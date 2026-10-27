@@ -83,8 +83,3 @@ sudo systemctl restart bunwrite
 Drizzle migrations run automatically at startup. Back up the database before a
 major upgrade.
 
-## Pesanle cutover example
-
-The original Pesanle production cutover notes are kept in
-[DEPLOY-PESANLE.md](DEPLOY-PESANLE.md) as a real-world example of migrating an
-Appwrite project to Bunwrite.

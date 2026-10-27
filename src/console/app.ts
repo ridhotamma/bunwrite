@@ -3,7 +3,6 @@
  * (hx-boost) and the few live bits. Every page is a plain HTML form, so it
  * also works without JavaScript.
  */
-import { join } from 'node:path'
 import type { Server } from 'bun'
 
 import { AppwriteError } from '~/lib/errors'
@@ -11,6 +10,7 @@ import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
 import { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
+import { htmxPath } from './assets'
 import { ConsoleAuth } from './auth'
 import type { ConsoleContext } from './context'
 import { readForm } from './forms'
@@ -20,8 +20,6 @@ import { shell, type Flash } from './layout'
 import { registerConsolePages } from './pages'
 import { signInPage } from './pages/sign-in'
 import { alert, emptyState, header } from './ui'
-
-const HTMX = join(import.meta.dir, '..', '..', 'node_modules', 'htmx.org', 'dist', 'htmx.min.js')
 
 function loopback(request: Request, server?: Server<any>): boolean {
   const ip = server?.requestIP(request)?.address ?? ''
@@ -51,7 +49,7 @@ export function createConsole(services: Services) {
       if (url.pathname !== '/console' && !url.pathname.startsWith('/console/')) return null
       if (!services.config.consoleEnabled) return new Response('Not found', { status: 404 })
       if (url.pathname === '/console/assets/htmx.min.js') {
-        return new Response(Bun.file(HTMX), { headers: { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=86400' } })
+        return new Response(Bun.file(htmxPath), { headers: { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=86400' } })
       }
 
       // Forms must come from this console (SameSite=Strict covers modern browsers; this covers the rest).

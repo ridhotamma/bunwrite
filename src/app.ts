@@ -1,7 +1,7 @@
-import { join } from 'node:path'
 import type { Server } from 'bun'
 
 import { resolveCaller, type Caller } from './auth/caller'
+import { faviconPath } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
@@ -30,8 +30,6 @@ interface RequestMeta {
 }
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
-
-const FAVICON = join(import.meta.dir, '..', 'public', 'favicon.ico')
 
 const ALLOW_HEADERS =
   'Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, X-Appwrite-Project, X-Appwrite-Key, X-Appwrite-Locale, X-Appwrite-Mode, X-Appwrite-JWT, X-Appwrite-Response-Format, X-Appwrite-Timeout, X-Appwrite-ID, X-Appwrite-Timestamp, X-Appwrite-Session, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent'
@@ -105,7 +103,7 @@ export function createApp(services: Services) {
   async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
     const url = new URL(request.url)
     if (url.pathname === '/favicon.ico' && (request.method === 'GET' || request.method === 'HEAD')) {
-      return new Response(Bun.file(FAVICON), { headers: { 'content-type': 'image/x-icon', 'cache-control': 'public, max-age=604800' } })
+      return new Response(Bun.file(faviconPath), { headers: { 'content-type': 'image/x-icon', 'cache-control': 'public, max-age=604800' } })
     }
     const consoleResponse = await consoleApp.handle(request, server)
     if (consoleResponse) return consoleResponse

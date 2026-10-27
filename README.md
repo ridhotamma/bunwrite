@@ -135,8 +135,6 @@ cancel the real one.
 ## Deploy
 
 See [docs/DEPLOY.md](docs/DEPLOY.md) for a generic Ubuntu + Bun + systemd setup.
-[docs/DEPLOY-PESANLE.md](docs/DEPLOY-PESANLE.md) keeps the original Pesanle
-cutover notes as a real-world example.
 
 ## Architecture
 
