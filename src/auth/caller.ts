@@ -12,6 +12,7 @@ import { err } from '../lib/errors'
 import { sha256 } from '../lib/ids'
 import type { Config } from '../config'
 import { verifyJwt } from './jwt'
+import { apiKeyValid } from '../settings/service'
 
 export interface UserRow {
   seq: number
@@ -134,7 +135,7 @@ export async function jwtCaller(db: Db, config: Config, jwt: string): Promise<Ca
 export async function resolveCaller(db: Db, config: Config, request: Request): Promise<Caller> {
   const key = request.headers.get('x-appwrite-key')
   if (key) {
-    if (!config.apiKeys.includes(key)) throw err('general_unauthorized_scope', 'Invalid API key.')
+    if (!apiKeyValid(db, config, key)) throw err('general_unauthorized_scope', 'Invalid API key.')
     return keyCaller()
   }
 

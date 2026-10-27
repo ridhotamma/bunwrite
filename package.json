@@ -12,10 +12,12 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "migrate": "bun src/cli/migrate.ts",
-    "snapshot": "bun src/cli/snapshot.ts"
+    "snapshot": "bun src/cli/snapshot.ts",
+    "console:admin": "bun src/cli/console-admin.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",
+    "htmx.org": "2.0.4",
     "nodemailer": "6.9.16",
     "sharp": "0.33.5"
   },

@@ -36,6 +36,13 @@
       "when": 1793092215917,
       "tag": "0004_more_views",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793095466097,
+      "tag": "0005_console",
+      "breakpoints": true
     }
   ]
 }

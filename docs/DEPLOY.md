@@ -27,15 +27,20 @@ live, so it is left unsupported.
 ## 2. Configure
 
 ```bash
-cp .env.example .env    # fill in API_KEYS (the existing key), SECRET, SMTP_*, GOOGLE_*
+cp .env.example .env    # PROJECT_ID, API_KEYS (the existing key), SECRET, PUBLIC_ENDPOINT
 SCHEMA_PATH=/opt/pesanle/packages/appwrite-config/appwrite.config.json
+bun run console:admin you@example.com
 ```
 
-Copy function variables into `functions.env` (`APPWRITE_DATABASE_ID`,
-`STORAGE_S3_*` for `backup`, `RENDER_FUNCTION_KEY`, WhatsApp and payment keys
-the cron jobs use). On live Appwrite the `backup` function has none set and has
-been failing nightly with "Missing function variables: APPWRITE_API_KEY"; here
-it gets the API key automatically.
+Only identity and paths have to be in `.env`. SMTP, Google sign-in, allowed
+origins, session length and function variables can be set later in the
+console (Settings, Functions), where each one shows whether it comes from env.
+
+The cron jobs need some variables: `APPWRITE_DATABASE_ID`, `STORAGE_S3_*` for
+`backup`, `RENDER_FUNCTION_KEY`, and the WhatsApp and payment keys. Put them in
+`functions.env` or in the console. On live Appwrite, `backup` has none set and
+fails every night with "Missing function variables: APPWRITE_API_KEY". Here
+every function gets an API key automatically.
 
 ## 3. Copy the data (dry run, any time)
 
@@ -58,8 +63,13 @@ curl localhost:8080/v1/health
 ```
 
 Expose it with a Cloudflare Tunnel (`cloudflared`, ~20 MB, no open ports, no
-certificates on the box), hostname `appwrite-new.pesanle.com` first, to test the
-apps against it from a staging build.
+certificates on the box). Use the hostname `appwrite-new.pesanle.com` first, and
+test the apps against it from a staging build.
+
+Protect `/console/*` with a Cloudflare Access policy (your email only). The
+console has its own sign-in and rate limit, but it needs no public exposure.
+Use `CONSOLE_ENABLED=false` to turn it off entirely; then use an SSH tunnel to
+`localhost:8080/console` when you need it.
 
 ## 5. Cutover (about 5 minutes)
 
@@ -76,9 +86,13 @@ apps against it from a staging build.
 
 - `RENDER_FUNCTION_URL=https://appwrite.pesanle.com/v1/functions/render/http`
   (Appwrite gave the function its own domain; here it is a path).
-- Schema changes: edit `appwrite.config.json` as today, then `bun run schema:push`
-  on the VPS (or restart: it applies `SCHEMA_PATH` on start). `appwrite push`
-  and the Appwrite Console no longer apply.
+- Schema changes, either way round:
+  - Edit `appwrite.config.json` in the Pesanle repo, then apply it from the
+    console's Schema page (with a preview first) or with `bun run schema:push`.
+  - Or edit in the console, then export to keep the repo file in step.
+
+  `appwrite push` and the Appwrite Console no longer apply. A restart never
+  re-applies the file unless `SCHEMA_SYNC_ON_START=true`.
 - Backups: `bun run snapshot` daily from cron, and copy `data/snapshots` off the
   box (rclone to R2). The `backup` function's API dump keeps working too.
 

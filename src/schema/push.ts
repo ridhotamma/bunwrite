@@ -24,7 +24,7 @@ export interface PushOptions {
   baseDir?: string
 }
 
-interface ConfigCollection {
+export interface ConfigCollection {
   databaseId: string
   id: string
   name: string
@@ -119,7 +119,7 @@ export function pushConfig(db: Db, config: any, options: PushOptions = {}): void
   })()
 }
 
-function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: (line: string) => void): void {
+export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: (line: string) => void): void {
   const sqlite = db.sqlite
   const dseq = sqlite.query<any, [string]>('SELECT seq FROM _databases WHERE id = ?').get(c.databaseId)?.seq
   if (!dseq) throw new Error(`Collection ${c.id} points at unknown database ${c.databaseId}`)
@@ -192,7 +192,7 @@ function createCollectionTables(db: Db, table: string, attributes: Attribute[]):
   db.sqlite.run(`CREATE INDEX ${q(perms + '_doc')} ON ${q(perms)} (doc)`)
 }
 
-function dropCollectionTables(db: Db, table: string): void {
+export function dropCollectionTables(db: Db, table: string): void {
   const fts = db.sqlite
     .query<any, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ESCAPE '\\'")
     .all(`${table.replace(/_/g, '\\_')}\\_\\_fts\\_%`)

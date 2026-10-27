@@ -255,3 +255,55 @@ export const executions = sqliteTable(
   },
   (t) => [index('_executions_function').on(t.functionId, t.seq)],
 )
+
+/** People who may sign in to /console. Separate from project users, as in Appwrite. */
+export const consoleAdmins = sqliteTable('_console_admins', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  email: text('email').notNull().unique(),
+  password: text('password').notNull(),
+  ...timestamps,
+})
+
+export const consoleSessions = sqliteTable('_console_sessions', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  adminId: integer('admin_id')
+    .notNull()
+    .references(() => consoleAdmins.seq, { onDelete: 'cascade' }),
+  secretHash: text('secret_hash').notNull().unique(),
+  expire: text('expire').notNull(),
+  createdAt: text('created_at').notNull(),
+})
+
+/** Settings edited in the console; they override the matching env vars. */
+export const settings = sqliteTable('_settings', {
+  key: text('key').primaryKey(),
+  value: json<unknown>('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+})
+
+/** API keys made in the console (env API_KEYS keep working too). Only the sha256 is stored. */
+export const apiKeys = sqliteTable('_api_keys', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  secretHash: text('secret_hash').notNull().unique(),
+  /** First characters, so a key can be recognised in the list. */
+  hint: text('hint').notNull(),
+  expire: text('expire'),
+  accessedAt: text('accessed_at'),
+  ...timestamps,
+})
+
+/** Function variables (Appwrite's per-function env). function_id '*' applies to every function. */
+export const functionVars = sqliteTable(
+  '_function_vars',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    functionId: text('function_id').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    secret: integer('secret', { mode: 'boolean' }).notNull().default(true),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_function_vars_fn_key').on(t.functionId, t.key)],
+)

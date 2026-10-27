@@ -23,6 +23,9 @@ import { functionRoutes } from './functions/routes'
 import { schemaRoutes } from './schema/routes'
 import { StorageService } from './storage/service'
 import { storageRoutes } from './storage/routes'
+import { SettingsService } from './settings/service'
+import { randomSecret } from './lib/ids'
+import { createConsole } from './console/app'
 
 export interface Services {
   config: Config
@@ -37,6 +40,7 @@ export interface Services {
   realtime: RealtimeHub
   storage: StorageService
   functions: FunctionService
+  settings: SettingsService
 }
 
 export interface AppContext extends Services {
@@ -52,20 +56,27 @@ const PROJECTLESS = [/^\/health/, /^\/version$/, /^\/account\/sessions\/oauth2\/
 export { originAllowed }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
+  config.internalKey ??= `internal_${randomSecret(32)}`
   const registry = new Registry(db)
   const store = new DocumentStore(db)
   const transactions = new TransactionService(db, registry, store)
   const auth = new AuthService(db, config, store)
   const teams = new TeamService(db, store, auth)
   const oauth = new OAuthService(db, config, auth)
-  const mailer = overrides.mailer ?? (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
+  const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db)
   const storage = new StorageService(db, config, store)
   const functions = new FunctionService(db, config, store, {
     functionEnv: readEnvFile(config.functionsEnvFile),
     skipSchedules: config.skipSchedules,
   })
-  return { config, db, registry, store, transactions, auth, teams, oauth, mailer, realtime, storage, functions, ...overrides }
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions } as Services
+  // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
+  services.settings = new SettingsService(db, config, (key) => {
+    if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
+  })
+  if (!overrides.mailer) services.mailer = makeMailer()
+  return Object.assign(services, overrides)
 }
 
 export function createApp(services: Services) {
@@ -95,6 +106,8 @@ export function createApp(services: Services) {
       vary: 'Origin',
     }
   }
+
+  const consoleApp = createConsole(services)
 
   const projectOf = (request: Request, url: URL) => request.headers.get('x-appwrite-project') ?? url.searchParams.get('project')
 
@@ -127,6 +140,8 @@ export function createApp(services: Services) {
 
   return {
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
+      const consoleResponse = await consoleApp.handle(request, server)
+      if (consoleResponse) return consoleResponse
       let response: Response | undefined
       try {
         response = await handle(request, server)

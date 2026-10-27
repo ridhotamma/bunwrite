@@ -23,7 +23,7 @@ const SYNC_TIMEOUT = 30
 const RUNNER_NODE = join(import.meta.dir, 'runner-node.ts')
 const RUNNER_PYTHON = join(import.meta.dir, 'runner-python.py')
 /** Server-only settings a function never needs to see. */
-const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD']
+const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
 
 export interface FunctionRow {
   id: string
@@ -202,6 +202,39 @@ export class FunctionService {
     return this.sql.query<FunctionRow, []>('SELECT * FROM _functions ORDER BY seq').all()
   }
 
+  update(id: string, fields: { enabled: boolean; schedule: string; timeout: number; execute: string[] }): FunctionRow {
+    this.fn(id)
+    if (fields.schedule) parseCron(fields.schedule) // throws on a bad expression
+    if (!Number.isInteger(fields.timeout) || fields.timeout < 1 || fields.timeout > 900) {
+      throw err('general_argument_invalid', 'Timeout must be between 1 and 900 seconds.')
+    }
+    this.sql
+      .query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, updated_at = ? WHERE id = ?')
+      .run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), now(), id)
+    return this.fn(id)
+  }
+
+  variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
+    return this.sql
+      .query<{ key: string; value: string; secret: number; function_id: string }, [string]>('SELECT key, value, secret, function_id FROM _function_vars WHERE function_id = ? ORDER BY key')
+      .all(functionId)
+  }
+
+  setVariable(functionId: string, key: string, value: string, secret: boolean): void {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _function_vars (function_id, key, value, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(function_id, key) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
+      )
+      .run(functionId, key, value, secret ? 1 : 0, stamp, stamp)
+  }
+
+  deleteVariable(functionId: string, key: string): void {
+    this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ?').run(functionId, key)
+  }
+
   execution(functionId: string, executionId: string): ExecutionRow {
     const row = this.sql.query<ExecutionRow, [string, string]>('SELECT * FROM _executions WHERE id = ? AND function_id = ?').get(executionId, functionId)
     if (!row) throw err('execution_not_found')
@@ -255,11 +288,18 @@ export class FunctionService {
     const base: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
-    const key = this.config.apiKeys[0] ?? ''
+    const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
+    const vars: Record<string, string> = {}
+    for (const v of this.sql
+      .query<{ key: string; value: string }, [string]>("SELECT key, value FROM _function_vars WHERE function_id IN ('*', ?) ORDER BY function_id = '*' DESC")
+      .all(f.id)) {
+      vars[v.key] = v.value
+    }
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
     return {
       ...base,
       ...this.options.functionEnv,
+      ...vars,
       APPWRITE_FUNCTION_API_ENDPOINT: endpoint,
       APPWRITE_FUNCTION_ID: f.id,
       APPWRITE_FUNCTION_NAME: f.name,
@@ -271,8 +311,8 @@ export class FunctionService {
       APPWRITE_FUNCTION_CPUS: '1',
       APPWRITE_FUNCTION_MEMORY: '512',
       // Appwrite hands functions a key; this server hands them its own.
-      APPWRITE_API_KEY: this.options.functionEnv?.APPWRITE_API_KEY ?? process.env.APPWRITE_API_KEY ?? key,
-      APPWRITE_ENDPOINT: this.options.functionEnv?.APPWRITE_ENDPOINT ?? endpoint,
+      APPWRITE_API_KEY: vars.APPWRITE_API_KEY ?? this.options.functionEnv?.APPWRITE_API_KEY ?? key,
+      APPWRITE_ENDPOINT: vars.APPWRITE_ENDPOINT ?? this.options.functionEnv?.APPWRITE_ENDPOINT ?? endpoint,
       APPWRITE_PROJECT_ID: this.config.projectId,
     }
   }

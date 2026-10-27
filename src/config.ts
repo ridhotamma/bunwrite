@@ -47,6 +47,12 @@ export interface Config {
   functionsEnvFile?: string
   /** Functions whose schedule is ignored (render's keep-warm ping is pointless here). */
   skipSchedules: string[]
+  /** Per-process key handed to function executions; never stored. */
+  internalKey?: string
+  /** Serve the admin console at /console. */
+  consoleEnabled: boolean
+  /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
+  schemaSyncOnStart: boolean
 }
 
 const list = (value: string | undefined) =>
@@ -97,5 +103,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
     skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : ['render'],
+    consoleEnabled: env.CONSOLE_ENABLED !== 'false',
+    schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
   }
 }

@@ -90,6 +90,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     google: null,
     storagePath: '',
     skipSchedules: [],
+    consoleEnabled: true,
+    schemaSyncOnStart: false,
     ...over,
   }
 }
