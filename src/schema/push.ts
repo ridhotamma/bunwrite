@@ -345,18 +345,25 @@ function pushFunctions(db: Db, functions: any[], stamp: string, log: (line: stri
       f.timeout ?? 15,
       f.enabled ?? true,
       JSON.stringify(f.scopes ?? []),
+      f.commands ?? '',
+      f.logging ?? true,
+      f.buildSpecification || 's-1vcpu-512mb',
+      f.runtimeSpecification || 's-1vcpu-512mb',
+      f.deploymentRetention ?? 0,
     ]
     const exists = db.sqlite.query('SELECT 1 FROM _functions WHERE id = ?').get(f.$id)
     if (exists) {
       db.sqlite.run(
         `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, path = ?, execute = ?, events = ?, schedule = ?,
-         timeout = ?, enabled = ?, scopes = ?, updated_at = ? WHERE id = ?`,
+         timeout = ?, enabled = ?, scopes = ?, commands = ?, logging = ?, build_specification = ?, runtime_specification = ?,
+         deployment_retention = ?, updated_at = ? WHERE id = ?`,
         [...values, stamp, f.$id],
       )
     } else {
       db.sqlite.run(
-        `INSERT INTO _functions (name, runtime, entrypoint, path, execute, events, schedule, timeout, enabled, scopes,
-         created_at, updated_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _functions (name, runtime, entrypoint, path, execute, events, schedule, timeout, enabled, scopes, commands, logging,
+         build_specification, runtime_specification, deployment_retention, created_at, updated_at, id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [...values, stamp, stamp, f.$id],
       )
       log(`+ function ${f.$id}`)

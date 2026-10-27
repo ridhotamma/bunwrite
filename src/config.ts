@@ -88,6 +88,8 @@ export interface Config {
   skipSchedules: string[]
   /** Folder that relative function paths resolve against: where appwrite.config.json lives. */
   functionsDir: string
+  /** Run a function's build command (`commands`) on each new deployment. */
+  functionsBuildCommands: boolean
   /** Per-process key handed to function executions; never stored. */
   internalKey?: string
   /** Serve the admin console at /console. */
@@ -104,8 +106,12 @@ export interface Config {
   logIp: boolean
   /** S3-compatible storage for uploaded files. */
   s3: S3Config
+  /** Prefix for S3 object keys, so projects sharing a bucket do not collide. */
+  storagePrefix?: string
   /** Automatic database backups. */
   backups: BackupsConfig
+  /** Prefix for S3 backup keys. */
+  backupsPrefix?: string
   /** Local folder for backups when backup S3 storage is off. */
   backupsPath: string
   /** HTML to PDF and image rendering (POST /v1/pdf, /v1/image). */
@@ -166,6 +172,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
     skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
+    functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',
@@ -173,7 +180,9 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     logRetentionDays: Number.isFinite(retention) && retention >= 0 ? Math.round(retention) : 7,
     logIp: env.LOG_IP !== 'false',
     s3: emptyS3(),
+    storagePrefix: '',
     backups: { enabled: false, keep: 7, s3: emptyS3() },
+    backupsPrefix: '',
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
     render: { enabled: env.RENDER_ENABLED === 'true', allowRemote: env.RENDER_ALLOW_REMOTE === 'true' },
   }

@@ -11,6 +11,48 @@ const timestamps = {
   updatedAt: text('updated_at').notNull(),
 }
 
+/** Project registry in the control database. Each project has its own database file. */
+export const projects = sqliteTable('_projects', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  orgId: text('org_id').notNull(),
+  ...timestamps,
+})
+
+/** Organization owning the projects on this instance. */
+export const organizations = sqliteTable('_organizations', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  ...timestamps,
+})
+
+/** Console users who belong to an organization, including pending invitations. */
+export const organizationMembers = sqliteTable(
+  '_organization_members',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    organizationId: text('organization_id').notNull(),
+    email: text('email').notNull(),
+    name: text('name').notNull().default(''),
+    /** owner | developer */
+    role: text('role').notNull().default('developer'),
+    /** invited | active */
+    status: text('status').notNull().default('invited'),
+    inviteHash: text('invite_hash'),
+    invitedAt: text('invited_at').notNull(),
+    joinedAt: text('joined_at'),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('_organization_members_email').on(t.organizationId, t.email),
+    index('_organization_members_org').on(t.organizationId),
+    uniqueIndex('_organization_members_invite').on(t.inviteHash),
+  ],
+)
+
 export const databases = sqliteTable('_databases', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   id: text('id').notNull().unique(),
@@ -227,8 +269,40 @@ export const functions = sqliteTable('_functions', {
   timeout: integer('timeout').notNull().default(15),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   scopes: json<string[]>('scopes').notNull().default(sql`'[]'`),
+  /** Build command run on each new deployment. */
+  commands: text('commands').notNull().default(''),
+  logging: integer('logging', { mode: 'boolean' }).notNull().default(true),
+  /** Active deployment; empty runs the code at `path`. */
+  deploymentId: text('deployment_id').notNull().default(''),
+  /** Appwrite settings with no effect here, kept so the API returns what was set. */
+  buildSpecification: text('build_specification').notNull().default('s-1vcpu-512mb'),
+  runtimeSpecification: text('runtime_specification').notNull().default('s-1vcpu-512mb'),
+  deploymentRetention: integer('deployment_retention').notNull().default(0),
   ...timestamps,
 })
+
+/** Code uploaded with `appwrite push functions` (or createDeployment), unpacked under <data>/deployments. */
+export const deployments = sqliteTable(
+  '_deployments',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    functionId: text('function_id').notNull(),
+    entrypoint: text('entrypoint').notNull(),
+    commands: text('commands').notNull().default(''),
+    /** waiting (uploading), building, ready or failed. */
+    status: text('status').notNull().default('waiting'),
+    buildLogs: text('build_logs').notNull().default(''),
+    buildDuration: real('build_duration').notNull().default(0),
+    sourceSize: integer('source_size').notNull().default(0),
+    /** Make it the active deployment once built. */
+    activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
+    chunksTotal: integer('chunks_total').notNull().default(1),
+    chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [index('_deployments_function').on(t.functionId)],
+)
 
 export const executions = sqliteTable(
   '_executions',

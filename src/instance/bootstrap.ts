@@ -36,9 +36,14 @@ export interface BootstrapResult {
   created: boolean
 }
 
+export interface BootstrapOptions {
+  /** Set false when re-opening an existing project DB: never mint another key. */
+  generateApiKey?: boolean
+}
+
 const generateOrgId = () => `org_${randomSecret(8)}`
 const generateProjectId = () => `prj_${randomSecret(8)}`
-const generateApiKey = () => `standard_${randomSecret(64)}`
+const generateApiKeyValue = () => `standard_${randomSecret(64)}`
 
 function read(db: Db): InstanceInfo | null {
   const row = db.sqlite.query<{ value: string }, [string]>('SELECT value FROM _settings WHERE key = ?').get(INSTANCE_KEY)
@@ -82,7 +87,12 @@ function ensureApiKeyRow(db: Db, key: string): void {
     .run(uniqueId(), DEFAULT_KEY_NAME, hash, key.slice(0, 16), stamp, stamp)
 }
 
-export function bootstrapInstance(db: Db, env: Record<string, string | undefined> = process.env): BootstrapResult {
+export function bootstrapInstance(
+  db: Db,
+  env: Record<string, string | undefined> = process.env,
+  options: BootstrapOptions = {},
+): BootstrapResult {
+  const generateApiKey = options.generateApiKey ?? true
   const stored = read(db)
   const info: InstanceInfo = stored ?? { orgId: '', projectId: '', secret: '', createdAt: now() }
   let generated = false
@@ -116,8 +126,8 @@ export function bootstrapInstance(db: Db, env: Record<string, string | undefined
 
   const setupComplete = adminCount(db) > 0
   let apiKey: string | undefined
-  if (!envApiKeys && !setupComplete) {
-    apiKey = info.apiKey || generateApiKey()
+  if (!envApiKeys && !setupComplete && generateApiKey) {
+    apiKey = info.apiKey || generateApiKeyValue()
     if (!info.apiKey) {
       info.apiKey = apiKey
       generated = true

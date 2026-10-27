@@ -35,6 +35,8 @@ export interface RequestLogFilter {
   search?: string
   /** '', 2xx, 3xx, 4xx or 5xx. */
   status?: string
+  /** Only logs for this project. */
+  project?: string
 }
 
 export interface HourlyBandwidth {
@@ -46,6 +48,11 @@ export interface HourlyBandwidth {
 export interface BandwidthConsumer {
   path: string
   bytes: number
+}
+
+export interface HourlyRequests {
+  hour: string
+  count: number
 }
 
 const STATUS_RANGES: Record<string, [number, number]> = {
@@ -90,11 +97,11 @@ export class RequestLogService {
     if (!this.queue.length) return
     const rows = this.queue
     this.queue = []
-    const insert = this.db.sqlite.prepare(
-      `INSERT INTO _request_logs (id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
     try {
+      const insert = this.db.sqlite.prepare(
+        `INSERT INTO _request_logs (id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
       this.db.sqlite.transaction(() => {
         for (const row of rows) {
           insert.run(
@@ -137,6 +144,10 @@ export class RequestLogService {
       where.push('status >= ? AND status < ?')
       params.push(range[0], range[1])
     }
+    if (filter.project) {
+      where.push('project = ?')
+      params.push(filter.project)
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
     const total = (this.db.sqlite.query(`SELECT count(*) AS n FROM _request_logs ${clause}`).get(...params) as { n: number }).n
     const logs = this.db.sqlite
@@ -147,9 +158,11 @@ export class RequestLogService {
     return { total, logs }
   }
 
-  get(seq: number): RequestLogRow | null {
+  get(seq: number, project?: string): RequestLogRow | null {
     this.flush()
-    return this.db.sqlite.query<RequestLogRow, [number]>(`SELECT ${COLUMNS} FROM _request_logs WHERE seq = ?`).get(seq) ?? null
+    const where = project ? 'WHERE seq = ? AND project = ?' : 'WHERE seq = ?'
+    const params: (string | number)[] = project ? [seq, project] : [seq]
+    return this.db.sqlite.query<RequestLogRow, any[]>(`SELECT ${COLUMNS} FROM _request_logs ${where}`).get(...params) ?? null
   }
 
   /** Request and response bytes per hour since `since`, an ISO timestamp. */
@@ -163,6 +176,18 @@ export class RequestLogService {
       .all(since)
   }
 
+  /** Request count per hour since `since`, optionally for one project. */
+  requestsByHour(since: string, project?: string): HourlyRequests[] {
+    this.flush()
+    const where = project ? 'created_at >= ? AND project = ?' : 'created_at >= ?'
+    const params: string[] = project ? [since, project] : [since]
+    return this.db.sqlite
+      .query<HourlyRequests, any[]>(
+        `SELECT substr(created_at, 1, 13) AS hour, count(*) AS count FROM _request_logs WHERE ${where} GROUP BY hour`,
+      )
+      .all(...params)
+  }
+
   /** Paths with the most traffic since `since`, largest first. */
   topConsumers(since: string, limit = 6): BandwidthConsumer[] {
     this.flush()
@@ -174,13 +199,14 @@ export class RequestLogService {
       .all(since, limit)
   }
 
-  clear(): void {
+  clear(project?: string): void {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
     }
     this.queue = []
-    this.db.sqlite.query('DELETE FROM _request_logs').run()
+    if (project) this.db.sqlite.query('DELETE FROM _request_logs WHERE project = ?').run(project)
+    else this.db.sqlite.query('DELETE FROM _request_logs').run()
   }
 
   prune(): void {

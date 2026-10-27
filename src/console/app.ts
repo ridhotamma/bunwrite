@@ -5,10 +5,13 @@
  */
 import type { Server } from 'bun'
 
+import { parseCookies } from '~/auth/caller'
 import { clearInstanceApiKey } from '~/instance/bootstrap'
 import { AppwriteError } from '~/lib/errors'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
+import { OrganizationService } from '~/organizations/service'
+import { singleProjectResolver, type ProjectResolver } from '~/projects/types'
 import { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
 import { htmxPath } from './assets'
@@ -17,10 +20,11 @@ import type { ConsoleContext } from './context'
 import { readForm } from './forms'
 import { back, go } from './htmx'
 import { html, page } from './html'
-import { shell, type Flash } from './layout'
+import { bare, projectShell, shell, type Flash } from './layout'
 import { registerConsolePages } from './pages'
 import { signInPage } from './pages/sign-in'
 import { alert, emptyState, header } from './ui'
+import { inviteAcceptContent, inviteUnavailableContent } from './views/organization'
 
 function loopback(request: Request, server?: Server<any>): boolean {
   const ip = server?.requestIP(request)?.address ?? ''
@@ -35,20 +39,23 @@ function flashFrom(url: URL): Flash {
   return ok ? { tone: 'success', text: ok } : null
 }
 
-export function createConsole(services: Services) {
-  const auth = new ConsoleAuth(services.db)
-  const schema = new SchemaAdmin(services.db, services.registry)
+export function createConsole(source: Services | ProjectResolver) {
+  const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
+  const control = projects.control
+  const auth = new ConsoleAuth(control.db)
+  const organizations = new OrganizationService(control.db)
+  organizations.ensure(control.config.orgId, control.config.projectName)
   const limiter = new RateLimiter()
   const router = new Router<ConsoleContext>()
   registerConsolePages(router)
 
-  const secure = () => services.config.publicEndpoint.startsWith('https')
+  const secure = () => control.config.publicEndpoint.startsWith('https')
 
   return {
     async handle(request: Request, server?: Server<any>): Promise<Response | null> {
       const url = new URL(request.url)
       if (url.pathname !== '/console' && !url.pathname.startsWith('/console/')) return null
-      if (!services.config.consoleEnabled) return new Response('Not found', { status: 404 })
+      if (!control.config.consoleEnabled) return new Response('Not found', { status: 404 })
       if (url.pathname === '/console/assets/htmx.min.js') {
         return new Response(Bun.file(htmxPath), { headers: { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=86400' } })
       }
@@ -60,6 +67,78 @@ export function createConsole(services: Services) {
       }
 
       const ip = (server?.requestIP(request)?.address ?? '') + (request.headers.get('cf-connecting-ip') ?? '')
+      const inviteMatch = /^\/console\/invite\/([^/]+)$/.exec(url.pathname)
+      if (inviteMatch) {
+        const token = decodeURIComponent(inviteMatch[1]!)
+        const member = organizations.inviteByToken(token)
+        if (!member) {
+          return page(bare('Invitation unavailable', inviteUnavailableContent('This invitation is invalid or has already been accepted.'), control.config.projectName))
+        }
+        const org = organizations.get(member.organizationId)
+        if (!org) {
+          return page(bare('Invitation unavailable', inviteUnavailableContent('The organization for this invitation no longer exists.'), control.config.projectName))
+        }
+        const existing = auth.find(member.email)
+        if (request.method === 'POST') {
+          try {
+            limiter.hit(`console-invite:${ip}`, 10, 900)
+          } catch {
+            return page(
+              bare(
+                `Join ${org.name}`,
+                inviteAcceptContent({
+                  orgName: org.name,
+                  email: member.email,
+                  token,
+                  existing: Boolean(existing),
+                  error: 'Too many attempts. Try again in 15 minutes.',
+                }),
+                control.config.projectName,
+              ),
+            )
+          }
+          const form = await readForm(request)
+          const password = String(form.password ?? '')
+          try {
+            let secret: string | null
+            if (existing) {
+              secret = await auth.login(member.email, password)
+              if (!secret) throw new Error('Incorrect email or password.')
+              organizations.accept(member.id)
+            } else {
+              await auth.upsert(member.email, password)
+              organizations.accept(member.id, String(form.name ?? ''))
+              secret = await auth.login(member.email, password)
+            }
+            return new Response(null, {
+              status: 303,
+              headers: { location: '/console', 'set-cookie': auth.cookie(secret!, secure()) },
+            })
+          } catch (error) {
+            return page(
+              bare(
+                `Join ${org.name}`,
+                inviteAcceptContent({
+                  orgName: org.name,
+                  email: member.email,
+                  token,
+                  existing: Boolean(existing),
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+                control.config.projectName,
+              ),
+            )
+          }
+        }
+        return page(
+          bare(
+            `Join ${org.name}`,
+            inviteAcceptContent({ orgName: org.name, email: member.email, token, existing: Boolean(existing) }),
+            control.config.projectName,
+          ),
+        )
+      }
+
       const noAdmins = auth.count() === 0
 
       if (url.pathname === '/console/setup') {
@@ -74,18 +153,18 @@ export function createConsole(services: Services) {
               setup: true,
               email,
               error: error instanceof Error ? error.message : String(error),
-              projectName: services.config.projectName,
-              instance: services.config.bootstrap,
+              projectName: control.config.projectName,
+              instance: control.config.bootstrap,
             })
           }
-          const bootstrapKey = services.config.bootstrap?.apiKey
-          clearInstanceApiKey(services.db)
-          if (bootstrapKey) services.config.apiKeys = services.config.apiKeys.filter((key) => key !== bootstrapKey)
-          if (services.config.bootstrap) services.config.bootstrap.apiKey = undefined
+          const bootstrapKey = control.config.bootstrap?.apiKey
+          clearInstanceApiKey(control.db)
+          if (bootstrapKey) control.config.apiKeys = control.config.apiKeys.filter((key) => key !== bootstrapKey)
+          if (control.config.bootstrap) control.config.bootstrap.apiKey = undefined
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth, { setup: true, projectName: services.config.projectName, instance: services.config.bootstrap })
+        return signInPage(auth, { setup: true, projectName: control.config.projectName, instance: control.config.bootstrap })
       }
 
       if (url.pathname === '/console/login') {
@@ -96,17 +175,18 @@ export function createConsole(services: Services) {
           try {
             limiter.hit(`console-login:${ip}`, 10, 900)
           } catch {
-            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: services.config.projectName })
+            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
           }
           const secret = await auth.login(email, String(form.password ?? ''))
-          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: services.config.projectName })
+          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth, { projectName: services.config.projectName })
+        return signInPage(auth, { projectName: control.config.projectName })
       }
 
       const admin = auth.admin(request)
       if (!admin) return go(request, noAdmins && loopback(request, server) ? '/console/setup' : '/console/login')
+      organizations.ensureAdmin(control.config.orgId, admin.email)
 
       if (url.pathname === '/console/logout' && request.method === 'POST') {
         auth.logout(request)
@@ -115,6 +195,15 @@ export function createConsole(services: Services) {
 
       const match = router.match(request.method, url.pathname.replace(/\/$/, '') || '/console')
       const flash = flashFrom(url)
+      const cookieProject = parseCookies(request.headers.get('cookie') ?? '')['console_project']
+      const selected = cookieProject ? projects.get(cookieProject) : null
+      const pathname = url.pathname.replace(/\/$/, '') || '/console'
+      const projectRoute = pathname !== '/console' && !pathname.startsWith('/console/projects') && !pathname.startsWith('/console/organization')
+      if (projectRoute && !selected) return go(request, '/console')
+
+      const current = selected ?? projects.defaultProject()
+      const services = current.services
+      const schema = new SchemaAdmin(services.db, services.registry)
       const ctx: ConsoleContext = {
         services,
         schema,
@@ -123,7 +212,28 @@ export function createConsole(services: Services) {
         form: await readForm(request),
         request,
         url,
-        render: (title, section, body) => page(shell(title, { section, admin: admin.email, projectName: services.config.projectName }, body, flash)),
+        projects,
+        organizations,
+        currentProject: current.info,
+        selectedProjectId: selected?.info.id ?? null,
+        render: (title, section, body) =>
+          page(
+            section === 'projects' || section === 'organization'
+              ? projectShell(title, { admin: admin.email }, body, flash)
+              : shell(
+                  title,
+                  {
+                    section,
+                    admin: admin.email,
+                    projectName: services.config.projectName,
+                    orgName: organizations.get(control.config.orgId)?.name ?? control.config.projectName,
+                    projects: projects.list().map((project) => project.info),
+                    currentProject: selected?.info.id ?? current.info.id,
+                  },
+                  body,
+                  flash,
+                ),
+          ),
         go: (location, message) => go(request, location, message),
         back: (message) => back(request, message),
       }

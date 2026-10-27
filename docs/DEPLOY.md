@@ -43,6 +43,11 @@ Create the data folders:
 sudo -u bunwrite mkdir -p /opt/bunwrite/data/storage /opt/bunwrite/data/backups
 ```
 
+The first project uses the existing `data/bunwrite.sqlite`, `data/storage` and
+`data/backups`. Additional projects created in the console live under
+`data/projects/<project-id>/` with their own database, storage, backups and
+function folder.
+
 ### 3. Configure
 
 ```bash
@@ -175,16 +180,18 @@ Upgrade with `git pull && docker compose up -d --build`.
 
 - Uploaded files use local disk by default. Enable S3-compatible storage in
   **Settings → File storage**; existing files are not migrated automatically.
+  Additional projects sharing one S3 bucket use the project ID as a key prefix.
 - HTML to PDF and images on a VPS without Docker: `sudo apt install chromium
   fonts-liberation`, then enable it in **Settings → HTML rendering**. See
   [RENDER.md](RENDER.md).
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - Enable daily database backups and optional S3 backup storage in
-  **Settings → Backups**. Database snapshots do not include uploaded files.
-  `bunwrite snapshot` is available for cron-driven copies.
-- Request logs go to stdout and the console. Set `LOG_REQUESTS=false` to silence
-  them, or `LOG_FORMAT=json` for a log collector.
+  **Settings → Backups**. Backups are per project; database snapshots do not
+  include uploaded files. `bunwrite snapshot` is available for cron-driven
+  copies of the default project.
+- Request logs are stored per project and go to stdout and the console. Set
+  `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
 
 ## Upgrades
 

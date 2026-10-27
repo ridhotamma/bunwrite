@@ -53,7 +53,11 @@ describe('console access', () => {
     expect(set).toContain('SameSite=Strict')
     expect(set).toContain('Path=/console')
     cookie = set.split(';')[0]!
-    const home = await get('/console')
+    const projectsPage = await (await get('/console')).text()
+    expect(projectsPage).toContain('class="org-head"')
+    expect(projectsPage).toContain('Projects')
+    cookie += `; console_project=${PROJECT}`
+    const home = await get('/console/overview')
     expect(home.status).toBe(200)
     const homeBody = await home.text()
     expect(homeBody).toContain('Recent function runs')
@@ -379,13 +383,11 @@ describe('settings through the console', () => {
     expect(await client.databases.listDocuments({ databaseId: DB, collectionId: 'products' }).catch((e: any) => e.code)).toBe(401)
   })
 
-  test('admins: add one, but never remove the last', async () => {
-    await form('/console/settings/admins', { email: 'second@example.com', password: 'second-password' })
-    const admins = new ConsoleAuth(server.db).list()
-    expect(admins.map((a) => a.email)).toEqual(['admin@example.com', 'second@example.com'])
-    await form(`/console/settings/admins/${admins[1]!.seq}/delete`, {})
-    const last = await form(`/console/settings/admins/${admins[0]!.seq}/delete`, {})
-    expect(flash(last).get('err')).toBe('The last admin cannot be removed.')
+  test('console access points at organization members', async () => {
+    const page = await (await get('/console/settings/access')).text()
+    expect(page).toContain('Console access is managed at the organization level')
+    expect(page).toContain('href="/console/organization/members"')
+    expect(page).not.toContain('/console/settings/admins')
   })
 
   test('database, user and storage pages read through their services', async () => {

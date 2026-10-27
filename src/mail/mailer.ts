@@ -65,6 +65,19 @@ export class MemoryMailer implements Mailer {
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
+export function organizationInviteMail(org: string, inviter: string, to: string, link: string): Mail {
+  const paragraphs = [
+    `${escape(inviter)} invited you to join ${bold(org)} on Bunwrite.`,
+    'Accept the invitation to create your account and access the organization projects.',
+  ]
+  return {
+    to,
+    subject: `Join ${org} on Bunwrite`,
+    html: layout(paragraphs, { href: link, label: 'Accept invitation' }),
+    text: `${inviter} invited you to join ${org} on Bunwrite.\n\nAccept the invitation: ${link}`,
+  }
+}
+
 function layout(paragraphs: string[], button?: { href: string; label: string }): string {
   const body = paragraphs.map((p) => `<p style="margin:0 0 16px">${p}</p>`).join('')
   const cta = button

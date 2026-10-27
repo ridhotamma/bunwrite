@@ -34,6 +34,15 @@ export class BackupService {
     return this.config.backups.s3
   }
 
+  private s3Prefix(): string {
+    const prefix = (this.config.backupsPrefix ?? '').replace(/^\/+|\/+$/g, '')
+    return prefix ? `${prefix}/` : ''
+  }
+
+  private s3Key(name: string): string {
+    return `${this.s3Prefix()}${name}`
+  }
+
   private validName(name: string): boolean {
     return NAME_RE.test(name) && !name.includes('/') && !name.includes('\\')
   }
@@ -41,13 +50,17 @@ export class BackupService {
   async list(): Promise<BackupFile[]> {
     if (this.s3.enabled) {
       const client = s3Client(this.s3)
+      const prefix = this.s3Prefix()
       const files: BackupFile[] = []
       let token: string | undefined
       do {
         const page = await client.list({ maxKeys: 1000, continuationToken: token })
         for (const object of page.contents ?? []) {
           if (!object.key.endsWith('.sqlite')) continue
-          files.push({ name: object.key, size: object.size ?? 0, modified: object.lastModified ?? '' })
+          if (prefix && !object.key.startsWith(prefix)) continue
+          const name = prefix ? object.key.slice(prefix.length) : object.key
+          if (!this.validName(name)) continue
+          files.push({ name, size: object.size ?? 0, modified: object.lastModified ?? '' })
         }
         token = page.isTruncated ? page.nextContinuationToken : undefined
       } while (token)
@@ -77,7 +90,7 @@ export class BackupService {
       this.db.sqlite.run(`VACUUM INTO '${temp.replace(/'/g, "''")}'`)
       const size = statSync(temp).size
       if (this.s3.enabled) {
-        await s3Client(this.s3).file(name).write(Bun.file(temp), { type: 'application/x-sqlite3' })
+        await s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: 'application/x-sqlite3' })
       } else {
         renameSync(temp, join(dir, name))
       }
@@ -97,7 +110,7 @@ export class BackupService {
 
   async delete(name: string): Promise<void> {
     if (!this.validName(name)) throw err('general_argument_invalid', 'Invalid backup name.')
-    if (this.s3.enabled) await s3Client(this.s3).delete(name)
+    if (this.s3.enabled) await s3Client(this.s3).delete(this.s3Key(name))
     else rmSync(join(this.config.backupsPath, name), { force: true })
   }
 
@@ -109,7 +122,7 @@ export class BackupService {
       'cache-control': 'no-store',
     }
     if (this.s3.enabled) {
-      const file = s3Client(this.s3).file(name)
+      const file = s3Client(this.s3).file(this.s3Key(name))
       try {
         const stat = await file.stat()
         return new Response(file.stream(), { headers: { ...headers, 'content-length': String(stat.size) } })
@@ -132,6 +145,11 @@ export class BackupService {
     if (this.timer) return
     this.timer = setInterval(() => void this.tick(new Date()), 60_000)
     this.timer.unref()
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
   }
 
   /** Daily at 02:00 UTC; exposed for tests through the optional date argument. */

@@ -20,7 +20,7 @@ async function readUpload(ctx: ConsoleContext): Promise<{ config: unknown; baseD
   const file = ctx.form.file
   if (file instanceof Blob && file.size > 0) {
     try {
-      return { config: JSON.parse(await file.text()), label: (file as File).name || 'uploaded file' }
+      return { config: JSON.parse(await file.text()), baseDir: ctx.services.config.functionsDir, label: (file as File).name || 'uploaded file' }
     } catch {
       throw err('general_argument_invalid', 'That file is not valid JSON.')
     }

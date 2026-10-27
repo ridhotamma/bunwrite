@@ -2,8 +2,9 @@
 
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
-admin console (`/console`). It keeps all of its state in one SQLite file plus a
-folder of uploaded files.
+admin console (`/console`). The default project uses the main SQLite file;
+additional projects each use their own database under `data/projects/<id>/`,
+plus their own storage, backups and function folder.
 
 ```
  Client apps (Web, mobile, server)        Admin (browser)
@@ -11,15 +12,17 @@ folder of uploaded files.
             │ HTTPS (Cloudflare)              │
             ▼                                 ▼
  ┌──────────────────────────── Bun.serve ────────────────────────────┐
- │ /v1/*  router → caller (key │ session │ JWT │ guest) → services   │
+ │ /v1/*  router → project → caller (key │ session │ JWT) → services│
  │ /v1/realtime  WebSocket hub ◄── document events                   │
- │ /console/*  htmx pages → the same services                        │
+ │ /console/*  htmx pages → the selected project's services         │
  │                                                                   │
+ │ ProjectManager: control project + one Services set per project   │
  │ services: DocumentStore · Transactions · Auth · Teams · Storage   │
  │           Functions (+cron) · Settings · Registry (schema)        │
  └───────────┬─────────────────────────────┬─────────────────────────┘
              ▼                             ▼
-     SQLite (WAL) data/bunwrite.sqlite    data/storage/<bucket>/<file>
+   default: data/bunwrite.sqlite       data/storage/<bucket>/<file>
+   others:  data/projects/<id>/        data/projects/<id>/storage/...
              ▲
    child processes: one per function run (bun runner / python3 runner)
 ```
@@ -38,6 +41,7 @@ folder of uploaded files.
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
 | `src/settings/` | Console-edited settings over env, console API keys |
 | `src/instance/` | First-run generated organization/project IDs, signing secret and initial API key |
+| `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
 | `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
@@ -66,13 +70,37 @@ The console keeps the same boundaries as the API:
   `SECRET` and `API_KEYS` from the environment when set, otherwise generates
   them and stores the defaults in `_settings` under `instance`. The generated
   API key is shown once on `/console/setup` and kept hashed in `_api_keys`.
+- `projects/manager.ts` owns `_projects` in the control database and a cached
+  `Services` set per project. The control database is the default project's
+  database, so an existing single-project install keeps its data. Additional
+  projects get `data/projects/<id>/` and their own signing secret, API keys,
+  storage prefix and backups prefix.
+- The console index (`/console`) lists projects, like Appwrite's organization
+  page; opening one goes to `/console/overview`. The selected project is kept in
+  the `console_project` cookie, and the project switcher changes which project's
+  services every page uses. Console admins remain global in the control
+  database. API request logs live in each project's database; console page
+  traffic goes to the default project.
+- `organizations/service.ts` owns the single organization in the control
+  database, its members and invitations. Console admins become members
+  automatically; owners invite by email, change roles and revoke access.
+  Invitation tokens are stored as SHA-256 hashes, can be used once, and create
+  the console account when accepted unless the account already exists (then the
+  member signs in first). Owners are protected from demoting or removing
+  themselves and from leaving the organization without an owner.
+- Function HTTP endpoints may omit `X-Appwrite-Project`; the server finds the
+  owning project by function ID. Send the header when the same function ID
+  exists in more than one project.
 
 ## Data model
 
 - **Built-in tables** (`_users`, `_sessions`, `_tokens`, `_teams`, `_memberships`,
   `_identities`, `_files`, `_buckets`, `_functions`, `_executions`,
-  `_transactions`, `_settings`, `_api_keys`, `_request_logs`, `_console_*`) are a
-  Drizzle schema in `src/db/system-schema.ts`. Drizzle migrations run on start.
+  `_transactions`, `_settings`, `_api_keys`, `_request_logs`, `_projects`,
+  `_organizations`, `_organization_members`, `_console_*`) are a Drizzle schema
+  in `src/db/system-schema.ts`. Drizzle migrations run on start. `_projects`,
+  `_organizations` and `_organization_members` live in the control/default
+  database.
 - **Each collection** is a real table `d<dbSeq>_<collectionId>`, with one column
   per attribute plus `_seq` (`$sequence`), `_id`, `_createdAt`, `_updatedAt` and
   `_permissions`. Arrays are stored as JSON text, booleans as 0/1, and datetimes
@@ -136,6 +164,14 @@ A function-specific value overrides a global one with the same name. Both
 places can bulk import pasted `KEY=value` lines; malformed lines are reported
 with line numbers before anything is written.
 
+Code comes from one of two places. `appwrite push functions` uploads a
+deployment: a `.tar.gz` (in 5 MB chunks when larger) unpacked to
+`<data>/deployments/<function>/<deployment>/`, where the function's build
+command runs with `sh -c` (skipped with `FUNCTIONS_BUILD_COMMANDS=false`). The
+active deployment runs; older ready ones are kept two deep, then deleted.
+Without one, the code is read from the function's `path` under the code
+folder, as `schema:push` sets it.
+
 A 15-second loop fires cron schedules (UTC). It never starts a function while
 that function's previous run is still going, and it skips functions on the
 pause list.
@@ -156,7 +192,8 @@ pause list.
 - **Settings:** env vars are the defaults, and a value saved in the console
   overrides them until it is reset to env.
 - **Schema:** the database is the source of truth.
-  - `appwrite.config.json` is an import/export format: `schema:push`, the console's Schema page, or `SCHEMA_SYNC_ON_START=true`.
+  - `appwrite.config.json` is an import/export format: `schema:push`, the console's Schema page, `SCHEMA_SYNC_ON_START=true`, or `appwrite push tables` (through `/v1/tablesdb` and `/v1/databases`).
+  - Columns read back in the shape they were defined (an email column shows a size only if it was given one), because `appwrite push` drops and recreates a column whose type, size, format or encrypt reads back differently.
   - The Schema page can export selected collections and import a pasted/uploaded
     collection array with a dry-run review and an optional delete-missing pass.
   - Console edits change the database directly; export them to keep your repo file in step.

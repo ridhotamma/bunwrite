@@ -93,6 +93,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     storagePath: '',
     skipSchedules: [],
     functionsDir: process.cwd(),
+    functionsBuildCommands: true,
     consoleEnabled: true,
     schemaSyncOnStart: false,
     logRequests: false,
@@ -100,6 +101,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     logRetentionDays: 7,
     logIp: true,
     s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
+    storagePrefix: '',
+    backupsPrefix: '',
     backups: {
       enabled: false,
       keep: 7,

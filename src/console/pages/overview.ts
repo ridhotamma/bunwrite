@@ -10,7 +10,7 @@ import { alert, emptyState, formatBytes, header, stat, statusBadge, when } from 
 const started = Date.now()
 
 export function overviewPages(router: ConsoleRouter): void {
-  router.get('/console', ({ ctx }) => ctx.render('Home', 'overview', overview(ctx)))
+  router.get('/console/overview', ({ ctx }) => ctx.render('Home', 'overview', overview(ctx)))
 }
 
 function overview(ctx: ConsoleContext): Html {

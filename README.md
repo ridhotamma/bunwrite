@@ -16,6 +16,8 @@ the Appwrite API most apps use. Existing apps keep using the official
   SQLite stores everything.
 - **SDK compatible.** Point the Appwrite SDK at Bunwrite and keep your frontend
   code.
+- **Multiple projects.** Each project has its own database, users, teams,
+  storage, functions and API keys; switch projects in the console.
 - **Admin console included.** Manage databases, users, teams, files, functions,
   schema, storage, backups and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
@@ -73,6 +75,17 @@ Import the example schema first if you want sample collections:
 bun run schema:push examples/appwrite.config.json
 ```
 
+The Appwrite CLI works too. Point it at Bunwrite with an API key, then push:
+
+```bash
+appwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
+appwrite push tables --all --force
+appwrite push functions --function-id <id> --force --activate true
+```
+
+Push functions one at a time: CLI 22 can mix up archives when it packs several
+functions in the same millisecond.
+
 ## Connect an app
 
 ```ts
@@ -96,6 +109,8 @@ phone.
 
 | Area | What you can do |
 | --- | --- |
+| Projects | Create projects, see their IDs and API keys, switch the active project |
+| Organization | Rename the organization, copy its ID, invite members by email and manage owner and developer roles |
 | Home | Counts, bandwidth chart with top consumers, failed function runs, memory and database size |
 | Databases | Create databases and collections; edit attributes, indexes and permissions; browse, filter, create, edit and delete documents |
 | Users | Search; edit profile, labels, verification and prefs; block; set a password; end sessions; delete |
@@ -110,6 +125,19 @@ phone.
 Settings saved in the console override the matching env vars and take effect
 immediately. Each setting shows whether it comes from env or from the console
 and can be reset to env.
+
+The console index is the organization page: it lists your projects, with tabs
+for the organization members and its settings. Open a project to enter its
+dashboard. The project switcher in the sidebar changes which project every page
+edits. Apps select a project with the `X-Appwrite-Project` header. The first
+project is the existing database; additional projects live under
+`data/projects/<project-id>/`. Users, databases, storage, functions, request
+logs, backups, settings and API keys are scoped to the selected project.
+
+Organization owners can invite teammates by email. The invitation creates the
+console account after it is accepted; until then the member is listed as
+invited. When SMTP is not configured the invite dialog shows the one-time links
+so they can be shared directly.
 
 ## What the API covers
 
@@ -149,9 +177,9 @@ cancel the real one.
 | `bun run build` | Build the standalone `dist/bunwrite` executable |
 | `bun run demo` | Self-contained demo with sample data |
 | `bun run console:admin <email> [--remove]` | Create, reset or remove a console admin |
-| `bun run schema:push <appwrite.config.json> [--prune]` | Create/alter tables, indexes, buckets and functions |
+| `bun run schema:push <appwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
 | `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
-| `bun run snapshot [dir]` | Consistent database copy while the server runs |
+| `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs |
 | `bun run autotune` | Show the resource limits detected from the host/cgroup |
 | `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
 | `bun run typecheck` | TypeScript check |

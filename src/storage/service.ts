@@ -171,7 +171,7 @@ export class StorageService {
       this.sql.query('DELETE FROM _files WHERE bucket_id = ?').run(id)
       this.sql.query('DELETE FROM _buckets WHERE id = ?').run(id)
     })()
-    if (this.config.s3.enabled) await this.deletePrefix(`${id}/`)
+    if (this.config.s3.enabled) await this.deletePrefix(`${this.prefix() ? `${this.prefix()}/` : ''}${id}/`)
     else rmSync(join(this.config.storagePath, id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.previews', id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.uploads', id), { recursive: true, force: true })
@@ -206,8 +206,12 @@ export class StorageService {
     return join(this.config.storagePath, '.uploads', bucketId, fileId)
   }
 
+  private prefix(): string {
+    return (this.config.storagePrefix ?? '').replace(/^\/+|\/+$/g, '')
+  }
+
   private objectKey(bucketId: string, fileId: string): string {
-    return s3Key(bucketId, fileId)
+    return s3Key(...(this.prefix() ? [this.prefix()] : []), bucketId, fileId)
   }
 
   private async deletePrefix(prefix: string): Promise<void> {

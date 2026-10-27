@@ -4,7 +4,7 @@
  * python-*), with the same env vars Appwrite injects, so a crash or a leak
  * dies with the process. Schedules run from an in-process cron.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import type { Caller } from '~/auth/caller'
@@ -18,6 +18,7 @@ import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
+import { deploymentDir } from './deployments'
 import { pythonRunner } from './runtime'
 
 const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
@@ -39,8 +40,42 @@ export interface FunctionRow {
   timeout: number
   enabled: number
   scopes: string
+  commands: string
+  logging: number
+  deployment_id: string
+  build_specification: string
+  runtime_specification: string
+  deployment_retention: number
   created_at: string
   updated_at: string
+}
+
+/** Settings a create or update call may set. */
+export interface FunctionSettings {
+  name: string
+  runtime: string
+  execute: string[]
+  events: string[]
+  schedule: string
+  timeout: number
+  enabled: boolean
+  logging: boolean
+  entrypoint: string
+  commands: string
+  scopes: string[]
+  buildSpecification: string
+  runtimeSpecification: string
+  deploymentRetention: number
+}
+
+/** Runtimes this server can run: node-* and bun-* under Bun, python-* under python3. */
+export const SUPPORTED_RUNTIME = /^(node|bun|python)-[0-9.]+$/
+
+/** The newest deployment of a function, for the function model. */
+export interface LatestDeployment {
+  id: string
+  status: string
+  created_at: string
 }
 
 export interface ExecutionRow {
@@ -121,7 +156,10 @@ const parse = <T>(text: string, fallback: T): T => {
   }
 }
 
-export function functionModel(f: FunctionRow) {
+export function functionModel(f: FunctionRow, latest?: LatestDeployment | null, codeAtPath = true) {
+  // Code found at `path` (schema:push) counts as a ready deployment named after the function.
+  const stand = codeAtPath ? f.id : ''
+  const active = f.deployment_id || stand
   return {
     $id: f.id,
     $createdAt: f.created_at,
@@ -131,29 +169,29 @@ export function functionModel(f: FunctionRow) {
     description: '',
     enabled: Boolean(f.enabled),
     live: true,
-    logging: true,
+    logging: Boolean(f.logging),
     runtime: f.runtime,
-    deploymentRetention: 0,
-    deploymentId: f.id,
-    deploymentCreatedAt: f.updated_at,
-    latestDeploymentId: f.id,
-    latestDeploymentCreatedAt: f.updated_at,
-    latestDeploymentStatus: 'ready',
+    deploymentRetention: f.deployment_retention,
+    deploymentId: active,
+    deploymentCreatedAt: active ? f.updated_at : '',
+    latestDeploymentId: latest?.id ?? stand,
+    latestDeploymentCreatedAt: latest?.created_at ?? (stand ? f.updated_at : ''),
+    latestDeploymentStatus: latest?.status ?? (stand ? 'ready' : ''),
     scopes: parse<string[]>(f.scopes, []),
     vars: [] as unknown[],
     events: parse<string[]>(f.events, []),
     schedule: f.schedule,
     timeout: f.timeout,
     entrypoint: f.entrypoint,
-    commands: '',
+    commands: f.commands,
     version: 'v5',
     installationId: '',
     providerRepositoryId: '',
     providerBranch: '',
     providerRootDirectory: '',
     providerSilentMode: false,
-    buildSpecification: 's-1vcpu-512mb',
-    runtimeSpecification: 's-1vcpu-512mb',
+    buildSpecification: f.build_specification,
+    runtimeSpecification: f.runtime_specification,
   }
 }
 
@@ -221,14 +259,84 @@ export class FunctionService {
 
   update(id: string, fields: { enabled: boolean; schedule: string; timeout: number; execute: string[] }): FunctionRow {
     this.fn(id)
-    if (fields.schedule) parseCron(fields.schedule) // throws on a bad expression
-    if (!Number.isInteger(fields.timeout) || fields.timeout < 1 || fields.timeout > 900) {
-      throw err('general_argument_invalid', 'Timeout must be between 1 and 900 seconds.')
-    }
+    this.check(fields)
     this.sql
       .query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, updated_at = ? WHERE id = ?')
       .run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), now(), id)
     return this.fn(id)
+  }
+
+  private check(fields: { schedule: string; timeout: number; runtime?: string }): void {
+    if (fields.schedule) {
+      try {
+        parseCron(fields.schedule)
+      } catch (error) {
+        throw err('general_argument_invalid', `Invalid schedule: ${(error as Error).message}`)
+      }
+    }
+    if (!Number.isInteger(fields.timeout) || fields.timeout < 1 || fields.timeout > 900) {
+      throw err('general_argument_invalid', 'Timeout must be between 1 and 900 seconds.')
+    }
+    if (fields.runtime !== undefined && !SUPPORTED_RUNTIME.test(fields.runtime)) {
+      throw err('function_runtime_unsupported', `Runtime "${fields.runtime}" is not supported here. Use a node-*, bun-* or python-* runtime.`)
+    }
+  }
+
+  /** A new function (functions.create). Its code arrives later as a deployment. */
+  create(id: string, fields: FunctionSettings): FunctionRow {
+    this.check(fields)
+    if (this.sql.query('SELECT 1 FROM _functions WHERE id = ?').get(id)) throw err('function_already_exists')
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _functions (id, path, name, runtime, entrypoint, execute, events, schedule, timeout, enabled, scopes, commands, logging,
+         build_specification, runtime_specification, deployment_retention, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp)
+    return this.fn(id)
+  }
+
+  /** Replace a function's settings (functions.update). */
+  save(id: string, fields: FunctionSettings): FunctionRow {
+    this.fn(id)
+    this.check(fields)
+    this.sql
+      .query(
+        `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, execute = ?, events = ?, schedule = ?, timeout = ?, enabled = ?, scopes = ?,
+         commands = ?, logging = ?, build_specification = ?, runtime_specification = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(...this.settingValues(fields), now(), id)
+    return this.fn(id)
+  }
+
+  private settingValues(f: FunctionSettings) {
+    return [
+      f.name,
+      f.runtime,
+      f.entrypoint,
+      JSON.stringify(f.execute),
+      JSON.stringify(f.events),
+      f.schedule,
+      f.timeout,
+      f.enabled ? 1 : 0,
+      JSON.stringify(f.scopes),
+      f.commands,
+      f.logging ? 1 : 0,
+      f.buildSpecification,
+      f.runtimeSpecification,
+      f.deploymentRetention,
+    ] as const
+  }
+
+  /** Delete a function with its variables, executions and deployments. */
+  remove(id: string): void {
+    this.fn(id)
+    this.sql.transaction(() => {
+      for (const table of ['_function_vars', '_executions', '_deployments']) this.sql.query(`DELETE FROM ${table} WHERE function_id = ?`).run(id)
+      this.sql.query('DELETE FROM _functions WHERE id = ?').run(id)
+    })()
+    rmSync(deploymentDir(this.config, id), { recursive: true, force: true })
   }
 
   variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
@@ -353,7 +461,8 @@ export class FunctionService {
     return { execution: this.execution(f.id, id), result }
   }
 
-  private env(f: FunctionRow, trigger: string): Record<string, string> {
+  /** Environment for a run or a build: server env without secrets, function variables, and Appwrite's APPWRITE_FUNCTION_* values. */
+  env(f: FunctionRow, trigger: string): Record<string, string> {
     const base: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
@@ -372,7 +481,7 @@ export class FunctionService {
       APPWRITE_FUNCTION_API_ENDPOINT: endpoint,
       APPWRITE_FUNCTION_ID: f.id,
       APPWRITE_FUNCTION_NAME: f.name,
-      APPWRITE_FUNCTION_DEPLOYMENT: f.id,
+      APPWRITE_FUNCTION_DEPLOYMENT: f.deployment_id || f.id,
       APPWRITE_FUNCTION_PROJECT_ID: this.config.projectId,
       APPWRITE_FUNCTION_RUNTIME_NAME: runtimeName ?? '',
       APPWRITE_FUNCTION_RUNTIME_VERSION: runtimeVersion ?? '',
@@ -387,19 +496,27 @@ export class FunctionService {
   }
 
   /**
-   * The folder holding a function's code. Tried in order: the stored path (absolute, or relative
-   * to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The last one also
-   * repairs paths stored against the wrong folder by an uploaded import.
+   * The folder holding a function's code and the entrypoint to run. The active deployment
+   * (`appwrite push functions`) wins. Otherwise, tried in order: the stored path (absolute, or
+   * relative to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The
+   * last one also repairs paths stored against the wrong folder by an uploaded import.
    */
-  codeDir(f: FunctionRow): { dir: string | null; tried: string[] } {
+  codeDir(f: FunctionRow): { dir: string | null; tried: string[]; entrypoint: string } {
+    if (f.deployment_id) {
+      const deployment = this.sql
+        .query<{ entrypoint: string }, [string, string]>("SELECT entrypoint FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'")
+        .get(f.deployment_id, f.id)
+      const dir = deploymentDir(this.config, f.id, f.deployment_id)
+      if (deployment && existsSync(join(dir, deployment.entrypoint))) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint }
+    }
     const base = this.config.functionsDir
     const tried = [...new Set([isAbsolute(f.path) ? f.path : resolve(base, f.path), join(base, 'functions', f.id)])]
     const dir = tried.find((d) => existsSync(join(d, f.entrypoint))) ?? null
-    return { dir, tried: tried.map((d) => join(d, f.entrypoint)) }
+    return { dir, tried: tried.map((d) => join(d, f.entrypoint)), entrypoint: f.entrypoint }
   }
 
-  private command(f: FunctionRow, dir: string): string[] {
-    const entry = join(dir, f.entrypoint)
+  private command(f: FunctionRow, dir: string, entrypoint: string): string[] {
+    const entry = join(dir, entrypoint)
     if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', pythonRunner(this.config), entry]
     if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) {
       return Bun.isStandaloneExecutable ? [process.execPath, NODE_RUNNER_MODE, entry] : [process.execPath, RUNNER_NODE, entry]
@@ -417,14 +534,14 @@ export class FunctionService {
     let logs = ''
     let errors = ''
     try {
-      const { dir, tried } = this.codeDir(f)
+      const { dir, tried, entrypoint } = this.codeDir(f)
       if (!dir) {
         throw new Error(
           `Function code not found. Looked for ${tried.join(' and ')}. ` +
             'Set the code folder (the folder with appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
         )
       }
-      const proc = Bun.spawn(this.command(f, dir), {
+      const proc = Bun.spawn(this.command(f, dir, entrypoint), {
         cwd: dir,
         env: this.env(f, request.trigger),
         stdin: 'pipe',

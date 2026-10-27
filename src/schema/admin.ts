@@ -10,7 +10,7 @@ import { err } from '~/lib/errors'
 import { isValidId } from '~/lib/ids'
 import { dropCollectionTables, pushCollection, pushConfig, type ConfigCollection } from './push'
 import type { Registry } from './registry'
-import { normalizeAttribute, normalizeIndex, tableName, type Attribute, type Index } from './types'
+import { attributeDefinition, normalizeAttribute, normalizeIndex, tableName, type Attribute, type Index } from './types'
 
 export class SchemaAdmin {
   constructor(
@@ -134,19 +134,10 @@ export class SchemaAdmin {
   }
 
   private attributeConfig(a: Attribute): Record<string, unknown> {
-    const out: Record<string, unknown> = { key: a.key, type: a.type, required: a.required, array: a.array }
-    if (a.type === 'string') {
-      out.size = a.size
-      if (a.format) out.format = a.format
-      if (a.elements) out.elements = a.elements
-      out.encrypt = false
-    }
-    if (a.type === 'integer' || a.type === 'double') {
-      if (a.min !== undefined) out.min = a.min
-      if (a.max !== undefined) out.max = a.max
-    }
-    if (a.type === 'datetime') out.format = ''
-    out.default = a.default ?? null
+    const out = attributeDefinition(a)
+    // A config file leaves out min/max it does not set.
+    if (out.min === null) delete out.min
+    if (out.max === null) delete out.max
     return out
   }
 

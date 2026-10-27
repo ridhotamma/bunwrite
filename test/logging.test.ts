@@ -77,13 +77,13 @@ describe('request logs', () => {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       redirect: 'manual',
     })
-    const cookie = login.headers.get('set-cookie')!.split(';')[0]!
+    const cookie = `${login.headers.get('set-cookie')!.split(';')[0]!}; console_project=${PROJECT}`
 
     await fetch(`${server.endpoint}/health`, {
       headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'visible-1', referer: 'https://example.com/app', 'user-agent': 'LogTest/1.0' },
     })
     server.services.requestLogs.flush()
-    const home = await (await fetch(`${base}/console`, { headers: { cookie } })).text()
+    const home = await (await fetch(`${base}/console/overview`, { headers: { cookie } })).text()
     expect(home).toContain('Bandwidth over time')
     expect(home).toContain('<svg')
     expect(home).toContain('/v1/health')

@@ -21,6 +21,7 @@ import { now } from '~/lib/datetime'
 export interface SocketData {
   caller: Caller
   subscriptions: Map<string, string[]>
+  projectId: string
 }
 
 export type Socket = ServerWebSocket<SocketData>

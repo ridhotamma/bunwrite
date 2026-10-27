@@ -32,7 +32,7 @@ function projectCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   return card(ctx, 'project', 'Project', 'project', 'Name in emails, allowed web origins and how long sign-ins last.', html`
     <form method="post" action="${SETTINGS}/project">
-      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Set by ORG_ID; generated on first start.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set by PROJECT_ID; apps send it.</small></label></div>
+      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Set by ORG_ID; generated on first start.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Apps send this in X-Appwrite-Project.</small></label></div>
       <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
       <div class="foot"><button class="primary">Save</button></div>
@@ -183,7 +183,6 @@ function renderCards(ctx: ConsoleContext): Html {
 
 function accessCards(ctx: ConsoleContext): Html {
   const keys = ctx.services.settings.listKeys()
-  const admins = ctx.auth.list()
   return html`
     ${card(ctx, 'keys', 'API keys', null, 'Server keys with full access. Keys from the API_KEYS env var also work and are not listed.', html`
       ${keys.length
@@ -193,10 +192,8 @@ function accessCards(ctx: ConsoleContext): Html {
         : ''}
       <form method="post" action="${SETTINGS}/keys" style="margin-top:12px" hx-push-url="false"><div class="fields"><label>Name<input name="name" required placeholder="Dashboard server"></label><label>Expires<input name="expire" type="date"><small>Optional.</small></label></div>
         <div class="foot"><button>Create key</button></div></form>`)}
-    ${card(ctx, 'admins', 'Console admins', null, 'People who can sign in here. Separate from your app users.', html`
-      <ul class="list">${admins.map((a) => html`<li><span>${a.email}${a.seq === ctx.admin.seq ? html` ${badge('You')}` : ''}</span><span>${admins.length > 1 ? destroy(`${SETTINGS}/admins/${a.seq}/delete`, 'Remove', `Remove ${a.email}?`) : ''}</span></li>`)}</ul>
-      <form method="post" action="${SETTINGS}/admins" style="margin-top:12px"><div class="fields"><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="8" required autocomplete="new-password"></label></div>
-        <div class="foot"><button>Add admin</button></div></form>`)}`
+    ${card(ctx, 'members', 'Console members', null, 'Console access is managed at the organization level. Invite people, change their roles or remove them there.', html`
+      <a class="btn" href="/console/organization/members">Manage organization members</a>`)}`
 }
 
 function apiKeyDialog(secret: string): Html {

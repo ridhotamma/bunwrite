@@ -15,6 +15,7 @@ import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
 import { functionRoutes } from './functions/routes'
+import { singleProjectResolver, type ProjectResolver, type ProjectRuntime } from './projects/types'
 import { renderRoutes } from './render/routes'
 import { storageRoutes } from './storage/routes'
 import { teamRoutes } from './teams/routes'
@@ -28,6 +29,7 @@ export interface AppContext extends Services {
 interface RequestMeta {
   auth?: string
   error?: string
+  project?: string
 }
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
@@ -35,12 +37,11 @@ const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.u
 const ALLOW_HEADERS =
   'Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, X-Appwrite-Project, X-Appwrite-Key, X-Appwrite-Locale, X-Appwrite-Mode, X-Appwrite-JWT, X-Appwrite-Response-Format, X-Appwrite-Timeout, X-Appwrite-ID, X-Appwrite-Timestamp, X-Appwrite-Session, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent'
 
-/** Routes reachable without an X-Appwrite-Project header. */
-const PROJECTLESS = [/^\/health/, /^\/version$/, /^\/account\/sessions\/oauth2\/callback\//, /^\/functions\/[^/]+\/http(\/|$)/]
-
 export { originAllowed }
 
-export function createApp(services: Services) {
+export function createApp(source: Services | ProjectResolver) {
+  const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
+  const control = projects.control
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
@@ -55,9 +56,9 @@ export function createApp(services: Services) {
   renderRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
-  const cors = (request: Request): Record<string, string> => {
+  const cors = (request: Request, allowedOrigins: string[]): Record<string, string> => {
     const origin = request.headers.get('origin')
-    if (!origin || !originAllowed(origin, services.config.allowedOrigins)) return {}
+    if (!origin || !originAllowed(origin, allowedOrigins)) return {}
     return {
       'access-control-allow-origin': origin,
       'access-control-allow-credentials': 'true',
@@ -69,29 +70,75 @@ export function createApp(services: Services) {
     }
   }
 
-  const consoleApp = createConsole(services)
+  const consoleApp = createConsole(projects)
 
   const projectOf = (request: Request, url: URL) => request.headers.get('x-appwrite-project') ?? url.searchParams.get('project')
 
-  async function handle(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
+  /** Which project's services handle this request. */
+  function runtimeFor(request: Request, url: URL): ProjectRuntime {
+    const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
+    // Browser preflights carry no custom project header.
+    if (request.method === 'OPTIONS') return projects.defaultProject()
+    if (pathname === '/health' || pathname.startsWith('/health/')) return projects.defaultProject()
+    // `appwrite push functions` reads this as the "console" project.
+    if (pathname === '/console/variables') return projects.defaultProject()
+
+    // OAuth callbacks carry the project ID in the path.
+    const oauth = /^\/account\/sessions\/oauth2\/callback\/[^/]+\/([^/]+)$/.exec(pathname)
+    if (oauth) {
+      const project = projects.get(decodeURIComponent(oauth[1]!))
+      if (project) return project
+      throw err('project_not_found')
+    }
+
+    // Function HTTP endpoints are called without a project header by the
+    // function's own integrations; resolve the owner by function ID.
+    const fn = /^\/functions\/([^/]+)\/http(?:\/|$)/.exec(pathname)
+    if (fn) {
+      const headerProject = projectOf(request, url)
+      if (headerProject) {
+        const byHeader = projects.get(headerProject)
+        if (!byHeader) throw err('project_not_found')
+        return byHeader
+      }
+      const owner = projects.findFunction(decodeURIComponent(fn[1]!))
+      if (owner) return owner
+      throw err('project_not_found')
+    }
+
+    const projectId = projectOf(request, url)
+    if (!projectId) {
+      // Let unknown paths fall through to the HTML 404 page; known API routes
+      // still need a project header.
+      if (!router.match(request.method, pathname)) return projects.defaultProject()
+      throw err('project_not_found')
+    }
+    const project = projects.get(projectId)
+    if (!project) throw err('project_not_found')
+    return project
+  }
+
+  async function handle(
+    request: Request,
+    server: Server<SocketData> | undefined,
+    meta: RequestMeta,
+    runtime: ProjectRuntime,
+  ): Promise<Response | undefined> {
     const url = new URL(request.url)
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
+    const services = runtime.services
+    meta.project = runtime.info.id
 
     if (pathname === '/realtime') {
-      if (projectOf(request, url) !== services.config.projectId) throw err('project_not_found')
       const caller = await resolveCaller(services.db, services.config, request)
       meta.auth = authLabel(caller)
-      if (server?.upgrade(request, { data: { caller, subscriptions: new Map() } })) return undefined
+      if (server?.upgrade(request, { data: { caller, subscriptions: new Map(), projectId: runtime.info.id } })) return undefined
       throw err('general_argument_invalid', 'Realtime needs a WebSocket upgrade.')
     }
 
     const match = router.match(request.method, pathname)
     if (request.method === 'OPTIONS' && !match?.raw) return new Response(null, { status: 204 })
     if (!match) throw err('general_route_not_found')
-
-    if (!PROJECTLESS.some((p) => p.test(pathname)) && projectOf(request, url) !== services.config.projectId) {
-      throw err('project_not_found')
-    }
 
     const params = match.raw ? {} : await readParams(request, url)
     const caller = await resolveCaller(services.db, services.config, request)
@@ -112,23 +159,25 @@ export function createApp(services: Services) {
     const pathname = url.pathname
     // The bare host is for people: send them to the console (or say the API is up).
     if (pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
-      return services.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(services.config.projectName)
+      return control.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(control.config.projectName)
     }
+    let runtime = projects.defaultProject()
     let response: Response | undefined
     try {
-      response = await handle(request, server, meta)
+      runtime = runtimeFor(request, url)
+      response = await handle(request, server, meta, runtime)
       if (!response) return undefined
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
       // A browser typing a wrong address gets a page; SDKs and /v1 keep Appwrite's JSON error.
       if (error instanceof AppwriteError && error.type === 'general_route_not_found' && wantsHtml(request, pathname)) {
-        return notFoundPage(services.config.consoleEnabled, services.config.projectName)
+        return notFoundPage(runtime.services.config.consoleEnabled, runtime.services.config.projectName)
       }
-      services.store.drainEvents()
+      runtime.services.store.drainEvents()
       response = errorResponse(error)
       if (!(error instanceof AppwriteError)) console.error(error)
     }
-    for (const [k, v] of Object.entries(cors(request))) response.headers.set(k, v)
+    for (const [k, v] of Object.entries(cors(request, runtime.services.config.allowedOrigins))) response.headers.set(k, v)
     return response
   }
 
@@ -153,7 +202,9 @@ export function createApp(services: Services) {
         return response
       } finally {
         const skip = url.pathname === '/favicon.ico' || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
-        if (services.config.logRequests && !skip) {
+        const runtime = meta.project ? projects.get(meta.project) : undefined
+        const logConfig = runtime?.services.config ?? control.config
+        if (logConfig.logRequests && !skip) {
           const entry = {
             id,
             method: request.method,
@@ -162,22 +213,23 @@ export function createApp(services: Services) {
             durationMs: performance.now() - started,
             requestBytes: Number(request.headers.get('content-length') ?? 0) || 0,
             responseBytes,
-            ip: services.config.logIp ? clientIp(request, server) : undefined,
-            project: truncate(request.headers.get('x-appwrite-project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
+            ip: logConfig.logIp ? clientIp(request, server) : undefined,
+            project: truncate(meta.project ?? request.headers.get('x-appwrite-project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
             auth: truncate(meta.auth ?? '', 200) || undefined,
             referer: truncate(request.headers.get('referer') ?? '', 2000) || undefined,
             userAgent: truncate(request.headers.get('user-agent') ?? '', 2000) || undefined,
             error: meta.error,
           }
-          logRequest(entry, services.config.logFormat)
-          services.requestLogs.record(entry)
+          logRequest(entry, logConfig.logFormat)
+          const logs = runtime?.services.requestLogs ?? control.requestLogs
+          logs.record(entry)
         }
       }
     },
     websocket: {
-      open: (ws: Socket) => services.realtime.open(ws),
-      message: (ws: Socket, message: string | Buffer) => services.realtime.message(ws, message),
-      close: (ws: Socket) => services.realtime.close(ws),
+      open: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.open(ws),
+      message: (ws: Socket, message: string | Buffer) => projects.get(ws.data.projectId)?.services.realtime.message(ws, message),
+      close: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.close(ws),
     },
   }
 }

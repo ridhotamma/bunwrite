@@ -1,5 +1,7 @@
 /** The context every console page handler receives. */
 import type { RouteContext, Router } from '~/lib/router'
+import type { OrganizationService } from '~/organizations/service'
+import type { ProjectInfo, ProjectResolver } from '~/projects/types'
 import type { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
 import type { Admin, ConsoleAuth } from './auth'
@@ -15,6 +17,12 @@ export interface ConsoleContext {
   form: Form
   request: Request
   url: URL
+  /** Project registry and switcher. */
+  projects: ProjectResolver
+  organizations: OrganizationService
+  currentProject: ProjectInfo
+  /** Null on the project-selection pages before a project is chosen. */
+  selectedProjectId: string | null
   /** Render a full console page. */
   render(title: string, section: string, body: Html): Response
   /** Navigate with a flash message, htmx-aware. */

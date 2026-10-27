@@ -113,6 +113,23 @@ export const FORM_SCRIPT = `
       input.value = new Date().toISOString().slice(0, 19)
       input.dispatchEvent(new Event("input", { bubbles: true }))
     }
+    const add = e.target.closest && e.target.closest("[data-add-row]")
+    if (add) {
+      const template = document.querySelector(add.dataset.addRow)
+      const target = add.dataset.rowTarget ? document.querySelector(add.dataset.rowTarget) : add.parentElement
+      if (template && target) {
+        const row = template.content.firstElementChild.cloneNode(true)
+        target.append(row)
+        const input = row.querySelector("input")
+        if (input) input.focus()
+      }
+    }
+    const remove = e.target.closest && e.target.closest("[data-remove-row]")
+    if (remove) {
+      const row = remove.closest("[data-row]")
+      if (row.parentElement.querySelectorAll("[data-row]").length > 1) row.remove()
+      else row.querySelector("input")?.focus()
+    }
   })
   document.addEventListener("submit", (e) => {
     const doc = e.target.querySelector && e.target.querySelector("[data-docform]")

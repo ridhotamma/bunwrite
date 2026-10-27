@@ -57,12 +57,14 @@ export function settingsPages(router: ConsoleRouter): void {
     const days = Number(f.sessionDays)
     const limit = Number(f.sessionsLimit)
     if (!(days >= 1) || !(limit >= 1 && limit <= 100)) throw err('general_argument_invalid', 'Session length and sessions per user must be positive.')
+    const projectName = value(f, 'projectName') || ctx.services.config.projectName
     ctx.services.settings.set('project', {
-      projectName: value(f, 'projectName') || ctx.services.config.projectName,
+      projectName,
       allowedOrigins: lines(f.allowedOrigins),
       sessionDuration: Math.round(days * 86400),
       sessionsLimit: Math.round(limit),
     })
+    ctx.projects.update(ctx.currentProject.id, { name: projectName })
     return ctx.go(tabPath('general'), { tone: 'success', text: 'Project settings saved' })
   })
 
@@ -186,6 +188,7 @@ export function settingsPages(router: ConsoleRouter): void {
     const key = path.key as SettingKey
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
     ctx.services.settings.reset(key)
+    if (key === 'project') ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
     if (key === 'logs') ctx.services.requestLogs.prune()
     return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Back to the env value' })
   })
@@ -202,13 +205,4 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('access'), { tone: 'success', text: 'Key revoked' })
   })
 
-  router.post(`${SETTINGS}/admins`, async ({ ctx }) => {
-    await ctx.auth.upsert(String(ctx.form.email ?? ''), String(ctx.form.password ?? ''))
-    return ctx.go(tabPath('access'), { tone: 'success', text: 'Admin saved' })
-  })
-
-  router.post(`${SETTINGS}/admins/:seq/delete`, ({ ctx, path }) => {
-    ctx.auth.remove(Number(path.seq))
-    return ctx.go(tabPath('access'), { tone: 'success', text: 'Admin removed' })
-  })
 }

@@ -30,6 +30,14 @@ export class ConsoleAuth {
     return this.db.sqlite.query<Admin & { created_at: string }, []>('SELECT seq, email, created_at FROM _console_admins ORDER BY seq').all()
   }
 
+  find(email: string): (Admin & { created_at: string }) | null {
+    return (
+      this.db.sqlite
+        .query<Admin & { created_at: string }, [string]>('SELECT seq, email, created_at FROM _console_admins WHERE email = ?')
+        .get(email.trim().toLowerCase()) ?? null
+    )
+  }
+
   /** Create an admin, or reset the password of an existing one. */
   async upsert(email: string, password: string): Promise<void> {
     const address = validEmail(email)

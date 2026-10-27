@@ -22,7 +22,8 @@ export function logPages(router: ConsoleRouter): void {
     const search = url.searchParams.get('q') ?? ''
     const status = url.searchParams.get('status') ?? ''
     const { page, limit } = pageParams(url, LIMIT)
-    const { total, logs } = ctx.services.requestLogs.list({ page, limit, search, status })
+    const project = ctx.services.config.projectId
+    const { total, logs } = ctx.services.requestLogs.list({ page, limit, search, status, project })
     const pages = pageCount(total, limit)
     const statusSelect = html`<select name="status" aria-label="Filter by status">
       ${STATUS_FILTERS.map(([value, label]) => html`<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`)}
@@ -46,7 +47,7 @@ export function logPages(router: ConsoleRouter): void {
     return ctx.render(
       'Request logs',
       'logs',
-      html`${header('Request logs', { actions: destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every stored request log?') })}
+      html`${header('Request logs', { actions: destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?') })}
       ${ctx.services.config.logRequests ? '' : alert('warning', html`Request logging is off. Set <code>LOG_REQUESTS=true</code> and restart to record new requests.`)}
       <p class="subdued" style="margin:-8px 0 16px">${retention} Requests to this page itself are not recorded.</p>
       ${listCard('logs', {
@@ -73,7 +74,7 @@ export function logPages(router: ConsoleRouter): void {
 
   router.get(`${LOGS}/:seq`, ({ ctx, path }) => {
     const seq = Number(path.seq)
-    const log = Number.isSafeInteger(seq) ? ctx.services.requestLogs.get(seq) : null
+    const log = Number.isSafeInteger(seq) ? ctx.services.requestLogs.get(seq, ctx.services.config.projectId) : null
     if (!log) {
       return ctx.render(
         'Log entry not found',
@@ -107,7 +108,7 @@ export function logPages(router: ConsoleRouter): void {
   })
 
   router.post(`${LOGS}/delete`, ({ ctx }) => {
-    ctx.services.requestLogs.clear()
+    ctx.services.requestLogs.clear(ctx.services.config.projectId)
     return ctx.go(LOGS, { tone: 'success', text: 'Request logs cleared' })
   })
 }
