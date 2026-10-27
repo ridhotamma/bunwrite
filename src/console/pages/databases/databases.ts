@@ -89,7 +89,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       html`${header('Create collection', { back: `${DB}/${d.id}` })}
       <form method="post" action="${DB}/${d.id}/collections" class="card">
         <div class="fields"><label>Name<input name="name" required></label><label>ID<input name="id" class="mono" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" required></label></div>
-        <label class="check"><input type="checkbox" name="documentSecurity" checked>Row security<small>&nbsp;· each document carries its own permissions (Pesanle uses this everywhere)</small></label>
+        <label class="check"><input type="checkbox" name="documentSecurity" checked>Row security<small>&nbsp;· each document carries its own permissions</small></label>
         <label>Collection permissions<textarea name="permissions" class="mono" placeholder='read("any")'></textarea><small>One per line. Leave empty so only API keys and row permissions apply.</small></label>
         ${formFooter(`${DB}/${d.id}`, 'Create')}
       </form>`,

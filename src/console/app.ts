@@ -71,12 +71,12 @@ export function createConsole(services: Services) {
           try {
             await auth.upsert(email, String(form.password ?? ''))
           } catch (error) {
-            return signInPage(auth, { setup: true, email, error: error instanceof Error ? error.message : String(error) })
+            return signInPage(auth, { setup: true, email, error: error instanceof Error ? error.message : String(error), projectName: services.config.projectName })
           }
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth, { setup: true })
+        return signInPage(auth, { setup: true, projectName: services.config.projectName })
       }
 
       if (url.pathname === '/console/login') {
@@ -87,13 +87,13 @@ export function createConsole(services: Services) {
           try {
             limiter.hit(`console-login:${ip}`, 10, 900)
           } catch {
-            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.' })
+            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: services.config.projectName })
           }
           const secret = await auth.login(email, String(form.password ?? ''))
-          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.' })
+          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: services.config.projectName })
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth)
+        return signInPage(auth, { projectName: services.config.projectName })
       }
 
       const admin = auth.admin(request)
@@ -114,7 +114,7 @@ export function createConsole(services: Services) {
         form: await readForm(request),
         request,
         url,
-        render: (title, section, body) => page(shell(title, { section, admin: admin.email }, body, flash)),
+        render: (title, section, body) => page(shell(title, { section, admin: admin.email, projectName: services.config.projectName }, body, flash)),
         go: (location, message) => go(request, location, message),
         back: (message) => back(request, message),
       }

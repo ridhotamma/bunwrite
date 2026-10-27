@@ -8,7 +8,12 @@ a{color:var(--focus);text-decoration:none}a:hover{text-decoration:underline}
 code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .frame{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 .nav{background:var(--nav);padding:12px 8px;position:sticky;top:0;height:100vh;overflow:auto;display:flex;flex-direction:column}
-.nav .brand{font-weight:650;font-size:15px;padding:6px 12px 14px}
+.nav .brand{display:flex;align-items:center;gap:8px;font-weight:650;font-size:15px;padding:6px 12px 14px}
+.nav .brand-text{flex:1}
+.nav-toggle{all:unset;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;cursor:pointer;color:var(--text);opacity:.6}
+.nav-toggle:hover{background:var(--nav-hover);opacity:1}
+.nav-toggle span{display:flex}
+.nav-toggle .nav-expand-icon{display:none}
 .nav a{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:8px;color:var(--text);font-weight:550;margin-bottom:2px}
 .nav a:hover{background:var(--nav-hover);text-decoration:none}.nav a.on{background:var(--nav-on);box-shadow:var(--shadow)}
 .nav .group{margin-top:14px;padding:0 12px 4px;color:var(--subdued);font-size:12px;font-weight:550}
@@ -25,12 +30,23 @@ main{padding:20px 32px 48px;max-width:1100px;width:100%;margin:0 auto}
 .card .hint{color:var(--subdued);margin:-8px 0 12px}
 .card .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px}@media(max-width:960px){.layout{grid-template-columns:1fr}}
+.split-sidebar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2fr);gap:16px}
+#export-panel{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow:auto}
+@media(max-width:960px){.split-sidebar{grid-template-columns:1fr}#export-panel{position:static;max-height:none;overflow:visible}}
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .stat{background:var(--surface);border-radius:12px;box-shadow:var(--shadow);padding:12px 16px}
+.chart{position:relative}
 .chart svg{display:block;width:100%;height:auto}
 .chart-legend{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:8px;color:var(--subdued);font-size:12px}
 .chart-key{display:inline-flex;align-items:center;gap:6px}
 .chart-dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.chart-tooltip{position:absolute;z-index:3;transform:translateX(-50%);pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);padding:8px 10px;font-size:12px;min-width:150px}
+.chart-tooltip[hidden]{display:none}
+.chart-tooltip-time{font-weight:650;margin-bottom:4px}
+.chart-tooltip-row{display:flex;justify-content:space-between;gap:16px;color:var(--subdued)}
+.chart-tooltip-row b{color:var(--text);font-weight:550;font-variant-numeric:tabular-nums}
+.chart-tooltip-label{display:inline-flex;align-items:center;gap:6px}
+.chart-tooltip-dot{display:inline-block;width:8px;height:8px;border-radius:50%}
 .stat span{color:var(--subdued)}.stat b{display:block;font-size:20px;line-height:28px;font-weight:650}
 table{width:100%;border-collapse:collapse}
 th{background:#f7f7f7;color:var(--subdued);font-weight:550;font-size:12px;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
@@ -97,15 +113,33 @@ details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 .auth{max-width:432px;margin:14vh auto 0;padding:0 16px}.auth .brand{display:flex;gap:8px;align-items:center;justify-content:center;font-weight:650;font-size:16px;margin-bottom:16px}
 .htmx-request{opacity:.6;transition:opacity .2s}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:#1a1a1a;color:#fff;padding:10px 16px;border-radius:12px;font-weight:550;z-index:50;box-shadow:0 8px 20px rgba(0,0,0,.2);animation:toast 4s forwards}
+.nav-tooltip{position:fixed;z-index:100;background:#1a1a1a;color:#fff;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:550;pointer-events:none;box-shadow:0 8px 20px rgba(0,0,0,.2);white-space:nowrap}
+.nav-tooltip[hidden]{display:none}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,8px)}8%,85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;visibility:hidden}}
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .topbar{display:none}#nav-toggle{display:none}.scrim{display:none}
+@media(min-width:769px){
+  html.nav-collapsed .frame{grid-template-columns:72px minmax(0,1fr)}
+  html.nav-collapsed .nav .brand{justify-content:center;padding:6px 0 14px}
+  html.nav-collapsed .nav .brand-text{display:none}
+  html.nav-collapsed .nav a{justify-content:center;padding:8px 0}
+  html.nav-collapsed .nav a span{display:none}
+  html.nav-collapsed .nav .group{display:none}
+  html.nav-collapsed .nav .group+a{margin-top:10px}
+  html.nav-collapsed .nav .foot{text-align:center;padding:12px 0}
+  html.nav-collapsed .nav .foot br,html.nav-collapsed .nav .nav-admin{display:none}
+  html.nav-collapsed .nav .foot button{justify-content:center}
+  html.nav-collapsed .nav .foot button span{display:none}
+  html.nav-collapsed .nav .nav-collapse-icon{display:none}
+  html.nav-collapsed .nav .nav-expand-icon{display:flex}
+}
 @media(prefers-reduced-motion:reduce){dialog,.banner{animation:none!important;transition:none!important}}
 @media(max-width:768px){
   .frame{grid-template-columns:1fr}
   .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:20;background:var(--nav);padding:8px 12px;border-bottom:1px solid var(--border)}
   .topbar .brand{font-weight:650;display:flex;gap:8px;align-items:center}
   .topbar label{display:flex;align-items:center;justify-content:center;margin:0;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:18px;line-height:1}
+  .nav-toggle{display:none}
   .nav{position:fixed;inset:0 auto 0 0;width:260px;z-index:30;transform:translateX(-100%);transition:transform .2s}
   #nav-toggle:checked~.frame .nav{transform:none}
   #nav-toggle:checked~.scrim{display:block;position:fixed;inset:0;z-index:25;background:rgba(0,0,0,.35)}

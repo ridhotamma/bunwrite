@@ -1,0 +1,18 @@
+[Unit]
+Description=Bunwrite (Appwrite-compatible API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bunwrite
+WorkingDirectory=/opt/bunwrite
+EnvironmentFile=/opt/bunwrite/.env
+ExecStart=/home/bunwrite/.bun/bin/bun src/index.ts
+Restart=always
+RestartSec=2
+# The API itself usually uses ~80-150 MB.
+MemoryMax=700M
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

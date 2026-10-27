@@ -1,12 +1,24 @@
 {
-  "name": "pesanle-backend",
+  "name": "bunwrite",
   "version": "0.1.0",
-  "private": true,
-  "description": "Lightweight Appwrite-compatible backend for Pesanle: Bun + SQLite + Drizzle.",
+  "description": "A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle.",
+  "license": "MIT",
+  "keywords": [
+    "appwrite",
+    "backend",
+    "bun",
+    "sqlite",
+    "self-hosted",
+    "headless"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "demo": "bun scripts/console-demo.ts",
     "schema:push": "bun src/cli/schema-push.ts",
     "db:generate": "drizzle-kit generate",
     "typecheck": "tsc --noEmit",

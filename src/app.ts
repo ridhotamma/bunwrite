@@ -112,7 +112,7 @@ export function createApp(services: Services) {
     const pathname = url.pathname
     // The bare host is for people: send them to the console (or say the API is up).
     if (pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
-      return services.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage()
+      return services.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(services.config.projectName)
     }
     let response: Response | undefined
     try {
@@ -122,7 +122,7 @@ export function createApp(services: Services) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
       // A browser typing a wrong address gets a page; SDKs and /v1 keep Appwrite's JSON error.
       if (error instanceof AppwriteError && error.type === 'general_route_not_found' && wantsHtml(request, pathname)) {
-        return notFoundPage(services.config.consoleEnabled)
+        return notFoundPage(services.config.consoleEnabled, services.config.projectName)
       }
       services.store.drainEvents()
       response = errorResponse(error)

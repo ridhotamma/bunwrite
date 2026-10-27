@@ -46,7 +46,7 @@ export function requireKey(ctx: AppContext, scope: string): void {
 const cookieName = (ctx: AppContext) => `a_session_${ctx.config.projectId.toLowerCase()}`
 
 /**
- * A new session. API keys get its secret in the body (Pesanle stores it in its
+ * A new session. API keys get its secret in the body (the app stores it in its
  * own cookie); browsers get it as the `a_session_<project>` cookie instead.
  */
 function sessionResponse(route: RouteContext<AppContext>, session: SessionRow, secret: string): Response {

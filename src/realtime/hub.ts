@@ -1,5 +1,5 @@
 /**
- * Appwrite Realtime over Bun WebSockets, enough for Pesanle's two
+ * Appwrite Realtime over Bun WebSockets, enough for the common
  * subscriptions (merchant notifications, AI-run progress).
  *
  * Protocol (web SDK 27): connect to `/v1/realtime?project=..&jwt=..`; the

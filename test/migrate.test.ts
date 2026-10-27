@@ -21,7 +21,7 @@ let report: Awaited<ReturnType<typeof importFromAppwrite>>
 let targetDb: ReturnType<typeof openDb>
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'pesanle-migrate-'))
+  dir = mkdtempSync(join(tmpdir(), 'bunwrite-migrate-'))
   const schema = { ...testSchema, buckets: [{ $id: 'media', name: 'Media', fileSecurity: true, allowedFileExtensions: [], maximumFileSize: 1_000_000 }] }
   source = startServer(schema, { storagePath: join(dir, 'source') })
   const a = adminClient(source.endpoint)

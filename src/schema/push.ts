@@ -125,7 +125,7 @@ export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: 
   if (!dseq) throw new Error(`Collection ${c.id} points at unknown database ${c.databaseId}`)
   const table = tableName(dseq, c.id)
   const existing = sqlite
-    .query<any, [string, string]>('SELECT attributes, indexes FROM _collections WHERE database_id = ? AND id = ?')
+    .query<any, [string, string]>('SELECT name, enabled, document_security, permissions, attributes, indexes FROM _collections WHERE database_id = ? AND id = ?')
     .get(c.databaseId, c.id)
 
   if (!existing) {
@@ -152,7 +152,21 @@ export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: 
     return old && sqlType(old) !== sqlType(a)
   })
   const schemaChanged = added.length + removed.length + retyped.length > 0
-  const indexesChanged = schemaChanged || JSON.stringify(beforeIndexes) !== JSON.stringify(c.indexes)
+  const indexDiff = JSON.stringify(beforeIndexes) !== JSON.stringify(c.indexes)
+  const indexesChanged = schemaChanged || indexDiff
+  const retypedKeys = new Set(retyped.map((a) => a.key))
+  const modified = c.attributes.filter((a) => {
+    const old = beforeMap.get(a.key)
+    return old && JSON.stringify(old) !== JSON.stringify(a) && !retypedKeys.has(a.key)
+  })
+  const metadata: string[] = []
+  if (existing.name !== c.name) metadata.push('name')
+  if (Boolean(existing.enabled) !== c.enabled) metadata.push('enabled')
+  if (Boolean(existing.document_security) !== c.documentSecurity) metadata.push('security')
+  if (JSON.stringify(JSON.parse(existing.permissions)) !== JSON.stringify(c.permissions)) metadata.push('permissions')
+  if (metadata.length) log(`~ collection ${c.id}: ${metadata.join(', ')}`)
+  for (const a of modified) log(`~ collection ${c.id}: ~ ${a.key}`)
+  if (indexDiff && !schemaChanged) log(`~ collection ${c.id}: indexes`)
 
   if (indexesChanged) dropIndexes(db, table, beforeIndexes)
 

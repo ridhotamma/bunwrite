@@ -2,7 +2,7 @@
  * Schema changes made in the console. Every change edits a collection's
  * definition and re-applies it with `pushCollection`, so the console and
  * `schema:push` alter tables the same way. Export/import use the
- * appwrite.config.json shape Pesanle keeps in its repo.
+ * appwrite.config.json shape the project keeps in its repo.
  */
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
@@ -133,40 +133,102 @@ export class SchemaAdmin {
     return this.apply(def)
   }
 
+  private attributeConfig(a: Attribute): Record<string, unknown> {
+    const out: Record<string, unknown> = { key: a.key, type: a.type, required: a.required, array: a.array }
+    if (a.type === 'string') {
+      out.size = a.size
+      if (a.format) out.format = a.format
+      if (a.elements) out.elements = a.elements
+      out.encrypt = false
+    }
+    if (a.type === 'integer' || a.type === 'double') {
+      if (a.min !== undefined) out.min = a.min
+      if (a.max !== undefined) out.max = a.max
+    }
+    if (a.type === 'datetime') out.format = ''
+    out.default = a.default ?? null
+    return out
+  }
+
+  /** All collections as appwrite.config.json table entries. */
+  collectionDefinitions(): Record<string, any>[] {
+    return [...this.registry.collections.values()]
+      .sort((a, b) => a.seq - b.seq)
+      .map((c) => ({
+        $id: c.id,
+        $permissions: c.permissions,
+        databaseId: c.databaseId,
+        name: c.name,
+        enabled: c.enabled,
+        rowSecurity: c.documentSecurity,
+        columns: c.attributes.map((a) => this.attributeConfig(a)),
+        indexes: c.indexes.map((i) => ({ key: i.key, type: i.type, status: 'available', columns: i.attributes, orders: i.orders })),
+      }))
+  }
+
+  /** Selected collections as appwrite.config.json table entries. */
+  exportCollections(ids?: Iterable<string>): Record<string, any>[] {
+    const definitions = this.collectionDefinitions()
+    if (!ids) return definitions
+    const wanted = new Set(ids)
+    return definitions.filter((c) => wanted.has(`${c.databaseId}/${c.$id}`))
+  }
+
+  /**
+   * Import collection definitions only. With `prune` missing collections and
+   * fields are deleted; otherwise existing fields are merged in.
+   */
+  importCollections(collections: unknown, options: { prune?: boolean; dryRun?: boolean } = {}): string[] {
+    if (!Array.isArray(collections) || collections.length === 0) {
+      throw err('general_argument_invalid', 'No collections to import.')
+    }
+    const list = collections.map((raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw err('general_argument_invalid', 'Each collection must be a JSON object.')
+      const entry = { ...(raw as Record<string, any>) }
+      const databaseId = String(entry.databaseId ?? '')
+      const id = String(entry.$id ?? entry.id ?? '')
+      if (!databaseId || !id) throw err('general_argument_invalid', 'Each collection needs a databaseId and $id.')
+      if (!Array.isArray(entry.columns ?? entry.attributes ?? [])) throw err('general_argument_invalid', `Collection ${id}: columns must be an array.`)
+      entry.databaseId = databaseId
+      entry.$id = id
+      return entry
+    })
+
+    const seen = new Set<string>()
+    for (const entry of list) {
+      const key = `${entry.databaseId}/${entry.$id}`
+      if (seen.has(key)) throw err('general_argument_invalid', `Collection ${key} appears more than once.`)
+      seen.add(key)
+    }
+
+    if (!options.prune) {
+      for (const entry of list) {
+        const existing = this.registry.collections.get(`${entry.databaseId}/${entry.$id}`)
+        if (!existing) continue
+        entry.name ??= existing.name
+        entry.enabled ??= existing.enabled
+        entry.rowSecurity ??= existing.documentSecurity
+        entry.$permissions ??= existing.permissions
+        entry.indexes ??= existing.indexes.map((index) => ({ key: index.key, type: index.type, status: 'available', columns: index.attributes, orders: index.orders }))
+        const columns = (entry.columns ?? entry.attributes ?? []) as Record<string, any>[]
+        const keys = new Set(columns.map((column) => column.key))
+        for (const attribute of existing.attributes) {
+          if (!keys.has(attribute.key)) columns.push(this.attributeConfig(attribute))
+        }
+        entry.columns = columns
+      }
+    }
+
+    return this.importConfig({ tables: list }, { prune: options.prune, dryRun: options.dryRun })
+  }
+
   /** Current schema in appwrite.config.json shape (tablesDB/tables/buckets). */
   export(): Record<string, unknown> {
     const sql = this.db.sqlite
-    const attribute = (a: Attribute) => {
-      const out: Record<string, unknown> = { key: a.key, type: a.type, required: a.required, array: a.array }
-      if (a.type === 'string') {
-        out.size = a.size
-        if (a.format) out.format = a.format
-        if (a.elements) out.elements = a.elements
-        out.encrypt = false
-      }
-      if (a.type === 'integer' || a.type === 'double') {
-        if (a.min !== undefined) out.min = a.min
-        if (a.max !== undefined) out.max = a.max
-      }
-      if (a.type === 'datetime') out.format = ''
-      out.default = a.default ?? null
-      return out
-    }
     const buckets = sql.query<any, []>('SELECT * FROM _buckets ORDER BY seq').all()
     return {
       tablesDB: [...this.registry.databases.values()].map((d) => ({ $id: d.id, name: d.name, enabled: d.enabled })),
-      tables: [...this.registry.collections.values()]
-        .sort((a, b) => a.seq - b.seq)
-        .map((c) => ({
-          $id: c.id,
-          $permissions: c.permissions,
-          databaseId: c.databaseId,
-          name: c.name,
-          enabled: c.enabled,
-          rowSecurity: c.documentSecurity,
-          columns: c.attributes.map(attribute),
-          indexes: c.indexes.map((i) => ({ key: i.key, type: i.type, status: 'available', columns: i.attributes, orders: i.orders })),
-        })),
+      tables: this.collectionDefinitions(),
       buckets: buckets.map((b) => ({
         $id: b.id,
         $permissions: JSON.parse(b.permissions),

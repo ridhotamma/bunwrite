@@ -11,7 +11,7 @@ if (!path) {
   process.exit(1)
 }
 
-const db = openDb(process.env.DATABASE_PATH ?? './data/pesanle.sqlite')
+const db = openDb(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
 let changes = 0
 pushConfig(db, await Bun.file(path).json(), {
   prune: args.includes('--prune'),

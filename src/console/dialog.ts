@@ -31,7 +31,7 @@ export function confirmDialog(): Html {
 
 export const DIALOG_SCRIPT = `
 (() => {
-  const FLAG = "__pesanleDialogs"
+  const FLAG = "__bunwriteDialogs"
   function closeDialog(modal) {
     if (!modal || !modal.open || modal.classList.contains("dialog-closing")) return
     modal.classList.add("dialog-closing")
@@ -78,6 +78,107 @@ export const DIALOG_SCRIPT = `
     label.textContent = ok ? "Copied" : "Copy failed"
     setTimeout(() => { label.textContent = old }, 2000)
   }
+  function hideNavTooltip() {
+    const tip = document.getElementById("nav-tooltip")
+    if (tip) tip.hidden = true
+  }
+  function showNavTooltip(event) {
+    if (!document.documentElement.classList.contains("nav-collapsed") || !window.matchMedia("(min-width: 769px)").matches) return
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null
+    if (!target || !target.closest(".nav")) return
+    const tip = document.getElementById("nav-tooltip")
+    if (!tip) return
+    tip.textContent = target.getAttribute("data-tooltip") || ""
+    tip.hidden = false
+    const rect = target.getBoundingClientRect()
+    const top = Math.max(8, Math.min(window.innerHeight - tip.offsetHeight - 8, rect.top + rect.height / 2 - tip.offsetHeight / 2))
+    tip.style.left = rect.right + 10 + "px"
+    tip.style.top = top + "px"
+  }
+  function fmtBytes(value) {
+    if (!Number.isFinite(value) || value <= 0) return "0 B"
+    const units = ["B", "KB", "MB", "GB", "TB"]
+    let number = value
+    let unit = 0
+    while (number >= 1024 && unit < units.length - 1) {
+      number /= 1024
+      unit++
+    }
+    return (unit === 0 ? Math.round(number) : number.toFixed(number >= 10 ? 1 : 2)) + " " + units[unit]
+  }
+  function setupCharts() {
+    for (const el of document.querySelectorAll("[data-chart]:not([data-chart-ready])")) {
+      const svg = el.querySelector("svg")
+      const tooltip = el.querySelector("[data-chart-tooltip]")
+      const time = el.querySelector("[data-chart-time]")
+      const rows = el.querySelector("[data-chart-rows]")
+      const cursor = el.querySelector("[data-chart-cursor]")
+      if (!svg || !tooltip || !time || !rows || !cursor) continue
+      let chart
+      try {
+        chart = JSON.parse(el.getAttribute("data-chart") || "{}")
+      } catch {
+        continue
+      }
+      if (!chart.labels?.length || !chart.series?.length) continue
+      el.setAttribute("data-chart-ready", "1")
+      const width = chart.width
+      const height = chart.height
+      const pad = chart.pad
+      const innerW = width - pad.left - pad.right
+      const innerH = height - pad.top - pad.bottom
+      const max = Math.max(1, ...chart.series.flatMap((series) => series.values))
+      const xAt = (index) => pad.left + (index / Math.max(1, chart.labels.length - 1)) * innerW
+      const yAt = (value) => pad.top + innerH - (value / max) * innerH
+      const hide = () => {
+        tooltip.hidden = true
+        cursor.setAttribute("visibility", "hidden")
+        for (const dot of el.querySelectorAll("[data-chart-cursor-dot]")) dot.setAttribute("visibility", "hidden")
+      }
+      svg.addEventListener("pointermove", (event) => {
+        const rect = svg.getBoundingClientRect()
+        if (!rect.width) return
+        const viewX = ((event.clientX - rect.left) / rect.width) * width
+        const index = Math.max(0, Math.min(chart.labels.length - 1, Math.round(((viewX - pad.left) / innerW) * (chart.labels.length - 1))))
+        const x = xAt(index)
+        cursor.setAttribute("x1", String(x))
+        cursor.setAttribute("x2", String(x))
+        cursor.setAttribute("y1", String(pad.top))
+        cursor.setAttribute("y2", String(height - pad.bottom))
+        cursor.setAttribute("visibility", "visible")
+        for (const dot of el.querySelectorAll("[data-chart-cursor-dot]")) {
+          const series = chart.series[Number(dot.getAttribute("data-chart-cursor-dot"))]
+          if (!series) continue
+          dot.setAttribute("cx", String(x))
+          dot.setAttribute("cy", String(yAt(series.values[index] ?? 0)))
+          dot.setAttribute("visibility", "visible")
+        }
+        time.textContent = chart.labels[index]
+        const next = chart.series.map((series) => {
+          const row = document.createElement("div")
+          row.className = "chart-tooltip-row"
+          const label = document.createElement("span")
+          label.className = "chart-tooltip-label"
+          const dot = document.createElement("span")
+          dot.className = "chart-tooltip-dot"
+          dot.style.background = series.color
+          label.append(dot, document.createTextNode(series.label))
+          const value = document.createElement("b")
+          value.textContent = fmtBytes(series.values[index] ?? 0)
+          row.append(label, value)
+          return row
+        })
+        rows.replaceChildren(...next)
+        tooltip.hidden = false
+        const chartRect = el.getBoundingClientRect()
+        const left = rect.left - chartRect.left + x * (rect.width / width)
+        tooltip.style.top = (rect.top - chartRect.top + 8) + "px"
+        const half = tooltip.offsetWidth / 2
+        tooltip.style.left = Math.max(half + 4, Math.min(chartRect.width - half - 4, left)) + "px"
+      })
+      svg.addEventListener("pointerleave", hide)
+    }
+  }
   if (!window[FLAG]) {
     window[FLAG] = true
     const approved = new WeakSet()
@@ -104,6 +205,25 @@ export const DIALOG_SCRIPT = `
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null
       if (!target) return
+      const navToggle = target.closest("[data-nav-toggle]")
+      if (navToggle) {
+        const collapsed = document.documentElement.classList.toggle("nav-collapsed")
+        try {
+          localStorage.setItem("bunwrite-nav", collapsed ? "collapsed" : "expanded")
+        } catch {}
+        hideNavTooltip()
+        return
+      }
+      const selectAll = target.closest("[data-select-all]")
+      if (selectAll) {
+        const form = selectAll.closest("form")
+        if (form) {
+          const checked = selectAll.getAttribute("data-select-all") !== "none"
+          for (const box of form.querySelectorAll("input[name='ids']")) box.checked = checked
+          form.requestSubmit()
+        }
+        return
+      }
       const opener = target.closest("[data-dialog-open]")
       if (opener) {
         const selector = opener.getAttribute("data-dialog-open")
@@ -149,8 +269,20 @@ export const DIALOG_SCRIPT = `
         if (source) copyValue(copy, source)
       }
     })
-    document.addEventListener("htmx:afterSwap", showOpenDialogs)
+    document.addEventListener("htmx:afterSwap", () => {
+      showOpenDialogs()
+      setupCharts()
+    })
+    document.addEventListener("pointerover", showNavTooltip)
+    document.addEventListener("focusin", showNavTooltip)
+    document.addEventListener("pointerout", (event) => {
+      if (event.target instanceof Element && event.target.closest(".nav")) hideNavTooltip()
+    })
+    document.addEventListener("focusout", hideNavTooltip)
+    window.addEventListener("scroll", hideNavTooltip, true)
+    window.addEventListener("resize", hideNavTooltip)
   }
   showOpenDialogs()
+  setupCharts()
 })()
 `

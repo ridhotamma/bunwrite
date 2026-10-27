@@ -5,7 +5,7 @@
  * `_transaction_logs`; nothing touches the collections until commit. Commit
  * replays every operation inside one SQLite transaction and fails with
  * `transaction_conflict` when a document changed after its operation was
- * staged — the optimistic check pesanle's stock code relies on.
+ * staged — the optimistic check inventory-style apps rely on.
  *
  * Reads sent with a `transactionId` see the staged writes: the operations are
  * replayed inside a savepoint, the read runs, and the savepoint is rolled back.

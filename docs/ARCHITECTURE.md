@@ -1,4 +1,4 @@
-# Architecture
+# Bunwrite architecture
 
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
@@ -6,7 +6,7 @@ admin console (`/console`). It keeps all of its state in one SQLite file plus a
 folder of uploaded files.
 
 ```
- Pesanle apps (Workers, browsers)        Admin (browser)
+ Client apps (Web, mobile, server)        Admin (browser)
    appwrite / node-appwrite SDKs              │
             │ HTTPS (Cloudflare)              │
             ▼                                 ▼
@@ -19,7 +19,7 @@ folder of uploaded files.
  │           Functions (+cron) · Settings · Registry (schema)        │
  └───────────┬─────────────────────────────┬─────────────────────────┘
              ▼                             ▼
-     SQLite (WAL) data/pesanle.sqlite    data/storage/<bucket>/<file>
+     SQLite (WAL) data/bunwrite.sqlite    data/storage/<bucket>/<file>
              ▲
    child processes: one per function run (bun runner / python3 runner)
 ```
@@ -102,8 +102,8 @@ savepoint and then rolls back, so the transaction sees its own writes.
 
 Commit replays the operations in one `BEGIN IMMEDIATE` transaction. If a
 document changed after its operation was staged, the commit fails with
-`transaction_conflict` (409) and nothing is applied. That is what
-`runTransaction` in Pesanle builds on.
+`transaction_conflict` (409) and nothing is applied. Apps can build
+transactional flows on this.
 
 ## Functions
 
@@ -144,7 +144,9 @@ pause list.
   overrides them until it is reset to env.
 - **Schema:** the database is the source of truth.
   - `appwrite.config.json` is an import/export format: `schema:push`, the console's Schema page, or `SCHEMA_SYNC_ON_START=true`.
-  - Console edits change the database directly; export them to keep Pesanle's repo file in step.
+  - The Schema page can export selected collections and import a pasted/uploaded
+    collection array with a dry-run review and an optional delete-missing pass.
+  - Console edits change the database directly; export them to keep your repo file in step.
   - Startup sync is off by default, so a restart never undoes a console change.
 
 ## Security notes

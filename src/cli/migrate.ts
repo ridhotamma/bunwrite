@@ -1,8 +1,8 @@
 /**
  * Copy a live Appwrite project into this server's database (read-only on Appwrite).
  *
- *   bun run migrate --endpoint https://appwrite.pesanle.com/v1 --project <id> --key <api key> \
- *     [--functions ../pesanle/packages/appwrite-config/appwrite.config.json] [--only schema,users,teams,documents,files] [--verify]
+ *   bun run migrate --endpoint https://appwrite.example.com/v1 --project <id> --key <api key> \
+ *     [--functions ./appwrite.config.json] [--only schema,users,teams,documents,files] [--verify]
  *
  * Writes to DATABASE_PATH and STORAGE_PATH (same env as the server). Safe to run
  * again: rows are replaced by ID, so a final run at cutover picks up changes.
@@ -37,7 +37,7 @@ const options: ImportOptions = {
   functions: functionsPath ? { config: await Bun.file(functionsPath).json(), baseDir: dirname(resolve(functionsPath)) } : undefined,
 }
 
-const db = openDb(process.env.DATABASE_PATH ?? './data/pesanle.sqlite')
+const db = openDb(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
 const started = performance.now()
 const report = await importFromAppwrite(db, options)
 const docs = report.collections.reduce((n, c) => n + c.imported, 0)

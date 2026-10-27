@@ -1,0 +1,96 @@
+{
+  "tablesDB": [
+    {
+      "$id": "main",
+      "name": "Main",
+      "enabled": true
+    }
+  ],
+  "tables": [
+    {
+      "$id": "products",
+      "databaseId": "main",
+      "name": "Products",
+      "enabled": true,
+      "rowSecurity": false,
+      "$permissions": ["read(\"any\")"],
+      "columns": [
+        {
+          "key": "name",
+          "type": "string",
+          "required": true,
+          "array": false,
+          "size": 255,
+          "default": null
+        },
+        {
+          "key": "slug",
+          "type": "string",
+          "required": false,
+          "array": false,
+          "size": 255,
+          "default": null
+        },
+        {
+          "key": "price",
+          "type": "integer",
+          "required": false,
+          "array": false,
+          "min": 0,
+          "default": 0
+        },
+        {
+          "key": "status",
+          "type": "string",
+          "format": "enum",
+          "elements": ["active", "draft"],
+          "required": false,
+          "array": false,
+          "size": 6,
+          "default": "draft"
+        },
+        {
+          "key": "tags",
+          "type": "string",
+          "required": false,
+          "array": true,
+          "size": 64,
+          "default": null
+        },
+        {
+          "key": "publishedAt",
+          "type": "datetime",
+          "required": false,
+          "array": false,
+          "format": "",
+          "default": null
+        }
+      ],
+      "indexes": [
+        {
+          "key": "idx_slug",
+          "type": "unique",
+          "columns": ["slug"],
+          "orders": ["ASC"]
+        },
+        {
+          "key": "idx_name",
+          "type": "fulltext",
+          "columns": ["name"],
+          "orders": ["ASC"]
+        }
+      ]
+    }
+  ],
+  "buckets": [
+    {
+      "$id": "media",
+      "name": "Media",
+      "enabled": true,
+      "fileSecurity": false,
+      "$permissions": ["read(\"any\")"],
+      "maximumFileSize": 10000000,
+      "allowedFileExtensions": ["jpg", "jpeg", "png", "webp"]
+    }
+  ]
+}

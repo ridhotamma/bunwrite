@@ -20,7 +20,7 @@ function fn(id: string, source: string, file = 'src/main.js') {
 }
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'pesanle-backend-'))
+  dir = mkdtempSync(join(tmpdir(), 'bunwrite-test-'))
   fn(
     'echo',
     `module.exports = async (context) => {
@@ -33,9 +33,9 @@ beforeAll(() => {
     }`,
   )
   fn('env', `module.exports = async (context) => context.res.json({
-    global: process.env.PESANLE_GLOBAL_TEST ?? null,
-    local: process.env.PESANLE_LOCAL_TEST ?? null,
-    shared: process.env.PESANLE_SHARED_TEST ?? null,
+    global: process.env.BUNWRITE_GLOBAL_TEST ?? null,
+    local: process.env.BUNWRITE_LOCAL_TEST ?? null,
+    shared: process.env.BUNWRITE_SHARED_TEST ?? null,
   })`)
   fn('boom', `module.exports = async (context) => { throw new Error('kaboom') }`)
   fn('slow', `module.exports = async (context) => { await new Promise((r) => setTimeout(r, 5000)); return context.res.json({}) }`)
@@ -266,19 +266,19 @@ describe('functions', () => {
   })
 
   test('global variables apply to every function; per-function values win', async () => {
-    server.services.functions.setGlobalVariable('PESANLE_GLOBAL_TEST', 'global', false)
-    server.services.functions.setGlobalVariable('PESANLE_SHARED_TEST', 'global', false)
-    server.services.functions.setVariable('env', 'PESANLE_LOCAL_TEST', 'local', false)
-    server.services.functions.setVariable('env', 'PESANLE_SHARED_TEST', 'local', false)
+    server.services.functions.setGlobalVariable('BUNWRITE_GLOBAL_TEST', 'global', false)
+    server.services.functions.setGlobalVariable('BUNWRITE_SHARED_TEST', 'global', false)
+    server.services.functions.setVariable('env', 'BUNWRITE_LOCAL_TEST', 'local', false)
+    server.services.functions.setVariable('env', 'BUNWRITE_SHARED_TEST', 'local', false)
     try {
       const e = await admin.functions.createExecution({ functionId: 'env' })
       expect(e.status).toBe('completed')
       expect(JSON.parse(e.responseBody)).toEqual({ global: 'global', local: 'local', shared: 'local' })
     } finally {
-      server.services.functions.deleteGlobalVariable('PESANLE_GLOBAL_TEST')
-      server.services.functions.deleteGlobalVariable('PESANLE_SHARED_TEST')
-      server.services.functions.deleteVariable('env', 'PESANLE_LOCAL_TEST')
-      server.services.functions.deleteVariable('env', 'PESANLE_SHARED_TEST')
+      server.services.functions.deleteGlobalVariable('BUNWRITE_GLOBAL_TEST')
+      server.services.functions.deleteGlobalVariable('BUNWRITE_SHARED_TEST')
+      server.services.functions.deleteVariable('env', 'BUNWRITE_LOCAL_TEST')
+      server.services.functions.deleteVariable('env', 'BUNWRITE_SHARED_TEST')
     }
   })
 
@@ -296,7 +296,7 @@ describe('functions', () => {
     try {
       server.config.functionsDir = dir
       // Stored against the wrong folder, as an uploaded import used to do.
-      setPath('/nowhere/pesanle-backend/functions/echo')
+      setPath('/nowhere/bunwrite-test/functions/echo')
       expect((await run()).status).toBe('completed')
       // Stored as written in appwrite.config.json.
       setPath('functions/echo')

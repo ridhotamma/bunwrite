@@ -11,7 +11,7 @@ if (!email) {
   console.error('Usage: bun run console:admin <email> [--remove]')
   process.exit(1)
 }
-const db = openDb(process.env.DATABASE_PATH ?? './data/pesanle.sqlite')
+const db = openDb(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
 const auth = new ConsoleAuth(db)
 if (flag === '--remove') {
   const admin = auth.list().find((a) => a.email === email.toLowerCase())

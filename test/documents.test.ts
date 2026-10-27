@@ -370,8 +370,8 @@ describe('permissions', () => {
 
 describe('CORS', () => {
   test('allowed origins are echoed with credentials', async () => {
-    const res = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://dashboard.pesanle.com' } })
-    expect(res.headers.get('access-control-allow-origin')).toBe('https://dashboard.pesanle.com')
+    const res = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://dashboard.example.com' } })
+    expect(res.headers.get('access-control-allow-origin')).toBe('https://dashboard.example.com')
     expect(res.headers.get('access-control-allow-credentials')).toBe('true')
     const other = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://evil.example' } })
     expect(other.headers.get('access-control-allow-origin')).toBeNull()

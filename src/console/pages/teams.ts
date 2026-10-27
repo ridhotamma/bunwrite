@@ -20,7 +20,7 @@ export function teamPages(router: ConsoleRouter): void {
       ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">ID</th><th class="num">Members</th><th class="hide-sm">Created</th></tr></thead><tbody>
           ${teams.map((t) => html`<tr class="row-link" onclick="location='${TEAMS}/${t.id}'"><td><a href="${TEAMS}/${t.id}">${t.name}</a></td><td class="mono hide-sm">${t.id}</td><td class="num">${t.total}</td><td class="hide-sm">${when(t.created_at)}</td></tr>`)}
           </tbody></table></div>${total > 100 ? html`<div class="pager subdued">Showing 100 of ${total}. Search to narrow down.</div>` : ''}`
-      : emptyState(search ? 'No teams match' : 'No teams yet', 'In Pesanle each shop is a team.')
+      : emptyState(search ? 'No teams match' : 'No teams yet', 'Teams group users and give them roles.')
     return ctx.render(
       'Teams',
       'teams',
@@ -68,7 +68,7 @@ export function teamPages(router: ConsoleRouter): void {
         <div>
           <form method="post" action="${base}/members" class="card"><h2>Add member</h2>
             <label>Email or user ID<input name="who" required></label>
-            <label>Roles<input name="roles" placeholder="owner, admin, staff"><small>Comma-separated. Pesanle uses owner, admin and staff.</small></label>
+            <label>Roles<input name="roles" placeholder="owner, admin, member"><small>Comma-separated.</small></label>
             <p class="help">Added straight away, without an invitation email.</p>
             <div class="foot"><button class="primary">Add</button></div>
           </form>

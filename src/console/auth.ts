@@ -11,7 +11,7 @@ import { hashPassword, validatePassword } from '~/auth/passwords'
 import { validEmail } from '~/auth/service'
 import { parseCookies } from '~/auth/caller'
 
-export const CONSOLE_COOKIE = 'pesanle_console'
+export const CONSOLE_COOKIE = 'bunwrite_console'
 const SESSION_TTL = 7 * 24 * 3600
 
 export interface Admin {

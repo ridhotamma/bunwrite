@@ -39,7 +39,7 @@ services.functions.start()
 services.backups.start()
 
 const server = Bun.serve({ port: config.port, fetch: app.fetch, websocket: app.websocket, maxRequestBodySize: 64 * 1024 * 1024 })
-console.log(`pesanle-backend listening on :${server.port} (${services.registry.collections.size} collections)${config.consoleEnabled ? `, console at /console` : ''}`)
+console.log(`bunwrite listening on :${server.port} (${services.registry.collections.size} collections)${config.consoleEnabled ? `, console at /console` : ''}`)
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {

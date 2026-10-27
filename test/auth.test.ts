@@ -104,7 +104,7 @@ describe('email one-time code (verification.ts flow)', () => {
     const token = await admin.account.createEmailToken({ userId: created.$id, email: 'otp@example.com' })
     expect(token.userId).toBe(created.$id)
     const mail = server.mailer.last('otp@example.com')!
-    expect(mail.subject).toBe('OTP for Pesanle Login')
+    expect(mail.subject).toBe('OTP for Test Project Login')
     const code = codeFrom(mail.text)!
     expect(token.secret).toBe(code)
 
@@ -189,12 +189,12 @@ describe('server-minted sessions (storefront mintSession)', () => {
 describe('password recovery', () => {
   test('mail a link, reset with it, then sign in with the new password', async () => {
     await admin.users.create({ userId: 'rec', email: 'recover@example.com', password: 'old password' })
-    const token = await guest.account.createRecovery({ email: 'recover@example.com', url: 'https://dashboard.pesanle.com/reset?x=1' })
+    const token = await guest.account.createRecovery({ email: 'recover@example.com', url: 'https://dashboard.example.com/reset?x=1' })
     expect(token.secret).toBe('')
     const mail = server.mailer.last('recover@example.com')!
-    expect(mail.subject).toBe('Password Reset for Pesanle')
+    expect(mail.subject).toBe('Password Reset for Test Project')
     const link = linkFrom(mail.text)
-    expect(link.origin + link.pathname).toBe('https://dashboard.pesanle.com/reset')
+    expect(link.origin + link.pathname).toBe('https://dashboard.example.com/reset')
     expect(link.searchParams.get('x')).toBe('1')
     expect(link.searchParams.get('userId')).toBe('rec')
 
@@ -208,7 +208,7 @@ describe('password recovery', () => {
   })
 
   test('unknown email is 404; foreign redirect host is 400', async () => {
-    expect((await failure(guest.account.createRecovery({ email: 'nobody@example.com', url: 'https://dashboard.pesanle.com/reset' }))).type).toBe('user_not_found')
+    expect((await failure(guest.account.createRecovery({ email: 'nobody@example.com', url: 'https://dashboard.example.com/reset' }))).type).toBe('user_not_found')
     const host = await failure(guest.account.createRecovery({ email: 'recover@example.com', url: 'https://evil.example/reset' }))
     expect([host.code, host.type]).toEqual([400, 'general_argument_invalid'])
   })
@@ -302,7 +302,7 @@ describe('teams', () => {
     const m1 = await admin.teams.createMembership({ teamId: team.$id, roles: ['owner'], userId: owner.$id, name: 'Owner' })
     expect([m1.confirm, m1.roles, m1.userEmail, m1.teamName]).toEqual([true, ['owner'], 'owner1@example.com', 'Toko A (toko-a)'])
     expect(m1.joined).toBe(m1.invited)
-    const m2 = await admin.teams.createMembership({ teamId: team.$id, roles: ['cashier'], email: 'staff1@example.com', url: 'https://dashboard.pesanle.com/invite' })
+    const m2 = await admin.teams.createMembership({ teamId: team.$id, roles: ['cashier'], email: 'staff1@example.com', url: 'https://dashboard.example.com/invite' })
     expect(m2.userId).toBe(staff.$id)
     expect(m2.confirm).toBe(true)
     expect(server.mailer.last('staff1@example.com')).toBeUndefined()
@@ -341,10 +341,10 @@ describe('teams', () => {
     const listed = await asBoss.teams.list()
     expect(listed.teams.map((t: any) => t.$id)).toEqual(['boss-team'])
 
-    const invite = await asBoss.teams.createMembership({ teamId: 'boss-team', roles: ['staff'], email: 'invitee@example.com', url: 'https://dashboard.pesanle.com/invite' })
+    const invite = await asBoss.teams.createMembership({ teamId: 'boss-team', roles: ['staff'], email: 'invitee@example.com', url: 'https://dashboard.example.com/invite' })
     expect(invite.confirm).toBe(false)
     const mail = server.mailer.last('invitee@example.com')!
-    expect(mail.subject).toBe('Invitation to Boss Team Team at Pesanle')
+    expect(mail.subject).toBe('Invitation to Boss Team Team at Test Project')
     const link = linkFrom(mail.text)
     const accepted = await guest.teams.updateMembershipStatus({
       teamId: 'boss-team',
@@ -395,7 +395,7 @@ describe('Google sign-in', () => {
 
   async function signIn(code = 'good-code') {
     const a = adminClient(oauthServer.endpoint)
-    const redirect = await a.account.createOAuth2Token('google', 'https://dashboard.pesanle.com/api/oauth/callback?next=%2Fx', 'https://dashboard.pesanle.com/login')
+    const redirect = await a.account.createOAuth2Token('google', 'https://dashboard.example.com/api/oauth/callback?next=%2Fx', 'https://dashboard.example.com/login')
     const auth = new URL(redirect)
     expect(auth.pathname).toBe('/auth')
     expect(auth.searchParams.get('redirect_uri')).toBe(`${oauthServer.endpoint}/account/sessions/oauth2/callback/google/${PROJECT}`)
@@ -408,7 +408,7 @@ describe('Google sign-in', () => {
 
   test('a new Google account becomes a verified user and gets a session', async () => {
     const success = await signIn()
-    expect(success.origin + success.pathname).toBe('https://dashboard.pesanle.com/api/oauth/callback')
+    expect(success.origin + success.pathname).toBe('https://dashboard.example.com/api/oauth/callback')
     expect(success.searchParams.get('next')).toBe('/x')
     const a = adminClient(oauthServer.endpoint)
     const session = await a.account.createSession(success.searchParams.get('userId')!, success.searchParams.get('secret')!)
@@ -432,7 +432,7 @@ describe('Google sign-in', () => {
 
   test('a failed exchange goes to the failure URL with an error', async () => {
     const failed = await signIn('bad-code')
-    expect(failed.origin + failed.pathname).toBe('https://dashboard.pesanle.com/login')
+    expect(failed.origin + failed.pathname).toBe('https://dashboard.example.com/login')
     expect(JSON.parse(failed.searchParams.get('error')!).type).toBe('user_oauth2_provider_error')
   })
 
@@ -441,9 +441,9 @@ describe('Google sign-in', () => {
     const bad = await failure(a.account.createOAuth2Token('google', 'https://evil.example/cb', 'https://evil.example/f'))
     expect(bad.code).toBe(400)
     // The SDK reports any non-redirect as "Invalid redirect" with the HTTP status, as with Appwrite.
-    const off = await failure(admin.account.createOAuth2Token('google', 'https://dashboard.pesanle.com/cb', 'https://dashboard.pesanle.com/f'))
+    const off = await failure(admin.account.createOAuth2Token('google', 'https://dashboard.example.com/cb', 'https://dashboard.example.com/f'))
     expect(off.message).toBe('Invalid redirect')
-    const raw = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=https://dashboard.pesanle.com/cb`, { redirect: 'manual' })
+    const raw = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=https://dashboard.example.com/cb`, { redirect: 'manual' })
     expect(((await raw.json()) as any).type).toBe('project_provider_disabled')
   })
 })

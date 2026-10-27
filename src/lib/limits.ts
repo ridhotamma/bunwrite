@@ -1,6 +1,6 @@
 /**
  * Appwrite's abuse limits, in memory: a fixed window per key. API-key callers
- * are exempt, as on Appwrite. Pesanle's own servers call these endpoints with
+ * are exempt, as on Appwrite. Trusted backend servers call these endpoints with
  * the key and keep their own login limits and captcha.
  */
 import { err } from './errors'

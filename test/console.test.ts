@@ -45,7 +45,7 @@ describe('console access', () => {
     expect(body).toContain('That email and password do not match an admin.')
     expect(body).toContain('value="admin@example.com"')
     expect(body).toContain('data-dismiss-alert')
-    expect(body).toContain('__pesanleDialogs')
+    expect(body).toContain('__bunwriteDialogs')
     const ok = await form('/console/login', { email: 'admin@example.com', password: 'console-password' })
     expect(ok.status).toBe(303)
     const set = ok.headers.get('set-cookie')!
@@ -133,6 +133,33 @@ describe('schema through the console', () => {
     expect(server.services.registry.collection('shop', 'orders', true).attributeMap.has('note')).toBe(true)
   })
 
+  test('collections can be exported and imported with a review', async () => {
+    const exportPage = await (await get('/console/schema/export')).text()
+    expect(exportPage).toContain('orders')
+
+    const selected = (await (await get('/console/schema/collections.json?selected=1&ids=shop/orders')).json()) as any[]
+    expect(selected.map((collection) => collection.$id)).toEqual(['orders'])
+    expect(selected[0].databaseId).toBe('shop')
+
+    selected[0].name = 'Orders renamed'
+    selected[0].columns.push({ key: 'extra', type: 'string', size: 20, required: false, array: false, default: null })
+    const preview = await form('/console/schema/import/preview', { json: JSON.stringify(selected), prune: '' })
+    expect(preview.status).toBe(200)
+    const review = await preview.text()
+    expect(review).toContain('Orders renamed')
+    const hidden = /name="collections" value="([^"]*)"/.exec(review)![1]!
+    const json = hidden.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
+    const applied = await form('/console/schema/import/apply', { collections: json, prune: '' })
+    expect(flash(applied).get('ok')).toContain('Applied')
+
+    const order = server.services.registry.collection('shop', 'orders', true)
+    expect(order.name).toBe('Orders renamed')
+    expect(order.attributeMap.has('extra')).toBe(true)
+
+    const invalid = await form('/console/schema/import/preview', { json: '{}' })
+    expect(await invalid.text()).toContain('JSON array')
+  })
+
   test('collections and databases can be deleted', async () => {
     await form('/console/databases/shop/collections/orders/delete', {})
     await form('/console/databases/shop/delete', {})
@@ -193,7 +220,7 @@ describe('settings through the console', () => {
     const cors = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://shop.example.com' } })
     expect(cors.headers.get('access-control-allow-origin')).toBe('https://shop.example.com')
     await form('/console/settings/project/reset', {})
-    expect(server.config.projectName).toBe('Pesanle')
+    expect(server.config.projectName).toBe('Test Project')
   })
 
   test('SMTP settings switch email on; the password is kept when left blank', async () => {
@@ -218,16 +245,16 @@ describe('settings through the console', () => {
   })
 
   test('global function variables can be added and removed', async () => {
-    await form('/console/settings/functions/variables', { key: 'PESANLE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
+    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
     expect(server.services.functions.globalVariables()).toMatchObject([
-      { key: 'PESANLE_GLOBAL_TEST', value: 'global-value', secret: 1, function_id: '*' },
+      { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1, function_id: '*' },
     ])
     const page = await (await get('/console/settings/functions')).text()
-    expect(page).toContain('PESANLE_GLOBAL_TEST')
+    expect(page).toContain('BUNWRITE_GLOBAL_TEST')
     expect(page).toContain('data-dialog-open="#bulk-global-vars"')
     expect(page).toContain('id="bulk-global-vars"')
     expect(page).toContain('hx-post="/console/settings/functions/variables/bulk"')
-    await form('/console/settings/functions/variables/delete', { key: 'PESANLE_GLOBAL_TEST' })
+    await form('/console/settings/functions/variables/delete', { key: 'BUNWRITE_GLOBAL_TEST' })
     expect(server.services.functions.globalVariables()).toEqual([])
   })
 
@@ -256,7 +283,7 @@ describe('settings through the console', () => {
   })
 
   test('backups can be created, downloaded and deleted locally', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pesanle-backups-'))
+    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backups-'))
     const original = server.config.backupsPath
     server.config.backupsPath = dir
     try {
@@ -278,7 +305,7 @@ describe('settings through the console', () => {
   })
 
   test('automatic backups run once a day', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'pesanle-auto-backups-'))
+    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-auto-backups-'))
     const originalPath = server.config.backupsPath
     const original = server.config.backups
     server.config.backupsPath = dir
@@ -315,7 +342,7 @@ describe('settings through the console', () => {
 
   test('Google sign-in can be set up from the console', async () => {
     await form('/console/settings/google', { clientId: 'gid', clientSecret: 'gsecret' })
-    const res = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.pesanle.com/cb')}`, { redirect: 'manual' })
+    const res = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
     expect(res.status).toBe(301)
     expect(new URL(res.headers.get('location')!).searchParams.get('client_id')).toBe('gid')
   })

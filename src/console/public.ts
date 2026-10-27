@@ -13,12 +13,12 @@ export function wantsHtml(request: Request, pathname: string): boolean {
   return (request.headers.get('accept') ?? '').includes('text/html')
 }
 
-export function notFoundPage(consoleEnabled: boolean): Response {
+export function notFoundPage(consoleEnabled: boolean, projectName: string): Response {
   return page(
     bare(
       'Page not found',
       html`<div class="auth">
-        <div class="brand">Pesanle</div>
+        <div class="brand">${projectName}</div>
         <div class="card" style="text-align:center;padding:32px 24px">
           <div style="font-size:40px;font-weight:650;line-height:1;margin-bottom:8px">404</div>
           <h2 style="margin:0 0 4px">Page not found</h2>
@@ -27,23 +27,25 @@ export function notFoundPage(consoleEnabled: boolean): Response {
         </div>
         <p class="subdued" style="text-align:center">Looking for the API? It lives under <code>/v1</code>.</p>
       </div>`,
+      projectName,
     ),
     404,
   )
 }
 
 /** Shown at / when the console is turned off. */
-export function apiHomePage(): Response {
+export function apiHomePage(projectName: string): Response {
   return page(
     bare(
       'API',
       html`<div class="auth">
-        <div class="brand">Pesanle</div>
+        <div class="brand">${projectName}</div>
         <div class="card" style="text-align:center;padding:32px 24px">
           <h2 style="margin:0 0 4px">API is running</h2>
           <p class="subdued" style="margin:0">Apps connect at <code>/v1</code>. Health check: <a href="/v1/health">/v1/health</a></p>
         </div>
       </div>`,
+      projectName,
     ),
   )
 }

@@ -62,7 +62,7 @@ function projectCard(ctx: ConsoleContext): Html {
   return card(ctx, 'project', 'Project', 'project', 'Name in emails, allowed web origins and how long sign-ins last.', html`
     <form method="post" action="${SETTINGS}/project">
       <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set by PROJECT_ID; apps send it.</small></label></div>
-      <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.pesanle.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
+      <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`)
@@ -317,7 +317,7 @@ export function settingsPages(router: ConsoleRouter): void {
       user: value(f, 'user') || undefined,
       password: String(f.password ?? '') || ctx.services.config.smtp?.password,
       secure: checked(f.secure),
-      senderEmail: value(f, 'senderEmail') || 'no-reply@pesanle.com',
+      senderEmail: value(f, 'senderEmail') || 'no-reply@example.com',
       senderName: value(f, 'senderName') || `${ctx.services.config.projectName} Team`,
     })
     return ctx.go(tabPath('email'), { tone: 'success', text: 'Email settings saved' })

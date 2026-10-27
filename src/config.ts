@@ -60,7 +60,7 @@ export interface Config {
   schemaPath?: string
   /** Public URL of this API including /v1, used for OAuth callbacks and file links. */
   publicEndpoint: string
-  /** Session lifetime in seconds (Appwrite's project setting; Pesanle uses one year). */
+  /** Session lifetime in seconds (defaults to one year). */
   sessionDuration: number
   /** Most sessions a user keeps; the oldest is removed beyond this. */
   sessionsLimit: number
@@ -70,7 +70,7 @@ export interface Config {
   storagePath: string
   /** dotenv file with variables for function executions (Appwrite "function variables"). */
   functionsEnvFile?: string
-  /** Functions whose schedule is ignored (render's keep-warm ping is pointless here). */
+  /** Functions whose schedule is ignored. */
   skipSchedules: string[]
   /** Folder that relative function paths resolve against: where appwrite.config.json lives. */
   functionsDir: string
@@ -111,9 +111,9 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
-    databasePath: env.DATABASE_PATH ?? './data/pesanle.sqlite',
+    databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
     projectId,
-    projectName: env.PROJECT_NAME ?? 'Pesanle',
+    projectName: env.PROJECT_NAME ?? 'Bunwrite',
     apiKeys: list(env.API_KEYS),
     secret,
     allowedOrigins: list(env.ALLOWED_ORIGINS),
@@ -128,8 +128,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
           user: env.SMTP_USERNAME || undefined,
           password: env.SMTP_PASSWORD || undefined,
           secure: env.SMTP_SECURE === 'tls',
-          senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@pesanle.com',
-          senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Pesanle'} Team`,
+          senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@example.com',
+          senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Bunwrite'} Team`,
         }
       : null,
     google:
@@ -144,7 +144,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
         : null,
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
-    skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : ['render'],
+    skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',

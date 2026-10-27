@@ -33,7 +33,7 @@ export interface ImportOptions {
   only?: Set<string>
   pageSize?: number
   log?: (line: string) => void
-  /** Functions to register from pesanle's appwrite.config.json (their code lives there). */
+  /** Functions to register from the appwrite.config.json (their code lives there). */
   functions?: { config: unknown; baseDir: string }
 }
 

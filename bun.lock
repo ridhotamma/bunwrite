@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "pesanle-backend",
+      "name": "bunwrite",
       "dependencies": {
         "drizzle-orm": "^0.44.0",
         "htmx.org": "2.0.4",

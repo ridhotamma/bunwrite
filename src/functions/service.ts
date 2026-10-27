@@ -343,7 +343,7 @@ export class FunctionService {
 
   /**
    * The folder holding a function's code. Tried in order: the stored path (absolute, or relative
-   * to the code folder), then `<code folder>/functions/<id>`, Pesanle's layout. The last one also
+   * to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The last one also
    * repairs paths stored against the wrong folder by an uploaded import.
    */
   codeDir(f: FunctionRow): { dir: string | null; tried: string[] } {

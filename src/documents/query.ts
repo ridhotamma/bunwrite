@@ -1,6 +1,6 @@
 /**
  * Parse Appwrite queries (`{"method":"equal","attribute":"x","values":[..]}`)
- * and compile them to SQLite, matching what pesanle sees from Appwrite:
+ * and compile them to SQLite, matching what Appwrite returns:
  * `equal` is exact, `contains`/`startsWith` ignore ASCII case, `search` matches
  * whole words with OR between words, and values must match the column type.
  */
