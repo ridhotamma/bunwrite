@@ -35,8 +35,17 @@ interface RequestMeta {
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
 
-const ALLOW_HEADERS =
-  'Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, X-Appwrite-Project, X-Appwrite-Key, X-Appwrite-Locale, X-Appwrite-Mode, X-Appwrite-JWT, X-Appwrite-Response-Format, X-Appwrite-Timeout, X-Appwrite-ID, X-Appwrite-Timestamp, X-Appwrite-Session, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent'
+// htmx sends its own headers on every request; a browser preflight rejects them
+// unless they are listed here, so cross-origin htmx clients need these too.
+const HTMX_REQUEST_HEADERS =
+  'HX-Request, HX-Current-URL, HX-Trigger, HX-Trigger-Name, HX-Target, HX-Prompt, HX-Boosted, HX-History-Restore-Request'
+
+const HTMX_RESPONSE_HEADERS =
+  'HX-Location, HX-Push-Url, HX-Redirect, HX-Refresh, HX-Replace-Url, HX-Reswap, HX-Retarget, HX-Reselect, HX-Trigger, HX-Trigger-After-Swap, HX-Trigger-After-Settle'
+
+const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, X-Appwrite-Project, X-Appwrite-Key, X-Appwrite-Locale, X-Appwrite-Mode, X-Appwrite-JWT, X-Appwrite-Response-Format, X-Appwrite-Timeout, X-Appwrite-ID, X-Appwrite-Timestamp, X-Appwrite-Session, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
+
+const EXPOSE_HEADERS = `X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, ${HTMX_RESPONSE_HEADERS}`
 
 export { originAllowed }
 
@@ -65,7 +74,7 @@ export function createApp(source: Services | ProjectResolver) {
       'access-control-allow-credentials': 'true',
       'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE',
       'access-control-allow-headers': ALLOW_HEADERS,
-      'access-control-expose-headers': 'X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id',
+      'access-control-expose-headers': EXPOSE_HEADERS,
       'access-control-max-age': '86400',
       vary: 'Origin',
     }

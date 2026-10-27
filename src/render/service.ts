@@ -10,7 +10,7 @@
 import { existsSync } from 'node:fs'
 
 import type { Config } from '~/config'
-import { err } from '~/lib/errors'
+import { AppwriteError, err } from '~/lib/errors'
 import { loadSharp } from '~/storage/sharp'
 import { avifTooLarge, maxAvifPixels } from '~/storage/transform'
 
@@ -77,6 +77,7 @@ export function maxImagePixels(): number {
 /** Chromium cannot capture taller than this many device pixels. */
 const MAX_CAPTURE_PX = 16_384
 const RENDER_TIMEOUT_MS = 30_000
+const RETRY_DELAY_MS = 300
 const IDLE_SHUTDOWN_MS = 60_000
 const MAX_WAITING = 20
 const BLOCKED_URLS = ['http://*', 'https://*', 'ws://*', 'wss://*', 'file://*', 'ftp://*']
@@ -239,7 +240,24 @@ export class RenderService {
 
     this.waiting++
     if (this.idle) clearTimeout(this.idle)
-    const job = this.line.then(() => this.withTimeout(this.withPage(chrome, html, setup, work)))
+    const attempt = (): Promise<T> => {
+      const chrome = findChrome()
+      if (!chrome) throw err('general_service_disabled', 'HTML rendering needs Chromium. Install it or set CHROME_PATH.')
+      return this.withTimeout(this.withPage(chrome, html, setup, work))
+    }
+    const job = this.line.then(async () => {
+      try {
+        return await attempt()
+      } catch (error) {
+        // Chromium can be briefly unlaunchable: it may be auto-updating, or the
+        // browser from a killed render may not have exited yet. One fresh
+        // attempt recovers without turning a transient failure into a 500.
+        if (error instanceof AppwriteError) throw error
+        console.warn(`[render] Chromium failed, retrying once: ${error instanceof Error ? error.message : String(error)}`)
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
+        return attempt()
+      }
+    })
     this.line = job.catch(() => {})
     try {
       return await job
