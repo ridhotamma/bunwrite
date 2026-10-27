@@ -1,15 +1,15 @@
 import { keyCaller } from '../../auth/caller'
 import { aggregatePermissions } from '../../auth/permissions'
 import type { BucketRow } from '../../storage/service'
-import { go, type ConsoleContext, type ConsoleRouter } from '../app'
+import type { ConsoleRouter } from '../context'
+import { checked, lines, value } from '../forms'
 import { html, type Html } from '../html'
-import { badge, destroy, emptyState, formatBytes, header, when } from '../layout'
+import { listQueries, pageCount, pageParams } from '../query'
+import { badge, destroy, emptyState, formatBytes, header, listCard, pager, searchForm, when } from '../ui'
 
 const STORAGE = '/console/storage'
-const lines = (v: unknown) => String(v ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
-const checked = (v: unknown) => v === 'on' || v === 'true'
 
-function bucketForm(ctx: ConsoleContext, b: BucketRow | null): Html {
+function bucketForm(b: BucketRow | null): Html {
   const mb = b ? b.maximum_file_size / 1_000_000 : 10
   return html`<form method="post" action="${b ? `${STORAGE}/${b.id}/settings` : STORAGE}" class="card">
     ${b ? html`<h2>Bucket settings</h2>` : ''}
@@ -27,7 +27,7 @@ function bucketForm(ctx: ConsoleContext, b: BucketRow | null): Html {
 
 const bucketInput = (form: Record<string, any>, id: string) => ({
   id,
-  name: String(form.name ?? '').trim(),
+  name: value(form, 'name'),
   enabled: checked(form.enabled),
   fileSecurity: checked(form.fileSecurity),
   transformations: checked(form.transformations),
@@ -40,7 +40,10 @@ export function storagePages(router: ConsoleRouter): void {
   router.get(STORAGE, ({ ctx }) => {
     const buckets = ctx.services.storage.buckets()
     const usage = new Map(
-      ctx.services.db.sqlite.query<{ bucket_id: string; n: number; bytes: number }, []>('SELECT bucket_id, count(*) AS n, coalesce(sum(size_original),0) AS bytes FROM _files GROUP BY bucket_id').all().map((r) => [r.bucket_id, r]),
+      ctx.services.db.sqlite
+        .query<{ bucket_id: string; n: number; bytes: number }, []>('SELECT bucket_id, count(*) AS n, coalesce(sum(size_original),0) AS bytes FROM _files GROUP BY bucket_id')
+        .all()
+        .map((r) => [r.bucket_id, r]),
     )
     return ctx.render(
       'Storage',
@@ -57,43 +60,36 @@ export function storagePages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${STORAGE}/new`, ({ ctx }) => ctx.render('Create bucket', 'storage', html`${header('Create bucket', { back: STORAGE })}${bucketForm(ctx, null)}`))
+  router.get(`${STORAGE}/new`, ({ ctx }) => ctx.render('Create bucket', 'storage', html`${header('Create bucket', { back: STORAGE })}${bucketForm(null)}`))
 
-  router.post(STORAGE, ({ ctx, request }) => {
-    const b = ctx.services.storage.saveBucket(bucketInput(ctx.form, String(ctx.form.id ?? '').trim()), true)
-    return go(request, `${STORAGE}/${b.id}`, { tone: 'success', text: 'Bucket created' })
+  router.post(STORAGE, ({ ctx }) => {
+    const b = ctx.services.storage.saveBucket(bucketInput(ctx.form, value(ctx.form, 'id')), true)
+    return ctx.go(`${STORAGE}/${b.id}`, { tone: 'success', text: 'Bucket created' })
   })
 
   router.get(`${STORAGE}/:bucket`, ({ ctx, path, url }) => {
     const b = ctx.services.storage.bucket(path.bucket!, true)
     const search = url.searchParams.get('search') ?? ''
-    const page = Math.max(1, Number(url.searchParams.get('page') ?? 1) || 1)
-    const limit = 25
-    const { total, files } = ctx.services.storage.listFiles(
-      keyCaller(),
-      b.id,
-      [JSON.stringify({ method: 'orderDesc', attribute: '$createdAt' }), JSON.stringify({ method: 'limit', values: [limit] }), JSON.stringify({ method: 'offset', values: [(page - 1) * limit] })],
-      search || undefined,
-    )
-    const pages = Math.max(1, Math.ceil(total / limit))
+    const { page, limit } = pageParams(url)
+    const { total, files } = ctx.services.storage.listFiles(keyCaller(), b.id, listQueries(page, limit), search || undefined)
+    const pages = pageCount(total, limit)
+    const body = files.length
+      ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Type</th><th class="num">Size</th><th class="hide-sm">Uploaded</th><th></th></tr></thead><tbody>
+          ${files.map((f) => html`<tr><td class="clip"><a href="${STORAGE}/${b.id}/files/${f.$id}/open" target="_blank" hx-boost="false">${f.name}</a></td><td class="hide-sm subdued">${f.mimeType}</td>
+            <td class="num">${formatBytes(f.sizeOriginal)}</td><td class="hide-sm">${when(f.$createdAt)}</td>
+            <td class="num">${destroy(`${STORAGE}/${b.id}/files/${f.$id}/delete`, 'Delete', `Delete ${f.name}?`)}</td></tr>`)}
+          </tbody></table></div>`
+      : emptyState(search ? 'No files match' : 'No files yet', search ? 'Try another name.' : 'Upload one here, or let your apps add them.')
     return ctx.render(
       b.name,
       'storage',
       html`${header(b.name, { back: STORAGE, badges: [b.enabled ? badge('Enabled', 'success') : badge('Disabled')] })}
       <div class="layout">
-        <div class="card flush" id="files">
-          <form class="toolbar" method="get" hx-get="${STORAGE}/${b.id}" hx-target="#files" hx-select="#files" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit, input changed delay:300ms from:find input">
-            <input type="search" name="search" value="${search}" placeholder="Search files" autocomplete="off">
-          </form>
-          ${files.length
-            ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Type</th><th class="num">Size</th><th class="hide-sm">Uploaded</th><th></th></tr></thead><tbody>
-              ${files.map((f) => html`<tr><td class="clip"><a href="${STORAGE}/${b.id}/files/${f.$id}/open" target="_blank" hx-boost="false">${f.name}</a></td><td class="hide-sm subdued">${f.mimeType}</td>
-                <td class="num">${formatBytes(f.sizeOriginal)}</td><td class="hide-sm">${when(f.$createdAt)}</td>
-                <td class="num">${destroy(`${STORAGE}/${b.id}/files/${f.$id}/delete`, 'Delete', `Delete ${f.name}?`)}</td></tr>`)}
-              </tbody></table></div>
-              ${pages > 1 ? html`<div class="pager">${page > 1 ? html`<a class="btn" href="?search=${encodeURIComponent(search)}&page=${page - 1}">Previous</a>` : ''}<span class="subdued">Page ${page} of ${pages} · ${total} files</span>${page < pages ? html`<a class="btn" href="?search=${encodeURIComponent(search)}&page=${page + 1}">Next</a>` : ''}</div>` : ''}`
-            : emptyState(search ? 'No files match' : 'No files yet', search ? 'Try another name.' : 'Upload one here, or let your apps add them.')}
-        </div>
+        ${listCard('files', {
+          toolbar: searchForm({ action: `${STORAGE}/${b.id}`, target: 'files', value: search, placeholder: 'Search files' }),
+          body,
+          footer: pager({ page, pages, params: { search }, label: `Page ${page} of ${pages} · ${total} files` }),
+        })}
         <div>
           <form method="post" action="${STORAGE}/${b.id}/files" enctype="multipart/form-data" class="card" hx-boost="false">
             <h2>Upload</h2>
@@ -101,24 +97,24 @@ export function storagePages(router: ConsoleRouter): void {
             <label>Permissions<textarea name="permissions" class="mono" placeholder='read("any")'></textarea><small>One per line. <code>read("any")</code> makes it public.</small></label>
             <div class="foot"><button class="primary">Upload</button></div>
           </form>
-          ${bucketForm(ctx, b)}
+          ${bucketForm(b)}
           <div class="card"><h2>Delete bucket</h2><p class="hint">Removes the bucket and all ${total} files.</p>${destroy(`${STORAGE}/${b.id}/delete`, 'Delete bucket', `Delete ${b.name} and its files?`)}</div>
         </div>
       </div>`,
     )
   })
 
-  router.post(`${STORAGE}/:bucket/settings`, ({ ctx, path, request }) => {
+  router.post(`${STORAGE}/:bucket/settings`, ({ ctx, path }) => {
     ctx.services.storage.saveBucket(bucketInput(ctx.form, path.bucket!), false)
-    return go(request, `${STORAGE}/${path.bucket}`, { tone: 'success', text: 'Saved' })
+    return ctx.go(`${STORAGE}/${path.bucket}`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${STORAGE}/:bucket/delete`, ({ ctx, path, request }) => {
+  router.post(`${STORAGE}/:bucket/delete`, ({ ctx, path }) => {
     ctx.services.storage.deleteBucket(path.bucket!)
-    return go(request, STORAGE, { tone: 'success', text: 'Bucket deleted' })
+    return ctx.go(STORAGE, { tone: 'success', text: 'Bucket deleted' })
   })
 
-  router.post(`${STORAGE}/:bucket/files`, async ({ ctx, path, request }) => {
+  router.post(`${STORAGE}/:bucket/files`, async ({ ctx, path }) => {
     await ctx.services.storage.createFile(keyCaller(), path.bucket!, {
       fileId: 'unique()',
       file: ctx.form.file,
@@ -126,7 +122,7 @@ export function storagePages(router: ConsoleRouter): void {
       contentRange: null,
       uploadId: null,
     })
-    return go(request, `${STORAGE}/${path.bucket}`, { tone: 'success', text: 'Uploaded' })
+    return ctx.go(`${STORAGE}/${path.bucket}`, { tone: 'success', text: 'Uploaded' })
   })
 
   // Opened in a new tab by an admin, so served with the admin's authority.
@@ -135,8 +131,8 @@ export function storagePages(router: ConsoleRouter): void {
     return ctx.services.storage.serve(request, path.bucket!, file, 'inline')
   })
 
-  router.post(`${STORAGE}/:bucket/files/:file/delete`, ({ ctx, path, request }) => {
+  router.post(`${STORAGE}/:bucket/files/:file/delete`, ({ ctx, path }) => {
     ctx.services.storage.deleteFile(keyCaller(), path.bucket!, path.file!)
-    return go(request, `${STORAGE}/${path.bucket}`, { tone: 'success', text: 'File deleted' })
+    return ctx.go(`${STORAGE}/${path.bucket}`, { tone: 'success', text: 'File deleted' })
   })
 }

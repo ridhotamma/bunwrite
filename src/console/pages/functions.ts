@@ -1,14 +1,13 @@
-import { go, statusBadge, type ConsoleRouter } from '../app'
-import { html, type Html } from '../html'
-import { badge, destroy, emptyState, header, when } from '../layout'
 import type { ExecutionRow, FunctionRow } from '../../functions/service'
+import type { ConsoleRouter } from '../context'
+import { checked, lines, value } from '../forms'
+import { html, type Html } from '../html'
+import { badge, destroy, emptyState, header, poll, statusBadge, when } from '../ui'
 
 const FN = '/console/functions'
-const checked = (v: unknown) => v === 'on' || v === 'true'
-const lines = (v: unknown) => String(v ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
 
 function runsTable(fnId: string, runs: ExecutionRow[], live: boolean): Html {
-  return html`<div class="card flush" id="runs" ${live ? html`hx-get="${FN}/${fnId}" hx-select="#runs" hx-target="#runs" hx-swap="outerHTML" hx-trigger="every 5s"` : ''}>
+  return html`<div class="card flush" id="runs" ${live ? poll(`${FN}/${fnId}`, 'runs', 5) : ''}>
     <div class="toolbar"><h2 style="margin:0">Runs</h2></div>
     ${runs.length
       ? html`<div class="scroll"><table><thead><tr><th>Started</th><th>Status</th><th class="hide-sm">Trigger</th><th class="num hide-sm">Code</th><th class="num">Time</th></tr></thead><tbody>
@@ -17,6 +16,14 @@ function runsTable(fnId: string, runs: ExecutionRow[], live: boolean): Html {
         </tbody></table></div>`
       : emptyState('No runs yet', 'Run it now, or wait for its schedule.')}
   </div>`
+}
+
+const pretty = (text: string) => {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
 }
 
 export function functionPages(router: ConsoleRouter): void {
@@ -99,47 +106,40 @@ export function functionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${FN}/:id`, ({ ctx, path, request }) => {
+  router.post(`${FN}/:id`, ({ ctx, path }) => {
     ctx.services.functions.update(path.id!, {
       enabled: checked(ctx.form.enabled),
-      schedule: String(ctx.form.schedule ?? '').trim(),
+      schedule: value(ctx.form, 'schedule'),
       timeout: Number(ctx.form.timeout),
       execute: lines(ctx.form.execute),
     })
-    return go(request, `${FN}/${path.id}`, { tone: 'success', text: 'Saved' })
+    return ctx.go(`${FN}/${path.id}`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${FN}/:id/run`, async ({ ctx, path, request }) => {
+  router.post(`${FN}/:id/run`, async ({ ctx, path }) => {
     const f = ctx.services.functions.fn(path.id!)
     const { execution } = await ctx.services.functions.execute(f, { trigger: 'http', method: 'POST', path: '/' }, 'async')
-    return go(request, `${FN}/${f.id}/executions/${execution.id}`, { tone: 'success', text: 'Started' })
+    return ctx.go(`${FN}/${f.id}/executions/${execution.id}`, { tone: 'success', text: 'Started' })
   })
 
-  router.post(`${FN}/:id/variables`, ({ ctx, path, request }) => {
+  router.post(`${FN}/:id/variables`, ({ ctx, path }) => {
     ctx.services.functions.fn(path.id!)
-    ctx.services.functions.setVariable(path.id!, String(ctx.form.key ?? '').trim(), String(ctx.form.value ?? ''), checked(ctx.form.secret))
-    return go(request, `${FN}/${path.id}`, { tone: 'success', text: 'Variable saved' })
+    ctx.services.functions.setVariable(path.id!, value(ctx.form, 'key'), String(ctx.form.value ?? ''), checked(ctx.form.secret))
+    return ctx.go(`${FN}/${path.id}`, { tone: 'success', text: 'Variable saved' })
   })
 
-  router.post(`${FN}/:id/variables/delete`, ({ ctx, path, request }) => {
-    ctx.services.functions.deleteVariable(path.id!, String(ctx.form.key ?? ''))
-    return go(request, `${FN}/${path.id}`, { tone: 'success', text: 'Variable removed' })
+  router.post(`${FN}/:id/variables/delete`, ({ ctx, path }) => {
+    ctx.services.functions.deleteVariable(path.id!, value(ctx.form, 'key'))
+    return ctx.go(`${FN}/${path.id}`, { tone: 'success', text: 'Variable removed' })
   })
 
   router.get(`${FN}/:id/executions/:eid`, ({ ctx, path }) => {
     const e = ctx.services.functions.execution(path.id!, path.eid!)
     const live = e.status === 'waiting' || e.status === 'processing'
-    const pretty = (text: string) => {
-      try {
-        return JSON.stringify(JSON.parse(text), null, 2)
-      } catch {
-        return text
-      }
-    }
     return ctx.render(
       `Run ${e.id}`,
       'functions',
-      html`<div id="run" ${live ? html`hx-get="${FN}/${path.id}/executions/${e.id}" hx-select="#run" hx-target="#run" hx-swap="outerHTML" hx-trigger="every 2s"` : ''}>
+      html`<div id="run" ${live ? poll(`${FN}/${path.id}/executions/${e.id}`, 'run', 2) : ''}>
         ${header(when(e.created_at), { back: `${FN}/${path.id}`, badges: [statusBadge(e.status), badge(e.trigger)] })}
         <div class="stats" style="margin-bottom:16px">
           <div class="stat"><span>Response</span><b>${e.response_status_code || '—'}</b></div>

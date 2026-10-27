@@ -2,9 +2,10 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { err } from '../../lib/errors'
-import { go, type ConsoleContext, type ConsoleRouter } from '../app'
+import type { ConsoleContext, ConsoleRouter } from '../context'
+import { checked, value } from '../forms'
 import { html, type Html } from '../html'
-import { badge, header } from '../layout'
+import { badge, header } from '../ui'
 
 const SCHEMA = '/console/schema'
 
@@ -60,23 +61,25 @@ export function schemaPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${SCHEMA}/export.json`, async ({ ctx }) =>
-    new Response(JSON.stringify(await exported(ctx), null, 4), {
-      headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="appwrite.config.json"', 'cache-control': 'no-store' },
-    }),
+  router.get(
+    `${SCHEMA}/export.json`,
+    async ({ ctx }) =>
+      new Response(JSON.stringify(await exported(ctx), null, 4), {
+        headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="appwrite.config.json"', 'cache-control': 'no-store' },
+      }),
   )
 
-  router.post(`${SCHEMA}/save`, async ({ ctx, request }) => {
+  router.post(`${SCHEMA}/save`, async ({ ctx }) => {
     const path = ctx.services.config.schemaPath
     if (!path) throw err('general_argument_invalid', 'SCHEMA_PATH is not set.')
     writeFileSync(path, `${JSON.stringify(await exported(ctx), null, 4)}\n`)
-    return go(request, SCHEMA, { tone: 'success', text: `Saved to ${path}` })
+    return ctx.go(SCHEMA, { tone: 'success', text: `Saved to ${path}` })
   })
 
   // Dry run: apply inside a savepoint, list the changes, roll back. The file goes back as a hidden field.
   router.post(`${SCHEMA}/preview`, async ({ ctx }) => {
     const { config, baseDir, label } = await readUpload(ctx)
-    const prune = ctx.form.prune === 'on'
+    const prune = checked(ctx.form.prune)
     const changes = ctx.schema.importConfig(config, { baseDir, prune, dryRun: true })
     return ctx.render(
       'Preview import',
@@ -92,14 +95,14 @@ export function schemaPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${SCHEMA}/apply`, ({ ctx, request }) => {
+  router.post(`${SCHEMA}/apply`, ({ ctx }) => {
     let config: unknown
     try {
-      config = JSON.parse(String(ctx.form.config ?? ''))
+      config = JSON.parse(value(ctx.form, 'config'))
     } catch {
       throw err('general_argument_invalid', 'The import was lost. Preview it again.')
     }
-    const changes = ctx.schema.importConfig(config, { baseDir: String(ctx.form.baseDir || '') || undefined, prune: ctx.form.prune === 'on' })
-    return go(request, SCHEMA, { tone: 'success', text: `Applied ${changes.length} change${changes.length === 1 ? '' : 's'}` })
+    const changes = ctx.schema.importConfig(config, { baseDir: String(ctx.form.baseDir || '') || undefined, prune: checked(ctx.form.prune) })
+    return ctx.go(SCHEMA, { tone: 'success', text: `Applied ${changes.length} change${changes.length === 1 ? '' : 's'}` })
   })
 }

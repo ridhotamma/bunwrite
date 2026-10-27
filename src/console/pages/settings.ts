@@ -1,15 +1,14 @@
 import { existsSync } from 'node:fs'
 
-import { SmtpMailer } from '../../mail/mailer'
 import { err } from '../../lib/errors'
-import { go, type ConsoleContext, type ConsoleRouter } from '../app'
-import { html, page, type Html } from '../html'
-import { badge, destroy, header, when } from '../layout'
+import { SmtpMailer } from '../../mail/mailer'
 import type { SettingKey } from '../../settings/service'
+import type { ConsoleContext, ConsoleRouter } from '../context'
+import { arrayOf, checked, lines, value } from '../forms'
+import { html, page, type Html } from '../html'
+import { badge, destroy, header, when } from '../ui'
 
 const SETTINGS = '/console/settings'
-const lines = (v: unknown) => String(v ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
-const checked = (v: unknown) => v === 'on' || v === 'true'
 
 function codeFound(ctx: ConsoleContext): Html {
   const fns = ctx.services.functions.list()
@@ -89,38 +88,38 @@ export function settingsPages(router: ConsoleRouter): void {
 
   router.get(SETTINGS, ({ ctx }) => view(ctx))
 
-  router.post(`${SETTINGS}/project`, ({ ctx, request }) => {
+  router.post(`${SETTINGS}/project`, ({ ctx }) => {
     const f = ctx.form
     const days = Number(f.sessionDays)
     const limit = Number(f.sessionsLimit)
     if (!(days >= 1) || !(limit >= 1 && limit <= 100)) throw err('general_argument_invalid', 'Session length and sessions per user must be positive.')
     ctx.services.settings.set('project', {
-      projectName: String(f.projectName ?? '').trim() || ctx.services.config.projectName,
+      projectName: value(f, 'projectName') || ctx.services.config.projectName,
       allowedOrigins: lines(f.allowedOrigins),
       sessionDuration: Math.round(days * 86400),
       sessionsLimit: Math.round(limit),
     })
-    return go(request, `${SETTINGS}#project`, { tone: 'success', text: 'Project settings saved' })
+    return ctx.go(`${SETTINGS}#project`, { tone: 'success', text: 'Project settings saved' })
   })
 
-  router.post(`${SETTINGS}/smtp`, ({ ctx, request }) => {
+  router.post(`${SETTINGS}/smtp`, ({ ctx }) => {
     const f = ctx.form
     if (f.disable) {
       ctx.services.settings.set('smtp', { disabled: true })
-      return go(request, `${SETTINGS}#email`, { tone: 'success', text: 'Email turned off' })
+      return ctx.go(`${SETTINGS}#email`, { tone: 'success', text: 'Email turned off' })
     }
-    const host = String(f.host ?? '').trim()
+    const host = value(f, 'host')
     if (!host) throw err('general_argument_invalid', 'Enter the SMTP host.')
     ctx.services.settings.set('smtp', {
       host,
       port: Number(f.port || 587),
-      user: String(f.user ?? '').trim() || undefined,
+      user: value(f, 'user') || undefined,
       password: String(f.password ?? '') || ctx.services.config.smtp?.password,
       secure: checked(f.secure),
-      senderEmail: String(f.senderEmail ?? '').trim() || 'no-reply@pesanle.com',
-      senderName: String(f.senderName ?? '').trim() || `${ctx.services.config.projectName} Team`,
+      senderEmail: value(f, 'senderEmail') || 'no-reply@pesanle.com',
+      senderName: value(f, 'senderName') || `${ctx.services.config.projectName} Team`,
     })
-    return go(request, `${SETTINGS}#email`, { tone: 'success', text: 'Email settings saved' })
+    return ctx.go(`${SETTINGS}#email`, { tone: 'success', text: 'Email settings saved' })
   })
 
   // Answers with a fragment for the inline result next to the button.
@@ -140,53 +139,52 @@ export function settingsPages(router: ConsoleRouter): void {
     }
   })
 
-  router.post(`${SETTINGS}/google`, ({ ctx, request }) => {
+  router.post(`${SETTINGS}/google`, ({ ctx }) => {
     const f = ctx.form
     if (f.disable) {
       ctx.services.settings.set('google', { disabled: true })
-      return go(request, `${SETTINGS}#google`, { tone: 'success', text: 'Google sign-in turned off' })
+      return ctx.go(`${SETTINGS}#google`, { tone: 'success', text: 'Google sign-in turned off' })
     }
-    const clientId = String(f.clientId ?? '').trim()
+    const clientId = value(f, 'clientId')
     const clientSecret = String(f.clientSecret ?? '') || ctx.services.config.google?.clientSecret || ''
     if (!clientId || !clientSecret) throw err('general_argument_invalid', 'Enter both the client ID and secret.')
     ctx.services.settings.set('google', { clientId, clientSecret })
-    return go(request, `${SETTINGS}#google`, { tone: 'success', text: 'Google sign-in saved' })
+    return ctx.go(`${SETTINGS}#google`, { tone: 'success', text: 'Google sign-in saved' })
   })
 
-  router.post(`${SETTINGS}/functions`, ({ ctx, request }) => {
-    const functionsDir = String(ctx.form.functionsDir ?? '').trim()
+  router.post(`${SETTINGS}/functions`, ({ ctx }) => {
+    const functionsDir = value(ctx.form, 'functionsDir')
     if (functionsDir && !existsSync(functionsDir)) throw err('general_argument_invalid', `No folder at ${functionsDir}.`)
-    ctx.services.settings.set('functions', { skipSchedules: ([] as unknown[]).concat(ctx.form.paused ?? []).map(String), functionsDir: functionsDir || undefined })
-    return go(request, `${SETTINGS}#schedules`, { tone: 'success', text: 'Schedules saved' })
+    ctx.services.settings.set('functions', { skipSchedules: arrayOf(ctx.form.paused), functionsDir: functionsDir || undefined })
+    return ctx.go(`${SETTINGS}#schedules`, { tone: 'success', text: 'Schedules saved' })
   })
 
-  router.post(`${SETTINGS}/:key/reset`, ({ ctx, path, request }) => {
+  router.post(`${SETTINGS}/:key/reset`, ({ ctx, path }) => {
     const key = path.key as SettingKey
     if (!['project', 'smtp', 'google', 'functions'].includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
     ctx.services.settings.reset(key)
-    return go(request, SETTINGS, { tone: 'success', text: 'Back to the env value' })
+    return ctx.go(SETTINGS, { tone: 'success', text: 'Back to the env value' })
   })
 
-  router.post(`${SETTINGS}/keys`, ({ ctx, request }) => {
-    const expire = String(ctx.form.expire ?? '').trim()
-    const { secret } = ctx.services.settings.createKey(String(ctx.form.name ?? ''), expire ? `${expire}T23:59:59.999+00:00` : null)
+  router.post(`${SETTINGS}/keys`, ({ ctx }) => {
+    const expire = value(ctx.form, 'expire')
+    const { secret } = ctx.services.settings.createKey(value(ctx.form, 'name'), expire ? `${expire}T23:59:59.999+00:00` : null)
     // Shown once in this response; never put in a URL, where history would keep it.
-    void request
     return view(ctx, secret)
   })
 
-  router.post(`${SETTINGS}/keys/:id/delete`, ({ ctx, path, request }) => {
+  router.post(`${SETTINGS}/keys/:id/delete`, ({ ctx, path }) => {
     ctx.services.settings.deleteKey(path.id!)
-    return go(request, `${SETTINGS}#keys`, { tone: 'success', text: 'Key revoked' })
+    return ctx.go(`${SETTINGS}#keys`, { tone: 'success', text: 'Key revoked' })
   })
 
-  router.post(`${SETTINGS}/admins`, async ({ ctx, request }) => {
+  router.post(`${SETTINGS}/admins`, async ({ ctx }) => {
     await ctx.auth.upsert(String(ctx.form.email ?? ''), String(ctx.form.password ?? ''))
-    return go(request, `${SETTINGS}#admins`, { tone: 'success', text: 'Admin saved' })
+    return ctx.go(`${SETTINGS}#admins`, { tone: 'success', text: 'Admin saved' })
   })
 
-  router.post(`${SETTINGS}/admins/:seq/delete`, ({ ctx, path, request }) => {
+  router.post(`${SETTINGS}/admins/:seq/delete`, ({ ctx, path }) => {
     ctx.auth.remove(Number(path.seq))
-    return go(request, `${SETTINGS}#admins`, { tone: 'success', text: 'Admin removed' })
+    return ctx.go(`${SETTINGS}#admins`, { tone: 'success', text: 'Admin removed' })
   })
 }

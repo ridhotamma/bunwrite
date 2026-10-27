@@ -16,7 +16,7 @@ memory and ~4,000 list requests a second on a laptop.
 cp .env.example .env    # PROJECT_ID, API_KEYS, SECRET at minimum
 bun install
 bun run dev             # API at http://localhost:8080/v1, console at /console
-bun test                # 108 contract tests through the real SDKs
+bun test                # 113 contract tests through the real SDKs
 ```
 
 On first run, create a console admin with `bun run console:admin you@example.com`.

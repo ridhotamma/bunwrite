@@ -36,8 +36,21 @@ folder of uploaded files.
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/` | One service and its routes each |
 | `src/settings/` | Console-edited settings over env, console API keys |
-| `src/console/` | Console sign-in, layout and pages |
+| `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
+
+### Console
+
+The console keeps the same boundaries as the API:
+
+- `src/console/app.ts` is only the request lifecycle: assets, sign-in/setup,
+  origin checks, admin auth, routing and error rendering.
+- `context.ts` defines the handler context. `ctx.go()` and `ctx.back()` choose
+  between an htmx `HX-Location` swap and a plain 303 redirect.
+- `forms.ts`, `query.ts` and `ui.ts` hold shared form parsing, paging/query
+  builders and UI pieces (list cards, live search, pagers, badges, polling).
+- `pages/` has one module per console area. `pages/databases/` splits databases,
+  documents, attributes, indexes and collection settings.
 
 ## Data model
 
