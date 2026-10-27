@@ -26,6 +26,7 @@ import { storageRoutes } from './storage/routes'
 import { SettingsService } from './settings/service'
 import { randomSecret } from './lib/ids'
 import { createConsole } from './console/app'
+import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 
 export interface Services {
   config: Config
@@ -142,11 +143,20 @@ export function createApp(services: Services) {
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       const consoleResponse = await consoleApp.handle(request, server)
       if (consoleResponse) return consoleResponse
+      const pathname = new URL(request.url).pathname
+      // The bare host is for people: send them to the console (or say the API is up).
+      if (pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
+        return services.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage()
+      }
       let response: Response | undefined
       try {
         response = await handle(request, server)
         if (!response) return undefined
       } catch (error) {
+        // A browser typing a wrong address gets a page; SDKs and /v1 keep Appwrite's JSON error.
+        if (error instanceof AppwriteError && error.type === 'general_route_not_found' && wantsHtml(request, pathname)) {
+          return notFoundPage(services.config.consoleEnabled)
+        }
         services.store.drainEvents()
         response = errorResponse(error)
         if (!(error instanceof AppwriteError)) console.error(error)

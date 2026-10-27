@@ -219,3 +219,40 @@ describe('settings through the console', () => {
     expect(res.status).toBe(303)
   })
 })
+
+describe('pages outside the API', () => {
+  const html = { accept: 'text/html,application/xhtml+xml' }
+
+  test('the bare host goes to the console', async () => {
+    const res = await fetch(`${base}/`, { redirect: 'manual', headers: html })
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe('/console')
+  })
+
+  test('a browser gets a 404 page; SDK calls and /v1 keep the JSON error', async () => {
+    const page = await fetch(`${base}/nope`, { headers: html })
+    expect(page.status).toBe(404)
+    expect(page.headers.get('content-type')).toContain('text/html')
+    expect(await page.text()).toContain('Page not found')
+
+    for (const [path, headers] of [['/v1/nope', html], ['/nope', { accept: 'application/json' }]] as const) {
+      const res = await fetch(`${base}${path}`, { headers: { ...headers, 'x-appwrite-project': PROJECT } })
+      expect(res.status).toBe(404)
+      expect(((await res.json()) as any).type).toBe('general_route_not_found')
+    }
+  })
+
+  test('with the console off, / says the API is up and 404s do not link to it', async () => {
+    server.config.consoleEnabled = false
+    try {
+      const home = await fetch(`${base}/`, { redirect: 'manual', headers: html })
+      expect(home.status).toBe(200)
+      expect(await home.text()).toContain('API is running')
+      const missing = await (await fetch(`${base}/nope`, { headers: html })).text()
+      expect(missing).not.toContain('Go to console')
+      expect((await fetch(`${base}/console`, { redirect: 'manual' })).status).toBe(404)
+    } finally {
+      server.config.consoleEnabled = true
+    }
+  })
+})
