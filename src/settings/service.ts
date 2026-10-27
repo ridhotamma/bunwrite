@@ -4,7 +4,7 @@
  * use the defaults captured when the service starts; API keys live in
  * `_api_keys`.
  */
-import type { BackupsConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
+import type { BackupsConfig, CacheConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
 import type { RenderConfig } from '~/render/service'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
@@ -18,9 +18,9 @@ export interface ProjectSettings {
   sessionsLimit: number
 }
 
-export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups' | 'render'
+export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache'
 
-export const SETTING_KEYS: SettingKey[] = ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups', 'render']
+export const SETTING_KEYS: SettingKey[] = ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups', 'render', 'cache']
 
 export interface ApiKeyRow {
   id: string
@@ -48,6 +48,7 @@ export class SettingsService {
     | 's3'
     | 'backups'
     | 'render'
+    | 'cache'
   >
 
   constructor(
@@ -69,6 +70,7 @@ export class SettingsService {
       s3: { ...config.s3 },
       backups: { ...config.backups, s3: { ...config.backups.s3 } },
       render: { ...config.render },
+      cache: { ...config.cache },
     }
     for (const key of SETTING_KEYS) this.apply(key)
   }
@@ -137,6 +139,11 @@ export class SettingsService {
       case 'render': {
         const v = this.read<Partial<RenderConfig>>('render')
         c.render = { ...this.defaults.render, ...v }
+        break
+      }
+      case 'cache': {
+        const v = this.read<Partial<CacheConfig>>('cache')
+        c.cache = { ...this.defaults.cache, ...v }
         break
       }
     }

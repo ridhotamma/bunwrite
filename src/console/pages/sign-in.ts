@@ -41,7 +41,7 @@ export function signInPage(auth: ConsoleAuth, options: SignInOptions): Response 
               ${options.instance.apiKey
                 ? html`<label>API key<input id="instance-api-key" class="mono" readonly autocomplete="off" spellcheck="false" value="${options.instance.apiKey}"><small>Copy it now; it is not shown after you create the admin.</small></label>
                   <button type="button" data-copy-target="#instance-api-key">Copy API key</button>`
-                : html`<p class="hint" style="margin:0">API keys were imported from the environment and are managed in Settings → Access.</p>`}
+                : html`<p class="hint" style="margin:0">API keys were imported from the environment and are managed on the API page.</p>`}
             </div>`
           : ''}
         ${!setup && auth.count() === 0 ? html`<p class="subdued" style="text-align:center">No admin yet. Run <code>bun run console:admin you@example.com</code> on the server.</p>` : ''}

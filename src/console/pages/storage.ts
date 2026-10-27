@@ -1,6 +1,8 @@
 import { keyCaller } from '~/auth/caller'
 import { aggregatePermissions } from '~/auth/permissions'
+import { requestEndpoint } from '~/lib/origins'
 import { publiclyReadable, type BucketRow } from '~/storage/service'
+import { fileToken } from '~/storage/tokens'
 import type { ConsoleRouter } from '~/console/context'
 import type { ConsoleContext } from '~/console/context'
 import { dialog } from '~/console/dialog'
@@ -17,10 +19,17 @@ const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word
 const extensionsOf = (b: BucketRow): string[] => JSON.parse(b.allowed_file_extensions)
 const megabytes = (b: BucketRow | null) => (b ? b.maximum_file_size / 1_000_000 : 10)
 
-/** The SDK-style URL for a file; public files open through it without a console session. */
-function fileViewUrl(ctx: ConsoleContext, bucketId: string, fileId: string): string {
-  const endpoint = ctx.services.config.publicEndpoint.replace(/\/$/, '')
-  return `${endpoint}/storage/buckets/${encodeURIComponent(bucketId)}/files/${encodeURIComponent(fileId)}/view?project=${encodeURIComponent(ctx.services.config.projectId)}`
+/**
+ * The API view URL for a file, on the host this console was opened on
+ * (localhost while developing, the public domain in production). Files that
+ * are not public get a signed token, so they open without a console session.
+ */
+function fileViewUrl(ctx: ConsoleContext, bucketId: string, fileId: string, isPublic: boolean): string {
+  const { config } = ctx.services
+  const url = new URL(`${requestEndpoint(ctx.request, config.publicEndpoint)}/storage/buckets/${encodeURIComponent(bucketId)}/files/${encodeURIComponent(fileId)}/view`)
+  url.searchParams.set('project', config.projectId)
+  if (!isPublic) url.searchParams.set('token', fileToken(config.secret, bucketId, fileId))
+  return url.toString()
 }
 
 type BucketInput = Parameters<ConsoleContext['services']['storage']['saveBucket']>[0]
@@ -204,11 +213,11 @@ export function storagePages(router: ConsoleRouter): void {
       ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Type</th><th class="num">Size</th><th class="hide-sm">Uploaded</th><th></th></tr></thead><tbody>
           ${files.map((f, i) => {
             const isPublic = publiclyReadable(b, f.$permissions)
-            const viewUrl = fileViewUrl(ctx, b.id, f.$id)
-            return html`<tr><td class="clip"><a href="${isPublic ? viewUrl : `${bucketUrl(b.id)}/files/${f.$id}/open`}" target="_blank" rel="noopener" hx-boost="false">${f.name}</a>${isPublic ? html` ${badge('Public', 'success')}` : ''}</td><td class="hide-sm subdued">${f.mimeType}</td>
+            const viewUrl = fileViewUrl(ctx, b.id, f.$id, isPublic)
+            return html`<tr><td class="clip"><a href="${viewUrl}" target="_blank" rel="noopener" hx-boost="false">${f.name}</a>${isPublic ? html` ${badge('Public', 'success')}` : ''}</td><td class="hide-sm subdued">${f.mimeType}</td>
             <td class="num">${formatBytes(f.sizeOriginal)}</td><td class="hide-sm subdued">${when(f.$createdAt)}</td>
             <td class="num"><div class="row-actions">
-              ${isPublic ? html`<button type="button" class="small plain" data-copy-target="#file-url-${i}">${icon('copy', 14)}<span data-copy-label>Copy link</span></button><span id="file-url-${i}" hidden>${viewUrl}</span>` : ''}
+              <button type="button" class="small plain" data-copy-target="#file-url-${i}" title="${isPublic ? 'Anyone with this link can open the file' : 'Signed link: anyone with it can open the file for 24 hours'}">${icon('copy', 14)}<span data-copy-label>Copy link</span></button><span id="file-url-${i}" hidden>${viewUrl}</span>
               ${destroy(`${bucketUrl(b.id)}/files/${f.$id}/delete`, 'Delete', `Delete ${f.name}?`)}
             </div></td></tr>`
           })}

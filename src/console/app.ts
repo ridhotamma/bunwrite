@@ -57,7 +57,8 @@ export function createConsole(source: Services | ProjectResolver) {
       if (url.pathname !== '/console' && !url.pathname.startsWith('/console/')) return null
       if (!control.config.consoleEnabled) return new Response('Not found', { status: 404 })
       if (url.pathname === '/console/assets/htmx.min.js') {
-        return new Response(Bun.file(htmxPath), { headers: { 'content-type': 'text/javascript', 'cache-control': 'public, max-age=86400' } })
+        const file = Bun.file(htmxPath)
+        return new Response(file, { headers: { 'content-type': 'text/javascript', 'content-length': String(file.size), 'cache-control': 'public, max-age=86400' } })
       }
 
       // Forms must come from this console (SameSite=Strict covers modern browsers; this covers the rest).

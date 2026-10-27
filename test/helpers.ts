@@ -110,6 +110,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     },
     backupsPath: './data/test-backups',
     render: { enabled: false, allowRemote: false },
+    cache: { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 },
+    compression: true,
     ...over,
   }
 }

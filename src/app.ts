@@ -6,6 +6,7 @@ import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
+import { addVary, compressResponse } from './lib/compress'
 import { AppwriteError, err } from './lib/errors'
 import { errorResponse, json, readParams } from './lib/http'
 import { clientIp, logRequest, requestId, truncate } from './lib/log'
@@ -153,7 +154,8 @@ export function createApp(source: Services | ProjectResolver) {
     const url = new URL(request.url)
     const brand = BRAND_FILES[url.pathname]
     if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
-      return new Response(Bun.file(brand.path), { headers: { 'content-type': brand.type, 'cache-control': 'public, max-age=604800' } })
+      const file = Bun.file(brand.path)
+      return new Response(file, { headers: { 'content-type': brand.type, 'content-length': String(file.size), 'cache-control': 'public, max-age=604800' } })
     }
     const consoleResponse = await consoleApp.handle(request, server)
     if (consoleResponse) return consoleResponse
@@ -178,7 +180,11 @@ export function createApp(source: Services | ProjectResolver) {
       response = errorResponse(error)
       if (!(error instanceof AppwriteError)) console.error(error)
     }
-    for (const [k, v] of Object.entries(cors(request, runtime.services.config.allowedOrigins))) response.headers.set(k, v)
+    for (const [k, v] of Object.entries(cors(request, runtime.services.config.allowedOrigins))) {
+      // Keep a handler's Vary (for example Accept-Encoding) and add Origin beside it.
+      if (k === 'vary') addVary(response.headers, v)
+      else response.headers.set(k, v)
+    }
     return response
   }
 
@@ -192,15 +198,17 @@ export function createApp(source: Services | ProjectResolver) {
       let status = 500
       let responseBytes = 0
       try {
-        const response = await respond(request, server, meta)
-        if (!response) {
+        const raw = await respond(request, server, meta)
+        if (!raw) {
           status = 101
           return undefined
         }
+        const response = control.config.compression ? await compressResponse(request, raw) : raw
         status = response.status
         responseBytes = Number(response.headers.get('content-length') ?? 0) || 0
         response.headers.set('x-request-id', id)
-        return response
+        // HEAD runs the GET handler so headers and cache validation match, then drops the body.
+        return request.method === 'HEAD' ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers }) : response
       } finally {
         const skip = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
         const runtime = meta.project ? projects.get(meta.project) : undefined
@@ -228,6 +236,8 @@ export function createApp(source: Services | ProjectResolver) {
       }
     },
     websocket: {
+      // Realtime messages are JSON; compressing them saves bandwidth for clients that support it.
+      perMessageDeflate: control.config.compression,
       open: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.open(ws),
       message: (ws: Socket, message: string | Buffer) => projects.get(ws.data.projectId)?.services.realtime.message(ws, message),
       close: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.close(ws),

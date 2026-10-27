@@ -41,6 +41,24 @@ export interface BackupsConfig {
   s3: S3Config
 }
 
+/** How long browsers may reuse files and previews, and how long previews stay on disk. */
+export interface CacheConfig {
+  /** Seconds browsers may reuse a file view or download without asking again; 0 makes them check each time. */
+  fileMaxAge: number
+  /** Seconds browsers may reuse an image preview; 0 makes them check each time. */
+  previewMaxAge: number
+  /** Days a generated preview stays on disk before it is made again; 0 keeps previews until the file changes. */
+  previewRetentionDays: number
+}
+
+/** Appwrite's own values: 45 days for files, 30 for previews. */
+export const DEFAULT_CACHE: CacheConfig = { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 }
+
+const wholeNumber = (value: string | undefined, fallback: number) => {
+  const n = Number(value)
+  return value !== undefined && value !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback
+}
+
 export const emptyS3 = (): S3Config => ({ enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false })
 
 /** Values generated on first start; shown once on the console setup page. */
@@ -116,6 +134,10 @@ export interface Config {
   backupsPath: string
   /** HTML to PDF and image rendering (POST /v1/pdf, /v1/image). */
   render: RenderConfig
+  /** Browser cache lifetimes and preview cache retention. */
+  cache: CacheConfig
+  /** Compress responses (Brotli or gzip). Server-wide; read from the main project's config. */
+  compression: boolean
   /** Set by the first-run bootstrap; not part of the environment. */
   bootstrap?: BootstrapInfo
 }
@@ -193,5 +215,11 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     backupsPrefix: '',
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
     render: { enabled: env.RENDER_ENABLED === 'true', allowRemote: env.RENDER_ALLOW_REMOTE === 'true' },
+    cache: {
+      fileMaxAge: wholeNumber(env.CACHE_FILES_MAX_AGE, DEFAULT_CACHE.fileMaxAge),
+      previewMaxAge: wholeNumber(env.CACHE_PREVIEWS_MAX_AGE, DEFAULT_CACHE.previewMaxAge),
+      previewRetentionDays: wholeNumber(env.PREVIEW_CACHE_DAYS, DEFAULT_CACHE.previewRetentionDays),
+    },
+    compression: env.COMPRESSION !== 'false',
   }
 }

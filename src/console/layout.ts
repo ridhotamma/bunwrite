@@ -32,6 +32,7 @@ const MAIN: [string, string, string, IconName][] = [
 const MANAGE: [string, string, string, IconName][] = [
   ['logs', 'Request logs', '/console/logs', 'list-bullets'],
   ['schema', 'Schema', '/console/schema', 'tree-structure'],
+  ['api', 'API', '/console/api', 'key'],
   ['settings', 'Settings', '/console/settings/general', 'gear-six'],
 ]
 

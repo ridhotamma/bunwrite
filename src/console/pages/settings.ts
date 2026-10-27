@@ -47,6 +47,8 @@ export function settingsPages(router: ConsoleRouter): void {
   router.get(SETTINGS, ({ ctx }) => ctx.go(tabPath('general')))
   router.get(`${SETTINGS}/:tab`, async ({ ctx, path }) => {
     const tab = path.tab ?? ''
+    // The old Access tab moved to its own API page.
+    if (tab === 'access') return ctx.go('/console/api')
     return isTab(tab) ? ctx.render('Settings', 'settings', await settingsView(ctx, tab)) : ctx.go(tabPath('general'))
   })
 
@@ -166,6 +168,25 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('storage'), { tone: 'success', text: 'Storage settings saved' })
   })
 
+  router.post(`${SETTINGS}/cache`, ({ ctx }) => {
+    const f = ctx.form
+    const seconds = (name: string) => {
+      const n = Number(f[name])
+      if (!Number.isFinite(n) || n < 0) throw err('general_argument_invalid', 'Cache lifetimes must be zero or more seconds.')
+      return Math.round(n)
+    }
+    const days = Number(f.previewRetentionDays)
+    if (!Number.isFinite(days) || days < 0 || days > 3650) throw err('general_argument_invalid', 'Keep previews between 0 and 3650 days.')
+    ctx.services.settings.set('cache', { fileMaxAge: seconds('fileMaxAge'), previewMaxAge: seconds('previewMaxAge'), previewRetentionDays: Math.round(days) })
+    ctx.services.storage.prunePreviews(true)
+    return ctx.go(tabPath('cache'), { tone: 'success', text: 'Cache settings saved' })
+  })
+
+  router.post(`${SETTINGS}/cache/previews/clear`, ({ ctx }) => {
+    ctx.services.storage.clearPreviews()
+    return ctx.go(tabPath('cache'), { tone: 'success', text: 'Preview cache cleared' })
+  })
+
   router.post(`${SETTINGS}/backups`, ({ ctx }) => {
     const keep = Number(ctx.form.backupsKeep)
     if (!Number.isInteger(keep) || keep < 1 || keep > 100) throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
@@ -190,19 +211,7 @@ export function settingsPages(router: ConsoleRouter): void {
     ctx.services.settings.reset(key)
     if (key === 'project') ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
     if (key === 'logs') ctx.services.requestLogs.prune()
-    return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Back to the env value' })
+    if (key === 'cache') ctx.services.storage.prunePreviews(true)
+    return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Setting reset' })
   })
-
-  router.post(`${SETTINGS}/keys`, async ({ ctx }) => {
-    const expire = value(ctx.form, 'expire')
-    const { secret } = ctx.services.settings.createKey(value(ctx.form, 'name'), expire ? `${expire}T23:59:59.999+00:00` : null)
-    // Shown once in this response; never put in a URL, where history would keep it.
-    return ctx.render('Settings', 'settings', await settingsView(ctx, 'access', secret))
-  })
-
-  router.post(`${SETTINGS}/keys/:id/delete`, ({ ctx, path }) => {
-    ctx.services.settings.deleteKey(path.id!)
-    return ctx.go(tabPath('access'), { tone: 'success', text: 'Key revoked' })
-  })
-
 }

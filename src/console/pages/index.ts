@@ -1,4 +1,5 @@
 import type { ConsoleRouter } from '~/console/context'
+import { apiPages } from './api'
 import { databasePages } from './databases'
 import { functionPages } from './functions'
 import { logPages } from './logs'
@@ -23,5 +24,6 @@ export function registerConsolePages(router: ConsoleRouter): void {
   functionPages(router)
   logPages(router)
   settingsPages(router)
+  apiPages(router)
   schemaPages(router)
 }

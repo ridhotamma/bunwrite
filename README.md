@@ -126,7 +126,8 @@ phone.
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
-| Settings | Project, email, sign-in, storage, backups, functions, logs, HTML rendering and access |
+| Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |
+| API | Project endpoint, project ID and server API keys |
 
 Settings live in the database and take effect immediately when saved in the
 console. Each setting shows whether it is customised or still at its default and

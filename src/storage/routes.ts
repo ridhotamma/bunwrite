@@ -1,10 +1,17 @@
 import type { AppContext } from '~/app'
+import { keyCaller } from '~/auth/caller'
 import { requireKey } from '~/auth/routes'
 import { bool, json, list, noContent, str } from '~/lib/http'
 import type { Router } from '~/lib/router'
 import { bucketModel, fileModel } from './service'
+import { validFileToken } from './tokens'
 
 const FILES = '/storage/buckets/:bucketId/files'
+
+/** A signed `token=` link opens that one file for anyone holding it. */
+function readerFor(ctx: AppContext, url: URL, bucketId: string, fileId: string) {
+  return validFileToken(url.searchParams.get('token'), ctx.config.secret, bucketId, fileId) ? keyCaller() : ctx.caller
+}
 
 export function storageRoutes(router: Router<AppContext>): void {
   router.get('/storage/buckets', ({ ctx }) => {
@@ -49,18 +56,18 @@ export function storageRoutes(router: Router<AppContext>): void {
     return noContent()
   })
 
-  router.get(`${FILES}/:fileId/view`, ({ ctx, path, request }) => {
-    const { file } = ctx.storage.file(ctx.caller, path.bucketId!, path.fileId!, 'read', true)
+  router.get(`${FILES}/:fileId/view`, ({ ctx, path, request, url }) => {
+    const { file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.serve(request, path.bucketId!, file, 'inline')
   })
 
-  router.get(`${FILES}/:fileId/download`, ({ ctx, path, request }) => {
-    const { file } = ctx.storage.file(ctx.caller, path.bucketId!, path.fileId!, 'read', true)
+  router.get(`${FILES}/:fileId/download`, ({ ctx, path, request, url }) => {
+    const { file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.serve(request, path.bucketId!, file, 'attachment')
   })
 
   router.get(`${FILES}/:fileId/preview`, ({ ctx, path, request, url }) => {
-    const { bucket, file } = ctx.storage.file(ctx.caller, path.bucketId!, path.fileId!, 'read', true)
+    const { bucket, file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.preview(request, url, bucket, file)
   })
 }

@@ -12,7 +12,7 @@ import { deflateRawSync } from 'node:zlib'
 import { ConsoleAuth } from '~/console/auth'
 import { Deployments } from '~/functions/deployments'
 import { extractZip } from '~/functions/zip'
-import { PROJECT, startServer, type TestServer } from './helpers'
+import { makeUser, PROJECT, sessionClient, startServer, type TestServer } from './helpers'
 
 let server: TestServer
 let base: string
@@ -128,6 +128,11 @@ describe('console function creation', () => {
     expect(JSON.parse(result.body).message).toBe('Hello from your new function')
     expect((await run('hello', '/ping')).body).toBe('pong')
 
+    // A normal signed-in client can execute it without an API key.
+    const user = makeUser(server.db)
+    const clientRun = await sessionClient(server.endpoint, user.secret).functions.createExecution({ functionId: 'hello' })
+    expect(clientRun.status).toBe('completed')
+
     const page = await (await get('/console/functions/hello')).text()
     expect(page).toContain('id="deploy-code"')
     // An existing function's deploy dialog opens on its own code, not the template.
@@ -138,6 +143,13 @@ describe('console function creation', () => {
     expect(deployments).toContain('Active')
     const settings = await (await get('/console/functions/hello/settings')).text()
     expect(settings).toContain('Live deployment')
+    expect(settings).toContain(`${server.endpoint}/functions/hello/http`)
+    expect(settings).toContain('id="function-http-url"')
+    expect(settings).toContain('Copy function URL')
+    // Appwrite's default lets client SDKs call a new function.
+    expect(JSON.parse(server.services.functions.fn('hello').execute)).toEqual(['any'])
+    expect(settings).toContain('name="execute" value="any"')
+    expect(settings).toContain('Empty means API keys only')
   })
 
   test('refuses bad input before creating anything', async () => {

@@ -49,6 +49,11 @@ export class Router<C> {
   delete = (p: string, h: Handler<C>) => this.on('DELETE', p, h)
 
   match(method: string, pathname: string): { handler: Handler<C>; path: Record<string, string>; raw: boolean } | null {
+    // HEAD is GET without the body; app.fetch strips it after the handler runs.
+    return this.find(method, pathname) ?? (method === 'HEAD' ? this.find('GET', pathname) : null)
+  }
+
+  private find(method: string, pathname: string): { handler: Handler<C>; path: Record<string, string>; raw: boolean } | null {
     for (const route of this.routes) {
       if (route.method !== method) continue
       const m = route.pattern.exec(pathname)

@@ -4,7 +4,7 @@
  * x-appwrite-id), Range reads for video, and resized previews through sharp.
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, openSync, writeSync, closeSync, renameSync, rmSync, statSync, existsSync } from 'node:fs'
+import { mkdirSync, openSync, writeSync, closeSync, renameSync, rmSync, statSync, existsSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import type { Caller } from '~/auth/caller'
@@ -12,6 +12,7 @@ import { aggregatePermissions, grants, parsePermission, type PermissionType } fr
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
+import { isCompressible } from '~/lib/compress'
 import { now } from '~/lib/datetime'
 import { AppwriteError, err } from '~/lib/errors'
 import { isValidId, resolveId } from '~/lib/ids'
@@ -20,6 +21,26 @@ import { normalizeAttribute, type Collection } from '~/schema/types'
 import { s3Client, s3Key } from './s3'
 import { loadSharp } from './sharp'
 import { previewKey, previewOptions, renderPreview } from './transform'
+
+/** Cache headers for a file or preview: `private` so only the visitor's browser keeps it, never a shared proxy. */
+function cacheHeaders(maxAge: number, etag: string): Record<string, string> {
+  return { 'cache-control': maxAge > 0 ? `private, max-age=${maxAge}` : 'private, no-cache', etag }
+}
+
+/** A 304 when the browser already has this version (If-None-Match uses weak comparison). */
+function notModified(request: Request, headers: Record<string, string>): Response | null {
+  const header = request.headers.get('if-none-match')
+  if (!header) return null
+  const tags = header.split(',').map((t) => t.trim().replace(/^W\//, ''))
+  if (!tags.includes('*') && !tags.includes(headers.etag!)) return null
+  return new Response(null, {
+    status: 304,
+    headers: { etag: headers.etag!, 'cache-control': headers['cache-control']!, ...(headers.vary ? { vary: headers.vary } : {}) },
+  })
+}
+
+/** File contents never change after upload, so the checksum (or the ID) names the version. */
+const fileEtag = (file: FileRow) => `"${file.signature || `${file.id}-${file.size_original}`}"`
 
 /** Previews rendered at once (PREVIEW_CONCURRENCY, default 4); more wait in line. */
 function previewConcurrency(): number {
@@ -400,10 +421,14 @@ export class StorageService {
     const headers: Record<string, string> = {
       'content-type': file.mime_type,
       'content-disposition': `${disposition}; filename="${encodeURIComponent(file.name)}"`,
-      'cache-control': 'private, max-age=3888000',
+      ...cacheHeaders(this.config.cache.fileMaxAge, fileEtag(file)),
       'accept-ranges': 'bytes',
       'x-content-type-options': 'nosniff',
     }
+    // A compressed 200 varies by Accept-Encoding; its 304 must carry the same Vary.
+    if (this.config.compression && isCompressible(file.mime_type)) headers.vary = 'Accept-Encoding'
+    const unchanged = notModified(request, headers)
+    if (unchanged) return unchanged
     const range = request.headers.get('range')
     const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range) : null
 
@@ -469,7 +494,11 @@ export class StorageService {
 
     const options = previewOptions(url.searchParams, file.mime_type)
     const format = options.format
-    const cached = join(this.config.storagePath, '.previews', bucket.id, file.id, previewKey(options))
+    const key = previewKey(options)
+    const cached = join(this.config.storagePath, '.previews', bucket.id, file.id, key)
+    const caching = cacheHeaders(this.config.cache.previewMaxAge, `"${fileEtag(file).slice(1, -1)}-${createHash('sha1').update(key).digest('hex').slice(0, 12)}"`)
+    const unchanged = notModified(request, caching)
+    if (unchanged) return unchanged
     if (!existsSync(cached)) {
       let sharp: any
       try {
@@ -503,9 +532,63 @@ export class StorageService {
       headers: {
         'content-type': mime,
         'content-length': String(statSync(cached).size),
-        'cache-control': 'private, max-age=2592000',
+        ...caching,
         'x-content-type-options': 'nosniff',
       },
     })
+  }
+
+  // ------------------------------------------------------------ preview cache
+
+  private get previewRoot(): string {
+    return join(this.config.storagePath, '.previews')
+  }
+
+  private lastPreviewPrune = 0
+
+  /** Delete previews older than the retention setting. Runs at most once an hour unless forced. */
+  prunePreviews(force = false): number {
+    const days = this.config.cache.previewRetentionDays
+    if (!days || !existsSync(this.previewRoot)) return 0
+    if (!force && Date.now() - this.lastPreviewPrune < 60 * 60 * 1000) return 0
+    this.lastPreviewPrune = Date.now()
+    const cutoff = Date.now() - days * 86400 * 1000
+    let removed = 0
+    for (const path of this.previewFiles()) {
+      try {
+        if (statSync(path).mtimeMs < cutoff) {
+          rmSync(path, { force: true })
+          removed++
+        }
+      } catch {
+        // Deleted meanwhile, for example with its file.
+      }
+    }
+    return removed
+  }
+
+  /** How many previews are cached on disk, and their size. */
+  previewCacheStats(): { files: number; bytes: number } {
+    let files = 0
+    let bytes = 0
+    for (const path of this.previewFiles()) {
+      try {
+        bytes += statSync(path).size
+        files++
+      } catch {}
+    }
+    return { files, bytes }
+  }
+
+  /** Remove every cached preview; they are made again on the next request. */
+  clearPreviews(): void {
+    rmSync(this.previewRoot, { recursive: true, force: true })
+  }
+
+  private previewFiles(): string[] {
+    if (!existsSync(this.previewRoot)) return []
+    return readdirSync(this.previewRoot, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && !entry.name.endsWith('.tmp'))
+      .map((entry) => join(entry.parentPath, entry.name))
   }
 }

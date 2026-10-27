@@ -1,7 +1,6 @@
 /** Settings tab markup. The page loads data and validates writes; this module renders it. */
 import type { BackupFile } from '~/backups/service'
 import type { S3Config } from '~/config'
-import { dialog } from '~/console/dialog'
 import { envBulkDialog } from '~/console/env-vars'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
@@ -9,6 +8,7 @@ import { SETTINGS, TABS, type SettingsTab } from '~/console/settings-meta'
 import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, tabs, when } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
+import { MIN_COMPRESS_BYTES } from '~/lib/compress'
 
 function codeFound(ctx: ConsoleContext): Html {
   const fns = ctx.services.functions.list()
@@ -147,13 +147,60 @@ function functionCards(ctx: ConsoleContext): Html {
     ${envBulkDialog({ id: 'bulk-global-vars', title: 'Import global variables', action: `${SETTINGS}/functions/variables/bulk` })}`
 }
 
+/** Browser cache choices; a value set in env that is not listed shows as its own option. */
+export const CACHE_CHOICES: [number, string][] = [
+  [0, 'Off, check every time'],
+  [3600, '1 hour'],
+  [86400, '1 day'],
+  [604800, '7 days'],
+  [2592000, '30 days'],
+  [3888000, '45 days'],
+  [31536000, '1 year'],
+]
+
+function cacheSelect(name: string, seconds: number): Html {
+  const choices = CACHE_CHOICES.some(([s]) => s === seconds) ? CACHE_CHOICES : [...CACHE_CHOICES, [seconds, `${seconds.toLocaleString('en-US')} seconds`] as [number, string]]
+  return html`<select name="${name}">${choices.map(([s, label]) => html`<option value="${s}" ${s === seconds ? 'selected' : ''}>${label}</option>`)}</select>`
+}
+
+function cacheCards(ctx: ConsoleContext): Html {
+  const c = ctx.services.config.cache
+  const stats = ctx.services.storage.previewCacheStats()
+  const compression = ctx.services.config.compression
+  return html`${card(ctx, 'cache', 'Cache lifetimes', 'cache', 'How long browsers reuse files and image previews before asking again, and how long generated previews stay on disk.', html`
+    <form method="post" action="${SETTINGS}/cache">
+      <div class="fields">
+        <label>File views and downloads${cacheSelect('fileMaxAge', c.fileMaxAge)}</label>
+        <label>Image previews${cacheSelect('previewMaxAge', c.previewMaxAge)}</label>
+      </div>
+      <label>Keep generated previews (days)<input name="previewRetentionDays" type="number" min="0" max="3650" value="${c.previewRetentionDays}"><small>Older previews are deleted and made again on the next request. 0 keeps them until the file is deleted.</small></label>
+      <p class="help">Files are cached as private, so only the visitor's browser keeps them, never a shared proxy. When the time is up the browser asks again and gets a quick "not modified" reply if the file is the same. Uploaded files never change, so long lifetimes are safe.</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`)}
+    ${card(ctx, 'previews', 'Generated previews', null, 'Resized and converted images made for preview links, kept on this server so each size is made once.', html`
+      <ul class="list">
+        <li><span class="subdued">Cached previews</span><span>${stats.files.toLocaleString('en-US')}</span></li>
+        <li><span class="subdued">Disk space</span><span>${formatBytes(stats.bytes)}</span></li>
+      </ul>
+      <form method="post" action="${SETTINGS}/cache/previews/clear" data-confirm="Delete all ${stats.files} cached previews? They are made again when next requested." data-confirm-label="Clear previews" class="foot">
+        <button ${stats.files ? '' : 'disabled'}>Clear previews</button>
+      </form>`)}
+    ${card(ctx, 'compression', 'Compression', null, 'Applies to the whole server, every project and the console.', html`
+      <ul class="list">
+        <li><span class="subdued">Responses</span><span>${compression ? badge('On', 'success') : badge('Off')}</span></li>
+        <li><span class="subdued">Encodings</span><span>Brotli, else gzip</span></li>
+        <li><span class="subdued">Realtime messages</span><span>${compression ? 'Per-message deflate' : 'Off'}</span></li>
+      </ul>
+      <p class="help">JSON, HTML, scripts, text, SVG and other text-based responses over ${formatBytes(MIN_COMPRESS_BYTES)} are compressed. Images, video, zip and PDF are already compressed and go out as they are. ${compression ? html`Set <code>COMPRESSION=false</code> only if a proxy in front already compresses.` : html`Turned off with <code>COMPRESSION=false</code>.`}</p>`)}`
+}
+
 function logsCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   return card(ctx, 'logs', 'Request logs', 'logs', 'How long request logs are kept, and whether client IP addresses are stored.', html`
     <form method="post" action="${SETTINGS}/logs">
       <div class="fields">
         <label>Retention (days)<input name="retentionDays" type="number" min="0" value="${c.logRetentionDays}"><small>0 keeps logs until you clear them.</small></label>
-        <label class="check"><input type="checkbox" name="logIp" ${c.logIp ? 'checked' : ''}>Store IP addresses<small>&nbsp;· off keeps visitor IPs out of logs</small></label>
+        <label class="check"><input type="checkbox" name="logIp" ${c.logIp ? 'checked' : ''}><span>Store IP addresses</span><small>Off keeps visitor IPs out of logs.</small></label>
       </div>
       <p class="help">Recording is ${c.logRequests ? 'on' : 'off'} (LOG_REQUESTS). <a href="/console/logs">Open request logs</a>.</p>
       <div class="foot"><button>Save</button></div>
@@ -168,8 +215,8 @@ function renderCards(ctx: ConsoleContext): Html {
     : html`<b style="color:var(--critical)">Chromium not found.</b> Install <code>chromium</code> (Docker: build with <code>BUNWRITE_WITH_CHROMIUM=true</code>) or set <code>CHROME_PATH</code>.`
   return html`${card(ctx, 'render', 'HTML rendering', 'render', 'Render HTML to PDF (POST /v1/pdf) or to png, jpg, webp, avif and gif images (POST /v1/image) with an API key. Uses headless Chromium, about 150 MB while rendering.', html`
     <form method="post" action="${SETTINGS}/render">
-      <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}>Enable HTML rendering</label>
-      <label class="check"><input type="checkbox" name="allowRemote" ${c.allowRemote ? 'checked' : ''}>Allow remote images, fonts and stylesheets<small>&nbsp;· off blocks every http(s) request; embed assets as data: URLs</small></label>
+      <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}><span>Enable HTML rendering</span><small>Off disables POST /v1/pdf and POST /v1/image.</small></label>
+      <label class="check"><input type="checkbox" name="allowRemote" ${c.allowRemote ? 'checked' : ''}><span>Allow remote images, fonts and stylesheets</span><small>Off blocks every http(s) request; embed assets as data: URLs instead.</small></label>
       <p class="help">${chrome}</p>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`)}
@@ -183,38 +230,12 @@ function renderCards(ctx: ConsoleContext): Html {
       : ''}`
 }
 
-function accessCards(ctx: ConsoleContext): Html {
-  const keys = ctx.services.settings.listKeys()
-  return html`
-    ${card(ctx, 'keys', 'API keys', null, 'Server keys with full access. Create one per app so it can be rotated or revoked on its own.', html`
-      ${keys.length
-        ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Key</th><th>Last used</th><th class="hide-sm">Expires</th><th></th></tr></thead><tbody>
-          ${keys.map((k) => html`<tr><td>${k.name}</td><td class="mono hide-sm">${k.hint}…</td><td>${when(k.accessed_at)}</td><td class="hide-sm">${k.expire ? when(k.expire) : 'Never'}</td>
-            <td class="num">${destroy(`${SETTINGS}/keys/${k.id}/delete`, 'Revoke', `Revoke ${k.name}? Apps using it stop working.`)}</td></tr>`)}</tbody></table></div>`
-        : ''}
-      <form method="post" action="${SETTINGS}/keys" style="margin-top:12px" hx-push-url="false"><div class="fields"><label>Name<input name="name" required placeholder="Dashboard server"></label><label>Expires<input name="expire" type="date"><small>Optional.</small></label></div>
-        <div class="foot"><button>Create key</button></div></form>`)}
-    ${card(ctx, 'members', 'Console members', null, 'Console access is managed at the organization level. Invite people, change their roles or remove them there.', html`
-      <a class="btn" href="/console/organization/members">Manage organization members</a>`)}`
-}
-
-function apiKeyDialog(secret: string): Html {
-  return dialog({
-    id: 'api-key-dialog',
-    title: 'API key created',
-    open: true,
-    body: html`<p class="dialog-message">Copy this key now. It is not shown again.</p>
-      <label>Key<input id="api-key-value" class="mono" readonly autocomplete="off" spellcheck="false" value="${secret}"></label>`,
-    actions: html`<button type="button" data-copy-target="#api-key-value">${icon('copy')}<span data-copy-label>Copy key</span></button><button type="button" class="primary" data-dialog-close>Done</button>`,
-  })
-}
-
 /** An inline result for htmx requests, such as the SMTP test button. */
 export function inlineStatus(message: string, tone: 'success' | 'critical'): Html {
   return html`<span style="color:var(--${tone})">${message}</span>`
 }
 
-export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, created?: string): Promise<Html> {
+export async function settingsView(ctx: ConsoleContext, tab: SettingsTab): Promise<Html> {
   let body: Html
   switch (tab) {
     case 'general':
@@ -235,15 +256,14 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, create
     case 'logs':
       body = logsCard(ctx)
       break
+    case 'cache':
+      body = cacheCards(ctx)
+      break
     case 'render':
       body = renderCards(ctx)
-      break
-    case 'access':
-      body = accessCards(ctx)
       break
   }
   return html`${header('Settings', { subtitle: ctx.currentProject.name })}
     ${tabs(TABS, tab)}
-    ${body}
-    ${created ? apiKeyDialog(created) : ''}`
+    ${body}`
 }

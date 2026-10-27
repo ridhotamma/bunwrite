@@ -71,7 +71,7 @@ an empty database — useful when reusing an existing Appwrite project ID and AP
 key. They are imported once into the database and then ignored:
 
 - `ORG_ID`, `PROJECT_ID`, `PROJECT_NAME`
-- `API_KEYS` (imported hashed into **Settings → Access**)
+- `API_KEYS` (imported hashed into **Console → API**)
 - `SECRET` (at least 32 random characters, `openssl rand -hex 32`)
 - `ALLOWED_ORIGINS`, `SESSION_DURATION`, `SESSIONS_LIMIT`
 - `SMTP_*`, `GOOGLE_*`, `FUNCTIONS_SKIP_SCHEDULES`
@@ -81,7 +81,7 @@ sessions, SMTP, Google and function schedules) in the console; the project ID
 is fixed for the life of the project. Confirm the project ID and API key, then
 remove the seed values from `.env`; keeping them only produces a warning that
 they are ignored. Keep the API key somewhere safe (or create a fresh key in
-**Settings → Access**) before deleting `API_KEYS` from `.env`, because the
+**Console → API**) before deleting `API_KEYS` from `.env`, because the
 console only stores its hash and cannot show it again.
 
 Create or reset the first console admin:
@@ -96,7 +96,7 @@ server (or through an SSH tunnel). That page creates the admin and shows the
 generated organization ID, project ID and API key. The same values are printed
 in the startup log until the first admin exists. If you create the admin with
 the command above before the first start, create an API key later in
-**Console → Settings → Access**.
+**Console → API**.
 
 Email, Google sign-in, storage, backups, functions and request-log settings can
 be changed later in the console.

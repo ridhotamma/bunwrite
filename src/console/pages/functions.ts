@@ -11,6 +11,7 @@ import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { createFunctionDialog, deployDialog, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { err } from '~/lib/errors'
+import { requestEndpoint } from '~/lib/origins'
 
 const FN = '/console/functions'
 const FUNCTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/
@@ -18,6 +19,8 @@ const FUNCTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/
 const MAX_EDIT_BYTES = 256 * 1024
 
 const functionUrl = (id: string) => `${FN}/${encodeURIComponent(id)}`
+const functionHttpUrl = (ctx: ConsoleContext, f: FunctionRow) =>
+  `${requestEndpoint(ctx.request, ctx.services.config.publicEndpoint)}/functions/${encodeURIComponent(f.id)}/http`
 const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 
 const deploymentsOf = (ctx: ConsoleContext) => new Deployments(ctx.services.db, ctx.services.config, ctx.services.functions)
@@ -188,7 +191,8 @@ export function functionPages(router: ConsoleRouter): void {
     const f = ctx.services.functions.create(id, {
       name,
       runtime,
-      execute: [],
+      // Appwrite's default: client SDKs and guests may call it until the admin narrows this.
+      execute: ['any'],
       events: [],
       schedule: value(ctx.form, 'schedule'),
       timeout: 15,
@@ -283,7 +287,7 @@ export function functionPages(router: ConsoleRouter): void {
           html`<form method="post" action="${functionUrl(f.id)}">
             <label>Schedule<input name="schedule" class="mono" value="${f.schedule}" placeholder="0 * * * *"><small>Cron, in UTC. Empty for none.</small></label>
             <div class="fields"><label>Timeout (seconds)<input name="timeout" type="number" min="1" max="900" value="${f.timeout}"></label>
-              <label>Who may run it<input name="execute" value="${JSON.parse(f.execute).join(', ')}" placeholder="any"><small>Roles, comma-separated. API keys always may.</small></label></div>
+              <label>Who may run it<input name="execute" value="${JSON.parse(f.execute).join(', ')}" placeholder="any, users, team:ID"><small>Roles, comma-separated. <code>any</code> lets everyone call it, <code>users</code> only signed-in users. Empty means API keys only; API keys always may.</small></label></div>
             <label class="check"><input type="checkbox" name="enabled" ${f.enabled ? 'checked' : ''}>Enabled</label>
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
@@ -296,7 +300,7 @@ export function functionPages(router: ConsoleRouter): void {
             <li><span class="subdued">Source</span><span>${fromDeployment ? 'Live deployment' : code.dir ? 'Code folder' : html`<span style="color:var(--critical)">None</span>`}</span></li>
             ${code.dir && !fromDeployment ? html`<li><span class="subdued">Folder</span><span class="mono clip">${code.dir}</span></li>` : ''}
             <li><span class="subdued">Entry file</span><span class="mono">${code.entrypoint}</span></li>
-            <li><span class="subdued">HTTP endpoint</span><span class="mono clip">/v1/functions/${f.id}/http</span></li>
+            <li><span class="subdued">HTTP endpoint</span>${copyableId(functionHttpUrl(ctx, f), 'function-http-url', 'Copy function URL')}</li>
           </ul>
           <p class="help">${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'} <a href="${functionUrl(f.id)}/deployments">View deployments</a></p>`,
         )}

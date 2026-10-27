@@ -213,9 +213,14 @@ describe('settings through the console', () => {
     const general = await (await get('/console/settings/general')).text()
     expect(general).toContain('Project')
     expect(general).not.toContain('Global function variables')
+    expect(general).not.toContain('/console/settings/access')
     const functions = await (await get('/console/settings/functions')).text()
     expect(functions).toContain('Global function variables')
-    expect(functions).not.toContain('id="keys"') // the Access tab's API keys card
+    expect(functions).not.toContain('id="keys"')
+    // Access moved to the dedicated API page.
+    const access = await get('/console/settings/access')
+    expect(access.status).toBe(303)
+    expect(access.headers.get('location')).toBe('/console/api')
   })
 
   test('project settings apply at once and can reset to their defaults', async () => {
@@ -366,12 +371,19 @@ describe('settings through the console', () => {
   })
 
   test('API keys: shown once, work with the SDK, stop working when revoked', async () => {
-    const res = await form('/console/settings/keys', { name: 'CI', expire: '' })
+    const page = await (await get('/console/api')).text()
+    expect(page).toContain('API keys')
+    expect(page).toContain('id="api-endpoint"')
+    expect(page).toContain('id="api-project-id"')
+    expect(page).toContain('href="/console/api"')
+    expect(page).not.toContain('Console members')
+
+    const res = await form('/console/api/keys', { name: 'CI', expire: '' })
     const html = await res.text()
     expect(html).toContain('id="api-key-dialog"')
     expect(html).toContain('data-open')
     const secret = /(standard_[0-9a-f]{128})/.exec(html)![1]!
-    const list = await (await get('/console/settings/access')).text()
+    const list = await (await get('/console/api')).text()
     expect(list).not.toContain(secret)
     expect(list).toContain('data-confirm=')
     expect(list).not.toContain('hx-confirm=')
@@ -379,15 +391,8 @@ describe('settings through the console', () => {
     client.client.setKey(secret)
     expect((await client.databases.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.limit(1)] })).total).toBeGreaterThanOrEqual(0)
     const id = server.services.settings.listKeys()[0]!.id
-    await form(`/console/settings/keys/${id}/delete`, {})
+    await form(`/console/api/keys/${id}/delete`, {})
     expect(await client.databases.listDocuments({ databaseId: DB, collectionId: 'products' }).catch((e: any) => e.code)).toBe(401)
-  })
-
-  test('console access points at organization members', async () => {
-    const page = await (await get('/console/settings/access')).text()
-    expect(page).toContain('Console access is managed at the organization level')
-    expect(page).toContain('href="/console/organization/members"')
-    expect(page).not.toContain('/console/settings/admins')
   })
 
   test('database, user and storage pages read through their services', async () => {
@@ -439,9 +444,20 @@ describe('settings through the console', () => {
       expect(files).toContain('id="upload-file"')
       expect(files).toContain('Page 1 of 1 · 1 file')
       expect(files).not.toContain('Bucket permissions</h3>')
-      // Private files stay behind the admin-only console route.
-      expect(files).toContain('/console/storage/page-bucket/files/')
-      expect(files).not.toContain('Copy link')
+      // Private files get a signed API link that opens without a console session.
+      const privateId = (server.db.sqlite.query("SELECT id FROM _files WHERE bucket_id = 'page-bucket'").get() as { id: string }).id
+      const signed = new RegExp(`href="(${server.endpoint}/storage/buckets/page-bucket/files/${privateId}/view\\?project=${PROJECT}&amp;token=[^"]+)"`).exec(files)
+      expect(signed).not.toBeNull()
+      expect(files).toContain('Copy link')
+      const signedUrl = signed![1]!.replaceAll('&amp;', '&')
+      const signedView = await fetch(signedUrl, { redirect: 'manual' })
+      expect(signedView.status).toBe(200)
+      expect(await signedView.text()).toBe('hello')
+      expect((await fetch(signedUrl.replace(/token=[^&]+/, 'token=1.bad'))).status).toBe(404)
+      expect((await fetch(signedUrl.replace(/token=[^&]+/, ''))).status).toBe(404)
+      // Behind a proxy, links use the public host the browser used.
+      const proxied = await (await fetch(`${base}/console/storage/page-bucket`, { headers: { cookie, 'x-forwarded-host': 'files.example.com', 'x-forwarded-proto': 'https', 'x-forwarded-for': '203.0.113.9' } })).text()
+      expect(proxied).toContain(`href="https://files.example.com/v1/storage/buckets/page-bucket/files/${privateId}/view?project=${PROJECT}&amp;token=`)
       const settingsPage = await (await get('/console/storage/page-bucket/settings')).text()
       expect(settingsPage).toContain('Delete bucket')
       expect(settingsPage).toContain('name="section" value="access"')

@@ -120,7 +120,8 @@ export function functionRoutes(router: Router<AppContext>): void {
     const settings = settingsFrom(params, {
       name: id,
       runtime: '',
-      execute: [],
+      // Appwrite's default: client SDKs and guests may call it until the admin narrows this.
+      execute: ['any'],
       events: [],
       schedule: '',
       timeout: 15,

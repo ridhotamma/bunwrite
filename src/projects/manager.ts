@@ -134,6 +134,7 @@ export class ProjectManager implements ProjectResolver {
       backups: { ...base.backups, s3: { ...base.backups.s3 } },
       backupsPrefix: info.id,
       render: { ...base.render },
+      cache: { ...base.cache },
       smtp: base.smtp ? { ...base.smtp } : null,
       google: base.google ? { ...base.google } : null,
       allowedOrigins: [...base.allowedOrigins],
@@ -290,6 +291,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.auth.pruneExpired()
       runtime.services.functions.prune()
       runtime.services.requestLogs.prune()
+      runtime.services.storage.prunePreviews()
     }
   }
 

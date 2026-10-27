@@ -181,7 +181,7 @@ select:not([multiple]){appearance:none;-webkit-appearance:none;background-image:
 select:not([multiple]):disabled{color:var(--disabled);cursor:not-allowed;opacity:.65}
 .toolbar select{flex:0 0 auto;min-width:150px}
 textarea{min-height:80px;resize:vertical}textarea.tall{min-height:300px}
-label.check{display:flex;gap:8px;align-items:center}label.check input{width:16px;min-height:16px;margin:0}
+label.check{display:flex;flex-wrap:wrap;gap:2px 8px;align-content:flex-start;align-items:flex-start;margin-bottom:12px}label.check input{width:16px;min-height:16px;margin:3px 0 0;flex:none}label.check>small{display:block;flex:0 0 100%;margin:0 0 0 24px;color:var(--subdued);font-size:12px;line-height:16px}
 .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px}
 button,.btn{font:inherit;font-weight:550;border:0;border-radius:8px;padding:6px 12px;min-height:28px;cursor:pointer;background:var(--surface);color:var(--text);box-shadow:var(--shadow);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
 button:hover,.btn:hover{background:#f7f7f7;text-decoration:none}
