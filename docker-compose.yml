@@ -2,7 +2,7 @@
 # from the cgroup limits below), so the same file works on a small VPS or a
 # larger machine.
 #
-#   cp .env.example .env    # set DOMAIN (and other overrides)
+#   cp .env.example .env    # set DOMAIN; COMPOSE_PROFILES controls the bundled Caddy
 #   docker compose up -d --build
 #
 # See docs/DEPLOY.md ("Docker Compose") for admin setup, functions and backups.
@@ -62,10 +62,13 @@ services:
         max-size: 10m
         max-file: "3"
 
-  # Automatic HTTPS for DOMAIN. Caddy obtains and renews the certificate itself;
-  # it only needs DNS pointing here and ports 80/443 open. Certificate state is
+  # Automatic HTTPS for DOMAIN. Opt in with COMPOSE_PROFILES=caddy in .env (see
+  # .env.example); without the profile this service is skipped and you can use
+  # your own reverse proxy. Caddy obtains and renews the certificate itself; it
+  # only needs DNS pointing here and ports 80/443 open. Certificate state is
   # kept in the caddy-data volume, so restarts do not re-issue certificates.
   caddy:
+    profiles: ["caddy"]
     image: caddy:2-alpine
     restart: unless-stopped
     depends_on:

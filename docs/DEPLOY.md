@@ -148,14 +148,26 @@ to about 70 MB.
 
 ```bash
 cp .env.example .env
-$EDITOR .env          # set DOMAIN=appwrite.example.com (and optional seed values)
+$EDITOR .env          # set DOMAIN=appwrite.example.com and COMPOSE_PROFILES=caddy
 docker compose up -d --build
 curl https://appwrite.example.com/v1/health
 ```
 
-`docker compose` starts two containers: `bunwrite` and `caddy`. Caddy publishes
-ports 80/443 and obtains a Let's Encrypt certificate for `DOMAIN` automatically.
-Requirements:
+`docker compose` can start two containers: `bunwrite` and `caddy`. Caddy
+publishes ports 80/443 and obtains a Let's Encrypt certificate for `DOMAIN`
+automatically. It is opt-in through a Compose profile stored in `.env`:
+
+```env
+# .env
+COMPOSE_PROFILES=caddy   # Bunwrite + Caddy (automatic HTTPS)
+# COMPOSE_PROFILES=      # Bunwrite only (bring your own reverse proxy)
+```
+
+`docker compose up -d` reads this value from `.env`, so no extra flag is needed.
+Without the profile, `caddy` is not created at all — nothing is installed,
+pulled or run.
+
+Requirements when Caddy is enabled:
 
 - `appwrite.example.com` has an **A record** (and AAAA if you use IPv6) pointing
   at this server. Bunwrite and Caddy cannot create that record — add it at your
@@ -180,11 +192,24 @@ re-issue certificates.
 (Console → Overview shows it). Set `PUBLIC_ENDPOINT` explicitly only when TLS
 ends somewhere else.
 
-If you already have a reverse proxy or Cloudflare Tunnel on the host, do not
-start the bundled Caddy — run the app alone and point your proxy at it:
+If you already have a reverse proxy or Cloudflare Tunnel on the host, leave
+`COMPOSE_PROFILES` empty and point your proxy at `127.0.0.1:8080`:
+
+```env
+# .env
+COMPOSE_PROFILES=
+```
 
 ```bash
-docker compose up -d bunwrite
+docker compose up -d
+```
+
+If Caddy was already running from an earlier start, disabling the profile does
+not stop it (`docker compose up` only ensures the selected services). Remove it
+once:
+
+```bash
+docker compose --profile caddy rm -sf caddy
 ```
 
 Create the first console admin:

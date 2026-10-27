@@ -209,7 +209,7 @@ Or run it with Docker Compose. It auto-tunes to the host's CPU and RAM; set
 cgroup limits in `docker-compose.yml` if you share the host with other services:
 
 ```bash
-cp .env.example .env   # set DOMAIN=appwrite.example.com, server tweaks and first-start seeds
+cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy for automatic HTTPS, seeds
 docker compose up -d --build
 ```
 
