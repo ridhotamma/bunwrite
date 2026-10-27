@@ -73,14 +73,21 @@ services:
     restart: unless-stopped
     depends_on:
       - bunwrite
+    # Wait for DOMAIN to point here before starting, so a first install can run
+    # before DNS has propagated without burning ACME attempts and backing off.
+    entrypoint: ["/bin/sh", "/usr/local/bin/caddy-entrypoint.sh"]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      CADDY_WAIT_DNS: ${CADDY_WAIT_DNS:-true}
+      CADDY_WAIT_IP: ${CADDY_WAIT_IP:-}
+      CADDY_WAIT_INTERVAL: ${CADDY_WAIT_INTERVAL:-10}
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp" # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./scripts/caddy-entrypoint.sh:/usr/local/bin/caddy-entrypoint.sh:ro
       - caddy-data:/data
       - caddy-config:/config
     logging:

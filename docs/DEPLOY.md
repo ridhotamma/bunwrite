@@ -183,10 +183,23 @@ curl -i https://appwrite.example.com/v1/health
 docker compose logs -f caddy
 ```
 
-If DNS was not ready on the first start, Caddy retries on its own; after fixing
-DNS, `docker compose restart caddy` forces an immediate attempt. Certificate
-state lives in the `caddy-data` volume, so restarts and image updates do not
-re-issue certificates.
+If DNS was not ready on the first start, nothing to do: Caddy's entrypoint
+waits for `DOMAIN` to resolve to this server before it starts (polling every 10
+seconds) and logs `[caddy] waiting for …`. As soon as the record appears, Caddy
+starts and issues the certificate on the first attempt. Watch it with:
+
+```bash
+docker compose logs -f caddy
+```
+
+When a proxy or tunnel (Cloudflare, another host) hides the origin address, the
+comparison cannot match: set `CADDY_WAIT_IP` to the address the record should
+point at, or `CADDY_WAIT_DNS=false` to start immediately. If Caddy has already
+started and issuance failed (for example the record changed later), it retries
+on its own with exponential backoff for up to 30 days (at most one attempt a
+day). `docker compose restart caddy` or a reload only forces an immediate
+attempt. Certificate state lives in the `caddy-data` volume, so restarts and
+image updates do not re-issue certificates.
 
 `DOMAIN` also sets `PUBLIC_ENDPOINT` to `https://<DOMAIN>/v1` automatically
 (Console → Overview shows it). Set `PUBLIC_ENDPOINT` explicitly only when TLS
