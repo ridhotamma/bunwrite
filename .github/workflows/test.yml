@@ -16,5 +16,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+        env:
+          # GitHub's Ubuntu runners cannot start Chromium's sandbox (no unprivileged
+          # user namespaces), so headless Chrome exits before the render starts.
+          CHROME_NO_SANDBOX: 'true'
       - run: bun run build
       - run: ./dist/bunwrite --help
