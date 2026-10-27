@@ -2,7 +2,7 @@
 # from the cgroup limits below), so the same file works on a small VPS or a
 # larger machine.
 #
-#   cp .env.example .env    # optional: set PUBLIC_ENDPOINT and other overrides
+#   cp .env.example .env    # set DOMAIN (and other overrides)
 #   docker compose up -d --build
 #
 # See docs/DEPLOY.md ("Docker Compose") for admin setup, functions and backups.
@@ -29,14 +29,18 @@ services:
       STORAGE_PATH: /app/data/storage
       BACKUPS_PATH: /app/data/backups
       FUNCTIONS_ENV_FILE: /app/functions/functions.env
+      # PUBLIC_ENDPOINT defaults to https://$DOMAIN/v1; override it in .env when
+      # TLS is terminated somewhere else.
+      DOMAIN: ${DOMAIN:-}
       # Image previews, renders, SQLite cache, upload size, JSC heap and malloc
       # arenas are auto-tuned. Set any of them in .env to override autotune.
       # Chromium for HTML rendering (only present when built with WITH_CHROMIUM=true).
       CHROME_PATH: /usr/bin/chromium
       CHROME_NO_SANDBOX: "true"
     ports:
-      # Use 127.0.0.1:8080:8080 when a reverse proxy on this host is the only entry point.
-      - "${BUNWRITE_PORT:-8080}:8080"
+      # Only on loopback: Caddy below is the public entry point. Set
+      # BUNWRITE_BIND=0.0.0.0 to expose the app directly instead.
+      - "${BUNWRITE_BIND:-127.0.0.1}:${BUNWRITE_PORT:-8080}:8080"
     volumes:
       - bunwrite-data:/app/data
       # appwrite.config.json and function code. Set SCHEMA_PATH=/app/functions/appwrite.config.json.
@@ -58,5 +62,31 @@ services:
         max-size: 10m
         max-file: "3"
 
+  # Automatic HTTPS for DOMAIN. Caddy obtains and renews the certificate itself;
+  # it only needs DNS pointing here and ports 80/443 open. Certificate state is
+  # kept in the caddy-data volume, so restarts do not re-issue certificates.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - bunwrite
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   bunwrite-data:
+  caddy-data:
+  caddy-config:

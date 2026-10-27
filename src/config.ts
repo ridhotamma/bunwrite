@@ -181,6 +181,10 @@ export function googleFromEnv(env: Record<string, string | undefined>): GoogleCo
  */
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080)
+  // DOMAIN is only a default for PUBLIC_ENDPOINT: whatever terminates TLS has
+  // to be reachable at https://<domain>, and the container cannot know that on
+  // its own. Strip a pasted scheme and path so https://x.example/ also works.
+  const domain = (env.DOMAIN ?? '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '')
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
@@ -193,7 +197,9 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     secret: '',
     allowedOrigins: [],
     schemaPath: env.SCHEMA_PATH || undefined,
-    publicEndpoint: (env.PUBLIC_ENDPOINT ?? `http://localhost:${port}/v1`).replace(/\/$/, ''),
+    publicEndpoint: (
+      env.PUBLIC_ENDPOINT ?? (domain ? `https://${domain}/v1` : `http://localhost:${port}/v1`)
+    ).replace(/\/$/, ''),
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,

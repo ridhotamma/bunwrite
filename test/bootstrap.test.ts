@@ -44,6 +44,17 @@ describe('instance bootstrap', () => {
     ])
   })
 
+  test('DOMAIN supplies the public endpoint unless PUBLIC_ENDPOINT is set', () => {
+    expect(configFromEnv({ DOMAIN: 'appwrite.pesanle.com' }).publicEndpoint).toBe('https://appwrite.pesanle.com/v1')
+    expect(configFromEnv({ DOMAIN: 'https://appwrite.pesanle.com/' }).publicEndpoint).toBe('https://appwrite.pesanle.com/v1')
+    expect(configFromEnv({ DOMAIN: 'appwrite.pesanle.com', PUBLIC_ENDPOINT: 'https://api.example.com/v1/' }).publicEndpoint).toBe(
+      'https://api.example.com/v1',
+    )
+    expect(configFromEnv({ DOMAIN: '   ' }).publicEndpoint).toBe('http://localhost:8080/v1')
+    expect(configFromEnv({}).publicEndpoint).toBe('http://localhost:8080/v1')
+    expect(configFromEnv({ PORT: '9090' }).publicEndpoint).toBe('http://localhost:9090/v1')
+  })
+
   test('generates and persists credentials on first start', () => {
     const db = openDb(':memory:')
     try {

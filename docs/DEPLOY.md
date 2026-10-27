@@ -60,7 +60,10 @@ The first start generates (or imports from the optional seed values) the
 organization ID, project ID, signing secret and an initial API key, then stores
 them in the database. `.env` is for server and deployment settings:
 
-- `PUBLIC_ENDPOINT` — the public URL including `/v1`.
+- `DOMAIN` — the public hostname (for example `appwrite.example.com`). When set,
+  `PUBLIC_ENDPOINT` defaults to `https://<DOMAIN>/v1`; the Docker Compose setup
+  also gives Caddy the hostname to obtain a certificate for.
+- `PUBLIC_ENDPOINT` — the public URL including `/v1`, if TLS ends somewhere else.
 - `HOST` — bind address; defaults to `0.0.0.0`. Set `127.0.0.1` when a
   reverse proxy or tunnel on the same host is the only entry point.
 - `CONSOLE_ADMIN_EMAIL` and `CONSOLE_ADMIN_PASSWORD` — optional first admin; the
@@ -145,9 +148,43 @@ to about 70 MB.
 
 ```bash
 cp .env.example .env
-$EDITOR .env          # optional: PUBLIC_ENDPOINT and first-start seed values
+$EDITOR .env          # set DOMAIN=appwrite.example.com (and optional seed values)
 docker compose up -d --build
-curl http://localhost:8080/v1/health
+curl https://appwrite.example.com/v1/health
+```
+
+`docker compose` starts two containers: `bunwrite` and `caddy`. Caddy publishes
+ports 80/443 and obtains a Let's Encrypt certificate for `DOMAIN` automatically.
+Requirements:
+
+- `appwrite.example.com` has an **A record** (and AAAA if you use IPv6) pointing
+  at this server. Bunwrite and Caddy cannot create that record — add it at your
+  DNS provider first.
+- Ports **80 and 443** are open in `ufw`/`iptables` *and* the provider's firewall.
+  Caddy needs 80 for the ACME HTTP challenge.
+- No other service on the host is using 80/443.
+
+Issue the certificate with a normal request; watch it with:
+
+```bash
+curl -i https://appwrite.example.com/v1/health
+docker compose logs -f caddy
+```
+
+If DNS was not ready on the first start, Caddy retries on its own; after fixing
+DNS, `docker compose restart caddy` forces an immediate attempt. Certificate
+state lives in the `caddy-data` volume, so restarts and image updates do not
+re-issue certificates.
+
+`DOMAIN` also sets `PUBLIC_ENDPOINT` to `https://<DOMAIN>/v1` automatically
+(Console → Overview shows it). Set `PUBLIC_ENDPOINT` explicitly only when TLS
+ends somewhere else.
+
+If you already have a reverse proxy or Cloudflare Tunnel on the host, do not
+start the bundled Caddy — run the app alone and point your proxy at it:
+
+```bash
+docker compose up -d bunwrite
 ```
 
 Create the first console admin:
@@ -167,8 +204,14 @@ Notes:
 - Data (database, uploads, backups) lives in the `bunwrite-data` volume at
   `/app/data`. `HOST`, `PORT` and the data paths in `.env` are overridden
   inside the container.
-- Change the published port with `BUNWRITE_PORT=9000`. Behind a reverse proxy
-  on the same host, publish `127.0.0.1:8080:8080` instead.
+- The app is published only on `127.0.0.1:${BUNWRITE_PORT:-8080}`, so Caddy is
+  the public entry point. For a quick local check use
+  `curl http://localhost:8080/v1/health`. Set `BUNWRITE_BIND=0.0.0.0` only if you
+  intentionally want the app exposed directly.
+- Caddy proxies WebSockets (`/v1/realtime`) and passes `X-Forwarded-*`; keep the
+  `/v1` prefix (no path rewriting), or the API routes stop matching.
+- To use Cloudflare in front, set SSL/TLS mode to **Full (strict)** after Caddy
+  has a certificate, or keep the record DNS-only.
 - Functions: mount the folder holding `appwrite.config.json` at
   `/app/functions` (see the commented volume) and set
   `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are

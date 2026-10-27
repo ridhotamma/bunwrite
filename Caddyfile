@@ -1,0 +1,14 @@
+# Caddy in front of Bunwrite (the `caddy` service in docker-compose.yml).
+#
+# DOMAIN comes from .env. Caddy gets and renews a Let's Encrypt certificate for
+# it automatically as soon as the DNS A/AAAA record points at this server and
+# ports 80 and 443 are reachable. HTTP is redirected to HTTPS.
+#
+# Without DOMAIN it serves https://localhost with Caddy's own local CA, which is
+# handy for a quick local look but not useful on a VPS.
+{$DOMAIN:localhost} {
+	encode zstd gzip
+
+	# Compose's service name; the app is not published publicly.
+	reverse_proxy bunwrite:8080
+}
