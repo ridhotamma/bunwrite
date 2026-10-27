@@ -21,7 +21,7 @@ export function signInPage(auth: ConsoleAuth, options: SignInOptions): Response 
     bare(
       setup ? 'Create admin' : 'Sign in',
       html`<div class="auth">
-        <div class="brand">${options.projectName} console</div>
+        <div class="brand"><img src="/logo-dark.png" alt="" width="28" height="28"><span>${options.projectName} console</span></div>
         <div class="card">
           <h2>${setup ? 'Create the first admin' : 'Sign in'}</h2>
           ${setup ? html`<p class="hint">Only shown on this machine while no admin exists.</p>` : ''}

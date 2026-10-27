@@ -27,7 +27,7 @@ const MAIN: [string, string, string, IconName][] = [
   ['users', 'Users', '/console/auth/users', 'users'],
   ['teams', 'Teams', '/console/auth/teams', 'users-three'],
   ['storage', 'Storage', '/console/storage', 'folder-simple'],
-  ['functions', 'Functions', '/console/functions', 'function'],
+  ['functions', 'Functions', '/console/functions', 'lightning'],
 ]
 const MANAGE: [string, string, string, IconName][] = [
   ['logs', 'Request logs', '/console/logs', 'list-bullets'],
@@ -84,7 +84,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any">
 <title>${title} · ${nav.projectName}</title>
 <style>${raw(CONSOLE_CSS)}</style>
 <script>try{if(localStorage.getItem("bunwrite-nav")==="collapsed")document.documentElement.classList.add("nav-collapsed")}catch(e){}</script>
@@ -138,14 +138,14 @@ export function projectShell(title: string, nav: { admin: string }, body: Html, 
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any">
 <title>${title} · Bunwrite</title>
 <style>${raw(CONSOLE_CSS)}</style>
 <script src="/console/assets/htmx.min.js"></script>
 </head>
 <body hx-boost="true">
 <header class="select-topbar">
-  <a class="select-brand" href="/console"><img src="/favicon.ico" alt=""><span>Bunwrite</span></a>
+  <a class="select-brand" href="/console"><img src="/logo-dark.png" alt="" width="24" height="24"><span>Bunwrite</span></a>
   <div class="select-user">${account}</div>
 </header>
 <main class="select-main">
@@ -164,6 +164,6 @@ ${confirmDialog()}
 
 export function bare(title: string, body: Html, projectName = 'Bunwrite'): Html {
   return html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any">
 <title>${title} · ${projectName}</title><style>${raw(CONSOLE_CSS)}</style></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script></body></html>`
 }

@@ -20,7 +20,7 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .switcher-caret{color:var(--subdued)}
 .nav-head{position:relative}.switcher.menu-root{position:static}.switcher .menu{left:0;right:0;width:auto;min-width:0}.switcher .menu.menu-fixed{right:auto;width:260px}
 .select-topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;height:56px;padding:0 max(24px,calc((100% - 1080px)/2 + 24px));background:var(--surface);border-bottom:1px solid var(--border)}
-.select-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-weight:650;font-size:15px}.select-brand:hover{text-decoration:none}.select-brand img{width:22px;height:22px;border-radius:6px}
+.select-brand{display:flex;align-items:center;gap:8px;color:var(--text);font-weight:650;font-size:15px}.select-brand:hover{text-decoration:none}.select-brand img{width:24px;height:24px}
 .select-user{display:flex;align-items:center;margin-left:auto}
 .account-btn{list-style:none;display:flex;border-radius:50%;cursor:pointer}.account-btn::-webkit-details-marker{display:none}
 .account-btn:hover .avatar,.menu-root[open] .account-btn .avatar{box-shadow:0 0 0 3px var(--border)}
@@ -201,7 +201,7 @@ td .badge+.badge{margin-left:6px}
 pre{background:#f7f7f7;border-radius:8px;padding:12px;overflow:auto;max-height:360px;margin:0;white-space:pre-wrap;word-break:break-word}
 details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 .pager{display:flex;gap:8px;justify-content:center;align-items:center;padding:10px;border-top:1px solid var(--border)}
-.auth{max-width:432px;margin:14vh auto 0;padding:0 16px}.auth .brand{display:flex;gap:8px;align-items:center;justify-content:center;font-weight:650;font-size:16px;margin-bottom:16px}
+.auth{max-width:432px;margin:14vh auto 0;padding:0 16px}.auth .brand{display:flex;gap:10px;align-items:center;justify-content:center;font-weight:650;font-size:16px;margin-bottom:16px}.auth .brand img{width:28px;height:28px}
 .htmx-request{opacity:.6;transition:opacity .2s}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:#1a1a1a;color:#fff;padding:10px 16px;border-radius:12px;font-weight:550;z-index:50;box-shadow:0 8px 20px rgba(0,0,0,.2);animation:toast 4s forwards}
 .nav-tooltip{position:fixed;z-index:100;background:#1a1a1a;color:#fff;padding:6px 10px;border-radius:8px;font-size:12px;font-weight:550;pointer-events:none;box-shadow:0 8px 20px rgba(0,0,0,.2);white-space:nowrap}

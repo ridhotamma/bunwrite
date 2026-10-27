@@ -132,7 +132,7 @@ export interface InviteAcceptOptions {
 
 export function inviteAcceptContent(options: InviteAcceptOptions): Html {
   return html`<div class="auth">
-    <div class="brand">Bunwrite console</div>
+    <div class="brand"><img src="/logo-dark.png" alt="" width="28" height="28"><span>Bunwrite console</span></div>
     <div class="card">
       <h2>Join ${options.orgName}</h2>
       ${options.error ? alert('critical', html`${options.error}`) : ''}
@@ -156,7 +156,7 @@ export function inviteAcceptContent(options: InviteAcceptOptions): Html {
 
 export function inviteUnavailableContent(message: string): Html {
   return html`<div class="auth">
-    <div class="brand">Bunwrite console</div>
+    <div class="brand"><img src="/logo-dark.png" alt="" width="28" height="28"><span>Bunwrite console</span></div>
     <div class="card">
       <h2>Invitation unavailable</h2>
       ${alert('critical', html`${message}`)}

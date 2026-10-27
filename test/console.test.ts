@@ -462,6 +462,22 @@ describe('pages outside the API', () => {
     expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0)
   })
 
+  test('serves the dark, light and adaptive logos', async () => {
+    for (const [path, type] of [
+      ['/logo-dark.png', 'image/png'],
+      ['/logo-light.png', 'image/png'],
+      ['/logo.svg', 'image/svg+xml'],
+    ] as const) {
+      const res = await fetch(`${base}${path}`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain(type)
+      expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0)
+    }
+    const page = await (await fetch(`${base}/nope`, { headers: html })).text()
+    expect(page).toContain('<link rel="icon" type="image/svg+xml" href="/logo.svg">')
+    expect(page).toContain('src="/logo-dark.png"')
+  })
+
   test('a browser gets a 404 page; SDK calls and /v1 keep the JSON error', async () => {
     const page = await fetch(`${base}/nope`, { headers: html })
     expect(page.status).toBe(404)

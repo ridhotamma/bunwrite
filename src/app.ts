@@ -1,7 +1,7 @@
 import type { Server } from 'bun'
 
 import { resolveCaller, type Caller } from './auth/caller'
-import { faviconPath } from './console/assets'
+import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
@@ -151,8 +151,9 @@ export function createApp(source: Services | ProjectResolver) {
 
   async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
     const url = new URL(request.url)
-    if (url.pathname === '/favicon.ico' && (request.method === 'GET' || request.method === 'HEAD')) {
-      return new Response(Bun.file(faviconPath), { headers: { 'content-type': 'image/x-icon', 'cache-control': 'public, max-age=604800' } })
+    const brand = BRAND_FILES[url.pathname]
+    if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
+      return new Response(Bun.file(brand.path), { headers: { 'content-type': brand.type, 'cache-control': 'public, max-age=604800' } })
     }
     const consoleResponse = await consoleApp.handle(request, server)
     if (consoleResponse) return consoleResponse
@@ -201,7 +202,7 @@ export function createApp(source: Services | ProjectResolver) {
         response.headers.set('x-request-id', id)
         return response
       } finally {
-        const skip = url.pathname === '/favicon.ico' || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
+        const skip = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
         const runtime = meta.project ? projects.get(meta.project) : undefined
         const logConfig = runtime?.services.config ?? control.config
         if (logConfig.logRequests && !skip) {
