@@ -4,6 +4,7 @@
  * - `data-slug-from`: an ID input follows a name input until edited by hand
  * - `data-show-for`: show a block only for some values of a `data-show-by` select
  * - `data-disable-when`: disable an input while a checkbox is ticked
+ * - `data-follow`: a field takes its value from another field's choice until edited by hand
  */
 export const FORM_SCRIPT = `
 (() => {
@@ -72,6 +73,7 @@ export const FORM_SCRIPT = `
   const slug = (s) => s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").replace(/-+$/, "").slice(0, 36)
   function showFor(scope) {
     for (const select of scope.querySelectorAll("[data-show-by]")) {
+      if (select.type === "radio" && !select.checked) continue
       const form = select.form || document
       for (const el of form.querySelectorAll('[data-show-for][data-for-select="' + select.name + '"]')) {
         el.hidden = !el.dataset.showFor.split(" ").includes(select.value)
@@ -96,13 +98,28 @@ export const FORM_SCRIPT = `
       if (target && !target.dataset.touched) target.value = slug(t.value)
     }
     if (t.matches && t.matches("[data-slug-from]")) t.dataset.touched = t.value ? "1" : ""
+    if (t.matches && t.matches("[data-follow]")) t.dataset.touched = "1"
   })
+  // Fields with data-follow="<name>" take a value from data-follow-values
+  // (keyed by the part before "-", or "*") whenever <name> changes, until edited by hand.
+  function follow(t) {
+    const form = t.form
+    if (!form || !t.name) return
+    for (const el of form.querySelectorAll('[data-follow="' + t.name + '"]')) {
+      if (el.dataset.touched) continue
+      const values = JSON.parse(el.dataset.followValues || "{}")
+      const key = String(t.value).split("-")[0]
+      const next = key in values ? values[key] : values["*"]
+      if (next !== undefined) el.value = next
+    }
+  }
   document.addEventListener("change", (e) => {
     const t = e.target
     const doc = t.closest && t.closest("[data-docform]")
     if (doc && t.name && t.name.startsWith("field:")) fieldsToJson(doc)
     if (t.matches && t.matches("[data-show-by]")) { showFor(t.form || document); disableWhen(t.form || document) }
     if (t.type === "checkbox") disableWhen(t.form || document)
+    follow(t)
   })
   document.addEventListener("click", (e) => {
     const tab = e.target.closest && e.target.closest("[data-doc-tab]")

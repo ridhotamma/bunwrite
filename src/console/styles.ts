@@ -97,8 +97,14 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .role-form{margin:0}.role-form select{min-height:28px;padding:2px 30px 2px 10px;font-size:13px;background-color:var(--surface);border-color:var(--border)}
 .role-form select:hover{border-color:var(--border-strong)}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}
+.stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}.stack-fields .fields{row-gap:14px}
 .card.narrow{max-width:520px}
+#create-function,#deploy-code{max-width:min(680px,calc(100vw - 32px))}
+.code-source{border:0;padding:0;margin:0;min-width:0}.code-source legend{padding:0;margin-bottom:6px;font-weight:450}
+.code-source .choice{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
+.code-source .choice label{align-items:flex-start}.code-source .choice div{min-width:0}.code-source .choice b{font-weight:600}.code-source .choice span{display:block;line-height:16px;margin-top:2px}
+textarea.code-editor{min-height:260px;max-height:50vh;tab-size:2;white-space:pre;overflow:auto;line-height:18px}
+input[type=file]{padding:5px 8px;background:var(--surface)}
 .invite-rows{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 .invite-row{display:grid;grid-template-columns:minmax(0,1fr) 130px 28px;gap:8px;align-items:center}.invite-row input,.invite-row select{min-width:0;margin:0}
 .nav-toggle{all:unset;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;cursor:pointer;color:var(--text);opacity:.6}
@@ -276,6 +282,7 @@ details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
   .settings-section{grid-template-columns:1fr;gap:10px}
   th.role-col,td.role-col{width:auto}
   .member-cell .avatar{display:none}
+  .code-source .choice{grid-template-columns:1fr}
   .invite-row{grid-template-columns:minmax(0,1fr) 112px 28px}
 }
 `

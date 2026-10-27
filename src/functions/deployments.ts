@@ -5,14 +5,17 @@
  * `<data>/deployments/<functionId>/<deploymentId>/`, run the function's build
  * command there, and make it the active code once built when asked to.
  *
+ * The console also uploads .zip files, and deploys starter templates and
+ * pasted code by writing the files straight into the deployment folder.
+ *
  * Build commands run with `sh -c` on this host, not in Appwrite's runtime
  * image, so Alpine-only steps such as `apk` fail; set
  * FUNCTIONS_BUILD_COMMANDS=false to skip them and install what the code needs
  * on the host instead.
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, rmSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
@@ -20,6 +23,7 @@ import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import type { FunctionRow, FunctionService } from './service'
+import { extractZip, isZip } from './zip'
 
 /** The SDKs upload in chunks of this size. */
 const CHUNK_SIZE = 5 * 1024 * 1024
@@ -99,6 +103,19 @@ export interface UploadInput {
   uploadId: string | null
 }
 
+export interface CodeFile {
+  /** Relative path inside the function folder, such as src/main.js. */
+  path: string
+  content: string
+}
+
+export interface FilesInput {
+  files: CodeFile[]
+  entrypoint: string
+  commands: string
+  activate: boolean
+}
+
 export class Deployments {
   constructor(
     private db: Db,
@@ -173,11 +190,81 @@ export class Deployments {
   }
 
   private archivePath(functionId: string, id: string) {
-    return join(deploymentDir(this.config, functionId), `${id}.tar.gz`)
+    return join(deploymentDir(this.config, functionId), `${id}.upload`)
+  }
+
+  /**
+   * Deploy files given as text: a starter template or code pasted in the
+   * console. The build (if any) runs in the background, as for uploads.
+   */
+  deployFiles(f: FunctionRow, input: FilesInput): DeploymentRow {
+    if (!input.files.length) throw err('general_argument_invalid', 'Add at least one file.')
+    const id = uniqueId()
+    const dir = deploymentDir(this.config, f.id, id)
+    const root = resolve(dir)
+    const size = input.files.reduce((total, file) => total + Buffer.byteLength(file.content), 0)
+    if (size > MAX_SIZE) throw err('deployment_invalid_file_size')
+    for (const file of input.files) {
+      const target = resolve(root, file.path)
+      if (!file.path || isAbsolute(file.path) || !target.startsWith(root + sep)) throw err('general_argument_invalid', `Invalid file path: ${file.path}`)
+    }
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'processing', ?, ?, 1, 1, ?, ?)`,
+      )
+      .run(id, f.id, input.entrypoint, input.commands, size, input.activate ? 1 : 0, stamp, stamp)
+    rmSync(dir, { recursive: true, force: true })
+    for (const file of input.files) {
+      const target = resolve(root, file.path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, file.content)
+    }
+    this.build(f.id, id, { unpacked: true }).catch((e) => console.error(`[functions] ${f.id}: build ${id} crashed`, e))
+    return this.get(f.id, id)
+  }
+
+  /** Unpack a .tar.gz or .zip upload into `dir`. */
+  private async unpack(archive: string, dir: string): Promise<void> {
+    const head = new Uint8Array(4)
+    const fd = openSync(archive, 'r')
+    try {
+      readSync(fd, head, 0, 4, 0)
+    } finally {
+      closeSync(fd)
+    }
+    if (isZip(head)) {
+      extractZip(readFileSync(archive), dir)
+      return
+    }
+    const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir], { stdout: 'pipe', stderr: 'pipe' })
+    const [untarErr, untarCode] = await Promise.all([new Response(untar.stderr).text(), untar.exited])
+    if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
+  }
+
+  /**
+   * Archives made by zipping a folder put everything under that folder. When
+   * the entrypoint is missing at the top but sits inside the only folder,
+   * use that folder as the function root.
+   */
+  private liftSingleFolder(dir: string, entrypoint: string): string | null {
+    if (existsSync(join(dir, entrypoint))) return null
+    const top = readdirSync(dir).filter((name) => !name.startsWith('.'))
+    if (top.length !== 1) return null
+    const inner = join(dir, top[0]!)
+    if (!statSync(inner).isDirectory() || !existsSync(join(inner, entrypoint))) return null
+    const temp = `${dir}.lift`
+    rmSync(temp, { recursive: true, force: true })
+    renameSync(inner, temp)
+    for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true })
+    for (const name of readdirSync(temp)) renameSync(join(temp, name), join(dir, name))
+    rmdirSync(temp)
+    return top[0]!
   }
 
   /** Unpack, run the build command, and activate when asked. Sets status ready or failed. */
-  async build(functionId: string, id: string): Promise<DeploymentRow> {
+  async build(functionId: string, id: string, options: { unpacked?: boolean } = {}): Promise<DeploymentRow> {
     const started = performance.now()
     const archive = this.archivePath(functionId, id)
     const dir = deploymentDir(this.config, functionId, id)
@@ -188,14 +275,19 @@ export class Deployments {
         .run(status, logs.join('\n').slice(-MAX_LOG), (performance.now() - started) / 1000, now(), id)
     try {
       set('building')
-      rmSync(dir, { recursive: true, force: true })
-      mkdirSync(dir, { recursive: true })
-      const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir], { stdout: 'pipe', stderr: 'pipe' })
-      const [untarErr, untarCode] = await Promise.all([new Response(untar.stderr).text(), untar.exited])
-      rmSync(archive, { force: true })
-      if (untarCode !== 0) throw new Error(`Could not unpack the upload: ${untarErr.trim() || `tar exited with ${untarCode}`}`)
+      if (!options.unpacked) {
+        rmSync(dir, { recursive: true, force: true })
+        mkdirSync(dir, { recursive: true })
+        try {
+          await this.unpack(archive, dir)
+        } finally {
+          rmSync(archive, { force: true })
+        }
+      }
 
       const d = this.get(functionId, id)
+      const lifted = this.liftSingleFolder(dir, d.entrypoint)
+      if (lifted) logs.push(`Using the "${lifted}" folder inside the upload as the function folder.`)
       if (!existsSync(join(dir, d.entrypoint))) {
         throw new Error(`Entrypoint "${d.entrypoint}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`)
       }
