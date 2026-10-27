@@ -1,32 +1,13 @@
 # Deploying Bunwrite
 
 Target: one small VPS (Ubuntu 24.04 is a good default) with a reverse proxy or
-Cloudflare Tunnel in front. Docker is optional (see Option C).
+Cloudflare Tunnel in front. Docker is optional (see Option B).
 
 The `bunwrite` executable is self-contained: the API, console assets, database
 migrations and Node/Python function runners are embedded. Python functions also
 need `python3` on the host.
 
-## Option A: Ansible playbook (one command)
-
-The playbook provisions a fresh VPS, builds the binary, creates the service
-user and `.env`, installs systemd and starts Bunwrite. With a domain it also
-installs Caddy for automatic HTTPS.
-
-See [playbook/README.md](../playbook/README.md). Short version:
-
-```bash
-cp playbook/inventory.example.ini playbook/inventory.ini
-$EDITOR playbook/inventory.ini
-
-ansible-playbook -i playbook/inventory.ini playbook/site.yml \
-  -e bunwrite_domain=api.example.com \
-  -e bunwrite_admin_email=you@example.com
-```
-
-Omit `bunwrite_domain` to run directly on port 8080 without TLS.
-
-## Option B: Manual install
+## Option A: Manual install
 
 Build on the target OS and architecture so native dependencies such as `sharp`
 match.
@@ -115,7 +96,7 @@ its own sign-in and rate limiting, but the admin UI should not be public. Set
 `CONSOLE_ENABLED=false` to disable it entirely; use an SSH tunnel to
 `localhost:8080/console` when needed.
 
-## Option C: Docker Compose
+## Option B: Docker Compose
 
 `docker-compose.yml` runs the same standalone binary on `debian:bookworm-slim`,
 limited to **1 vCPU and 512 MB RAM** (no swap). Measured on that limit: about
@@ -180,7 +161,7 @@ Upgrade with `git pull && docker compose up -d --build`.
 
 ## Upgrades
 
-With the Ansible playbook, re-run it. Manually:
+With Docker Compose, see Option B. Manual install:
 
 ```bash
 cd /opt/bunwrite
