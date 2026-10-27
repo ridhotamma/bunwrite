@@ -1,7 +1,7 @@
 # Deploying Bunwrite
 
 Target: one small VPS (Ubuntu 24.04 is a good default) with a reverse proxy or
-Cloudflare Tunnel in front. No Docker is required.
+Cloudflare Tunnel in front. Docker is optional (see Option C).
 
 The `bunwrite` executable is self-contained: the API, console assets, database
 migrations and Node/Python function runners are embedded. Python functions also
@@ -114,6 +114,48 @@ Protect `/console` with Cloudflare Access or another access layer. Bunwrite has
 its own sign-in and rate limiting, but the admin UI should not be public. Set
 `CONSOLE_ENABLED=false` to disable it entirely; use an SSH tunnel to
 `localhost:8080/console` when needed.
+
+## Option C: Docker Compose
+
+`docker-compose.yml` runs the same standalone binary on `debian:bookworm-slim`,
+limited to **1 vCPU and 512 MB RAM** (no swap). Measured on that limit: about
+20 MB idle, 5,000+ API requests/s, and a 114 MB peak while resizing four
+3000×3000 images at once.
+
+```bash
+cp .env.example .env
+$EDITOR .env          # PROJECT_ID, API_KEYS, SECRET, PUBLIC_ENDPOINT, ALLOWED_ORIGINS
+docker compose up -d --build
+curl http://localhost:8080/v1/health
+```
+
+Create the first console admin:
+
+```bash
+docker compose exec bunwrite bunwrite console:admin you@example.com
+```
+
+Notes:
+
+- Data (database, uploads, backups) lives in the `bunwrite-data` volume at
+  `/app/data`. `HOST`, `PORT` and the data paths in `.env` are overridden
+  inside the container.
+- Change the published port with `BUNWRITE_PORT=9000`. Behind a reverse proxy
+  on the same host, publish `127.0.0.1:8080:8080` instead.
+- Functions: mount the folder holding `appwrite.config.json` at
+  `/app/functions` (see the commented volume) and set
+  `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are
+  read from `/app/functions/functions.env`.
+- Python functions need `BUNWRITE_WITH_PYTHON=true docker compose up -d --build`.
+- Each function run is a separate process: about 10 MB for a trivial one, more
+  with heavy dependencies. Many large functions running at once are what can
+  push a 512 MB container to its limit.
+- Low-memory tuning is set in the compose file: `BUN_JSC_forceRAMSize`
+  (JS heap target), `MALLOC_ARENA_MAX=2`, `SHARP_CONCURRENCY=1` and
+  `SHARP_CACHE_MB=16`. Raise them on a bigger host, or raise the limits under
+  `deploy.resources`.
+
+Upgrade with `git pull && docker compose up -d --build`.
 
 ## Storage, backups and logs
 

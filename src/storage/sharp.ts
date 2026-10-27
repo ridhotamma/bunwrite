@@ -91,15 +91,29 @@ async function extractSharp(config: Config): Promise<string> {
   return dir
 }
 
+/**
+ * Optional limits for small hosts. libvips sizes its thread pool from the host's
+ * CPU count, which ignores container CPU limits.
+ */
+function tune(sharp: any): any {
+  const threads = Number(process.env.SHARP_CONCURRENCY)
+  if (Number.isInteger(threads) && threads > 0) sharp.concurrency(threads)
+  const cacheMb = process.env.SHARP_CACHE_MB
+  if (cacheMb !== undefined && cacheMb !== '' && Number(cacheMb) >= 0) {
+    sharp.cache(Number(cacheMb) === 0 ? false : { memory: Number(cacheMb) })
+  }
+  return sharp
+}
+
 export function loadSharp(config: Config): Promise<any> {
   if (!loaded) {
     loaded = (async () => {
       if (!Bun.isStandaloneExecutable) {
         const specifier = 'sharp'
-        return (await import(specifier)).default
+        return tune((await import(specifier)).default)
       }
       const dir = await extractSharp(config)
-      return (await import(pathToFileURL(join(dir, 'node_modules', 'sharp', 'lib', 'index.js')).href)).default
+      return tune((await import(pathToFileURL(join(dir, 'node_modules', 'sharp', 'lib', 'index.js')).href)).default)
     })().catch((error) => {
       loaded = null
       throw error

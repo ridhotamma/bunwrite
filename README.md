@@ -151,6 +151,13 @@ Use the [Ansible playbook](playbook/README.md) to provision a VPS and run the
 standalone binary in one command, including optional Caddy HTTPS. For a manual
 Ubuntu + systemd setup, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
+Or run it with Docker Compose, limited to 1 vCPU and 512 MB RAM:
+
+```bash
+cp .env.example .env   # then set PROJECT_ID, API_KEYS, SECRET
+docker compose up -d --build
+```
+
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+dist
+data
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+!.env.example
+functions.env
+.functions.env
+playbook/inventory.ini

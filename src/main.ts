@@ -18,6 +18,7 @@ Usage:
   bunwrite snapshot [dir]      Copy the database consistently
   bunwrite schema:push ...     Apply appwrite.config.json
   bunwrite migrate ...         Import an Appwrite project
+  bunwrite health              Exit 0 when the local server answers /v1/health
 
 Environment is read from .env in the working directory, like the source CLI.`
 
@@ -30,6 +31,16 @@ switch (command) {
     const { runNodeFunction } = await import('./functions/runner-node')
     await runNodeFunction(args[0] ?? '')
     break
+  }
+  case 'health': {
+    // Used by the container HEALTHCHECK, so the image needs no curl.
+    const port = process.env.PORT || '8080'
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/health`, { signal: AbortSignal.timeout(4000) })
+      process.exit(res.ok ? 0 : 1)
+    } catch {
+      process.exit(1)
+    }
   }
   case 'console:admin':
     runCli(...args)

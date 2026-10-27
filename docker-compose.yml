@@ -1,0 +1,59 @@
+# Bunwrite with Docker Compose, sized for a 1 vCPU / 512 MB host.
+#
+#   cp .env.example .env    # set PROJECT_ID, API_KEYS, SECRET, PUBLIC_ENDPOINT
+#   docker compose up -d --build
+#
+# See docs/DEPLOY.md ("Docker Compose") for admin setup, functions and backups.
+
+services:
+  bunwrite:
+    build:
+      context: .
+      args:
+        # Set to true if you run python-* functions.
+        WITH_PYTHON: ${BUNWRITE_WITH_PYTHON:-false}
+    image: bunwrite:latest
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      # The container always listens on 8080; change the published port below instead.
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_PATH: /app/data/bunwrite.sqlite
+      STORAGE_PATH: /app/data/storage
+      BACKUPS_PATH: /app/data/backups
+      FUNCTIONS_ENV_FILE: /app/functions/functions.env
+      # Low-memory tuning (the defaults assume a bigger machine):
+      # GC heap target for Bun's JS engine, in bytes (256 MB).
+      BUN_JSC_forceRAMSize: "268435456"
+      # Fewer glibc malloc arenas: less RSS from image-processing threads.
+      MALLOC_ARENA_MAX: "2"
+      # One libvips thread and a small cache for image previews.
+      SHARP_CONCURRENCY: "1"
+      SHARP_CACHE_MB: "16"
+    ports:
+      # Use 127.0.0.1:8080:8080 when a reverse proxy on this host is the only entry point.
+      - "${BUNWRITE_PORT:-8080}:8080"
+    volumes:
+      - bunwrite-data:/app/data
+      # appwrite.config.json and function code. Set SCHEMA_PATH=/app/functions/appwrite.config.json.
+      # - ./functions:/app/functions:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+          pids: 256
+        reservations:
+          memory: 128M
+    # No swap beyond the memory limit.
+    memswap_limit: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  bunwrite-data:
