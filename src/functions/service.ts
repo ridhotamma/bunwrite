@@ -18,11 +18,12 @@ import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
+import { pythonRunner } from './runtime'
 
 const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
 const SYNC_TIMEOUT = 30
 const RUNNER_NODE = join(import.meta.dir, 'runner-node.ts')
-const RUNNER_PYTHON = join(import.meta.dir, 'runner-python.py')
+const NODE_RUNNER_MODE = '__bunwrite-runner-node'
 /** Server-only settings a function never needs to see. */
 const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
 
@@ -355,8 +356,10 @@ export class FunctionService {
 
   private command(f: FunctionRow, dir: string): string[] {
     const entry = join(dir, f.entrypoint)
-    if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', RUNNER_PYTHON, entry]
-    if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) return [process.execPath, RUNNER_NODE, entry]
+    if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', pythonRunner(this.config), entry]
+    if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) {
+      return Bun.isStandaloneExecutable ? [process.execPath, NODE_RUNNER_MODE, entry] : [process.execPath, RUNNER_NODE, entry]
+    }
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
   }
 

@@ -77,6 +77,7 @@ export interface TestServer {
 export function testConfig(over: Partial<Config> = {}): Config {
   return {
     port: 0,
+    hostname: '127.0.0.1',
     databasePath: ':memory:',
     projectId: PROJECT,
     projectName: 'Test Project',

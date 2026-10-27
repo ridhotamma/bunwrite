@@ -40,6 +40,18 @@ On a fresh database, create an admin:
 bun run console:admin you@example.com
 ```
 
+Build a single executable instead—migrations, console assets and function
+runners are embedded:
+
+```bash
+bun run build             # dist/bunwrite
+./dist/bunwrite           # API at http://localhost:8080/v1
+./dist/bunwrite console:admin you@example.com
+```
+
+Build on the target OS and architecture so native dependencies match. The
+resulting binary needs no Bun at runtime.
+
 Or try the self-contained demo:
 
 ```bash
@@ -124,6 +136,7 @@ cancel the real one.
 | Command | Does |
 | --- | --- |
 | `bun run dev` | Watch-mode API + console |
+| `bun run build` | Build the standalone `dist/bunwrite` executable |
 | `bun run demo` | Self-contained demo with sample data |
 | `bun run console:admin <email> [--remove]` | Create, reset or remove a console admin |
 | `bun run schema:push <appwrite.config.json> [--prune]` | Create/alter tables, indexes, buckets and functions |
@@ -134,7 +147,9 @@ cancel the real one.
 
 ## Deploy
 
-See [docs/DEPLOY.md](docs/DEPLOY.md) for a generic Ubuntu + Bun + systemd setup.
+Use the [Ansible playbook](playbook/README.md) to provision a VPS and run the
+standalone binary in one command, including optional Caddy HTTPS. For a manual
+Ubuntu + systemd setup, see [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Architecture
 

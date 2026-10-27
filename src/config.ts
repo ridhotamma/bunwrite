@@ -44,6 +44,8 @@ export const emptyS3 = (): S3Config => ({ enabled: false, bucket: '', region: ''
 
 export interface Config {
   port: number
+  /** Interface to bind (defaults to all interfaces). */
+  hostname: string
   /** SQLite file path. */
   databasePath: string
   /** Must match the X-Appwrite-Project header (keep the old Appwrite project ID). */
@@ -111,6 +113,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
+    hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
     projectId,
     projectName: env.PROJECT_NAME ?? 'Bunwrite',

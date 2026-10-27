@@ -16,3 +16,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun test
+      - run: bun run build
+      - run: ./dist/bunwrite --help
+
+  playbook:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible-core
+      - run: ansible-playbook --syntax-check -i playbook/inventory.example.ini playbook/site.yml

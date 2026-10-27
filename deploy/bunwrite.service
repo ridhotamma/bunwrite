@@ -6,8 +6,9 @@ Wants=network-online.target
 [Service]
 User=bunwrite
 WorkingDirectory=/opt/bunwrite
+Environment=HOME=/home/bunwrite
 EnvironmentFile=/opt/bunwrite/.env
-ExecStart=/home/bunwrite/.bun/bin/bun src/index.ts
+ExecStart=/usr/local/bin/bunwrite serve
 Restart=always
 RestartSec=2
 # The API itself usually uses ~80-150 MB.

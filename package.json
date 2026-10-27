@@ -18,6 +18,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "build": "bun scripts/build.ts",
     "demo": "bun scripts/console-demo.ts",
     "schema:push": "bun src/cli/schema-push.ts",
     "db:generate": "drizzle-kit generate",

@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import * as schema from './system-schema'
@@ -13,7 +13,15 @@ export interface Db {
   orm: Orm
 }
 
-const MIGRATIONS = join(import.meta.dir, '..', '..', 'drizzle')
+function migrationsFolder(): string {
+  const candidates = [
+    join(import.meta.dir, '..', '..', 'drizzle'),
+    join(import.meta.dir, 'drizzle'),
+    join(import.meta.dir, '..', 'drizzle'),
+    join(import.meta.dir, '..', '..', '..', 'drizzle'),
+  ]
+  return candidates.find((path) => existsSync(join(path, 'meta', '_journal.json'))) ?? candidates[0]!
+}
 
 /** Open (or create) the database file, tune it for a small VPS, and migrate. */
 export function openDb(path: string): Db {
@@ -26,7 +34,7 @@ export function openDb(path: string): Db {
   sqlite.run('PRAGMA cache_size = -16000') // ~16 MB page cache
   sqlite.run('PRAGMA temp_store = MEMORY')
   const orm = drizzle(sqlite, { schema })
-  migrate(orm, { migrationsFolder: MIGRATIONS })
+  migrate(orm, { migrationsFolder: migrationsFolder() })
   return { sqlite, orm }
 }
 

@@ -18,6 +18,7 @@ import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { s3Client, s3Key } from './s3'
+import { loadSharp } from './sharp'
 
 export interface BucketRow {
   id: string
@@ -416,7 +417,7 @@ export class StorageService {
     if (!existsSync(cached)) {
       let sharp: any
       try {
-        sharp = (await import('sharp')).default
+        sharp = await loadSharp(this.config)
       } catch {
         return this.serve(request, bucket.id, file, 'inline')
       }
