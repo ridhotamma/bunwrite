@@ -58,15 +58,15 @@ export interface Config {
   hostname: string
   /** SQLite file path. */
   databasePath: string
-  /** Organization grouping for this instance. Generated on first start when unset. */
+  /** Organization grouping for this instance; stored in the database on first start. */
   orgId: string
-  /** Must match the X-Appwrite-Project header (keep the old Appwrite project ID). */
+  /** Project ID stored in the database; environment values only seed an empty instance. */
   projectId: string
-  /** Shown in emails as {{project}}. */
+  /** Shown in emails as {{project}}; stored in the database. */
   projectName: string
-  /** Accepted X-Appwrite-Key values. Reuse the old Appwrite key so apps need no change. */
+  /** Programmatic keys (tests); project keys live hashed in `_api_keys`. */
   apiKeys: string[]
-  /** Signs JWTs and OAuth state. */
+  /** Signs JWTs and OAuth state; stored in the database on first start. */
   secret: string
   /** Browser origins allowed by CORS and as redirect targets. `*.example.com` matches subdomains. */
   allowedOrigins: string[]
@@ -120,57 +120,65 @@ export interface Config {
   bootstrap?: BootstrapInfo
 }
 
-const list = (value: string | undefined) =>
+export const list = (value: string | undefined) =>
   (value ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
 
+/** SMTP settings from the environment. Used once to seed a new instance. */
+export function smtpFromEnv(env: Record<string, string | undefined>): SmtpConfig | null {
+  if (!env.SMTP_HOST) return null
+  return {
+    host: env.SMTP_HOST,
+    port: Number(env.SMTP_PORT ?? 587),
+    user: env.SMTP_USERNAME || undefined,
+    password: env.SMTP_PASSWORD || undefined,
+    secure: env.SMTP_SECURE === 'tls',
+    senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@example.com',
+    senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Bunwrite'} Team`,
+  }
+}
+
+/** Google OAuth settings from the environment. Used once to seed a new instance. */
+export function googleFromEnv(env: Record<string, string | undefined>): GoogleConfig | null {
+  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null
+  return {
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+    authUrl: env.GOOGLE_AUTH_URL ?? 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: env.GOOGLE_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
+    userinfoUrl: env.GOOGLE_USERINFO_URL ?? 'https://www.googleapis.com/oauth2/v3/userinfo',
+  }
+}
+
+/**
+ * Server configuration. Project identity and settings are not read from the
+ * environment here: `bootstrapInstance` seeds them into the database once, and
+ * `index.ts` fills the project fields before services are created.
+ */
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
-  const projectId = env.PROJECT_ID ?? ''
-  const secret = env.SECRET ?? ''
-  if (!projectId) throw new Error('PROJECT_ID is required')
-  if (secret.length < 32) throw new Error('SECRET must be at least 32 characters')
   const port = Number(env.PORT ?? 8080)
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
-    orgId: env.ORG_ID ?? '',
-    projectId,
-    projectName: env.PROJECT_NAME ?? 'Bunwrite',
-    apiKeys: list(env.API_KEYS),
-    secret,
-    allowedOrigins: list(env.ALLOWED_ORIGINS),
+    orgId: '',
+    projectId: '',
+    projectName: 'Bunwrite',
+    apiKeys: [],
+    secret: '',
+    allowedOrigins: [],
     schemaPath: env.SCHEMA_PATH || undefined,
     publicEndpoint: (env.PUBLIC_ENDPOINT ?? `http://localhost:${port}/v1`).replace(/\/$/, ''),
-    sessionDuration: Number(env.SESSION_DURATION ?? 31536000),
-    sessionsLimit: Number(env.SESSIONS_LIMIT ?? 10),
-    smtp: env.SMTP_HOST
-      ? {
-          host: env.SMTP_HOST,
-          port: Number(env.SMTP_PORT ?? 587),
-          user: env.SMTP_USERNAME || undefined,
-          password: env.SMTP_PASSWORD || undefined,
-          secure: env.SMTP_SECURE === 'tls',
-          senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@example.com',
-          senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Bunwrite'} Team`,
-        }
-      : null,
-    google:
-      env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
-        ? {
-            clientId: env.GOOGLE_CLIENT_ID,
-            clientSecret: env.GOOGLE_CLIENT_SECRET,
-            authUrl: env.GOOGLE_AUTH_URL ?? 'https://accounts.google.com/o/oauth2/v2/auth',
-            tokenUrl: env.GOOGLE_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
-            userinfoUrl: env.GOOGLE_USERINFO_URL ?? 'https://www.googleapis.com/oauth2/v3/userinfo',
-          }
-        : null,
+    sessionDuration: 31536000,
+    sessionsLimit: 10,
+    smtp: null,
+    google: null,
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
-    skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : [],
+    skipSchedules: [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',

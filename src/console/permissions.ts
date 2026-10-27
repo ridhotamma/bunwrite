@@ -23,6 +23,8 @@ export interface PermissionsFieldOptions {
   actions: PermissionAction[]
   /** Shown under the table, e.g. how this level combines with row security. */
   note?: Html
+  /** Shown while no roles are listed. */
+  empty?: string
 }
 
 interface Directory {
@@ -68,7 +70,7 @@ function knownNames(ctx: ConsoleContext, value: string[], dir: Directory): Recor
 let fieldCount = 0
 
 export function permissionsField(ctx: ConsoleContext, options: PermissionsFieldOptions): Html {
-  const { name = 'permissions', value, actions, note } = options
+  const { name = 'permissions', value, actions, note, empty = 'No roles yet, so only API keys and server functions have access.' } = options
   const dir = directory(ctx)
   const id = `perm-${++fieldCount}`
   const config = { actions, names: knownNames(ctx, value, dir), users: dir.users, teams: dir.teams }
@@ -84,7 +86,7 @@ export function permissionsField(ctx: ConsoleContext, options: PermissionsFieldO
       <thead><tr><th>Role</th>${actions.map((a) => html`<th class="perm-col">${a[0]!.toUpperCase() + a.slice(1)}</th>`)}<th></th></tr></thead>
       <tbody></tbody>
     </table></div>
-    <p class="perm-empty subdued">No roles yet, so only API keys and server functions have access.</p>
+    <p class="perm-empty subdued">${empty}</p>
     <div class="perm-add">
       <select data-perm-kind aria-label="Role type">
         <optgroup label="Groups">

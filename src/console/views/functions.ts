@@ -1,7 +1,7 @@
 /** Console views for creating functions and deploying their code. */
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { badge, destroy, emptyState, formatBytes, icon, menu, poll, when } from '~/console/ui'
+import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, poll, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
 import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
@@ -86,16 +86,21 @@ export function createFunctionDialog(open: boolean, buildCommands: boolean): Htm
   })
 }
 
+/** The deploy form, shared by the dialog and its no-JavaScript page. */
+export function deployForm(f: FunctionRow, current: string | undefined, buildCommands: boolean, id = 'deploy-code-form'): Html {
+  return html`<form id="${id}" method="post" action="${FN}/${f.id}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
+    <p class="dialog-message">The current code keeps running until the new one is built.</p>
+    <label>Entry file<input name="entrypoint" class="mono" required value="${f.entrypoint}"></label>
+    ${codeFields({ runtime: f.runtime, commands: f.commands, current, buildCommands })}
+    <label class="check"><input type="checkbox" name="activate" checked>Make it live once built</label>
+  </form>`
+}
+
 export function deployDialog(f: FunctionRow, current: string | undefined, buildCommands: boolean): Html {
   return dialog({
     id: 'deploy-code',
     title: 'Deploy new code',
-    body: html`<form id="deploy-code-form" method="post" action="${FN}/${f.id}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
-      <p class="dialog-message">The current code keeps running until the new one is built.</p>
-      <label>Entry file<input name="entrypoint" class="mono" required value="${f.entrypoint}"></label>
-      ${codeFields({ runtime: f.runtime, commands: f.commands, current, buildCommands })}
-      <label class="check"><input type="checkbox" name="activate" checked>Make it live once built</label>
-    </form>`,
+    body: deployForm(f, current, buildCommands),
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="deploy-code-form" class="primary">Deploy</button>`,
   })
 }
@@ -103,9 +108,9 @@ export function deployDialog(f: FunctionRow, current: string | undefined, buildC
 export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): Html {
   const live = deployments.some((d) => IN_PROGRESS.includes(d.status))
   const base = `${FN}/${f.id}`
-  // While a build runs, refresh this card and, out of band, the code notice and Code card.
-  return html`<div class="card flush" id="deployments" ${live ? html`${poll(base, 'deployments', 2)} hx-select-oob="#code-status,#code-card"` : ''}>
-    <div class="toolbar"><h2 style="margin:0">Deployments</h2><button type="button" class="small" style="margin-left:auto" data-dialog-open="#deploy-code">${icon('upload-simple')}<span>Deploy new code</span></button></div>
+  // While a build runs, refresh this card so its status and actions stay current.
+  return html`<div class="card flush" id="deployments" ${live ? poll(`${base}/deployments`, 'deployments', 2) : ''}>
+    <div class="toolbar"><h2 style="margin:0">Deployments</h2></div>
     ${deployments.length
       ? html`<div class="scroll"><table><thead><tr><th>Created</th><th>Status</th><th class="num hide-sm">Size</th><th class="num hide-sm">Build</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
         ${deployments.map((d) => {
@@ -133,15 +138,13 @@ export function deploymentView(f: FunctionRow, d: DeploymentRow): Html {
   const base = `${FN}/${f.id}`
   const live = IN_PROGRESS.includes(d.status)
   return html`<div id="deployment" ${live ? poll(`${base}/deployments/${d.id}`, 'deployment', 2) : ''}>
-    <div class="header">
-      <a class="back" href="${base}" aria-label="Back">${icon('arrow-left')}</a>
-      <h1>Deployment</h1>
-      <div class="meta">${deploymentBadge(d, f.deployment_id)}</div>
-      <div class="actions">
-        ${d.status === 'ready' && d.id !== f.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}
-        ${d.id === f.deployment_id ? '' : destroy(`${base}/deployments/${d.id}/delete`, 'Delete', 'Delete this deployment and its files?')}
-      </div>
-    </div>
+    ${header('Deployment', {
+      back: `${base}/deployments`,
+      subtitle: html`${copyableId(d.id, 'deployment-id-label')}<span class="dot" aria-hidden="true">·</span><span>${f.name}</span>`,
+      badges: [deploymentBadge(d, f.deployment_id)],
+      actions: html`${d.status === 'ready' && d.id !== f.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}
+        ${d.id === f.deployment_id ? '' : destroy(`${base}/deployments/${d.id}/delete`, 'Delete', 'Delete this deployment and its files?')}`,
+    })}
     <div class="stats" style="margin-bottom:16px">
       <div class="stat"><span>Created</span><b style="font-size:14px">${when(d.created_at)}</b></div>
       <div class="stat"><span>Size</span><b>${formatBytes(d.source_size)}</b></div>

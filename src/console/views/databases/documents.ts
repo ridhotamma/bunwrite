@@ -6,7 +6,7 @@ import type { Collection } from '~/schema/types'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { DOCUMENT_ACTIONS, permissionsField } from '~/console/permissions'
-import { alert, badge, emptyState, listCard, pager, searchForm, when } from '~/console/ui'
+import { alert, badge, emptyState, header, icon, listCard, pager, searchForm, when } from '~/console/ui'
 import { collectionHeader, collectionUrl, tabs } from '~/console/pages/databases/shared'
 
 type Attr = Collection['attributes'][number]
@@ -69,8 +69,13 @@ export function documentFormView(ctx: ConsoleContext, c: Collection, doc: Record
   for (const a of c.attributes) data[a.key] = doc ? doc[a.key] : (a.default ?? (a.array ? [] : null))
   const action = doc ? `${collectionUrl(c)}/documents/${encodeURIComponent(String(doc.$id))}` : `${collectionUrl(c)}/documents`
   const schema = c.attributes.map((a) => ({ key: a.key, type: a.type, array: a.array }))
-  return html`<form method="post" action="${action}" class="layout">
-    <div class="card docform" data-docform="${JSON.stringify(schema)}">
+  return html`${header(doc ? String(doc.$id) : 'Create document', {
+      back: `${collectionUrl(c)}/documents`,
+      subtitle: c.name,
+      badges: doc ? [badge('Document')] : [],
+    })}${tabs(c, 'documents')}
+    <form method="post" action="${action}" class="layout">
+      <div class="card docform" data-docform="${JSON.stringify(schema)}">
       <div class="docform-head"><h2>Data</h2>
         <div class="seg" role="tablist"><button type="button" class="on" data-doc-tab="form" role="tab" aria-selected="true">Form</button><button type="button" data-doc-tab="json" role="tab" aria-selected="false">JSON</button></div></div>
       ${doc ? '' : html`<label>Document ID<input name="id" class="mono" value="unique()"><small>Keep <code>unique()</code> to generate one, or type your own.</small></label>`}
@@ -135,26 +140,32 @@ export function documentsListView(ctx: ConsoleContext, view: DocumentsListView):
     submit: 'Filter',
     mono: true,
   })
+  const create = c.attributes.length
+    ? html`<a class="btn primary" href="${collectionUrl(c)}/documents/new">${icon('plus')}<span>Create document</span></a>`
+    : html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">${icon('plus')}<span>Add attribute</span></a>`
   const body = html`${filterError ? alert('critical', html`${filterError}`, { style: 'margin:12px' }) : ''}
     ${documents.length
-      ? html`<div class="scroll"><table><thead><tr><th>ID</th>${shown.map((a, i) => html`<th class="${i > 1 ? 'hide-sm' : ''}">${a.key}</th>`)}<th class="hide-sm">Updated</th></tr></thead><tbody>
-        ${documents.map((d) => html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}'"><td class="mono"><a href="${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}">${d.$id}</a></td>
-          ${shown.map((a, i) => html`<td class="clip ${i > 1 ? 'hide-sm' : ''}">${cell(d[a.key])}</td>`)}<td class="hide-sm">${when(d.$updatedAt as string | null)}</td></tr>`)}
+      ? html`<div class="scroll"><table><thead><tr><th>Document</th>${shown.map((a, i) => html`<th class="${i > 1 ? 'hide-sm' : ''}">${a.key}</th>`)}<th class="hide-sm">Updated</th></tr></thead><tbody>
+        ${documents.map((d) => html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}'"><td><a class="mono" href="${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}">${d.$id}</a></td>
+          ${shown.map((a, i) => html`<td class="clip ${i > 1 ? 'hide-sm' : ''}">${cell(d[a.key])}</td>`)}<td class="hide-sm subdued">${when(d.$updatedAt as string | null)}</td></tr>`)}
         </tbody></table></div>`
-      : emptyState(
-          filter ? 'No matching documents' : 'No documents yet',
-          filter ? 'Try a different filter.' : c.attributes.length ? 'Create one here, or let your apps write them.' : 'Add attributes first, then documents.',
-        )}`
-  const footer = documents.length
+      : filter
+        ? emptyState('No matching documents', 'Try a different filter.', html`<a class="btn" href="${collectionUrl(c)}/documents">Clear filter</a>`)
+        : emptyState(
+            'No documents yet',
+            c.attributes.length ? 'Create one here, or let your apps write them.' : 'Add attributes first, then documents.',
+            create,
+          )}`
+  const footer = total > 0
     ? pager({
         page,
         pages,
         params: { q: filter },
         always: true,
-        label: html`Page ${page} of ${pages} · ${total.toLocaleString('en-US')}${total >= 5000 ? '+' : ''} documents`,
+        label: html`Page ${page} of ${pages} · ${total.toLocaleString('en-US')}${total >= 5000 ? '+' : ''} document${total === 1 ? '' : 's'}`,
       })
     : html``
-  return html`${collectionHeader(ctx, c, html`<a class="btn primary" href="${collectionUrl(c)}/documents/new">Create document</a>`)}
+  return html`${collectionHeader(ctx, c, documents.length || filter ? create : undefined)}
     ${tabs(c, 'documents')}
     ${listCard('docs', { toolbar, body, footer })}`
 }

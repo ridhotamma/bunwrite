@@ -33,15 +33,21 @@ the Appwrite API most apps use. Existing apps keep using the official
 Requires **Bun 1.4+**.
 
 ```bash
-cp .env.example .env    # optional: set PUBLIC_ENDPOINT and other overrides
+cp .env.example .env    # optional: set PUBLIC_ENDPOINT and server tweaks
 bun install
 bun run dev             # API at http://localhost:8080/v1, console at /console
 ```
 
 On first start, Bunwrite generates an organization ID, project ID, signing
 secret and an initial API key, stores them in the database, and shows them on
-the first-run console setup page. Set `ORG_ID`, `PROJECT_ID`, `SECRET` or
-`API_KEYS` in `.env` to override the generated values.
+the first-run console setup page. After that the database is the source of
+truth: manage the project, API keys, allowed origins, email, Google sign-in and
+other application settings in the console.
+
+The optional "First start only" values at the end of `.env.example` can seed an
+empty database—useful when reusing an existing Appwrite project ID and API key.
+They are imported once and then ignored. `.env` itself is for server and
+deployment settings such as `PUBLIC_ENDPOINT`, paths, logs and resource limits.
 
 On a fresh database, open `/console/setup` to create the first admin and see the
 generated instance credentials, or create the admin from the command line:
@@ -122,9 +128,10 @@ phone.
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
 | Settings | Project, email, sign-in, storage, backups, functions, logs, HTML rendering and access |
 
-Settings saved in the console override the matching env vars and take effect
-immediately. Each setting shows whether it comes from env or from the console
-and can be reset to env.
+Settings live in the database and take effect immediately when saved in the
+console. Each setting shows whether it is customised or still at its default and
+can be reset. The optional first-start values in `.env` are imported once into
+the database; later environment changes are ignored.
 
 The console index is the organization page: it lists your projects, with tabs
 for the organization members and its settings. Open a project to enter its
@@ -201,7 +208,7 @@ Or run it with Docker Compose. It auto-tunes to the host's CPU and RAM; set
 cgroup limits in `docker-compose.yml` if you share the host with other services:
 
 ```bash
-cp .env.example .env   # optional: set PUBLIC_ENDPOINT and other overrides
+cp .env.example .env   # optional: PUBLIC_ENDPOINT, server tweaks and first-start seeds
 docker compose up -d --build
 ```
 

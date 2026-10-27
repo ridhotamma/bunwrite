@@ -6,7 +6,7 @@ import { envBulkDialog } from '~/console/env-vars'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { SETTINGS, TABS, type SettingsTab } from '~/console/settings-meta'
-import { alert, badge, destroy, emptyState, formatBytes, header, icon, tabs, when } from '~/console/ui'
+import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, tabs, when } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
 
@@ -19,20 +19,19 @@ function codeFound(ctx: ConsoleContext): Html {
 
 function source(ctx: ConsoleContext, key: SettingKey): Html {
   return ctx.services.settings.overridden(key)
-    ? html`${badge('Set here', 'info')} ${destroy(`${SETTINGS}/${key}/reset`, 'Use env value', 'Go back to the value from the server env?')}`
-    : badge('From env')
+    ? html`${badge('Custom', 'info')} ${destroy(`${SETTINGS}/${key}/reset`, 'Reset', 'Reset this setting to the default value?')}`
+    : badge('Default')
 }
 
 function card(ctx: ConsoleContext, id: string, title: string, key: SettingKey | null, hint: string, body: Html): Html {
-  return html`<div class="card" id="${id}"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><h2 style="margin:0">${title}</h2><span style="margin-left:auto;display:flex;gap:8px;align-items:center">${key ? source(ctx, key) : ''}</span></div>
-    <p class="hint" style="margin:4px 0 12px">${hint}</p>${body}</div>`
+  return settingsSection(title, hint, body, { id, badge: key ? source(ctx, key) : undefined })
 }
 
 function projectCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   return card(ctx, 'project', 'Project', 'project', 'Name in emails, allowed web origins and how long sign-ins last.', html`
     <form method="post" action="${SETTINGS}/project">
-      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Set by ORG_ID; generated on first start.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Apps send this in X-Appwrite-Project.</small></label></div>
+      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Generated on first start and stored in the database.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set when the project was created. Apps send this in X-Appwrite-Project.</small></label></div>
       <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
       <div class="foot"><button class="primary">Save</button></div>
@@ -99,19 +98,22 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
   }
   return html`
     ${error ? alert('critical', html`${error}`) : ''}
-    <div class="card flush">
-      <div class="toolbar"><h2 style="margin:0">Backups</h2>
-        <form method="post" action="${SETTINGS}/backups/create" class="inline" style="margin-left:auto"><button class="primary">Initialize new backup</button></form>
-      </div>
-      ${backups.length
-        ? html`<div class="scroll"><table><thead><tr><th>Backup</th><th class="num">Size</th><th class="hide-sm">Created</th><th></th></tr></thead><tbody>
-          ${backups.map((b) => html`<tr><td class="mono clip">${b.name}</td><td class="num">${formatBytes(b.size)}</td><td class="hide-sm">${when(b.modified)}</td>
-            <td class="num"><a class="btn small" href="${SETTINGS}/backups/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
-              ${destroy(`${SETTINGS}/backups/${encodeURIComponent(b.name)}/delete`, 'Delete', `Delete ${b.name}?`)}</td></tr>`)}
-          </tbody></table></div>`
-        : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}
-    </div>
-    ${card(ctx, 'backup-options', 'Backup options', 'backups', 'Database snapshots. Automatic backups run once a day at 02:00 UTC.', html`
+    ${settingsSection(
+      'Backups',
+      'Database snapshots you can download. Automatic backups run once a day at 02:00 UTC.',
+      html`<div class="toolbar"><h2 style="margin:0">Saved backups</h2>
+          <form method="post" action="${SETTINGS}/backups/create" class="inline" style="margin-left:auto"><button class="primary">Create backup</button></form>
+        </div>
+        ${backups.length
+          ? html`<div class="scroll"><table><thead><tr><th>Backup</th><th class="num">Size</th><th class="hide-sm">Created</th><th></th></tr></thead><tbody>
+            ${backups.map((b) => html`<tr><td class="mono clip">${b.name}</td><td class="num">${formatBytes(b.size)}</td><td class="hide-sm subdued">${when(b.modified)}</td>
+              <td class="num"><a class="btn small" href="${SETTINGS}/backups/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
+                ${destroy(`${SETTINGS}/backups/${encodeURIComponent(b.name)}/delete`, 'Delete', `Delete ${b.name}?`)}</td></tr>`)}
+            </tbody></table></div>`
+          : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
+      { id: 'backups', flush: true },
+    )}
+    ${card(ctx, 'backup-options', 'Backup options', 'backups', 'Choose whether automatic backups run, how many to keep, and where they are stored.', html`
       <form method="post" action="${SETTINGS}/backups">
         <label class="check"><input type="checkbox" name="backupsEnabled" ${c.backups.enabled ? 'checked' : ''}>Enable auto backups</label>
         <div class="fields"><label>Keep automatic backups<input name="backupsKeep" type="number" min="1" max="100" value="${c.backups.keep}"></label></div>
@@ -136,7 +138,7 @@ function functionCards(ctx: ConsoleContext): Html {
     ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', html`
       ${globals.length
         ? html`<ul class="list">${globals.map((v) => html`<li><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`} ${destroy(`${SETTINGS}/functions/variables/delete`, 'Remove', `Remove global variable ${v.key}?`, { key: v.key })}</span></li>`)}</ul>`
-        : html`<p class="hint" style="margin:0 0 12px">None set. Values from the server env and FUNCTIONS_ENV_FILE still apply.</p>`}
+        : html`<p class="hint" style="margin:0 0 12px">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`}
       <form method="post" action="${SETTINGS}/functions/variables" style="margin-top:12px">
         <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
         <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
@@ -184,7 +186,7 @@ function renderCards(ctx: ConsoleContext): Html {
 function accessCards(ctx: ConsoleContext): Html {
   const keys = ctx.services.settings.listKeys()
   return html`
-    ${card(ctx, 'keys', 'API keys', null, 'Server keys with full access. Keys from the API_KEYS env var also work and are not listed.', html`
+    ${card(ctx, 'keys', 'API keys', null, 'Server keys with full access. Create one per app so it can be rotated or revoked on its own.', html`
       ${keys.length
         ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Key</th><th>Last used</th><th class="hide-sm">Expires</th><th></th></tr></thead><tbody>
           ${keys.map((k) => html`<tr><td>${k.name}</td><td class="mono hide-sm">${k.hint}…</td><td>${when(k.accessed_at)}</td><td class="hide-sm">${k.expire ? when(k.expire) : 'Never'}</td>
@@ -240,7 +242,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, create
       body = accessCards(ctx)
       break
   }
-  return html`${header('Settings')}
+  return html`${header('Settings', { subtitle: ctx.currentProject.name })}
     ${tabs(TABS, tab)}
     ${body}
     ${created ? apiKeyDialog(created) : ''}`

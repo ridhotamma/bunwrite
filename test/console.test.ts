@@ -218,7 +218,7 @@ describe('settings through the console', () => {
     expect(functions).not.toContain('id="keys"') // the Access tab's API keys card
   })
 
-  test('project settings apply at once and can go back to env', async () => {
+  test('project settings apply at once and can reset to their defaults', async () => {
     await form('/console/settings/project', { projectName: 'Toko Saya', allowedOrigins: 'shop.example.com', sessionDays: '30', sessionsLimit: '3' })
     expect([server.config.projectName, server.config.allowedOrigins, server.config.sessionDuration, server.config.sessionsLimit]).toEqual(['Toko Saya', ['shop.example.com'], 2592000, 3])
     const cors = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://shop.example.com' } })
@@ -432,10 +432,126 @@ describe('settings through the console', () => {
       const storage = await (await get('/console/storage')).text()
       expect(storage).toContain('Page bucket')
       expect(storage).toContain('5 B')
+
+      // Files and Settings tabs, plus the no-JavaScript upload page
+      const files = await (await get('/console/storage/page-bucket')).text()
+      expect(files).toContain('hello.txt')
+      expect(files).toContain('id="upload-file"')
+      expect(files).toContain('Page 1 of 1 · 1 file')
+      expect(files).not.toContain('Bucket permissions</h3>')
+      // Private files stay behind the admin-only console route.
+      expect(files).toContain('/console/storage/page-bucket/files/')
+      expect(files).not.toContain('Copy link')
+      const settingsPage = await (await get('/console/storage/page-bucket/settings')).text()
+      expect(settingsPage).toContain('Delete bucket')
+      expect(settingsPage).toContain('name="section" value="access"')
+      expect((await get('/console/storage/page-bucket/upload')).status).toBe(200)
+
+      // Saving one settings card keeps the other fields
+      const saved = await form('/console/storage/page-bucket/settings', { section: 'access', fileSecurity: 'on', permissions: 'read("any")' })
+      expect(saved.status).toBe(303)
+      const bucket = server.services.storage.bucket('page-bucket', true)
+      expect(bucket).toMatchObject({ name: 'Page bucket', enabled: 1, transformations: 1, file_security: 1, maximum_file_size: 5_000_000 })
+      expect(JSON.parse(bucket.permissions)).toEqual(['read("any")'])
+
+      // Public files link to the API view URL, which works without a console session.
+      const publicFiles = await (await get('/console/storage/page-bucket')).text()
+      const fileId = (server.db.sqlite.query("SELECT id FROM _files WHERE bucket_id = 'page-bucket'").get() as { id: string }).id
+      const publicUrl = `${server.endpoint}/storage/buckets/page-bucket/files/${fileId}/view?project=${PROJECT}`
+      expect(publicFiles).toContain(`href="${publicUrl}"`)
+      expect(publicFiles).toContain('Copy link')
+      const guestView = await fetch(publicUrl)
+      expect(guestView.status).toBe(200)
+      expect(await guestView.text()).toBe('hello')
+
       await form('/console/storage/page-bucket/delete', {})
     } finally {
       await admin.teams.delete({ teamId: 'page-team' }).catch(() => {})
       await admin.users.delete({ userId: 'page-user' })
+    }
+  })
+
+  test('detail pages use tabs, sectioned settings and no-JavaScript fallbacks', async () => {
+    // Database and collection pages split their content from settings.
+    const database = await (await get('/console/databases/main')).text()
+    expect(database).toContain('Search collections')
+    expect(database).toContain('>Collections</a>')
+    const databaseSettings = await (await get('/console/databases/main/settings')).text()
+    expect(databaseSettings).toContain('Delete database')
+    expect(databaseSettings).toContain('data-copy-target="#database-id"')
+
+    const collectionSettings = await (await get('/console/databases/main/collections/products/settings')).text()
+    expect(collectionSettings).toContain('name="section" value="general"')
+    expect(collectionSettings).toContain('name="section" value="access"')
+
+    // Saving one collection section leaves the other section alone.
+    let collection = server.services.registry.collection('main', 'products', true)
+    const original = { name: collection.name, enabled: collection.enabled, security: collection.documentSecurity, permissions: collection.permissions }
+    await form('/console/databases/main/collections/products/settings', { section: 'general', name: 'Products renamed', enabled: 'on' })
+    collection = server.services.registry.collection('main', 'products', true)
+    expect([collection.name, collection.documentSecurity]).toEqual(['Products renamed', original.security])
+    await form('/console/databases/main/collections/products/settings', { section: 'access', documentSecurity: 'on', permissions: 'read("any")' })
+    collection = server.services.registry.collection('main', 'products', true)
+    expect([collection.name, collection.documentSecurity, collection.permissions]).toEqual(['Products renamed', true, ['read("any")']])
+    await form('/console/databases/main/collections/products/settings', { section: 'general', name: original.name, enabled: original.enabled ? 'on' : '' })
+    await form('/console/databases/main/collections/products/settings', {
+      section: 'access',
+      documentSecurity: original.security ? 'on' : '',
+      permissions: original.permissions.join('\n'),
+    })
+
+    const indexes = await (await get('/console/databases/main/collections/products/indexes')).text()
+    expect(indexes).toContain('id="add-index"')
+    expect((await get('/console/databases/main/collections/products/indexes/new')).status).toBe(200)
+
+    // Users and teams have their own settings tab, plus dialogs with fallback pages.
+    const admin = adminClient(server.endpoint)
+    const user = await admin.users.create({ userId: 'detail-user', email: 'detail@example.com', name: 'Detail User' })
+    const team = await admin.teams.create({ teamId: 'detail-team', name: 'Detail Team' })
+    try {
+      const userPage = await (await get(`/console/auth/users/${user.$id}`)).text()
+      expect(userPage).toContain('>Profile</a>')
+      expect(userPage).toContain('>Settings</a>')
+      const userSettings = await (await get(`/console/auth/users/${user.$id}/settings`)).text()
+      expect(userSettings).toContain('Delete user')
+      expect(userSettings).toContain('Set password')
+      const teamPage = await (await get(`/console/auth/teams/${team.$id}`)).text()
+      expect(teamPage).toContain('id="add-member"')
+      const teamSettings = await (await get(`/console/auth/teams/${team.$id}/settings`)).text()
+      expect(teamSettings).toContain('Delete team')
+      expect((await get(`/console/auth/teams/${team.$id}/members/new`)).status).toBe(200)
+    } finally {
+      await admin.teams.delete({ teamId: team.$id }).catch(() => {})
+      await admin.users.delete({ userId: user.$id })
+    }
+
+    // Functions split runs, deployments, variables and settings into tabs.
+    const fn = server.services.functions.create('tab-fn', {
+      name: 'Tab function',
+      runtime: 'node-22',
+      execute: [],
+      events: [],
+      schedule: '',
+      timeout: 15,
+      enabled: true,
+      logging: true,
+      entrypoint: 'src/main.js',
+      commands: '',
+      scopes: [],
+      buildSpecification: 's-1vcpu-512mb',
+      runtimeSpecification: 's-1vcpu-512mb',
+      deploymentRetention: 0,
+    })
+    try {
+      const runs = await (await get(`/console/functions/${fn.id}`)).text()
+      expect(runs).toContain('id="deploy-code"')
+      expect(runs).toContain('>Deployments</a>')
+      expect(await (await get(`/console/functions/${fn.id}/deployments`)).text()).toContain('No deployments')
+      expect(await (await get(`/console/functions/${fn.id}/variables`)).text()).toContain('Function variables')
+      expect(await (await get(`/console/functions/${fn.id}/settings`)).text()).toContain('Delete function')
+      expect((await get(`/console/functions/${fn.id}/deploy`)).status).toBe(200)
+    } finally {
+      server.services.functions.remove(fn.id)
     }
   })
 

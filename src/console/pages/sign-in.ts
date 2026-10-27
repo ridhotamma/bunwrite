@@ -35,13 +35,13 @@ export function signInPage(auth: ConsoleAuth, options: SignInOptions): Response 
         ${setup && options.instance
           ? html`<div class="card">
               <h2>Instance credentials</h2>
-              <p class="hint">Generated on first start when not set in the environment, and stored in the database. Set <code>ORG_ID</code>, <code>PROJECT_ID</code>, <code>SECRET</code> or <code>API_KEYS</code> in the environment to override them.</p>
+              <p class="hint">Generated on first start and stored in the database. Manage the project and its keys from the console after setup.</p>
               <label>Organization ID<input class="mono" readonly value="${options.instance.orgId}"></label>
               <label>Project ID<input class="mono" readonly value="${options.instance.projectId}"></label>
               ${options.instance.apiKey
                 ? html`<label>API key<input id="instance-api-key" class="mono" readonly autocomplete="off" spellcheck="false" value="${options.instance.apiKey}"><small>Copy it now; it is not shown after you create the admin.</small></label>
                   <button type="button" data-copy-target="#instance-api-key">Copy API key</button>`
-                : html`<p class="hint" style="margin:0">Using <code>API_KEYS</code> from the environment.</p>`}
+                : html`<p class="hint" style="margin:0">API keys were imported from the environment and are managed in Settings → Access.</p>`}
             </div>`
           : ''}
         ${!setup && auth.count() === 0 ? html`<p class="subdued" style="text-align:center">No admin yet. Run <code>bun run console:admin you@example.com</code> on the server.</p>` : ''}

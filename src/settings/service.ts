@@ -1,7 +1,8 @@
 /**
  * Project settings edited in the console. Stored in `_settings` and applied
- * over the env-derived Config in place, so the next request sees them; env
- * values remain the defaults. API keys made here live in `_api_keys`.
+ * over the Config in place, so the next request sees them. Values left unset
+ * use the defaults captured when the service starts; API keys live in
+ * `_api_keys`.
  */
 import type { BackupsConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
 import type { RenderConfig } from '~/render/service'
@@ -179,7 +180,7 @@ export class SettingsService {
   }
 }
 
-/** Is this X-Appwrite-Key acceptable? Env keys, the functions' internal key, or a live console key. */
+/** Is this X-Appwrite-Key acceptable? Programmatic keys, the functions' internal key, or a live console key. */
 export function apiKeyValid(db: Db, config: Config, key: string): boolean {
   if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) return true
   const row = db.sqlite

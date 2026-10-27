@@ -174,7 +174,6 @@ export function projectsView(options: ProjectsViewOptions): Html {
           <a href="?${queryString}view=grid" class="${view === 'grid' ? 'on' : ''}" aria-label="Grid view" title="Grid">${icon('squares-four')}</a>
           <a href="?${queryString}view=list" class="${view === 'list' ? 'on' : ''}" aria-label="List view" title="List">${icon('list')}</a>
         </div>
-        <button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>
       </div>
     </div>
     <div id="projects-page">
@@ -189,7 +188,7 @@ export function projectsView(options: ProjectsViewOptions): Html {
           )}</div>`}
       ${renameDialogs(projects)}
     </div>
-    ${createProjectDialog(Boolean(options.createOpen) && !options.created)}
+    ${createProjectDialog(Boolean(options.createOpen))}
     ${options.created ? (options.created.apiKey ? projectKeyDialog(options.created) : html`<div class="toast" role="status">${icon('check-circle')}<span>${options.created.project.name} created</span></div>`) : ''}`
 }
 

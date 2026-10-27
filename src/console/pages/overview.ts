@@ -5,7 +5,7 @@ import { addSeconds } from '~/lib/datetime'
 import { lineChart } from '~/console/chart'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { html, type Html } from '~/console/html'
-import { alert, emptyState, formatBytes, header, stat, statusBadge, when } from '~/console/ui'
+import { alert, cardHead, emptyState, formatBytes, header, stat, statusBadge, when } from '~/console/ui'
 
 const started = Date.now()
 
@@ -39,7 +39,7 @@ function overview(ctx: ConsoleContext): Html {
   const consumers = services.requestLogs.topConsumers(since, 6)
   const traffic = html`<div class="layout" style="margin-bottom:16px">
     <div class="card">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h2 style="margin:0">Bandwidth over time</h2><a class="subdued" style="margin-left:auto" href="/console/logs">View request logs</a></div>
+      ${cardHead('Bandwidth over time', html`<a class="subdued" href="/console/logs">View request logs</a>`)}
       ${totalBytes
         ? lineChart({
             labels: hours.map((hour) => `${hour.slice(11, 13)}:00`),
@@ -50,7 +50,7 @@ function overview(ctx: ConsoleContext): Html {
           })
         : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.')}
     </div>
-    <div class="card"><h2>Top bandwidth consumers</h2>
+    <div class="card">${cardHead('Top bandwidth consumers')}
       ${consumers.length
         ? html`<ul class="list">${consumers.map((item) => html`<li><span class="mono clip" title="${item.path}">${item.path}</span><span class="subdued">${formatBytes(item.bytes)}</span></li>`)}</ul>`
         : emptyState('No consumers yet', 'Paths appear here after the first requests.')}
@@ -70,7 +70,7 @@ function overview(ctx: ConsoleContext): Html {
     ${traffic}
     <div class="layout">
       <div class="card flush">
-        <div class="toolbar"><h2 style="margin:0">Recent function runs</h2></div>
+        <div class="toolbar"><h2 style="margin:0">Recent function runs</h2><a class="subdued" style="margin-left:auto" href="/console/functions">View all</a></div>
         ${runs.length
           ? html`<div class="scroll"><table><thead><tr><th>Function</th><th>Status</th><th class="hide-sm">Trigger</th><th class="num">Time</th><th>Started</th></tr></thead><tbody>
             ${runs.map((r) => html`<tr class="row-link" onclick="location='/console/functions/${r.function_id}/executions/${r.id}'"><td>${r.function_id}</td><td>${statusBadge(r.status)}</td><td class="hide-sm">${r.trigger}</td><td class="num">${r.duration.toFixed(2)}s</td><td>${when(r.created_at)}</td></tr>`)}
@@ -78,7 +78,7 @@ function overview(ctx: ConsoleContext): Html {
           : emptyState('No runs yet', 'Scheduled functions show up here after their first run.')}
       </div>
       <div class="card">
-        <h2>Server</h2>
+        ${cardHead('Server')}
         <ul class="list">
           <li><span class="subdued">Database file</span><span>${formatBytes(dbBytes)}</span></li>
           <li><span class="subdued">Memory</span><span>${formatBytes(process.memoryUsage().rss)}</span></li>

@@ -100,6 +100,20 @@ export function bucketModel(b: BucketRow) {
   }
 }
 
+/** Roles a request without a session carries: `any` and `guests`. */
+const GUEST_ROLES = new Set(['any', 'guests'])
+
+/**
+ * Whether a file can be read without signing in, using the same precedence as
+ * `StorageService.can`: bucket permissions first, then the file's own
+ * permissions when file security is on.
+ */
+export function publiclyReadable(bucket: BucketRow, filePermissions: string[]): boolean {
+  if (!bucket.enabled) return false
+  if (grants(JSON.parse(bucket.permissions), 'read', GUEST_ROLES)) return true
+  return Boolean(bucket.file_security) && grants(filePermissions, 'read', GUEST_ROLES)
+}
+
 export function fileModel(f: FileRow, bucket?: BucketRow) {
   return {
     $id: f.id,

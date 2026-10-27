@@ -19,7 +19,7 @@ const flag = (name: string) => {
 }
 
 const endpoint = flag('endpoint') ?? process.env.MIGRATE_ENDPOINT
-const projectId = flag('project') ?? process.env.MIGRATE_PROJECT_ID ?? process.env.PROJECT_ID
+const projectId = flag('project') ?? process.env.MIGRATE_PROJECT_ID
 const key = flag('key') ?? process.env.MIGRATE_API_KEY
 if (!endpoint || !projectId || !key) {
   console.error('Usage: bun run migrate --endpoint <https://.../v1> --project <projectId> --key <apiKey> [--functions <appwrite.config.json>] [--only a,b] [--verify]')

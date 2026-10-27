@@ -1,6 +1,7 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { value } from '~/console/forms'
 import { html } from '~/console/html'
+import { icon } from '~/console/ui'
 import { organizationHeader } from '~/console/views/organization'
 import { projectEditView, projectsView, type CreatedProject } from '~/console/views/projects'
 import { addSeconds } from '~/lib/datetime'
@@ -29,10 +30,11 @@ function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
   const org = ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
   const members = ctx.organizations.members(org.id).filter((member) => member.status === 'active').length
   const manager = ctx.organizations.roleOf(org.id, ctx.admin.email) === 'owner'
+  const create = html`<button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>`
   return ctx.render(
     org.name,
     'projects',
-    html`${organizationHeader(org, { projects: all.length, members }, 'projects', manager)}${projectsView({
+    html`${organizationHeader(org, { projects: all.length, members }, 'projects', manager, create)}${projectsView({
       projects: filtered.map((project) => project.info),
       currentId: ctx.selectedProjectId ?? '',
       defaultId: ctx.projects.defaultProject().info.id,

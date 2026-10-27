@@ -1,7 +1,7 @@
 import type { ConsoleRouter } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { pageCount, pageParams } from '~/console/query'
-import { alert, badge, destroy, emptyState, formatBytes, header, listCard, pager, searchForm, when } from '~/console/ui'
+import { alert, badge, destroy, emptyState, formatBytes, header, listCard, menu, pager, searchForm, when } from '~/console/ui'
 
 const LOGS = '/console/logs'
 const LIMIT = 50
@@ -42,14 +42,17 @@ export function logPages(router: ConsoleRouter): void {
               ? 'Try a different filter.'
               : 'Requests appear here after the next call.'
             : 'Set LOG_REQUESTS=true and restart to record requests.',
+          search || status ? html`<a class="btn" href="${LOGS}">Clear filters</a>` : undefined,
         )
     const retention = ctx.services.requestLogs.retentionDays > 0 ? `Stored for ${ctx.services.requestLogs.retentionDays} day${ctx.services.requestLogs.retentionDays === 1 ? '' : 's'}.` : 'Stored until you clear them.'
     return ctx.render(
       'Request logs',
       'logs',
-      html`${header('Request logs', { actions: destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?') })}
+      html`${header('Request logs', {
+        subtitle: `${retention} Requests to this page itself are not recorded.`,
+        actions: menu(destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?'), { label: 'More actions' }),
+      })}
       ${ctx.services.config.logRequests ? '' : alert('warning', html`Request logging is off. Set <code>LOG_REQUESTS=true</code> and restart to record new requests.`)}
-      <p class="subdued" style="margin:-8px 0 16px">${retention} Requests to this page itself are not recorded.</p>
       ${listCard('logs', {
         toolbar: searchForm({
           action: LOGS,
@@ -66,6 +69,7 @@ export function logPages(router: ConsoleRouter): void {
           page,
           pages,
           params: { q: search, status },
+          always: total > 0,
           label: `Page ${page} of ${pages} · ${total.toLocaleString('en-US')} request${total === 1 ? '' : 's'}`,
         }),
       })}`,
@@ -87,22 +91,29 @@ export function logPages(router: ConsoleRouter): void {
     return ctx.render(
       `${log.method} ${log.path}`,
       'logs',
-      html`${header(`${log.method} ${log.path}`, { back: LOGS, badges: [badge(String(log.status), tone(log.status))] })}
-      <div class="card"><h2>Request</h2><ul class="list">
-        ${row('Time', when(log.created_at))}
-        ${row('Method', log.method)}
-        ${row('Path', html`<span class="mono">${log.path}</span>`)}
-        ${row('Status', String(log.status))}
-        ${row('Duration', duration(log.duration_ms))}
-        ${row('Inbound', formatBytes(log.request_bytes))}
-        ${row('Outbound', formatBytes(log.response_bytes))}
-        ${row('Auth', log.auth || '—')}
-        ${row('IP', log.ip || '—')}
-        ${row('Project', log.project || '—')}
-        ${row('Request ID', html`<span class="mono">${log.id}</span>`)}
-        ${row('Referer', log.referer || '—')}
-        ${row('User agent', log.user_agent || '—')}
-      </ul></div>
+      html`${header(`${log.method} ${log.path}`, {
+        back: LOGS,
+        subtitle: when(log.created_at),
+        badges: [badge(String(log.status), tone(log.status))],
+      })}
+      <div class="layout">
+        <div class="card"><h2>Request</h2><ul class="list">
+          ${row('Method', log.method)}
+          ${row('Path', html`<span class="mono">${log.path}</span>`)}
+          ${row('Status', String(log.status))}
+          ${row('Duration', duration(log.duration_ms))}
+          ${row('Inbound', formatBytes(log.request_bytes))}
+          ${row('Outbound', formatBytes(log.response_bytes))}
+          ${row('Request ID', html`<span class="mono">${log.id}</span>`)}
+          ${row('Project', log.project || '—')}
+        </ul></div>
+        <div class="card"><h2>Client</h2><ul class="list">
+          ${row('Auth', log.auth || '—')}
+          ${row('IP', log.ip || '—')}
+          ${row('Referer', log.referer || '—')}
+          ${row('User agent', log.user_agent || '—')}
+        </ul></div>
+      </div>
       ${log.error ? html`<div class="card"><h2>Error</h2><pre>${log.error}</pre></div>` : ''}`,
     )
   })

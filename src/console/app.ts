@@ -157,9 +157,7 @@ export function createConsole(source: Services | ProjectResolver) {
               instance: control.config.bootstrap,
             })
           }
-          const bootstrapKey = control.config.bootstrap?.apiKey
           clearInstanceApiKey(control.db)
-          if (bootstrapKey) control.config.apiKeys = control.config.apiKeys.filter((key) => key !== bootstrapKey)
           if (control.config.bootstrap) control.config.bootstrap.apiKey = undefined
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })

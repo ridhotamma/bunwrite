@@ -39,8 +39,8 @@ plus their own storage, backups and function folder.
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/` | One service and its routes each |
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
-| `src/settings/` | Console-edited settings over env, console API keys |
-| `src/instance/` | First-run generated organization/project IDs, signing secret and initial API key |
+| `src/settings/` | Console-edited project settings and API keys |
+| `src/instance/` | First-run organization/project IDs, signing secret, initial API key and one-time env seed |
 | `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
 | `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
@@ -66,10 +66,12 @@ The console keeps the same boundaries as the API:
 - Page and view modules do not run SQL. Queries live with the service that owns
   the data (`DocumentStore`, `AuthService`, `TeamService`, `StorageService`,
   `FunctionService`, `RequestLogService`), and the page calls that service.
-- `instance/bootstrap.ts` runs at startup. It uses `ORG_ID`, `PROJECT_ID`,
-  `SECRET` and `API_KEYS` from the environment when set, otherwise generates
-  them and stores the defaults in `_settings` under `instance`. The generated
-  API key is shown once on `/console/setup` and kept hashed in `_api_keys`.
+- `instance/bootstrap.ts` runs at startup. Stored values win; environment
+  values only seed an empty (or legacy partial) instance, and are imported once
+  into `_settings` / `_api_keys` behind an `env_seed` marker. After that,
+  project identity, API keys and application settings live in the database and
+  are managed in the console. The generated API key is shown once on
+  `/console/setup` and kept hashed in `_api_keys`.
 - `projects/manager.ts` owns `_projects` in the control database and a cached
   `Services` set per project. The control database is the default project's
   database, so an existing single-project install keeps its data. Additional
@@ -189,8 +191,9 @@ pause list.
 
 ## Settings and schema: who wins
 
-- **Settings:** env vars are the defaults, and a value saved in the console
-  overrides them until it is reset to env.
+- **Settings:** the database is the source of truth. Environment project
+  settings are imported once into `_settings` when an instance is first seeded
+  and are ignored afterwards; console edits take effect immediately.
 - **Schema:** the database is the source of truth.
   - `appwrite.config.json` is an import/export format: `schema:push`, the console's Schema page, `SCHEMA_SYNC_ON_START=true`, or `appwrite push tables` (through `/v1/tablesdb` and `/v1/databases`).
   - Columns read back in the shape they were defined (an email column shows a size only if it was given one), because `appwrite push` drops and recreates a column whose type, size, format or encrypt reads back differently.

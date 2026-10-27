@@ -56,20 +56,33 @@ sudo -u bunwrite chmod 600 /opt/bunwrite/.env
 sudo -u bunwrite vi /opt/bunwrite/.env
 ```
 
-The first start generates the identity values below and stores them in the
-database. Set any of them to override the generated values:
+The first start generates (or imports from the optional seed values) the
+organization ID, project ID, signing secret and an initial API key, then stores
+them in the database. `.env` is for server and deployment settings:
 
-- `ORG_ID` — optional organization ID for the console.
-- `PROJECT_ID` — the project ID your apps send in `X-Appwrite-Project`.
-- `API_KEYS` — one or more server keys, comma-separated.
-- `SECRET` — at least 32 random characters when set (`openssl rand -hex 32`).
 - `PUBLIC_ENDPOINT` — the public URL including `/v1`.
-- `ALLOWED_ORIGINS` — the browser origins allowed by CORS.
 - `HOST` — bind address; defaults to `0.0.0.0`. Set `127.0.0.1` when a
   reverse proxy or tunnel on the same host is the only entry point.
 - `CONSOLE_ADMIN_EMAIL` and `CONSOLE_ADMIN_PASSWORD` — optional first admin; the
-  server creates it once at startup. Otherwise open `/console/setup` on the
-  server to see the generated credentials and create the admin.
+  server creates it once at startup.
+
+The optional **First start only** values at the end of `.env.example` can seed
+an empty database — useful when reusing an existing Appwrite project ID and API
+key. They are imported once into the database and then ignored:
+
+- `ORG_ID`, `PROJECT_ID`, `PROJECT_NAME`
+- `API_KEYS` (imported hashed into **Settings → Access**)
+- `SECRET` (at least 32 random characters, `openssl rand -hex 32`)
+- `ALLOWED_ORIGINS`, `SESSION_DURATION`, `SESSIONS_LIMIT`
+- `SMTP_*`, `GOOGLE_*`, `FUNCTIONS_SKIP_SCHEDULES`
+
+After the first start, manage the mutable settings (API keys, origins,
+sessions, SMTP, Google and function schedules) in the console; the project ID
+is fixed for the life of the project. Confirm the project ID and API key, then
+remove the seed values from `.env`; keeping them only produces a warning that
+they are ignored. Keep the API key somewhere safe (or create a fresh key in
+**Settings → Access**) before deleting `API_KEYS` from `.env`, because the
+console only stores its hash and cannot show it again.
 
 Create or reset the first console admin:
 
@@ -132,7 +145,7 @@ to about 70 MB.
 
 ```bash
 cp .env.example .env
-$EDITOR .env          # optional: PUBLIC_ENDPOINT, ALLOWED_ORIGINS and overrides
+$EDITOR .env          # optional: PUBLIC_ENDPOINT and first-start seed values
 docker compose up -d --build
 curl http://localhost:8080/v1/health
 ```
@@ -145,8 +158,9 @@ docker compose exec bunwrite bunwrite console:admin you@example.com
 
 The first start prints the generated organization ID, project ID and API key to
 `docker compose logs bunwrite`. The signing secret is stored in the database
-volume. Set `ORG_ID`, `PROJECT_ID`, `SECRET` or `API_KEYS` in `.env` to override
-the generated values.
+volume. Optional first-start seed values in `.env` (organization/project ID,
+API keys, secret and application settings) are imported once and then ignored;
+manage them in the console afterwards.
 
 Notes:
 

@@ -38,14 +38,26 @@ export function icon(name: IconName, size = 16, className = ''): Html {
   return html`<svg class="icon ${className}" viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden="true"><path d="${ICON_PATHS[name]}"/></svg>`
 }
 
-/** Polaris page header: back link, title, status badges, then actions with at most one primary. */
-export function header(title: string, opts: { back?: string; badges?: (Html | string)[]; actions?: Html } = {}): Html {
+/** Polaris page header: back link, title (with optional context line), status badges, then actions with at most one primary. */
+export function header(title: string, opts: { back?: string; subtitle?: Html | string; badges?: (Html | string)[]; actions?: Html } = {}): Html {
   return html`<div class="header">
     ${opts.back ? html`<a class="back" href="${opts.back}" aria-label="Back">${icon('arrow-left')}</a>` : ''}
-    <h1>${title}</h1>
-    ${opts.badges?.length ? html`<div class="meta">${opts.badges}</div>` : ''}
+    <div class="header-main">
+      <div class="header-title"><h1>${title}</h1>${opts.badges?.length ? html`<div class="meta">${opts.badges}</div>` : ''}</div>
+      ${opts.subtitle ? html`<div class="header-sub">${opts.subtitle}</div>` : ''}
+    </div>
     ${opts.actions ? html`<div class="actions">${opts.actions}</div>` : ''}
   </div>`
+}
+
+/** A monospace ID with a small copy button, for header subtitles. */
+export function copyableId(id: string, domId: string): Html {
+  return html`<span class="id-copy"><span class="mono" id="${domId}">${id}</span><button type="button" class="icon-btn id-copy-btn" data-copy-target="#${domId}" aria-label="Copy ID" title="Copy ID">${icon('copy', 14)}<span data-copy-label aria-live="polite"></span></button></span>`
+}
+
+/** A card heading with a place for a secondary action. */
+export function cardHead(title: Html | string, action?: Html): Html {
+  return html`<div class="card-head"><h2>${title}</h2>${action ? html`<div class="card-head-actions">${action}</div>` : ''}</div>`
 }
 
 export interface TabItem {
@@ -58,6 +70,22 @@ export function tabs(items: readonly TabItem[], active: string): Html {
   return html`<nav class="tabs" aria-label="Sections">
     ${items.map((item) => html`<a href="${item.href}" class="${item.key === active ? 'on' : ''}" ${item.key === active ? html`aria-current="page"` : ''}>${item.label}</a>`)}
   </nav>`
+}
+
+/** A settings block: title and explanation on the left, its card on the right (stacked on phones). */
+export function settingsSection(
+  title: string,
+  hint: Html | string,
+  body: Html,
+  options: { id?: string; badge?: Html; flush?: boolean } = {},
+): Html {
+  return html`<section class="settings-section" ${options.id ? html`id="${options.id}"` : ''}>
+    <div class="settings-aside">
+      <div class="settings-heading"><h2>${title}</h2>${options.badge ? html`<span class="settings-badge">${options.badge}</span>` : ''}</div>
+      <p class="subdued">${hint}</p>
+    </div>
+    <div class="card ${options.flush ? 'flush' : ''}">${body}</div>
+  </section>`
 }
 
 export type AlertTone = 'success' | 'critical' | 'warning' | 'info'
@@ -97,6 +125,11 @@ export const destroy = (action: string, label: string, confirm: string, fields: 
 
 export function formFooter(cancel: string | null, submit: string): Html {
   return html`<div class="foot">${cancel ? html`<a class="btn" href="${cancel}">Cancel</a>` : ''}<button class="primary">${submit}</button></div>`
+}
+
+/** Actions at the end of a page-level form, outside the section cards. */
+export function pageFooter(cancel: string | null, submit: string): Html {
+  return html`<div class="page-foot">${cancel ? html`<a class="btn" href="${cancel}">Cancel</a>` : ''}<button class="primary">${submit}</button></div>`
 }
 
 export const formatBytes = (n: number) =>

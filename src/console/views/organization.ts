@@ -1,6 +1,6 @@
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { alert, avatar, badge, day, destroy, emptyState, icon, menu } from '~/console/ui'
+import { alert, avatar, badge, day, destroy, emptyState, icon, menu, settingsSection, tabs } from '~/console/ui'
 import type { InviteResult, OrganizationInfo, OrganizationMember } from '~/organizations/service'
 import { displayName } from '~/organizations/service'
 
@@ -18,28 +18,24 @@ export function organizationHeader(
   counts: OrganizationCounts,
   active: 'projects' | 'members' | 'settings',
   canManage: boolean,
+  actions?: Html,
 ): Html {
-  const tab = (key: typeof active, label: string, href: string) =>
-    html`<a href="${href}" class="${active === key ? 'on' : ''}" ${active === key ? html`aria-current="page"` : ''}>${label}</a>`
   return html`<div class="org-head">
     <span class="org-mark" aria-hidden="true">${(org.name.trim()[0] ?? 'O').toUpperCase()}</span>
     <div class="org-title">
       <h1>${org.name}</h1>
       <p class="subdued">${plural(counts.projects, 'project')} · ${plural(counts.members, 'member')}</p>
     </div>
+    ${actions ? html`<div class="org-head-actions">${actions}</div>` : ''}
   </div>
-  <nav class="org-tabs" aria-label="Organization">
-    ${tab('projects', 'Projects', '/console')}
-    ${tab('members', 'Members', '/console/organization/members')}
-    ${canManage ? tab('settings', 'Settings', '/console/organization') : ''}
-  </nav>`
-}
-
-function settingsSection(title: string, hint: string, body: Html): Html {
-  return html`<section class="settings-section">
-    <div class="settings-aside"><h2>${title}</h2><p class="subdued">${hint}</p></div>
-    <div class="card">${body}</div>
-  </section>`
+  ${tabs(
+    [
+      { key: 'projects', label: 'Projects', href: '/console' },
+      { key: 'members', label: 'Members', href: '/console/organization/members' },
+      ...(canManage ? [{ key: 'settings', label: 'Settings', href: '/console/organization' }] : []),
+    ],
+    active,
+  )}`
 }
 
 export function organizationGeneralView(org: OrganizationInfo): Html {
@@ -233,7 +229,6 @@ export function membersView(options: MembersViewOptions): Html {
       <input type="search" name="q" value="${query}" placeholder="Search by name or email..." autocomplete="off" aria-label="Search members">
       <noscript><button class="small">Search</button></noscript>
     </form>
-    ${canManage ? html`<div class="page-toolbar-actions"><button class="primary" type="button" data-dialog-open="#invite-members">${icon('plus')}<span>Invite members</span></button></div>` : ''}
   </div>`
   const body = members.length
     ? html`${active.length ? membersTable(options, active) : ''}${invited.length ? invitationsTable(options, invited) : ''}`

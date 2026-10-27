@@ -3,7 +3,7 @@ import type { Collection } from '~/schema/types'
 import type { ConsoleRouter } from '~/console/context'
 import { checked, lines, numberOrUndefined, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { badge, destroy, emptyState, header } from '~/console/ui'
+import { badge, destroy, emptyState, header, icon, listCard } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
 const TYPES: [string, string][] = [
@@ -80,24 +80,28 @@ export function attributePages(router: ConsoleRouter): void {
     return ctx.render(
       c.name,
       'databases',
-      html`${collectionHeader(ctx, c, html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">Add attribute</a>`)}${tabs(c, 'attributes')}
-      <div class="card flush">
-        ${c.attributes.length
-          ? html`<div class="scroll"><table><thead><tr><th>Key</th><th>Type</th><th class="hide-sm">Required</th><th class="hide-sm">Default</th><th class="hide-sm">Limits</th><th></th></tr></thead><tbody>
-            ${c.attributes.map((a) => html`<tr><td class="mono"><a href="${collectionUrl(c)}/attributes/${encodeURIComponent(a.key)}">${a.key}</a></td>
+      html`${collectionHeader(
+        ctx,
+        c,
+        c.attributes.length ? html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">${icon('plus')}<span>Add attribute</span></a>` : undefined,
+      )}${tabs(c, 'attributes')}
+      ${listCard('attributes', {
+        body: c.attributes.length
+          ? html`<div class="scroll"><table><thead><tr><th>Attribute</th><th>Type</th><th class="hide-sm">Required</th><th class="hide-sm">Default</th><th class="hide-sm">Limits</th><th></th></tr></thead><tbody>
+            ${c.attributes.map((a) => html`<tr><td><a class="mono" href="${collectionUrl(c)}/attributes/${encodeURIComponent(a.key)}">${a.key}</a></td>
               <td>${typeOf(a)}${a.array ? '[]' : ''}</td><td class="hide-sm">${a.required ? badge('Required', 'attention') : ''}</td>
-              <td class="clip mono hide-sm">${a.default === null || a.default === undefined ? '' : JSON.stringify(a.default)}</td>
+              <td class="clip mono hide-sm subdued">${a.default === null || a.default === undefined ? '' : JSON.stringify(a.default)}</td>
               <td class="subdued hide-sm">${a.type === 'string' && a.format !== 'enum' ? `≤ ${a.size}` : a.elements ? a.elements.join(', ') : a.min !== undefined || a.max !== undefined ? `${a.min ?? '−∞'} … ${a.max ?? '∞'}` : ''}</td>
               <td class="num">${destroy(`${collectionUrl(c)}/attributes/${encodeURIComponent(a.key)}/delete`, 'Delete', `Delete ${a.key}? Its data in every document is removed.`)}</td></tr>`)}
             </tbody></table></div>`
-          : emptyState('No attributes yet', 'Attributes are the fields every document has.', html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">Add attribute</a>`)}
-      </div>`,
+          : emptyState('No attributes yet', 'Attributes are the fields every document has.', html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">Add attribute</a>`),
+      })}`,
     )
   })
 
   router.get(`${COL}/attributes/new`, ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    return ctx.render('Add attribute', 'databases', html`${header('Add attribute', { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, null)}`)
+    return ctx.render('Add attribute', 'databases', html`${header('Add attribute', { back: `${collectionUrl(c)}/attributes`, subtitle: c.name })}${attributeForm(c, null)}`)
   })
 
   router.post(`${COL}/attributes`, ({ ctx, path }) => {
@@ -110,7 +114,7 @@ export function attributePages(router: ConsoleRouter): void {
     const c = loadCollection(ctx, path)
     const a = c.attributeMap.get(path.key!)
     if (!a) throw err('attribute_not_found', undefined, [path.key])
-    return ctx.render(a.key, 'databases', html`${header(a.key, { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, a)}`)
+    return ctx.render(a.key, 'databases', html`${header(a.key, { back: `${collectionUrl(c)}/attributes`, subtitle: c.name })}${attributeForm(c, a)}`)
   })
 
   router.post(`${COL}/attributes/:key`, ({ ctx, path }) => {

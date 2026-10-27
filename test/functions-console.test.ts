@@ -129,11 +129,15 @@ describe('console function creation', () => {
     expect((await run('hello', '/ping')).body).toBe('pong')
 
     const page = await (await get('/console/functions/hello')).text()
-    expect(page).toContain('id="deployments"')
-    expect(page).toContain('Live deployment')
+    expect(page).toContain('id="deploy-code"')
     // An existing function's deploy dialog opens on its own code, not the template.
     expect(page).toMatch(/value="paste" data-show-by checked/)
     expect(page).toContain('Hello from your new function')
+    const deployments = await (await get('/console/functions/hello/deployments')).text()
+    expect(deployments).toContain('id="deployments"')
+    expect(deployments).toContain('Active')
+    const settings = await (await get('/console/functions/hello/settings')).text()
+    expect(settings).toContain('Live deployment')
   })
 
   test('refuses bad input before creating anything', async () => {

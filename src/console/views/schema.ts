@@ -1,6 +1,6 @@
 /** Schema page and panels markup. The page loads, validates and applies changes. */
 import { html, type Html } from '~/console/html'
-import { alert, badge, emptyState, header, tabs as tabList } from '~/console/ui'
+import { alert, badge, emptyState, header, settingsSection, tabs as tabList } from '~/console/ui'
 import { SCHEMA } from '~/console/schema-meta'
 
 const SCHEMA_TABS = [
@@ -37,23 +37,23 @@ export function configurationView(options: { schemaPath?: string }): Html {
   const path = options.schemaPath
   return html`${header('Schema')}${schemaTabs('configuration')}
   ${alert('info', html`Databases, collections, buckets and functions can be described in <code>appwrite.config.json</code>, the file your project keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
-  <div class="layout">
-    <form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" class="card" hx-boost="false">
-      <h2>Import</h2>
-      <p class="hint">Creates and alters what the file describes. Preview first; nothing changes until you apply.</p>
+  ${settingsSection(
+    'Import from a file',
+    'Creates and alters exactly what the file describes. Preview first; nothing changes until you apply.',
+    html`<form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" hx-boost="false">
       <label>File<input type="file" name="file" accept=".json,application/json"><small>${path ? html`Leave empty to use <code>${path}</code>.` : 'appwrite.config.json'}</small></label>
       <label class="check"><input type="checkbox" name="prune">Also delete collections missing from the file</label>
       <div class="foot"><button class="primary">Preview changes</button></div>
-    </form>
-    <div class="card">
-      <h2>Export</h2>
-      <p class="hint">The current schema as appwrite.config.json${path ? ', with the rest of your file kept as is' : ''}.</p>
-      <div class="foot" style="justify-content:flex-start"><a class="btn" href="${SCHEMA}/export.json" hx-boost="false" download="appwrite.config.json">Download</a>
-        ${path
-          ? html`<form method="post" action="${SCHEMA}/save" class="inline" data-confirm="Overwrite ${path} with the current schema?" data-confirm-label="Overwrite" data-confirm-tone="critical"><button>Save to ${path.split('/').pop()}</button></form>`
-          : ''}</div>
-    </div>
-  </div>`
+    </form>`,
+  )}
+  ${settingsSection(
+    'Export the current schema',
+    `The current schema as appwrite.config.json${path ? ', with the rest of your file kept as is' : ''}.`,
+    html`<div class="foot" style="justify-content:flex-start"><a class="btn" href="${SCHEMA}/export.json" hx-boost="false" download="appwrite.config.json">Download</a>
+      ${path
+        ? html`<form method="post" action="${SCHEMA}/save" class="inline" data-confirm="Overwrite ${path} with the current schema?" data-confirm-label="Overwrite" data-confirm-tone="critical"><button>Save to ${path.split('/').pop()}</button></form>`
+        : ''}</div>`,
+  )}`
 }
 
 export interface ExportView {
@@ -95,14 +95,16 @@ export function importView(values: { json?: string; error?: string; prune?: bool
   const prune = values.prune ?? true
   return html`${header('Schema')}${schemaTabs('import')}
   ${values.error ? alert('critical', html`${values.error}`) : ''}
-  <form method="post" action="${SCHEMA}/import/preview" enctype="multipart/form-data" class="card" hx-boost="false">
-    <h2>Import collections</h2>
-    <p class="hint">Paste an array of collections exported from this console, or choose a JSON file. Target databases must already exist.</p>
-    <label>Collections JSON<textarea name="json" class="mono tall" spellcheck="false" placeholder='[{"$id":"collection","databaseId":"main","name":"Collection","columns":[]}]'>${values.json ?? ''}</textarea><small>Files replace the pasted text when both are provided.</small></label>
-    <label>Load from JSON file<input type="file" name="file" accept=".json,application/json"></label>
-    <label class="check"><input type="checkbox" name="prune" ${prune ? 'checked' : ''}>Delete collections and fields missing from the import<small>&nbsp;· related document data is removed</small></label>
-    <div class="foot"><button class="primary">Review changes</button></div>
-  </form>`
+  ${settingsSection(
+    'Import collections',
+    'Paste an array of collections exported from this console, or choose a JSON file. Target databases must already exist.',
+    html`<form method="post" action="${SCHEMA}/import/preview" enctype="multipart/form-data" hx-boost="false">
+      <label>Collections JSON<textarea name="json" class="mono tall" spellcheck="false" placeholder='[{"$id":"collection","databaseId":"main","name":"Collection","columns":[]}]'>${values.json ?? ''}</textarea><small>Files replace the pasted text when both are provided.</small></label>
+      <label>Load from JSON file<input type="file" name="file" accept=".json,application/json"></label>
+      <label class="check"><input type="checkbox" name="prune" ${prune ? 'checked' : ''}>Delete collections and fields missing from the import<small>&nbsp;· related document data is removed</small></label>
+      <div class="foot"><button class="primary">Review changes</button></div>
+    </form>`,
+  )}`
 }
 
 export interface ImportReviewView {
@@ -116,12 +118,20 @@ export interface ImportReviewView {
 export function importReviewView(options: ImportReviewView): Html {
   const { changes, names, collectionsJson, prune, danger } = options
   return html`${header('Schema')}${schemaTabs('import')}
-  <div class="card"><h2>${changes.length} change${changes.length === 1 ? '' : 's'} to import</h2><p class="hint">${names}</p>${changeList(changes)}</div>
+  ${settingsSection(
+    `${changes.length} change${changes.length === 1 ? '' : 's'} to import`,
+    names,
+    changeList(changes),
+  )}
   ${changes.length
-    ? html`<form method="post" action="${SCHEMA}/import/apply" class="card" ${danger ? html`data-confirm="This removes data. Import anyway?" data-confirm-label="Import" data-confirm-tone="critical"` : ''}>
-        <input type="hidden" name="collections" value="${collectionsJson}">${prune ? html`<input type="hidden" name="prune" value="on">` : ''}
-        <div class="foot"><a class="btn" href="${SCHEMA}/import">Cancel</a><button class="primary">Apply changes</button></div>
-      </form>`
+    ? settingsSection(
+        'Apply the import',
+        danger ? 'This removes data. Review the changes above before applying.' : 'The changes above are applied together.',
+        html`<form method="post" action="${SCHEMA}/import/apply" ${danger ? html`data-confirm="This removes data. Import anyway?" data-confirm-label="Import" data-confirm-tone="critical"` : ''}>
+          <input type="hidden" name="collections" value="${collectionsJson}">${prune ? html`<input type="hidden" name="prune" value="on">` : ''}
+          <div class="foot"><a class="btn" href="${SCHEMA}/import">Cancel</a><button class="primary">Apply changes</button></div>
+        </form>`,
+      )
     : html`<div class="card"><a class="btn" href="${SCHEMA}/import">Import another file</a></div>`}`
 }
 
@@ -137,11 +147,19 @@ export interface PreviewView {
 export function previewView(options: PreviewView): Html {
   const { changes, label, configJson, baseDir, prune, danger } = options
   return html`${header('Preview import', { back: SCHEMA })}${schemaTabs('configuration')}
-  <div class="card"><h2>${changes.length} change${changes.length === 1 ? '' : 's'} from ${label}</h2>${changeList(changes)}</div>
+  ${settingsSection(
+    `${changes.length} change${changes.length === 1 ? '' : 's'} from ${label}`,
+    'Review what will change before applying. Nothing has been saved yet.',
+    changeList(changes),
+  )}
   ${changes.length
-    ? html`<form method="post" action="${SCHEMA}/apply" class="card" ${danger ? html`data-confirm="This removes data. Apply anyway?" data-confirm-label="Apply" data-confirm-tone="critical"` : ''}>
-        <input type="hidden" name="config" value="${configJson}"><input type="hidden" name="baseDir" value="${baseDir ?? ''}">${prune ? html`<input type="hidden" name="prune" value="on">` : ''}
-        <div class="foot"><a class="btn" href="${SCHEMA}">Cancel</a><button class="primary">Apply ${changes.length} change${changes.length === 1 ? '' : 's'}</button></div>
-      </form>`
+    ? settingsSection(
+        'Apply the import',
+        danger ? 'This removes data. Review the changes above before applying.' : 'The changes above are applied together.',
+        html`<form method="post" action="${SCHEMA}/apply" ${danger ? html`data-confirm="This removes data. Apply anyway?" data-confirm-label="Apply" data-confirm-tone="critical"` : ''}>
+          <input type="hidden" name="config" value="${configJson}"><input type="hidden" name="baseDir" value="${baseDir ?? ''}">${prune ? html`<input type="hidden" name="prune" value="on">` : ''}
+          <div class="foot"><a class="btn" href="${SCHEMA}">Cancel</a><button class="primary">Apply ${changes.length} change${changes.length === 1 ? '' : 's'}</button></div>
+        </form>`,
+      )
     : ''}`
 }

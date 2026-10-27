@@ -229,6 +229,8 @@ export const DIALOG_SCRIPT = `
         const selector = opener.getAttribute("data-dialog-open")
         const modal = selector ? document.querySelector(selector) : null
         if (modal) {
+          // A link opener is the no-JavaScript fallback; with JavaScript, open the dialog instead.
+          event.preventDefault()
           bindDialog(modal)
           if (!modal.open) modal.showModal()
           const field = modal.querySelector("textarea, input:not([type='hidden']), select")

@@ -240,7 +240,7 @@ export class FunctionService {
     private db: Db,
     private config: Config,
     private store: DocumentStore,
-    private options: { functionEnv?: Record<string, string>; skipSchedules?: string[]; internalEndpoint?: string } = {},
+    private options: { functionEnv?: Record<string, string>; internalEndpoint?: string } = {},
   ) {}
 
   private get sql() {
@@ -617,7 +617,7 @@ export class FunctionService {
     this.lastTick = minute
     const fired: string[] = []
     for (const f of this.list()) {
-      if (!f.enabled || !f.schedule || this.options.skipSchedules?.includes(f.id)) continue
+      if (!f.enabled || !f.schedule || this.config.skipSchedules.includes(f.id)) continue
       if ((this.running.get(f.id) ?? 0) > 0) continue // never overlap a slow run
       let due = false
       try {

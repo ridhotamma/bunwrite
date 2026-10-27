@@ -70,6 +70,7 @@ export class ProjectManager implements ProjectResolver {
   }
 
   private ensureDefault(): void {
+    if (!this.config.projectId) throw new Error('The default project ID is missing; run bootstrap before opening projects.')
     const stamp = now()
     this.db.sqlite
       .query(
@@ -113,9 +114,9 @@ export class ProjectManager implements ProjectResolver {
     const base = this.config
     return {
       ...base,
-      projectId: info.id,
-      orgId: info.orgId,
-      projectName: info.name,
+      projectId: instance.projectId,
+      orgId: instance.orgId,
+      projectName: instance.projectName,
       databasePath: paths.database,
       storagePath: paths.storage,
       backupsPath: paths.backups,
@@ -123,8 +124,8 @@ export class ProjectManager implements ProjectResolver {
       functionsEnvFile: undefined,
       schemaPath: undefined,
       schemaSyncOnStart: false,
-      apiKeys: instance.env.API_KEYS ? [instance.env.API_KEYS] : [],
-      secret: instance.env.SECRET!,
+      apiKeys: [],
+      secret: instance.secret,
       internalKey: undefined,
       skipSchedules: [],
       bootstrap: { orgId: info.orgId, projectId: info.id, apiKey: instance.apiKey, generated: instance.generated },
@@ -148,7 +149,7 @@ export class ProjectManager implements ProjectResolver {
     const db = openDb(paths.database)
     const instance = bootstrapInstance(
       db,
-      { ORG_ID: info.orgId, PROJECT_ID: info.id, SECRET: randomSecret(32) },
+      { ORG_ID: info.orgId, PROJECT_ID: info.id, PROJECT_NAME: info.name, SECRET: randomSecret(32) },
       { generateApiKey: false },
     )
     if (info.orgId !== instance.orgId) {
@@ -201,7 +202,11 @@ export class ProjectManager implements ProjectResolver {
       mkdirSync(paths.backups, { recursive: true })
       mkdirSync(paths.functions, { recursive: true })
       db = openDb(paths.database)
-      const instance = bootstrapInstance(db, { ORG_ID: input.orgId, PROJECT_ID: id, SECRET: randomSecret(32) }, { generateApiKey: true })
+      const instance = bootstrapInstance(
+        db,
+        { ORG_ID: input.orgId, PROJECT_ID: id, PROJECT_NAME: name, SECRET: randomSecret(32) },
+        { generateApiKey: true },
+      )
       const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now() }
       const config = this.configFor(info, paths, instance)
       const services = createServices(config, db)
@@ -211,7 +216,6 @@ export class ProjectManager implements ProjectResolver {
       inserted = true
       const apiKey = instance.apiKey
       // The key is returned to the caller once and stays hashed in _api_keys.
-      if (apiKey) config.apiKeys = config.apiKeys.filter((key) => key !== apiKey)
       clearInstanceApiKey(db)
       if (config.bootstrap) config.bootstrap.apiKey = undefined
       const runtime: ProjectRuntime = { info, services }

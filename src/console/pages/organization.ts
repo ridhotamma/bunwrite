@@ -1,6 +1,7 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { arrayOf, value } from '~/console/forms'
-import { html } from '~/console/html'
+import { html, type Html } from '~/console/html'
+import { icon } from '~/console/ui'
 import { membersView, organizationGeneralView, organizationHeader } from '~/console/views/organization'
 import type { InviteInput, OrganizationRole } from '~/organizations/service'
 import { err } from '~/lib/errors'
@@ -11,12 +12,14 @@ const consoleBaseUrl = (ctx: ConsoleContext) => ctx.projects.control.config.publ
 const ownerCount = (members: { status: string; role: string }[]) =>
   members.filter((member) => member.status === 'active' && member.role === 'owner').length
 
-function orgHeader(ctx: ConsoleContext, active: 'projects' | 'members' | 'settings') {
+function orgHeader(ctx: ConsoleContext, active: 'projects' | 'members' | 'settings', actions?: Html) {
   const org = ctx.organizations.ensure(orgId(ctx), ctx.projects.control.config.projectName)
   const members = ctx.organizations.members(org.id)
   const counts = { projects: ctx.projects.list().length, members: members.filter((member) => member.status === 'active').length }
-  return { org, members, header: organizationHeader(org, counts, active, canManage(ctx)) }
+  return { org, members, header: organizationHeader(org, counts, active, canManage(ctx), actions) }
 }
+
+const inviteButton = html`<button class="primary" type="button" data-dialog-open="#invite-members">${icon('plus')}<span>Invite members</span></button>`
 
 export function organizationPages(router: ConsoleRouter): void {
   router.get('/console/organization', ({ ctx }) => {
@@ -33,8 +36,8 @@ export function organizationPages(router: ConsoleRouter): void {
   })
 
   router.get('/console/organization/members', ({ ctx, url }) => {
-    const { org, members, header } = orgHeader(ctx, 'members')
     const manager = canManage(ctx)
+    const { org, members, header } = orgHeader(ctx, 'members', manager ? inviteButton : undefined)
     const query = url.searchParams.get('q') ?? ''
     return ctx.render(
       org.name,
@@ -59,7 +62,7 @@ export function organizationPages(router: ConsoleRouter): void {
       .filter((input) => input.email)
     if (!inputs.length) throw err('general_argument_invalid', 'Add at least one email address.')
 
-    const { org, members, header } = orgHeader(ctx, 'members')
+    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
     const results = await ctx.organizations.invite(org.id, inputs, {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
@@ -85,7 +88,7 @@ export function organizationPages(router: ConsoleRouter): void {
     if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can resend invitations.')
     const member = ctx.organizations.findMember(orgId(ctx), path.id!)
     if (member.status !== 'invited') throw err('general_argument_invalid', 'That member has already accepted the invitation.')
-    const { org, members, header } = orgHeader(ctx, 'members')
+    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
     const results = await ctx.organizations.invite(org.id, [{ email: member.email, role: member.role }], {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
