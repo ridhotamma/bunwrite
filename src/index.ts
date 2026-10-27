@@ -28,13 +28,15 @@ if (process.env.CONSOLE_ADMIN_EMAIL && process.env.CONSOLE_ADMIN_PASSWORD) {
 }
 const app = createApp(services)
 
-// Clear out old transactions, tokens and sessions every 10 minutes.
+// Clear out old transactions, tokens, sessions and request logs every 10 minutes.
 setInterval(() => {
   services.transactions.prune()
   services.auth.pruneExpired()
   services.functions.prune()
+  services.requestLogs.prune()
 }, 10 * 60 * 1000).unref()
 services.functions.start()
+services.backups.start()
 
 const server = Bun.serve({ port: config.port, fetch: app.fetch, websocket: app.websocket, maxRequestBodySize: 64 * 1024 * 1024 })
 console.log(`pesanle-backend listening on :${server.port} (${services.registry.collections.size} collections)${config.consoleEnabled ? `, console at /console` : ''}`)
@@ -42,6 +44,7 @@ console.log(`pesanle-backend listening on :${server.port} (${services.registry.c
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     server.stop()
+    services.requestLogs.flush()
     db.sqlite.close()
     process.exit(0)
   })

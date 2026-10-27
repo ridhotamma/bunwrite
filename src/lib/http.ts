@@ -63,9 +63,10 @@ export async function readParams(request: Request, url: URL): Promise<Params> {
 }
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(data), {
+  const body = JSON.stringify(data)
+  return new Response(body, {
     status,
-    headers: { 'content-type': 'application/json; charset=UTF-8', ...headers },
+    headers: { 'content-type': 'application/json; charset=UTF-8', 'content-length': String(Buffer.byteLength(body)), ...headers },
   })
 }
 

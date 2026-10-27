@@ -1,5 +1,7 @@
 import { dirname, resolve } from 'node:path'
 
+import type { LogFormat } from './lib/log'
+
 export interface SmtpConfig {
   host: string
   port: number
@@ -18,6 +20,27 @@ export interface GoogleConfig {
   tokenUrl: string
   userinfoUrl: string
 }
+
+/** S3-compatible storage settings, used for uploads and optionally for backups. */
+export interface S3Config {
+  enabled: boolean
+  bucket: string
+  region: string
+  endpoint: string
+  accessKey: string
+  secret: string
+  forcePathStyle: boolean
+}
+
+export interface BackupsConfig {
+  /** Run one database backup a day at 02:00 UTC. */
+  enabled: boolean
+  /** Keep this many automatic backups; manual backups are never pruned. */
+  keep: number
+  s3: S3Config
+}
+
+export const emptyS3 = (): S3Config => ({ enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false })
 
 export interface Config {
   port: number
@@ -57,6 +80,20 @@ export interface Config {
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
   schemaSyncOnStart: boolean
+  /** Write one line per HTTP request to stdout. */
+  logRequests: boolean
+  /** `text` for journald, `json` for a log collector. */
+  logFormat: LogFormat
+  /** Days to keep request logs in the console; 0 keeps them until cleared. */
+  logRetentionDays: number
+  /** Store client IP addresses in request logs. */
+  logIp: boolean
+  /** S3-compatible storage for uploaded files. */
+  s3: S3Config
+  /** Automatic database backups. */
+  backups: BackupsConfig
+  /** Local folder for backups when backup S3 storage is off. */
+  backupsPath: string
 }
 
 const list = (value: string | undefined) =>
@@ -71,6 +108,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   if (!projectId) throw new Error('PROJECT_ID is required')
   if (secret.length < 32) throw new Error('SECRET must be at least 32 characters')
   const port = Number(env.PORT ?? 8080)
+  const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
     databasePath: env.DATABASE_PATH ?? './data/pesanle.sqlite',
@@ -110,5 +148,12 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
+    logRequests: env.LOG_REQUESTS !== 'false',
+    logFormat: env.LOG_FORMAT === 'json' ? 'json' : 'text',
+    logRetentionDays: Number.isFinite(retention) && retention >= 0 ? Math.round(retention) : 7,
+    logIp: env.LOG_IP !== 'false',
+    s3: emptyS3(),
+    backups: { enabled: false, keep: 7, s3: emptyS3() },
+    backupsPath: env.BACKUPS_PATH ?? './data/backups',
   }
 }

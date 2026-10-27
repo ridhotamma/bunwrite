@@ -17,6 +17,7 @@ import { err } from '~/lib/errors'
 import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
+import { s3Client, s3Key } from './s3'
 
 export interface BucketRow {
   id: string
@@ -156,14 +157,16 @@ export class StorageService {
     return this.bucket(input.id, true)
   }
 
-  deleteBucket(id: string): void {
+  async deleteBucket(id: string): Promise<void> {
     this.bucket(id, true)
     this.sql.transaction(() => {
       this.sql.query('DELETE FROM _files WHERE bucket_id = ?').run(id)
       this.sql.query('DELETE FROM _buckets WHERE id = ?').run(id)
     })()
-    rmSync(join(this.config.storagePath, id), { recursive: true, force: true })
+    if (this.config.s3.enabled) await this.deletePrefix(`${id}/`)
+    else rmSync(join(this.config.storagePath, id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.previews', id), { recursive: true, force: true })
+    rmSync(join(this.config.storagePath, '.uploads', id), { recursive: true, force: true })
   }
 
   buckets(): BucketRow[] {
@@ -172,6 +175,24 @@ export class StorageService {
 
   path(bucketId: string, fileId: string): string {
     return join(this.config.storagePath, bucketId, fileId)
+  }
+
+  private stagingPath(bucketId: string, fileId: string): string {
+    return join(this.config.storagePath, '.uploads', bucketId, fileId)
+  }
+
+  private objectKey(bucketId: string, fileId: string): string {
+    return s3Key(bucketId, fileId)
+  }
+
+  private async deletePrefix(prefix: string): Promise<void> {
+    const client = s3Client(this.config.s3)
+    let token: string | undefined
+    do {
+      const page = await client.list({ prefix, maxKeys: 1000, continuationToken: token })
+      for (const object of page.contents ?? []) await client.delete(object.key)
+      token = page.isTruncated ? page.nextContinuationToken : undefined
+    } while (token)
   }
 
   private row(bucketId: string, fileId: string): FileRow | null {
@@ -263,24 +284,36 @@ export class StorageService {
     if (!existing && start > 0) throw err('storage_file_not_found')
 
     const chunksTotal = existing?.chunks_total ?? Math.max(1, Math.ceil(total / file.size))
-    const target = this.path(bucketId, fileId)
+    const target = this.config.s3.enabled ? this.stagingPath(bucketId, fileId) : this.path(bucketId, fileId)
     const partial = `${target}.part`
-    mkdirSync(dirname(target), { recursive: true })
-
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const fd = openSync(chunked ? partial : target, chunked && existing ? 'r+' : 'w')
-    try {
-      writeSync(fd, bytes, 0, bytes.length, start)
-    } finally {
-      closeSync(fd)
+    const direct = this.config.s3.enabled && !chunked
+    if (!direct) {
+      mkdirSync(dirname(target), { recursive: true })
+      const fd = openSync(chunked ? partial : target, chunked && existing ? 'r+' : 'w')
+      try {
+        writeSync(fd, bytes, 0, bytes.length, start)
+      } finally {
+        closeSync(fd)
+      }
     }
 
     const permissions = existing ? JSON.parse(existing.permissions) : this.permissionsFor(caller, input.permissions)
     const uploaded = (existing?.chunks_uploaded ?? 0) + 1
     const done = !chunked || uploaded >= chunksTotal || statSync(partial).size >= total
-    if (done && chunked) renameSync(partial, target)
-    const signature = done ? createHash('md5').update(await Bun.file(target).bytes()).digest('hex') : ''
     const mime = (file.type && file.type !== 'application/octet-stream' ? file.type : Bun.file(name).type).split(';')[0]!
+    let signature = ''
+    if (done) {
+      const data = direct ? bytes : await Bun.file(chunked ? partial : target).bytes()
+      signature = createHash('md5').update(data).digest('hex')
+      if (this.config.s3.enabled) {
+        await s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).write(data, { type: mime })
+        rmSync(target, { force: true })
+        rmSync(partial, { force: true })
+      } else if (chunked) {
+        renameSync(partial, target)
+      }
+    }
 
     if (existing) {
       this.sql
@@ -309,18 +342,18 @@ export class StorageService {
     return fileModel(this.row(bucketId, fileId)!, bucket)
   }
 
-  deleteFile(caller: Caller, bucketId: string, fileId: string): void {
+  async deleteFile(caller: Caller, bucketId: string, fileId: string): Promise<void> {
     const { file } = this.file(caller, bucketId, fileId, 'delete')
-    this.sql.query('DELETE FROM _files WHERE seq = ?').run(file.seq)
+    if (this.config.s3.enabled) await s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).delete()
     for (const p of [this.path(bucketId, fileId), `${this.path(bucketId, fileId)}.part`]) rmSync(p, { force: true })
+    const staging = this.stagingPath(bucketId, fileId)
+    for (const p of [staging, `${staging}.part`]) rmSync(p, { force: true })
     rmSync(join(this.config.storagePath, '.previews', bucketId, fileId), { recursive: true, force: true })
+    this.sql.query('DELETE FROM _files WHERE seq = ?').run(file.seq)
   }
 
   /** Serve the bytes, honouring a Range header. */
-  serve(request: Request, bucketId: string, file: FileRow, disposition: 'inline' | 'attachment'): Response {
-    const path = this.path(bucketId, file.id)
-    if (!existsSync(path)) throw err('storage_file_not_found')
-    const blob = Bun.file(path)
+  async serve(request: Request, bucketId: string, file: FileRow, disposition: 'inline' | 'attachment'): Promise<Response> {
     const headers: Record<string, string> = {
       'content-type': file.mime_type,
       'content-disposition': `${disposition}; filename="${encodeURIComponent(file.name)}"`,
@@ -330,6 +363,27 @@ export class StorageService {
     }
     const range = request.headers.get('range')
     const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range) : null
+
+    if (this.config.s3.enabled) {
+      const object = s3Client(this.config.s3).file(this.objectKey(bucketId, file.id))
+      const size = file.size_original
+      if (m && (m[1] || m[2])) {
+        let start = m[1] ? Number(m[1]) : size - Number(m[2])
+        let end = m[1] && m[2] ? Number(m[2]) : size - 1
+        if (start < 0) start = 0
+        if (end >= size) end = size - 1
+        if (start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } })
+        return new Response(object.slice(start, end + 1), {
+          status: 206,
+          headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': String(end - start + 1) },
+        })
+      }
+      return new Response(object.stream(), { headers: { ...headers, 'content-length': String(size) } })
+    }
+
+    const path = this.path(bucketId, file.id)
+    if (!existsSync(path)) throw err('storage_file_not_found')
+    const blob = Bun.file(path)
     if (m && (m[1] || m[2])) {
       const size = blob.size
       let start = m[1] ? Number(m[1]) : size - Number(m[2])
@@ -337,9 +391,12 @@ export class StorageService {
       if (start < 0) start = 0
       if (end >= size) end = size - 1
       if (start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } })
-      return new Response(blob.slice(start, end + 1), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` } })
+      return new Response(blob.slice(start, end + 1), {
+        status: 206,
+        headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': String(end - start + 1) },
+      })
     }
-    return new Response(blob, { headers })
+    return new Response(blob, { headers: { ...headers, 'content-length': String(blob.size) } })
   }
 
   /** Resized copy (width/height/quality/output), cached on disk. Non-images are served as they are. */
@@ -364,7 +421,8 @@ export class StorageService {
         return this.serve(request, bucket.id, file, 'inline')
       }
       const position = { center: 'centre', 'top-left': 'northwest', top: 'north', 'top-right': 'northeast', left: 'west', right: 'east', 'bottom-left': 'southwest', bottom: 'south', 'bottom-right': 'southeast' }[gravity] ?? 'centre'
-      let pipeline = sharp(this.path(bucket.id, file.id), { animated: format === 'gif' }).rotate()
+      const source = this.config.s3.enabled ? await s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes() : this.path(bucket.id, file.id)
+      let pipeline = sharp(source, { animated: format === 'gif' }).rotate()
       if (width || height) pipeline = pipeline.resize({ width: width || undefined, height: height || undefined, fit: width && height ? 'cover' : 'inside', position, withoutEnlargement: true })
       pipeline = pipeline.toFormat(format === 'jpg' ? 'jpeg' : format, { quality })
       mkdirSync(dirname(cached), { recursive: true })
@@ -373,7 +431,12 @@ export class StorageService {
     }
     const mime = format === 'jpg' ? 'image/jpeg' : `image/${format}`
     return new Response(Bun.file(cached), {
-      headers: { 'content-type': mime, 'cache-control': 'private, max-age=2592000', 'x-content-type-options': 'nosniff' },
+      headers: {
+        'content-type': mime,
+        'content-length': String(statSync(cached).size),
+        'cache-control': 'private, max-age=2592000',
+        'x-content-type-options': 'nosniff',
+      },
     })
   }
 }

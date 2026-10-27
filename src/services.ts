@@ -1,11 +1,13 @@
 /** Service graph shared by the API and the console. */
 import { OAuthService } from './auth/oauth'
 import { AuthService } from './auth/service'
+import { BackupService } from './backups/service'
 import type { Config } from './config'
 import type { Db } from './db/connection'
 import { DocumentStore } from './documents/store'
 import { FunctionService, readEnvFile } from './functions/service'
 import { randomSecret } from './lib/ids'
+import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
@@ -28,6 +30,8 @@ export interface Services {
   storage: StorageService
   functions: FunctionService
   settings: SettingsService
+  requestLogs: RequestLogService
+  backups: BackupService
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
@@ -45,7 +49,9 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
     functionEnv: readEnvFile(config.functionsEnvFile),
     skipSchedules: config.skipSchedules,
   })
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions } as Services
+  const requestLogs = new RequestLogService(db, config)
+  const backups = new BackupService(db, config)
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups } as Services
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {
     if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()

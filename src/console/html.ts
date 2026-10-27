@@ -27,8 +27,9 @@ export function html(strings: TemplateStringsArray, ...values: unknown[]): Html 
 }
 
 export function page(body: Html | string, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(String(body), {
+  const text = String(body)
+  return new Response(text, {
     status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-frame-options': 'DENY', ...headers },
+    headers: { 'content-type': 'text/html; charset=utf-8', 'content-length': String(Buffer.byteLength(text)), 'cache-control': 'no-store', 'x-frame-options': 'DENY', ...headers },
   })
 }

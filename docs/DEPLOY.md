@@ -36,6 +36,16 @@ Only identity and paths have to be in `.env`. SMTP, Google sign-in, allowed
 origins, session length and function variables can be set later in the
 console (Settings, Functions), where each one shows whether it comes from env.
 
+Function code is normally read from beside `SCHEMA_PATH`. If it lives in a
+different folder, set `FUNCTIONS_DIR` to that folder, or set the code folder
+in **Settings → Functions** in the console.
+
+Uploaded files and backups use local disk by default. S3-compatible storage
+(and a separate S3 bucket for backups) can be configured in
+**Settings → File storage** and **Settings → Backups**. Switching file storage
+does not move existing uploads; migrate them manually. S3 uses Bun's native
+client, so run Bun 1.4 or newer.
+
 The cron jobs need some variables: `APPWRITE_DATABASE_ID`, `STORAGE_S3_*` for
 `backup`, `RENDER_FUNCTION_KEY`, and the WhatsApp and payment keys. Put them in
 `functions.env` or in the console. On live Appwrite, `backup` has none set and
@@ -61,6 +71,15 @@ sudo cp deploy/pesanle-backend.service /etc/systemd/system/
 sudo systemctl enable --now pesanle-backend
 curl localhost:8080/v1/health
 ```
+
+Request logs go to stdout, one line per request (status, duration, request ID,
+IP and project). Follow them with `sudo journalctl -u pesanle-backend -f`.
+Set `LOG_REQUESTS=false` to turn them off, or `LOG_FORMAT=json` for a log
+collector. Every response carries the `X-Request-Id` echoed in the log.
+The console's **Request logs** page keeps the last `LOG_RETENTION_DAYS` days
+(default 7) in SQLite; old rows are pruned every 10 minutes. Retention and IP
+storage (`LOG_IP`) can also be changed in Console Settings; both settings
+override the env defaults until reset.
 
 Expose it with a Cloudflare Tunnel (`cloudflared`, ~20 MB, no open ports, no
 certificates on the box). Use the hostname `appwrite-new.pesanle.com` first, and
@@ -93,8 +112,11 @@ Use `CONSOLE_ENABLED=false` to turn it off entirely; then use an SSH tunnel to
 
   `appwrite push` and the Appwrite Console no longer apply. A restart never
   re-applies the file unless `SCHEMA_SYNC_ON_START=true`.
-- Backups: `bun run snapshot` daily from cron, and copy `data/snapshots` off the
-  box (rclone to R2). The `backup` function's API dump keeps working too.
+- Backups: **Settings → Backups** can create, download and delete database
+  snapshots, enable daily auto backups (02:00 UTC), and store backups in a
+  separate S3 bucket. Database snapshots do not include uploaded files; back
+  up the storage bucket separately. `bun run snapshot` remains available if
+  you prefer a cron job:
 
 ```cron
 15 2 * * * cd /opt/pesanle-backend && /home/pesanle/.bun/bin/bun run snapshot && rclone sync data/snapshots r2:pesanle-backups/sqlite

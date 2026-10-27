@@ -32,6 +32,11 @@ beforeAll(() => {
       return context.res.json({ ok: true, body: context.req.body, query: context.req.query, databases: dbs.total, trigger: process.env.APPWRITE_FUNCTION_TRIGGER, secretLeaked: Boolean(process.env.SECRET) })
     }`,
   )
+  fn('env', `module.exports = async (context) => context.res.json({
+    global: process.env.PESANLE_GLOBAL_TEST ?? null,
+    local: process.env.PESANLE_LOCAL_TEST ?? null,
+    shared: process.env.PESANLE_SHARED_TEST ?? null,
+  })`)
   fn('boom', `module.exports = async (context) => { throw new Error('kaboom') }`)
   fn('slow', `module.exports = async (context) => { await new Promise((r) => setTimeout(r, 5000)); return context.res.json({}) }`)
   fn('cron', `module.exports = async (context) => context.res.json({ ran: true })`)
@@ -54,6 +59,7 @@ beforeAll(() => {
     ],
     functions: [
       { $id: 'echo', name: 'Echo', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/echo', execute: [], timeout: 15 },
+      { $id: 'env', name: 'Env', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/env', execute: [], timeout: 15 },
       { $id: 'boom', name: 'Boom', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/boom', execute: [], timeout: 15 },
       { $id: 'slow', name: 'Slow', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/slow', execute: [], timeout: 1 },
       { $id: 'cron', name: 'Cron', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/cron', execute: [], schedule: '*/5 * * * *', timeout: 15 },
@@ -257,6 +263,23 @@ describe('functions', () => {
     expect(await res.json()).toEqual({ method: 'POST', path: '/', key: 'k1', body: { html: '<p>x</p>' } })
     const blocked = await fetch(`${server.endpoint}/functions/echo/http`, { method: 'POST' })
     expect(blocked.status).toBe(401)
+  })
+
+  test('global variables apply to every function; per-function values win', async () => {
+    server.services.functions.setGlobalVariable('PESANLE_GLOBAL_TEST', 'global', false)
+    server.services.functions.setGlobalVariable('PESANLE_SHARED_TEST', 'global', false)
+    server.services.functions.setVariable('env', 'PESANLE_LOCAL_TEST', 'local', false)
+    server.services.functions.setVariable('env', 'PESANLE_SHARED_TEST', 'local', false)
+    try {
+      const e = await admin.functions.createExecution({ functionId: 'env' })
+      expect(e.status).toBe('completed')
+      expect(JSON.parse(e.responseBody)).toEqual({ global: 'global', local: 'local', shared: 'local' })
+    } finally {
+      server.services.functions.deleteGlobalVariable('PESANLE_GLOBAL_TEST')
+      server.services.functions.deleteGlobalVariable('PESANLE_SHARED_TEST')
+      server.services.functions.deleteVariable('env', 'PESANLE_LOCAL_TEST')
+      server.services.functions.deleteVariable('env', 'PESANLE_SHARED_TEST')
+    }
   })
 
   test('python functions run through python3', async () => {

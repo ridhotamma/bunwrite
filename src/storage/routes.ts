@@ -44,8 +44,8 @@ export function storageRoutes(router: Router<AppContext>): void {
     json(ctx.storage.updateFile(ctx.caller, path.bucketId!, path.fileId!, params.name, params.permissions)),
   )
 
-  router.delete(`${FILES}/:fileId`, ({ ctx, path }) => {
-    ctx.storage.deleteFile(ctx.caller, path.bucketId!, path.fileId!)
+  router.delete(`${FILES}/:fileId`, async ({ ctx, path }) => {
+    await ctx.storage.deleteFile(ctx.caller, path.bucketId!, path.fileId!)
     return noContent()
   })
 

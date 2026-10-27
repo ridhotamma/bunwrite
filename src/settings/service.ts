@@ -3,7 +3,7 @@
  * over the env-derived Config in place, so the next request sees them; env
  * values remain the defaults. API keys made here live in `_api_keys`.
  */
-import type { Config, GoogleConfig, SmtpConfig } from '~/config'
+import type { BackupsConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -16,7 +16,7 @@ export interface ProjectSettings {
   sessionsLimit: number
 }
 
-export type SettingKey = 'project' | 'smtp' | 'google' | 'functions'
+export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups'
 
 export interface ApiKeyRow {
   id: string
@@ -29,7 +29,21 @@ export interface ApiKeyRow {
 
 export class SettingsService {
   /** Env values, kept so a console setting can be cleared back to them. */
-  private readonly defaults: Pick<Config, 'projectName' | 'allowedOrigins' | 'sessionDuration' | 'sessionsLimit' | 'smtp' | 'google' | 'skipSchedules' | 'functionsDir'>
+  private readonly defaults: Pick<
+    Config,
+    | 'projectName'
+    | 'allowedOrigins'
+    | 'sessionDuration'
+    | 'sessionsLimit'
+    | 'smtp'
+    | 'google'
+    | 'skipSchedules'
+    | 'functionsDir'
+    | 'logRetentionDays'
+    | 'logIp'
+    | 's3'
+    | 'backups'
+  >
 
   constructor(
     private db: Db,
@@ -45,8 +59,12 @@ export class SettingsService {
       google: config.google ? { ...config.google } : null,
       skipSchedules: [...config.skipSchedules],
       functionsDir: config.functionsDir,
+      logRetentionDays: config.logRetentionDays,
+      logIp: config.logIp,
+      s3: { ...config.s3 },
+      backups: { ...config.backups, s3: { ...config.backups.s3 } },
     }
-    for (const key of ['project', 'smtp', 'google', 'functions'] as SettingKey[]) this.apply(key)
+    for (const key of ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups'] as SettingKey[]) this.apply(key)
   }
 
   private read<T>(key: SettingKey): T | null {
@@ -92,6 +110,22 @@ export class SettingsService {
         const v = this.read<{ skipSchedules?: string[]; functionsDir?: string }>('functions')
         c.skipSchedules = v?.skipSchedules ?? [...this.defaults.skipSchedules]
         c.functionsDir = v?.functionsDir || this.defaults.functionsDir
+        break
+      }
+      case 'logs': {
+        const v = this.read<{ retentionDays?: number; logIp?: boolean }>('logs')
+        c.logRetentionDays = v?.retentionDays ?? this.defaults.logRetentionDays
+        c.logIp = v?.logIp ?? this.defaults.logIp
+        break
+      }
+      case 's3': {
+        const v = this.read<S3Config>('s3')
+        c.s3 = v ? { ...v } : { ...this.defaults.s3 }
+        break
+      }
+      case 'backups': {
+        const v = this.read<BackupsConfig>('backups')
+        c.backups = v ? { ...v, s3: { ...v.s3 } } : { ...this.defaults.backups, s3: { ...this.defaults.backups.s3 } }
         break
       }
     }

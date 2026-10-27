@@ -109,8 +109,8 @@ export function storagePages(router: ConsoleRouter): void {
     return ctx.go(`${STORAGE}/${path.bucket}`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${STORAGE}/:bucket/delete`, ({ ctx, path }) => {
-    ctx.services.storage.deleteBucket(path.bucket!)
+  router.post(`${STORAGE}/:bucket/delete`, async ({ ctx, path }) => {
+    await ctx.services.storage.deleteBucket(path.bucket!)
     return ctx.go(STORAGE, { tone: 'success', text: 'Bucket deleted' })
   })
 
@@ -131,8 +131,8 @@ export function storagePages(router: ConsoleRouter): void {
     return ctx.services.storage.serve(request, path.bucket!, file, 'inline')
   })
 
-  router.post(`${STORAGE}/:bucket/files/:file/delete`, ({ ctx, path }) => {
-    ctx.services.storage.deleteFile(keyCaller(), path.bucket!, path.file!)
+  router.post(`${STORAGE}/:bucket/files/:file/delete`, async ({ ctx, path }) => {
+    await ctx.services.storage.deleteFile(keyCaller(), path.bucket!, path.file!)
     return ctx.go(`${STORAGE}/${path.bucket}`, { tone: 'success', text: 'File deleted' })
   })
 }

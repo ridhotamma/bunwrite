@@ -307,3 +307,28 @@ export const functionVars = sqliteTable(
   },
   (t) => [uniqueIndex('_function_vars_fn_key').on(t.functionId, t.key)],
 )
+
+/** HTTP requests shown on the console's Request logs page; pruned by LOG_RETENTION_DAYS. */
+export const requestLogs = sqliteTable(
+  '_request_logs',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull(),
+    method: text('method').notNull(),
+    path: text('path').notNull(),
+    status: integer('status').notNull(),
+    durationMs: real('duration_ms').notNull().default(0),
+    requestBytes: integer('request_bytes').notNull().default(0),
+    responseBytes: integer('response_bytes').notNull().default(0),
+    ip: text('ip').notNull().default(''),
+    project: text('project').notNull().default(''),
+    /** guest, key, console, or user:<id>. */
+    auth: text('auth').notNull().default(''),
+    referer: text('referer').notNull().default(''),
+    userAgent: text('user_agent').notNull().default(''),
+    /** API or console error message, empty on success. */
+    error: text('error').notNull().default(''),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [index('_request_logs_created').on(t.createdAt), index('_request_logs_status').on(t.status)],
+)

@@ -1,9 +1,10 @@
 import { statSync } from 'node:fs'
 
 import { addSeconds } from '~/lib/datetime'
+import { lineChart } from '~/console/chart'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { html, type Html } from '~/console/html'
-import { emptyState, formatBytes, header, stat, statusBadge, when } from '~/console/ui'
+import { alert, emptyState, formatBytes, header, stat, statusBadge, when } from '~/console/ui'
 
 const started = Date.now()
 
@@ -32,9 +33,51 @@ function overview(ctx: ConsoleContext): Html {
     .all()
   const uptime = Math.round((Date.now() - started) / 60000)
   const smtpOff = !services.config.smtp
+  services.requestLogs.flush()
+  const since = addSeconds(-86400)
+  const now = new Date()
+  now.setUTCMinutes(0, 0, 0)
+  const hours = Array.from({ length: 24 }, (_, i) => new Date(now.getTime() - (23 - i) * 3600_000).toISOString().slice(0, 13))
+  const hourly = new Map(
+    sql
+      .query<{ hour: string; inbound: number; outbound: number }, [string]>(
+        `SELECT substr(created_at, 1, 13) AS hour, coalesce(sum(request_bytes), 0) AS inbound, coalesce(sum(response_bytes), 0) AS outbound
+         FROM _request_logs WHERE created_at >= ? GROUP BY hour`,
+      )
+      .all(since)
+      .map((row) => [row.hour, row]),
+  )
+  const inbound = hours.map((hour) => hourly.get(hour)?.inbound ?? 0)
+  const outbound = hours.map((hour) => hourly.get(hour)?.outbound ?? 0)
+  const totalBytes = [...inbound, ...outbound].reduce((sum, value) => sum + value, 0)
+  const consumers = sql
+    .query<{ path: string; bytes: number }, [string]>(
+      `SELECT path, coalesce(sum(request_bytes + response_bytes), 0) AS bytes
+       FROM _request_logs WHERE created_at >= ? GROUP BY path ORDER BY bytes DESC LIMIT 6`,
+    )
+    .all(since)
+  const traffic = html`<div class="layout" style="margin-bottom:16px">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h2 style="margin:0">Bandwidth over time</h2><a class="subdued" style="margin-left:auto" href="/console/logs">View request logs</a></div>
+      ${totalBytes
+        ? lineChart({
+            labels: hours.map((hour) => `${hour.slice(11, 13)}:00`),
+            series: [
+              { label: 'Inbound', color: '#16a34a', values: inbound },
+              { label: 'Outbound', color: '#db2777', values: outbound },
+            ],
+          })
+        : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.')}
+    </div>
+    <div class="card"><h2>Top bandwidth consumers</h2>
+      ${consumers.length
+        ? html`<ul class="list">${consumers.map((item) => html`<li><span class="mono clip" title="${item.path}">${item.path}</span><span class="subdued">${formatBytes(item.bytes)}</span></li>`)}</ul>`
+        : emptyState('No consumers yet', 'Paths appear here after the first requests.')}
+    </div>
+  </div>`
   return html`
     ${header('Home')}
-    ${smtpOff ? html`<div class="banner warning">Email is not set up, so sign-in codes, password resets and invitations cannot be sent. <a href="/console/settings#email">Set up SMTP</a></div>` : ''}
+    ${smtpOff ? alert('warning', html`Email is not set up, so sign-in codes, password resets and invitations cannot be sent. <a href="/console/settings/email">Set up SMTP</a>`) : ''}
     <div class="stats" style="margin-bottom:16px">
       ${stat('Documents', documents.toLocaleString('en-US'), '/console/databases')}
       ${stat('Collections', services.registry.collections.size, '/console/databases')}
@@ -43,6 +86,7 @@ function overview(ctx: ConsoleContext): Html {
       ${stat('Files', `${files.n} · ${formatBytes(files.bytes)}`, '/console/storage')}
       ${stat('Failed runs, 24h', failed, '/console/functions')}
     </div>
+    ${traffic}
     <div class="layout">
       <div class="card flush">
         <div class="toolbar"><h2 style="margin:0">Recent function runs</h2></div>

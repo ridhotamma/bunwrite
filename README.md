@@ -16,7 +16,7 @@ memory and ~4,000 list requests a second on a laptop.
 cp .env.example .env    # PROJECT_ID, API_KEYS, SECRET at minimum
 bun install
 bun run dev             # API at http://localhost:8080/v1, console at /console
-bun test                # 113 contract tests through the real SDKs
+bun test                # 131 contract tests through the real SDKs
 ```
 
 On first run, create a console admin with `bun run console:admin you@example.com`.
@@ -39,14 +39,16 @@ Server-rendered pages with htmx, styled after Shopify Polaris, and usable on a p
 
 | Area | What you can do |
 | --- | --- |
-| Home | Counts, failed function runs, memory and database size |
+| Home | Counts, bandwidth chart with top consumers, failed function runs, memory and database size |
 | Databases | Create databases and collections; edit attributes (a type change keeps the data), indexes and permissions; browse, filter, create, edit and delete documents |
 | Users | Search; edit profile, labels, verification and prefs; block; set a password; end sessions; delete |
 | Teams | Create teams; add members by email or ID; edit roles; prefs |
-| Storage | Buckets and their rules; upload, open and delete files |
+| Storage | Buckets and their rules; upload, open and delete files; local or S3-compatible file storage |
+| Backups | Create, download and delete database snapshots; daily auto backups; optional S3 backup destination |
 | Functions | Schedule, timeout, who may run it, variables; run now; run history with logs |
+| Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; open details, search, filter, paginate, clear; retention/IP settings |
 | Schema | Export as `appwrite.config.json`; import with a preview before anything changes |
-| Settings | Project name, allowed origins, session length; SMTP with a test email; Google sign-in; API keys; console admins; paused schedules |
+| Settings | Project name, allowed origins, session length; SMTP with a test email; Google sign-in; API keys; console admins; paused schedules; global function variables with bulk `.env` import |
 
 Settings saved in the console override the matching env vars and take effect
 immediately. Each setting shows whether it comes from env or from the console,

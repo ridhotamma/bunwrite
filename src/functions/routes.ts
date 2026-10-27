@@ -83,6 +83,9 @@ export function functionRoutes(router: Router<AppContext>): void {
       const headers = Object.fromEntries(Object.entries(result!.headers).filter(([k]) => !HOP_HEADERS.has(k.toLowerCase())))
       const binary = !/json|text|xml|javascript/i.test(headers['content-type'] ?? headers['Content-Type'] ?? 'text')
       const payload = binary ? Buffer.from(result!.body, 'latin1') : result!.body
+      if (result!.statusCode !== 204) {
+        headers['content-length'] = String(typeof payload === 'string' ? Buffer.byteLength(payload) : payload.length)
+      }
       return new Response(result!.statusCode === 204 ? null : payload, { status: result!.statusCode || 500, headers })
     },
     { raw: true },

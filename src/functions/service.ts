@@ -17,6 +17,7 @@ import { uniqueId } from '~/lib/ids'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
+import { ENV_KEY_RE, type EnvVariable } from './env'
 
 const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
 const SYNC_TIMEOUT = 30
@@ -220,15 +221,38 @@ export class FunctionService {
       .all(functionId)
   }
 
+  globalVariables() {
+    return this.variables('*')
+  }
+
+  setGlobalVariable(key: string, value: string, secret: boolean): void {
+    this.setVariable('*', key, value, secret)
+  }
+
+  deleteGlobalVariable(key: string): void {
+    this.deleteVariable('*', key)
+  }
+
   setVariable(functionId: string, key: string, value: string, secret: boolean): void {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
+    this.setVariables(functionId, [{ key, value }], secret)
+  }
+
+  setVariables(functionId: string, entries: EnvVariable[], secret: boolean): void {
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _function_vars (function_id, key, value, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(function_id, key) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
-      )
-      .run(functionId, key, value, secret ? 1 : 0, stamp, stamp)
+    const statement = this.sql.prepare(
+      `INSERT INTO _function_vars (function_id, key, value, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(function_id, key) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
+    )
+    this.sql.transaction(() => {
+      for (const { key, value } of entries) {
+        if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
+        statement.run(functionId, key, value, secret ? 1 : 0, stamp, stamp)
+      }
+    })()
+  }
+
+  setGlobalVariables(entries: EnvVariable[], secret: boolean): void {
+    this.setVariables('*', entries, secret)
   }
 
   deleteVariable(functionId: string, key: string): void {

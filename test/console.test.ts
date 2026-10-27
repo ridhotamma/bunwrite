@@ -3,6 +3,9 @@
  * change through a console form and checks it through the Appwrite SDK.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Query } from 'node-appwrite'
 
 import { ConsoleAuth } from '~/console/auth'
@@ -37,7 +40,12 @@ describe('console access', () => {
 
   test('wrong password is refused; the right one sets a strict cookie', async () => {
     const bad = await form('/console/login', { email: 'admin@example.com', password: 'nope-nope' })
-    expect(bad.status).toBe(401)
+    expect(bad.status).toBe(200)
+    const body = await bad.text()
+    expect(body).toContain('That email and password do not match an admin.')
+    expect(body).toContain('value="admin@example.com"')
+    expect(body).toContain('data-dismiss-alert')
+    expect(body).toContain('__pesanleDialogs')
     const ok = await form('/console/login', { email: 'admin@example.com', password: 'console-password' })
     expect(ok.status).toBe(303)
     const set = ok.headers.get('set-cookie')!
@@ -47,7 +55,11 @@ describe('console access', () => {
     cookie = set.split(';')[0]!
     const home = await get('/console')
     expect(home.status).toBe(200)
-    expect(await home.text()).toContain('Recent function runs')
+    const homeBody = await home.text()
+    expect(homeBody).toContain('Recent function runs')
+    expect(homeBody).toContain('id="confirm-dialog"')
+    expect(homeBody).toContain('data-dismiss-alert')
+    expect(homeBody).toContain('class="icon')
   })
 
   test('forms posted from another site are refused', async () => {
@@ -163,6 +175,18 @@ describe('auth through the console', () => {
 })
 
 describe('settings through the console', () => {
+  test('settings are grouped into tabs, with the old URL redirecting', async () => {
+    const root = await get('/console/settings')
+    expect(root.status).toBe(303)
+    expect(root.headers.get('location')).toBe('/console/settings/general')
+    const general = await (await get('/console/settings/general')).text()
+    expect(general).toContain('Project')
+    expect(general).not.toContain('Global function variables')
+    const functions = await (await get('/console/settings/functions')).text()
+    expect(functions).toContain('Global function variables')
+    expect(functions).not.toContain('API keys')
+  })
+
   test('project settings apply at once and can go back to env', async () => {
     await form('/console/settings/project', { projectName: 'Toko Saya', allowedOrigins: 'shop.example.com', sessionDays: '30', sessionsLimit: '3' })
     expect([server.config.projectName, server.config.allowedOrigins, server.config.sessionDuration, server.config.sessionsLimit]).toEqual(['Toko Saya', ['shop.example.com'], 2592000, 3])
@@ -177,10 +201,116 @@ describe('settings through the console', () => {
     expect(server.config.smtp).toMatchObject({ host: 'smtp.example.com', port: 465, secure: true, password: 'p' })
     await form('/console/settings/smtp', { host: 'smtp2.example.com', port: '587', user: 'u', password: '', senderEmail: 'hi@example.com', senderName: 'Hi' })
     expect(server.config.smtp).toMatchObject({ host: 'smtp2.example.com', password: 'p' })
-    const page = await (await get('/console/settings')).text()
+    const page = await (await get('/console/settings/email')).text()
     expect(page).not.toContain('value="p"')
+    expect(page).toContain('Sends to admin@example.com')
     await form('/console/settings/smtp', { disable: '1' })
     expect(server.config.smtp).toBeNull()
+  })
+
+  test('request log retention and IP logging can be changed and reset', async () => {
+    await form('/console/settings/logs', { retentionDays: '2', logIp: 'on' })
+    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([2, true])
+    await form('/console/settings/logs', { retentionDays: '0' })
+    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([0, false])
+    await form('/console/settings/logs/reset', {})
+    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([7, true])
+  })
+
+  test('global function variables can be added and removed', async () => {
+    await form('/console/settings/functions/variables', { key: 'PESANLE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
+    expect(server.services.functions.globalVariables()).toMatchObject([
+      { key: 'PESANLE_GLOBAL_TEST', value: 'global-value', secret: 1, function_id: '*' },
+    ])
+    const page = await (await get('/console/settings/functions')).text()
+    expect(page).toContain('PESANLE_GLOBAL_TEST')
+    expect(page).toContain('data-dialog-open="#bulk-global-vars"')
+    expect(page).toContain('id="bulk-global-vars"')
+    expect(page).toContain('hx-post="/console/settings/functions/variables/bulk"')
+    await form('/console/settings/functions/variables/delete', { key: 'PESANLE_GLOBAL_TEST' })
+    expect(server.services.functions.globalVariables()).toEqual([])
+  })
+
+  test('S3 storage settings validate required fields and endpoints', async () => {
+    const bad = await form('/console/settings/storage', { s3Enabled: 'on', s3Endpoint: 'not-a-url', s3Bucket: 'b', s3Region: 'r', s3AccessKey: 'a', s3Secret: 's' })
+    expect(flash(bad).get('err')).toContain('valid URL')
+    const missing = await form('/console/settings/storage', { s3Enabled: 'on' })
+    expect(flash(missing).get('err')).toContain('required')
+    const off = await form('/console/settings/storage', {})
+    expect(flash(off).get('ok')).toBe('Storage settings saved')
+    expect(server.config.s3.enabled).toBe(false)
+    const storagePage = await (await get('/console/settings/storage')).text()
+    expect(storagePage).toContain('Use S3 storage')
+    const valid = await form('/console/settings/storage', {
+      s3Enabled: 'on',
+      s3Endpoint: 'https://s3.example.com/',
+      s3Bucket: 'bucket',
+      s3Region: 'us-east-1',
+      s3AccessKey: 'key',
+      s3Secret: 'secret',
+    })
+    expect(flash(valid).get('ok')).toBe('Storage settings saved')
+    expect(server.config.s3).toMatchObject({ enabled: true, bucket: 'bucket', endpoint: 'https://s3.example.com', accessKey: 'key', secret: 'secret' })
+    await form('/console/settings/s3/reset', {})
+    expect(server.config.s3.enabled).toBe(false)
+  })
+
+  test('backups can be created, downloaded and deleted locally', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pesanle-backups-'))
+    const original = server.config.backupsPath
+    server.config.backupsPath = dir
+    try {
+      const created = await form('/console/settings/backups/create', {})
+      expect(flash(created).get('ok')).toContain('Created backup-')
+      const backups = await server.services.backups.list()
+      expect(backups).toHaveLength(1)
+      const page = await (await get('/console/settings/backups')).text()
+      expect(page).toContain(backups[0]!.name)
+      const download = await get(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
+      expect(download.status).toBe(200)
+      expect(download.headers.get('content-disposition')).toContain('.sqlite')
+      await form(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
+      expect(await server.services.backups.list()).toHaveLength(0)
+    } finally {
+      server.config.backupsPath = original
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('automatic backups run once a day', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pesanle-auto-backups-'))
+    const originalPath = server.config.backupsPath
+    const original = server.config.backups
+    server.config.backupsPath = dir
+    server.config.backups = { enabled: true, keep: 1, s3: original.s3 }
+    try {
+      const at = new Date(Date.UTC(2026, 9, 27, 2, 0))
+      await server.services.backups.tick(at)
+      await server.services.backups.tick(at)
+      expect((await server.services.backups.list()).filter((b) => b.name.startsWith('auto-'))).toHaveLength(1)
+    } finally {
+      server.config.backupsPath = originalPath
+      server.config.backups = original
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('global variables can be bulk imported, with validation errors in the dialog', async () => {
+    const ok = await form('/console/settings/functions/variables/bulk', { env: 'BULK_A=one\nBULK_B="two words"\n# comment', secret: 'on' })
+    expect(flash(ok).get('ok')).toBe('Imported 2 variables')
+    expect(server.services.functions.globalVariables().map(({ key, value, secret, function_id }) => ({ key, value, secret, function_id }))).toEqual([
+      { key: 'BULK_A', value: 'one', secret: 1, function_id: '*' },
+      { key: 'BULK_B', value: 'two words', secret: 1, function_id: '*' },
+    ])
+
+    const bad = await form('/console/settings/functions/variables/bulk', { env: 'BULK_A=one\nBAD LINE' })
+    expect(flash(bad).get('err')).toContain('Line 2')
+    const inline = await form('/console/settings/functions/variables/bulk', { env: 'BAD LINE' }, { 'hx-request': 'true' })
+    expect(inline.status).toBe(200)
+    expect(await inline.text()).toContain('Line 1')
+
+    server.services.functions.deleteGlobalVariable('BULK_A')
+    server.services.functions.deleteGlobalVariable('BULK_B')
   })
 
   test('Google sign-in can be set up from the console', async () => {
@@ -193,9 +323,13 @@ describe('settings through the console', () => {
   test('API keys: shown once, work with the SDK, stop working when revoked', async () => {
     const res = await form('/console/settings/keys', { name: 'CI', expire: '' })
     const html = await res.text()
+    expect(html).toContain('id="api-key-dialog"')
+    expect(html).toContain('data-open')
     const secret = /(standard_[0-9a-f]{128})/.exec(html)![1]!
-    const list = await (await get('/console/settings')).text()
+    const list = await (await get('/console/settings/access')).text()
     expect(list).not.toContain(secret)
+    expect(list).toContain('data-confirm=')
+    expect(list).not.toContain('hx-confirm=')
     const client = adminClient(server.endpoint)
     client.client.setKey(secret)
     expect((await client.databases.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.limit(1)] })).total).toBeGreaterThanOrEqual(0)
@@ -227,6 +361,13 @@ describe('pages outside the API', () => {
     const res = await fetch(`${base}/`, { redirect: 'manual', headers: html })
     expect(res.status).toBe(302)
     expect(res.headers.get('location')).toBe('/console')
+  })
+
+  test('serves the favicon', async () => {
+    const res = await fetch(`${base}/favicon.ico`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('image/x-icon')
+    expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0)
   })
 
   test('a browser gets a 404 page; SDK calls and /v1 keep the JSON error', async () => {

@@ -1,8 +1,9 @@
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import type { ConsoleRouter } from '~/console/context'
+import { envBulkDialog, importEnvVariables } from '~/console/env-vars'
 import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { badge, destroy, emptyState, header, poll, statusBadge, when } from '~/console/ui'
+import { alert, badge, destroy, emptyState, header, icon, poll, statusBadge, when } from '~/console/ui'
 
 const FN = '/console/functions'
 
@@ -42,8 +43,8 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(
       'Functions',
       'functions',
-      html`${header('Functions')}
-      ${missing ? html`<div class="banner critical">Code not found for ${missing} function${missing === 1 ? '' : 's'}. Check the code folder in <a href="/console/settings#schedules">Settings</a>; it should be the folder with appwrite.config.json.</div>` : ''}
+      html`${header('Functions', { actions: html`<a class="btn" href="/console/settings/functions">Global variables</a>` })}
+      ${missing ? alert('critical', html`Code not found for ${missing} function${missing === 1 ? '' : 's'}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with appwrite.config.json.`) : ''}
       <div class="card flush">
         ${fns.length
           ? html`<div class="scroll"><table><thead><tr><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
@@ -77,8 +78,8 @@ export function functionPages(router: ConsoleRouter): void {
         badges: [f.enabled ? badge('Enabled', 'success') : badge('Disabled'), badge(f.runtime)],
         actions: html`<form method="post" action="${base}/run" class="inline"><button class="primary">Run now</button></form>`,
       })}
-      ${paused && f.schedule ? html`<div class="banner warning">The schedule is paused in Settings.</div>` : ''}
-      ${code.dir ? '' : html`<div class="banner critical">Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Set the code folder in <a href="/console/settings#schedules">Settings</a>.</div>`}
+      ${paused && f.schedule ? alert('warning', html`The schedule is paused in Settings.`) : ''}
+      ${code.dir ? '' : alert('critical', html`Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Set the code folder in <a href="/console/settings/functions">Settings</a>.`)}
       <div class="layout">
         <div>${runsTable(f.id, runs, live)}</div>
         <div>
@@ -93,12 +94,14 @@ export function functionPages(router: ConsoleRouter): void {
             ${vars.length
               ? html`<ul class="list">${vars.map((v) => html`<li><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`} ${destroy(`${base}/variables/delete`, 'Remove', `Remove ${v.key}?`, { key: v.key })}</span></li>`)}</ul>`
               : html`<p class="hint" style="margin:0 0 12px">None set here. Values from the functions env file still apply.</p>`}
+            <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>
             <form method="post" action="${base}/variables" style="margin-top:12px">
               <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
               <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
-              <div class="foot"><button>Add variable</button></div>
+              <div class="foot"><button type="button" data-dialog-open="#bulk-fn-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add variable</button></div>
             </form>
           </div>
+          ${envBulkDialog({ id: 'bulk-fn-vars', title: `Import variables for ${f.name}`, action: `${base}/variables/bulk` })}
           <div class="card"><h2>Code</h2><ul class="list"><li><span class="subdued">Folder</span><span class="mono">${code.dir ?? html`<span style="color:var(--critical)">Not found</span>`}</span></li><li><span class="subdued">Entry point</span><span class="mono">${f.entrypoint}</span></li>
             <li><span class="subdued">HTTP endpoint</span><span class="mono clip">/v1/functions/${f.id}/http</span></li></ul></div>
         </div>
@@ -131,6 +134,11 @@ export function functionPages(router: ConsoleRouter): void {
   router.post(`${FN}/:id/variables/delete`, ({ ctx, path }) => {
     ctx.services.functions.deleteVariable(path.id!, value(ctx.form, 'key'))
     return ctx.go(`${FN}/${path.id}`, { tone: 'success', text: 'Variable removed' })
+  })
+
+  router.post(`${FN}/:id/variables/bulk`, ({ ctx, path }) => {
+    const f = ctx.services.functions.fn(path.id!)
+    return importEnvVariables(ctx, (vars, secret) => ctx.services.functions.setVariables(f.id, vars, secret), `${FN}/${f.id}`)
   })
 
   router.get(`${FN}/:id/executions/:eid`, ({ ctx, path }) => {

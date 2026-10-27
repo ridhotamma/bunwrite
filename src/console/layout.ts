@@ -3,35 +3,40 @@
  * white cards, a page header with a single primary action, index tables,
  * tone badges and short sentence-case copy.
  */
+import { confirmDialog, DIALOG_SCRIPT } from './dialog'
 import { html, raw, type Html } from './html'
 import { CONSOLE_CSS } from './styles'
+import { alert, icon, type IconName } from './ui'
 
 export interface Nav {
   section: string
   admin: string
 }
 
-const MAIN: [string, string, string][] = [
-  ['overview', 'Home', '/console'],
-  ['databases', 'Databases', '/console/databases'],
-  ['users', 'Users', '/console/auth/users'],
-  ['teams', 'Teams', '/console/auth/teams'],
-  ['storage', 'Storage', '/console/storage'],
-  ['functions', 'Functions', '/console/functions'],
+const MAIN: [string, string, string, IconName][] = [
+  ['overview', 'Home', '/console', 'house'],
+  ['databases', 'Databases', '/console/databases', 'database'],
+  ['users', 'Users', '/console/auth/users', 'users'],
+  ['teams', 'Teams', '/console/auth/teams', 'users-three'],
+  ['storage', 'Storage', '/console/storage', 'folder-simple'],
+  ['functions', 'Functions', '/console/functions', 'function'],
 ]
-const MANAGE: [string, string, string][] = [
-  ['schema', 'Schema', '/console/schema'],
-  ['settings', 'Settings', '/console/settings'],
+const MANAGE: [string, string, string, IconName][] = [
+  ['logs', 'Request logs', '/console/logs', 'list-bullets'],
+  ['schema', 'Schema', '/console/schema', 'tree-structure'],
+  ['settings', 'Settings', '/console/settings/general', 'gear-six'],
 ]
 
 export type Flash = { tone: 'success' | 'critical' | 'warning' | 'info'; text: string } | null
 
 export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html {
-  const link = ([key, label, href]: [string, string, string]) => html`<a href="${href}" class="${nav.section === key ? 'on' : ''}">${label}</a>`
+  const link = ([key, label, href, name]: [string, string, string, IconName]) =>
+    html`<a href="${href}" class="${nav.section === key ? 'on' : ''}">${icon(name)}<span>${label}</span></a>`
   return html`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
 <title>${title} · Console</title>
 <style>${raw(CONSOLE_CSS)}</style>
 <script src="/console/assets/htmx.min.js"></script>
@@ -39,27 +44,30 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <body hx-boost="true">
 <input type="checkbox" id="nav-toggle" aria-hidden="true">
 <label for="nav-toggle" class="scrim" aria-hidden="true"></label>
-<div class="topbar"><label for="nav-toggle" aria-label="Menu">☰</label><div class="brand">Pesanle</div></div>
+<div class="topbar"><label for="nav-toggle" aria-label="Menu">${icon('list', 20)}</label><div class="brand">Pesanle</div></div>
 <div class="frame">
   <nav class="nav">
     <div class="brand">Pesanle</div>
     ${MAIN.map(link)}
     <div class="group">Manage</div>
     ${MANAGE.map(link)}
-    <div class="foot">${nav.admin}<br><form method="post" action="/console/logout" class="inline"><button>Sign out</button></form></div>
+    <div class="foot">${nav.admin}<br><form method="post" action="/console/logout" class="inline"><button>${icon('sign-out')}<span>Sign out</span></button></form></div>
   </nav>
   <main>
-    ${flash && flash.tone !== 'success' ? html`<div class="banner ${flash.tone}">${flash.text}</div>` : ''}
+    ${flash && flash.tone !== 'success' ? alert(flash.tone, html`${flash.text}`) : ''}
     ${body}
-    ${flash?.tone === 'success' ? html`<div class="toast" role="status">${flash.text}</div>` : ''}
+    ${flash?.tone === 'success' ? html`<div class="toast" role="status">${icon('check-circle')}<span>${flash.text}</span></div>` : ''}
     ${flash ? html`<script>{const u=new URL(location.href);u.searchParams.delete('ok');u.searchParams.delete('err');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}</script>` : ''}
   </main>
 </div>
+${confirmDialog()}
+<script>${raw(DIALOG_SCRIPT)}</script>
 </body>
 </html>`
 }
 
 export function bare(title: string, body: Html): Html {
   return html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} · Console</title><style>${raw(CONSOLE_CSS)}</style></head><body>${body}</body></html>`
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<title>${title} · Console</title><style>${raw(CONSOLE_CSS)}</style></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script></body></html>`
 }

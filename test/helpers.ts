@@ -93,6 +93,17 @@ export function testConfig(over: Partial<Config> = {}): Config {
     functionsDir: process.cwd(),
     consoleEnabled: true,
     schemaSyncOnStart: false,
+    logRequests: false,
+    logFormat: 'text',
+    logRetentionDays: 7,
+    logIp: true,
+    s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
+    backups: {
+      enabled: false,
+      keep: 7,
+      s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
+    },
+    backupsPath: './data/test-backups',
     ...over,
   }
 }

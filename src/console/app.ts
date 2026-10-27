@@ -19,7 +19,7 @@ import { html, page } from './html'
 import { shell, type Flash } from './layout'
 import { registerConsolePages } from './pages'
 import { signInPage } from './pages/sign-in'
-import { emptyState, header } from './ui'
+import { alert, emptyState, header } from './ui'
 
 const HTMX = join(import.meta.dir, '..', '..', 'node_modules', 'htmx.org', 'dist', 'htmx.min.js')
 
@@ -67,10 +67,11 @@ export function createConsole(services: Services) {
         if (!noAdmins || !loopback(request, server)) return go(request, '/console/login')
         if (request.method === 'POST') {
           const form = await readForm(request)
+          const email = String(form.email ?? '')
           try {
-            await auth.upsert(String(form.email ?? ''), String(form.password ?? ''))
+            await auth.upsert(email, String(form.password ?? ''))
           } catch (error) {
-            return signInPage(auth, { setup: true, error: error instanceof Error ? error.message : String(error) })
+            return signInPage(auth, { setup: true, email, error: error instanceof Error ? error.message : String(error) })
           }
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
@@ -82,13 +83,14 @@ export function createConsole(services: Services) {
         if (noAdmins && loopback(request, server)) return go(request, '/console/setup')
         if (request.method === 'POST') {
           const form = await readForm(request)
+          const email = String(form.email ?? '')
           try {
             limiter.hit(`console-login:${ip}`, 10, 900)
           } catch {
-            return signInPage(auth, { error: 'Too many attempts. Try again in 15 minutes.' })
+            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.' })
           }
-          const secret = await auth.login(String(form.email ?? ''), String(form.password ?? ''))
-          if (!secret) return signInPage(auth, { error: 'That email and password do not match an admin.' })
+          const secret = await auth.login(email, String(form.password ?? ''))
+          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.' })
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
         return signInPage(auth)
@@ -129,7 +131,7 @@ export function createConsole(services: Services) {
         const message = error instanceof Error ? error.message : String(error)
         if (!(error instanceof AppwriteError)) console.error('[console]', error)
         if (request.method === 'POST') return back(request, { tone: 'critical', text: message })
-        return ctx.render('Error', '', html`${header('Something went wrong')}<div class="banner critical">${message}</div>`)
+        return ctx.render('Error', '', html`${header('Something went wrong')}${alert('critical', html`${message}`)}`)
       }
     },
   }

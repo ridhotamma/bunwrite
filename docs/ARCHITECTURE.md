@@ -36,6 +36,8 @@ folder of uploaded files.
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/` | One service and its routes each |
 | `src/settings/` | Console-edited settings over env, console API keys |
+| `src/logs/` | Batched request-log storage for the console, retention pruning |
+| `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
 
@@ -56,8 +58,8 @@ The console keeps the same boundaries as the API:
 
 - **Built-in tables** (`_users`, `_sessions`, `_tokens`, `_teams`, `_memberships`,
   `_identities`, `_files`, `_buckets`, `_functions`, `_executions`,
-  `_transactions`, `_settings`, `_api_keys`, `_console_*`) are a Drizzle schema
-  in `src/db/system-schema.ts`. Drizzle migrations run on start.
+  `_transactions`, `_settings`, `_api_keys`, `_request_logs`, `_console_*`) are a
+  Drizzle schema in `src/db/system-schema.ts`. Drizzle migrations run on start.
 - **Each collection** is a real table `d<dbSeq>_<collectionId>`, with one column
   per attribute plus `_seq` (`$sequence`), `_id`, `_createdAt`, `_updatedAt` and
   `_permissions`. Arrays are stored as JSON text, booleans as 0/1, and datetimes
@@ -83,6 +85,14 @@ The console keeps the same boundaries as the API:
    one request's reads and writes never interleave with another's.
 4. On success, the changed documents go to realtime subscribers who may read
    them. On failure, the events are dropped.
+5. Every response carries `X-Request-Id`. When `LOG_REQUESTS` is on, one line
+   per request (method, path, status, duration, request/response bytes, auth,
+   IP, project, error) goes to stdout as text or JSON, and the same entry is
+   batched into `_request_logs` for the console's Request logs page. The page
+   stores referer and user agent too, and has a detail view. Static assets and
+   successful Request logs page requests are skipped; rows older than the
+   configured retention (env or Console Settings) are pruned. The Home page
+   charts hourly inbound/outbound bytes and lists the top paths.
 
 ## Transactions
 
@@ -108,9 +118,25 @@ env. Variables come from three places; a later one wins:
 2. `FUNCTIONS_ENV_FILE`;
 3. the console's function variables.
 
+Console variables can be global (Settings → Functions) or set on one function.
+A function-specific value overrides a global one with the same name. Both
+places can bulk import pasted `KEY=value` lines; malformed lines are reported
+with line numbers before anything is written.
+
 A 15-second loop fires cron schedules (UTC). It never starts a function while
 that function's previous run is still going, and it skips functions on the
 pause list.
+
+## Files and backups
+
+- Uploads are stored under `STORAGE_PATH`, or in an S3-compatible bucket when
+  enabled in **Settings → File storage**. Switching storage does not migrate
+  existing files; that is a manual step.
+- Backups are consistent SQLite snapshots made with `VACUUM INTO` in
+  `BACKUPS_PATH`, or in a separate S3 bucket when enabled in
+  **Settings → Backups**. Manual backups can be created, downloaded and
+  deleted there; automatic backups run daily at 02:00 UTC and keep the
+  configured number. Database snapshots do not include uploaded files.
 
 ## Settings and schema: who wins
 

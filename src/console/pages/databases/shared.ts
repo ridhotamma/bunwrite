@@ -2,7 +2,7 @@ import { q } from '~/db/connection'
 import type { Collection } from '~/schema/types'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
-import { badge, header } from '~/console/ui'
+import { badge, header, tabs as tabList } from '~/console/ui'
 
 export const DB = '/console/databases'
 export const COL = `${DB}/:db/collections/:col`
@@ -19,8 +19,15 @@ export function loadCollection(ctx: ConsoleContext, path: Record<string, string>
 }
 
 export function tabs(c: Collection, on: string): Html {
-  const tab = (key: string, label: string) => html`<a href="${collectionUrl(c)}/${key}" class="${on === key ? 'on' : ''}">${label}</a>`
-  return html`<nav class="tabs">${tab('documents', 'Documents')}${tab('attributes', 'Attributes')}${tab('indexes', 'Indexes')}${tab('settings', 'Settings')}</nav>`
+  return tabList(
+    [
+      { key: 'documents', label: 'Documents', href: `${collectionUrl(c)}/documents` },
+      { key: 'attributes', label: 'Attributes', href: `${collectionUrl(c)}/attributes` },
+      { key: 'indexes', label: 'Indexes', href: `${collectionUrl(c)}/indexes` },
+      { key: 'settings', label: 'Settings', href: `${collectionUrl(c)}/settings` },
+    ],
+    on,
+  )
 }
 
 export function collectionHeader(ctx: ConsoleContext, c: Collection, actions?: Html): Html {

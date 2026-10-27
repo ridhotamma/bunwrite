@@ -5,7 +5,7 @@ import { err } from '~/lib/errors'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { badge, header } from '~/console/ui'
+import { alert, badge, header } from '~/console/ui'
 
 const SCHEMA = '/console/schema'
 
@@ -42,7 +42,7 @@ export function schemaPages(router: ConsoleRouter): void {
       'Schema',
       'schema',
       html`${header('Schema')}
-      <div class="banner info">Databases, collections, buckets and functions can be described in <code>appwrite.config.json</code>, the file Pesanle keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.</div>
+      ${alert('info', html`Databases, collections, buckets and functions can be described in <code>appwrite.config.json</code>, the file Pesanle keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
       <div class="layout">
         <form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" class="card" hx-boost="false">
           <h2>Import</h2>
@@ -55,7 +55,9 @@ export function schemaPages(router: ConsoleRouter): void {
           <h2>Export</h2>
           <p class="hint">The current schema as appwrite.config.json${path ? ', with the rest of your file kept as is' : ''}.</p>
           <div class="foot" style="justify-content:flex-start"><a class="btn" href="${SCHEMA}/export.json" hx-boost="false" download="appwrite.config.json">Download</a>
-            ${path ? html`<form method="post" action="${SCHEMA}/save" class="inline" hx-confirm="Overwrite ${path} with the current schema?"><button>Save to ${path.split('/').pop()}</button></form>` : ''}</div>
+            ${path
+              ? html`<form method="post" action="${SCHEMA}/save" class="inline" data-confirm="Overwrite ${path} with the current schema?" data-confirm-label="Overwrite" data-confirm-tone="critical"><button>Save to ${path.split('/').pop()}</button></form>`
+              : ''}</div>
         </div>
       </div>`,
     )
@@ -87,7 +89,7 @@ export function schemaPages(router: ConsoleRouter): void {
       html`${header('Preview import', { back: SCHEMA })}
       <div class="card"><h2>${changes.length} change${changes.length === 1 ? '' : 's'} from ${label}</h2>${changeList(changes)}</div>
       ${changes.length
-        ? html`<form method="post" action="${SCHEMA}/apply" class="card" ${changes.some((c) => c.startsWith('-')) ? html`hx-confirm="This removes data. Apply anyway?"` : ''}>
+        ? html`<form method="post" action="${SCHEMA}/apply" class="card" ${changes.some((c) => c.startsWith('-')) ? html`data-confirm="This removes data. Apply anyway?" data-confirm-label="Apply" data-confirm-tone="critical"` : ''}>
             <input type="hidden" name="config" value="${JSON.stringify(config)}"><input type="hidden" name="baseDir" value="${baseDir ?? ''}">${prune ? html`<input type="hidden" name="prune" value="on">` : ''}
             <div class="foot"><a class="btn" href="${SCHEMA}">Cancel</a><button class="primary">Apply ${changes.length} change${changes.length === 1 ? '' : 's'}</button></div>
           </form>`

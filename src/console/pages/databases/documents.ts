@@ -4,7 +4,7 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { pageCount, pageParams } from '~/console/query'
-import { destroy, emptyState, header, listCard, pager, searchForm, when } from '~/console/ui'
+import { alert, destroy, emptyState, header, listCard, pager, searchForm, when } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
 const documentUrl = (c: Collection, id: unknown) => `${collectionUrl(c)}/documents/${encodeURIComponent(String(id))}`
@@ -78,7 +78,7 @@ export function documentPages(router: ConsoleRouter): void {
       submit: 'Filter',
       mono: true,
     })
-    const body = html`${filterError ? html`<div class="banner critical" style="margin:12px">${filterError}</div>` : ''}
+    const body = html`${filterError ? alert('critical', html`${filterError}`, { style: 'margin:12px' }) : ''}
       ${result.documents.length
         ? html`<div class="scroll"><table><thead><tr><th>ID</th>${shown.map((a, i) => html`<th class="${i > 1 ? 'hide-sm' : ''}">${a.key}</th>`)}<th class="hide-sm">Updated</th></tr></thead><tbody>
           ${result.documents.map((d) => html`<tr class="row-link" onclick="location='${documentUrl(c, d.$id)}'"><td class="mono"><a href="${documentUrl(c, d.$id)}">${d.$id}</a></td>
