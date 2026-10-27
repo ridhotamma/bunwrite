@@ -1,0 +1,101 @@
+export interface SmtpConfig {
+  host: string
+  port: number
+  user?: string
+  password?: string
+  /** 'tls' for implicit TLS (port 465); otherwise STARTTLS when offered. */
+  secure: boolean
+  senderEmail: string
+  senderName: string
+}
+
+export interface GoogleConfig {
+  clientId: string
+  clientSecret: string
+  authUrl: string
+  tokenUrl: string
+  userinfoUrl: string
+}
+
+export interface Config {
+  port: number
+  /** SQLite file path. */
+  databasePath: string
+  /** Must match the X-Appwrite-Project header (keep the old Appwrite project ID). */
+  projectId: string
+  /** Shown in emails as {{project}}. */
+  projectName: string
+  /** Accepted X-Appwrite-Key values. Reuse the old Appwrite key so apps need no change. */
+  apiKeys: string[]
+  /** Signs JWTs and OAuth state. */
+  secret: string
+  /** Browser origins allowed by CORS and as redirect targets. `*.example.com` matches subdomains. */
+  allowedOrigins: string[]
+  /** Optional appwrite.config.json applied at startup. */
+  schemaPath?: string
+  /** Public URL of this API including /v1, used for OAuth callbacks and file links. */
+  publicEndpoint: string
+  /** Session lifetime in seconds (Appwrite's project setting; Pesanle uses one year). */
+  sessionDuration: number
+  /** Most sessions a user keeps; the oldest is removed beyond this. */
+  sessionsLimit: number
+  smtp: SmtpConfig | null
+  google: GoogleConfig | null
+  /** Directory for uploaded files. */
+  storagePath: string
+  /** dotenv file with variables for function executions (Appwrite "function variables"). */
+  functionsEnvFile?: string
+  /** Functions whose schedule is ignored (render's keep-warm ping is pointless here). */
+  skipSchedules: string[]
+}
+
+const list = (value: string | undefined) =>
+  (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
+  const projectId = env.PROJECT_ID ?? ''
+  const secret = env.SECRET ?? ''
+  if (!projectId) throw new Error('PROJECT_ID is required')
+  if (secret.length < 32) throw new Error('SECRET must be at least 32 characters')
+  const port = Number(env.PORT ?? 8080)
+  return {
+    port,
+    databasePath: env.DATABASE_PATH ?? './data/pesanle.sqlite',
+    projectId,
+    projectName: env.PROJECT_NAME ?? 'Pesanle',
+    apiKeys: list(env.API_KEYS),
+    secret,
+    allowedOrigins: list(env.ALLOWED_ORIGINS),
+    schemaPath: env.SCHEMA_PATH || undefined,
+    publicEndpoint: (env.PUBLIC_ENDPOINT ?? `http://localhost:${port}/v1`).replace(/\/$/, ''),
+    sessionDuration: Number(env.SESSION_DURATION ?? 31536000),
+    sessionsLimit: Number(env.SESSIONS_LIMIT ?? 10),
+    smtp: env.SMTP_HOST
+      ? {
+          host: env.SMTP_HOST,
+          port: Number(env.SMTP_PORT ?? 587),
+          user: env.SMTP_USERNAME || undefined,
+          password: env.SMTP_PASSWORD || undefined,
+          secure: env.SMTP_SECURE === 'tls',
+          senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@pesanle.com',
+          senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Pesanle'} Team`,
+        }
+      : null,
+    google:
+      env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+        ? {
+            clientId: env.GOOGLE_CLIENT_ID,
+            clientSecret: env.GOOGLE_CLIENT_SECRET,
+            authUrl: env.GOOGLE_AUTH_URL ?? 'https://accounts.google.com/o/oauth2/v2/auth',
+            tokenUrl: env.GOOGLE_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
+            userinfoUrl: env.GOOGLE_USERINFO_URL ?? 'https://www.googleapis.com/oauth2/v3/userinfo',
+          }
+        : null,
+    storagePath: env.STORAGE_PATH ?? './data/storage',
+    functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
+    skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : ['render'],
+  }
+}

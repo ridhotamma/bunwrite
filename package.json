@@ -1,0 +1,30 @@
+{
+  "name": "pesanle-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight Appwrite-compatible backend for Pesanle: Bun + SQLite + Drizzle.",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "schema:push": "bun src/cli/schema-push.ts",
+    "db:generate": "drizzle-kit generate",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "migrate": "bun src/cli/migrate.ts",
+    "snapshot": "bun src/cli/snapshot.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.0",
+    "nodemailer": "6.9.16",
+    "sharp": "0.33.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/nodemailer": "6.4.17",
+    "appwrite": "27.0.0",
+    "drizzle-kit": "^0.31.0",
+    "node-appwrite": "29.0.0",
+    "typescript": "^5.9.0"
+  }
+}
