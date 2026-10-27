@@ -3,11 +3,10 @@ import type { ConsoleRouter } from '~/console/context'
 import { checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html } from '~/console/html'
-import { badge, copyableId, destroy, emptyState, header, icon, listCard, pageFooter, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import { badge, destroy, emptyState, header, icon, listCard, pageFooter, searchForm, settingsSection, tabs, when } from '~/console/ui'
 import { COL, DB, collectionUrl, countDocuments } from './shared'
 
 const databaseUrl = (id: string) => `${DB}/${encodeURIComponent(id)}`
-const collectionCount = (n: number) => `${n.toLocaleString('en-US')} collection${n === 1 ? '' : 's'}`
 
 const databaseTabs = (id: string, on: 'collections' | 'settings') =>
   tabs(
@@ -82,8 +81,6 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       'databases',
       html`${header(d.name, {
         back: DB,
-        subtitle: html`${copyableId(d.id, 'database-id-label')}<span class="dot" aria-hidden="true">·</span><span>${collectionCount(all.length)}</span>`,
-        badges: [d.enabled ? badge('Enabled', 'success') : badge('Disabled')],
         actions: all.length ? create : undefined,
       })}${databaseTabs(d.id, 'collections')}
       ${listCard('collections', {
@@ -99,11 +96,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     return ctx.render(
       d.name,
       'databases',
-      html`${header(d.name, {
-        back: DB,
-        subtitle: html`${copyableId(d.id, 'database-id-label')}<span class="dot" aria-hidden="true">·</span><span>${collectionCount(collections.length)}</span>`,
-        badges: [d.enabled ? badge('Enabled', 'success') : badge('Disabled')],
-      })}${databaseTabs(d.id, 'settings')}
+      html`${header(d.name, { back: DB })}${databaseTabs(d.id, 'settings')}
       ${settingsSection(
         'General',
         'The name shown here, and whether apps can use the database.',
