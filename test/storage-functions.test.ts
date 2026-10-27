@@ -266,6 +266,41 @@ describe('functions', () => {
     expect(e.logs).toContain('python says hi')
   })
 
+  test('code is found through the code folder, even when the stored path is wrong', async () => {
+    const setPath = (path: string) => server.db.sqlite.query("UPDATE _functions SET path = ? WHERE id = 'echo'").run(path)
+    const run = () => admin.functions.createExecution({ functionId: 'echo' })
+    const original = server.config.functionsDir
+    try {
+      server.config.functionsDir = dir
+      // Stored against the wrong folder, as an uploaded import used to do.
+      setPath('/nowhere/pesanle-backend/functions/echo')
+      expect((await run()).status).toBe('completed')
+      // Stored as written in appwrite.config.json.
+      setPath('functions/echo')
+      expect((await run()).status).toBe('completed')
+      // Genuinely missing: a failed run that says where it looked and how to fix it.
+      server.config.functionsDir = '/nowhere'
+      const failed = await run()
+      expect(failed.status).toBe('failed')
+      expect(failed.errors).toContain('Function code not found. Looked for /nowhere/functions/echo/src/main.js')
+      expect(failed.errors).toContain('Settings > Functions')
+    } finally {
+      server.config.functionsDir = original
+      setPath(join(dir, 'functions', 'echo'))
+    }
+  })
+
+  test('an uploaded import keeps relative function paths', () => {
+    const { pushConfig } = require('../src/schema/push') as typeof import('../src/schema/push')
+    pushConfig(server.db, { functions: [{ $id: 'uploaded', name: 'Uploaded', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/cron' }] })
+    const row = server.services.functions.fn('uploaded')
+    expect(row.path).toBe('functions/cron')
+    const original = server.config.functionsDir
+    server.config.functionsDir = dir
+    expect(server.services.functions.codeDir(row).dir).toBe(join(dir, 'functions', 'cron'))
+    server.config.functionsDir = original
+  })
+
   test('the scheduler fires due functions once per minute', async () => {
     const at = new Date(Date.UTC(2026, 9, 27, 10, 5))
     expect(server.services.functions.tick(at)).toEqual(['cron'])

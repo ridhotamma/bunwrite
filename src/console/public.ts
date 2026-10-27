@@ -18,7 +18,7 @@ export function notFoundPage(consoleEnabled: boolean): Response {
     bare(
       'Page not found',
       html`<div class="auth">
-        <div class="brand"><i></i>Pesanle</div>
+        <div class="brand">Pesanle</div>
         <div class="card" style="text-align:center;padding:32px 24px">
           <div style="font-size:40px;font-weight:650;line-height:1;margin-bottom:8px">404</div>
           <h2 style="margin:0 0 4px">Page not found</h2>
@@ -38,7 +38,7 @@ export function apiHomePage(): Response {
     bare(
       'API',
       html`<div class="auth">
-        <div class="brand"><i></i>Pesanle</div>
+        <div class="brand">Pesanle</div>
         <div class="card" style="text-align:center;padding:32px 24px">
           <h2 style="margin:0 0 4px">API is running</h2>
           <p class="subdued" style="margin:0">Apps connect at <code>/v1</code>. Health check: <a href="/v1/health">/v1/health</a></p>

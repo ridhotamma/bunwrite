@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+
 import { SmtpMailer } from '../../mail/mailer'
 import { err } from '../../lib/errors'
 import { go, type ConsoleContext, type ConsoleRouter } from '../app'
@@ -8,6 +10,13 @@ import type { SettingKey } from '../../settings/service'
 const SETTINGS = '/console/settings'
 const lines = (v: unknown) => String(v ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
 const checked = (v: unknown) => v === 'on' || v === 'true'
+
+function codeFound(ctx: ConsoleContext): Html {
+  const fns = ctx.services.functions.list()
+  if (!fns.length) return html``
+  const found = fns.filter((f) => ctx.services.functions.codeDir(f).dir).length
+  return found === fns.length ? html`Code found for all ${found} functions.` : html`<b style="color:var(--critical)">Code found for ${found} of ${fns.length} functions.</b>`
+}
 
 function source(ctx: ConsoleContext, key: SettingKey): Html {
   return ctx.services.settings.overridden(key)
@@ -64,8 +73,10 @@ export function settingsPages(router: ConsoleRouter): void {
           : ''}
         <form method="post" action="${SETTINGS}/keys" style="margin-top:12px" hx-push-url="false"><div class="fields"><label>Name<input name="name" required placeholder="Dashboard server"></label><label>Expires<input name="expire" type="date"><small>Optional.</small></label></div>
           <div class="foot"><button>Create key</button></div></form>`)}
-      ${card(ctx, 'schedules', 'Function schedules', 'functions', 'Paused schedules do not fire. Running a function by hand still works.', html`
+      ${card(ctx, 'schedules', 'Functions', 'functions', 'Where function code lives, and which schedules are paused.', html`
         <form method="post" action="${SETTINGS}/functions">
+          <label>Code folder<input name="functionsDir" class="mono" value="${c.functionsDir}"><small>The folder with appwrite.config.json; function paths are read from it. ${codeFound(ctx)}</small></label>
+          <div class="subdued" style="margin:4px 0 8px">Paused schedules do not fire. Running a function by hand still works.</div>
           ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''}>Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
           <div class="foot"><button>Save</button></div>
         </form>`)}
@@ -143,7 +154,9 @@ export function settingsPages(router: ConsoleRouter): void {
   })
 
   router.post(`${SETTINGS}/functions`, ({ ctx, request }) => {
-    ctx.services.settings.set('functions', { skipSchedules: ([] as unknown[]).concat(ctx.form.paused ?? []).map(String) })
+    const functionsDir = String(ctx.form.functionsDir ?? '').trim()
+    if (functionsDir && !existsSync(functionsDir)) throw err('general_argument_invalid', `No folder at ${functionsDir}.`)
+    ctx.services.settings.set('functions', { skipSchedules: ([] as unknown[]).concat(ctx.form.paused ?? []).map(String), functionsDir: functionsDir || undefined })
     return go(request, `${SETTINGS}#schedules`, { tone: 'success', text: 'Schedules saved' })
   })
 

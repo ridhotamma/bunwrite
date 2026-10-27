@@ -105,7 +105,7 @@ export function pushConfig(db: Db, config: any, options: PushOptions = {}): void
     }
 
     pushBuckets(db, config.buckets ?? [], stamp, log)
-    pushFunctions(db, config.functions ?? [], stamp, log, options.baseDir ?? process.cwd())
+    pushFunctions(db, config.functions ?? [], stamp, log, options.baseDir)
 
     if (options.prune) {
       const all = sqlite.query<any, []>('SELECT c.database_id, c.id, d.seq AS dseq FROM _collections c JOIN _databases d ON d.id = c.database_id').all()
@@ -313,13 +313,18 @@ function pushBuckets(db: Db, buckets: any[], stamp: string, log: (line: string) 
   }
 }
 
-function pushFunctions(db: Db, functions: any[], stamp: string, log: (line: string) => void, baseDir: string): void {
+/**
+ * `path` is stored absolute when the config file's folder is known (CLI, SCHEMA_PATH, migrate),
+ * and as written otherwise (an uploaded file); relative paths resolve against the functions
+ * code folder at run time.
+ */
+function pushFunctions(db: Db, functions: any[], stamp: string, log: (line: string) => void, baseDir: string | undefined): void {
   for (const f of functions) {
     const values = [
       f.name ?? f.$id,
       f.runtime ?? 'node-22',
       f.entrypoint ?? 'src/main.js',
-      resolve(baseDir, f.path ?? `functions/${f.$id}`),
+      baseDir ? resolve(baseDir, f.path ?? `functions/${f.$id}`) : (f.path ?? `functions/${f.$id}`),
       JSON.stringify(f.execute ?? []),
       JSON.stringify(f.events ?? []),
       f.schedule ?? '',

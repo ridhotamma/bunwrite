@@ -97,7 +97,7 @@ export function createConsole(services: Services) {
       bare(
         setup ? 'Create admin' : 'Sign in',
         html`<div class="auth">
-          <div class="brand"><i></i>Pesanle console</div>
+          <div class="brand">Pesanle console</div>
           <div class="card">
             <h2>${setup ? 'Create the first admin' : 'Sign in'}</h2>
             ${setup ? html`<p class="hint">Only shown on this machine while no admin exists.</p>` : ''}

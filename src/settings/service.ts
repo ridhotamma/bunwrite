@@ -29,7 +29,7 @@ export interface ApiKeyRow {
 
 export class SettingsService {
   /** Env values, kept so a console setting can be cleared back to them. */
-  private readonly defaults: Pick<Config, 'projectName' | 'allowedOrigins' | 'sessionDuration' | 'sessionsLimit' | 'smtp' | 'google' | 'skipSchedules'>
+  private readonly defaults: Pick<Config, 'projectName' | 'allowedOrigins' | 'sessionDuration' | 'sessionsLimit' | 'smtp' | 'google' | 'skipSchedules' | 'functionsDir'>
 
   constructor(
     private db: Db,
@@ -44,6 +44,7 @@ export class SettingsService {
       smtp: config.smtp ? { ...config.smtp } : null,
       google: config.google ? { ...config.google } : null,
       skipSchedules: [...config.skipSchedules],
+      functionsDir: config.functionsDir,
     }
     for (const key of ['project', 'smtp', 'google', 'functions'] as SettingKey[]) this.apply(key)
   }
@@ -88,8 +89,9 @@ export class SettingsService {
         break
       }
       case 'functions': {
-        const v = this.read<{ skipSchedules: string[] }>('functions')
+        const v = this.read<{ skipSchedules?: string[]; functionsDir?: string }>('functions')
         c.skipSchedules = v?.skipSchedules ?? [...this.defaults.skipSchedules]
+        c.functionsDir = v?.functionsDir || this.defaults.functionsDir
         break
       }
     }

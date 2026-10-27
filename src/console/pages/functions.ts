@@ -31,16 +31,19 @@ export function functionPages(router: ConsoleRouter): void {
         .map((r) => [r.function_id, r]),
     )
     const skipped = ctx.services.config.skipSchedules
+    const missing = fns.filter((f) => !ctx.services.functions.codeDir(f).dir).length
     return ctx.render(
       'Functions',
       'functions',
       html`${header('Functions')}
+      ${missing ? html`<div class="banner critical">Code not found for ${missing} function${missing === 1 ? '' : 's'}. Check the code folder in <a href="/console/settings#schedules">Settings</a>; it should be the folder with appwrite.config.json.</div>` : ''}
       <div class="card flush">
         ${fns.length
           ? html`<div class="scroll"><table><thead><tr><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
             ${fns.map((f) => {
               const run = last.get(f.id)
-              return html`<tr class="row-link" onclick="location='${FN}/${f.id}'"><td><a href="${FN}/${f.id}">${f.name}</a>${f.enabled ? '' : html` ${badge('Disabled')}`}</td>
+              const missing = !ctx.services.functions.codeDir(f).dir
+              return html`<tr class="row-link" onclick="location='${FN}/${f.id}'"><td><a href="${FN}/${f.id}">${f.name}</a>${f.enabled ? '' : html` ${badge('Disabled')}`}${missing ? html` ${badge('Code missing', 'critical')}` : ''}</td>
                 <td class="hide-sm subdued">${f.runtime}</td>
                 <td class="mono">${f.schedule ? html`${f.schedule}${skipped.includes(f.id) ? html` ${badge('Paused')}` : ''}` : html`<span class="subdued">—</span>`}</td>
                 <td>${run ? html`${statusBadge(run.status)} <span class="subdued hide-sm">${when(run.created_at)}</span>` : html`<span class="subdued">Never</span>`}</td></tr>`
@@ -58,6 +61,7 @@ export function functionPages(router: ConsoleRouter): void {
     const live = runs.some((r) => r.status === 'waiting' || r.status === 'processing')
     const base = `${FN}/${f.id}`
     const paused = ctx.services.config.skipSchedules.includes(f.id)
+    const code = ctx.services.functions.codeDir(f)
     return ctx.render(
       f.name,
       'functions',
@@ -66,7 +70,8 @@ export function functionPages(router: ConsoleRouter): void {
         badges: [f.enabled ? badge('Enabled', 'success') : badge('Disabled'), badge(f.runtime)],
         actions: html`<form method="post" action="${base}/run" class="inline"><button class="primary">Run now</button></form>`,
       })}
-      ${paused && f.schedule ? html`<div class="banner warning">The schedule is paused by the skip list in Settings.</div>` : ''}
+      ${paused && f.schedule ? html`<div class="banner warning">The schedule is paused in Settings.</div>` : ''}
+      ${code.dir ? '' : html`<div class="banner critical">Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Set the code folder in <a href="/console/settings#schedules">Settings</a>.</div>`}
       <div class="layout">
         <div>${runsTable(f.id, runs, live)}</div>
         <div>
@@ -87,7 +92,7 @@ export function functionPages(router: ConsoleRouter): void {
               <div class="foot"><button>Add variable</button></div>
             </form>
           </div>
-          <div class="card"><h2>Code</h2><ul class="list"><li><span class="subdued">Folder</span><span class="mono clip">${f.path}</span></li><li><span class="subdued">Entry point</span><span class="mono">${f.entrypoint}</span></li>
+          <div class="card"><h2>Code</h2><ul class="list"><li><span class="subdued">Folder</span><span class="mono">${code.dir ?? html`<span style="color:var(--critical)">Not found</span>`}</span></li><li><span class="subdued">Entry point</span><span class="mono">${f.entrypoint}</span></li>
             <li><span class="subdued">HTTP endpoint</span><span class="mono clip">/v1/functions/${f.id}/http</span></li></ul></div>
         </div>
       </div>`,

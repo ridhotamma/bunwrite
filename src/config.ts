@@ -1,3 +1,5 @@
+import { dirname, resolve } from 'node:path'
+
 export interface SmtpConfig {
   host: string
   port: number
@@ -47,6 +49,8 @@ export interface Config {
   functionsEnvFile?: string
   /** Functions whose schedule is ignored (render's keep-warm ping is pointless here). */
   skipSchedules: string[]
+  /** Folder that relative function paths resolve against: where appwrite.config.json lives. */
+  functionsDir: string
   /** Per-process key handed to function executions; never stored. */
   internalKey?: string
   /** Serve the admin console at /console. */
@@ -103,6 +107,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
     skipSchedules: env.FUNCTIONS_SKIP_SCHEDULES !== undefined ? list(env.FUNCTIONS_SKIP_SCHEDULES) : ['render'],
+    functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
   }

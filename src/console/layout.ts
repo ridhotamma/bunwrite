@@ -13,8 +13,7 @@ a{color:var(--focus);text-decoration:none}a:hover{text-decoration:underline}
 code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
 .frame{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 .nav{background:var(--nav);padding:12px 8px;position:sticky;top:0;height:100vh;overflow:auto;display:flex;flex-direction:column}
-.nav .brand{font-weight:650;padding:6px 12px 14px;display:flex;align-items:center;gap:8px}
-.nav .brand i{width:20px;height:20px;border-radius:6px;background:var(--primary);display:inline-block}
+.nav .brand{font-weight:650;font-size:15px;padding:6px 12px 14px}
 .nav a{display:block;padding:6px 12px;border-radius:8px;color:var(--text);font-weight:550;margin-bottom:2px}
 .nav a:hover{background:var(--nav-hover);text-decoration:none}.nav a.on{background:var(--nav-on);box-shadow:var(--shadow)}
 .nav .group{margin-top:14px;padding:0 12px 4px;color:var(--subdued);font-size:12px;font-weight:550}
@@ -70,7 +69,6 @@ pre{background:#f7f7f7;border-radius:8px;padding:12px;overflow:auto;max-height:3
 details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 .pager{display:flex;gap:8px;justify-content:center;align-items:center;padding:10px;border-top:1px solid var(--border)}
 .auth{max-width:432px;margin:14vh auto 0;padding:0 16px}.auth .brand{display:flex;gap:8px;align-items:center;justify-content:center;font-weight:650;font-size:16px;margin-bottom:16px}
-.auth .brand i{width:20px;height:20px;border-radius:6px;background:var(--primary)}
 .htmx-request{opacity:.6;transition:opacity .2s}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:10px 16px;border-radius:12px;font-weight:550;z-index:50;box-shadow:0 8px 20px rgba(0,0,0,.2);animation:toast 4s forwards}
 @keyframes toast{0%{opacity:0;transform:translate(-50%,8px)}8%,85%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;visibility:hidden}}
@@ -79,7 +77,7 @@ details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 @media(max-width:768px){
   .frame{grid-template-columns:1fr}
   .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:20;background:var(--nav);padding:8px 12px;border-bottom:1px solid var(--border)}
-  .topbar .brand{font-weight:650;display:flex;gap:8px;align-items:center}.topbar .brand i{width:20px;height:20px;border-radius:6px;background:var(--primary)}
+  .topbar .brand{font-weight:650;display:flex;gap:8px;align-items:center}
   .topbar label{margin:0;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:18px;line-height:1}
   .nav{position:fixed;inset:0 auto 0 0;width:260px;z-index:30;transform:translateX(-100%);transition:transform .2s}
   #nav-toggle:checked~.frame .nav{transform:none}
@@ -126,10 +124,10 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <body hx-boost="true">
 <input type="checkbox" id="nav-toggle" aria-hidden="true">
 <label for="nav-toggle" class="scrim" aria-hidden="true"></label>
-<div class="topbar"><label for="nav-toggle" aria-label="Menu">☰</label><div class="brand"><i></i>Pesanle</div></div>
+<div class="topbar"><label for="nav-toggle" aria-label="Menu">☰</label><div class="brand">Pesanle</div></div>
 <div class="frame">
   <nav class="nav">
-    <div class="brand"><i></i>Pesanle</div>
+    <div class="brand">Pesanle</div>
     ${MAIN.map(link)}
     <div class="group">Manage</div>
     ${MANAGE.map(link)}

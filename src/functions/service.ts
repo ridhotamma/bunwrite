@@ -5,7 +5,7 @@
  * dies with the process. Schedules run from an in-process cron.
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 
 import type { Caller } from '../auth/caller'
 import type { Config } from '../config'
@@ -317,9 +317,20 @@ export class FunctionService {
     }
   }
 
-  private command(f: FunctionRow): string[] {
-    const entry = join(f.path, f.entrypoint)
-    if (!existsSync(entry)) throw new Error(`Function code not found at ${entry}`)
+  /**
+   * The folder holding a function's code. Tried in order: the stored path (absolute, or relative
+   * to the code folder), then `<code folder>/functions/<id>`, Pesanle's layout. The last one also
+   * repairs paths stored against the wrong folder by an uploaded import.
+   */
+  codeDir(f: FunctionRow): { dir: string | null; tried: string[] } {
+    const base = this.config.functionsDir
+    const tried = [...new Set([isAbsolute(f.path) ? f.path : resolve(base, f.path), join(base, 'functions', f.id)])]
+    const dir = tried.find((d) => existsSync(join(d, f.entrypoint))) ?? null
+    return { dir, tried: tried.map((d) => join(d, f.entrypoint)) }
+  }
+
+  private command(f: FunctionRow, dir: string): string[] {
+    const entry = join(dir, f.entrypoint)
     if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', RUNNER_PYTHON, entry]
     if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) return [process.execPath, RUNNER_NODE, entry]
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
@@ -335,8 +346,15 @@ export class FunctionService {
     let logs = ''
     let errors = ''
     try {
-      const proc = Bun.spawn(this.command(f), {
-        cwd: f.path,
+      const { dir, tried } = this.codeDir(f)
+      if (!dir) {
+        throw new Error(
+          `Function code not found. Looked for ${tried.join(' and ')}. ` +
+            'Set the code folder (the folder with appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
+        )
+      }
+      const proc = Bun.spawn(this.command(f, dir), {
+        cwd: dir,
         env: this.env(f, request.trigger),
         stdin: 'pipe',
         stdout: 'pipe',
