@@ -160,6 +160,14 @@ export class DocumentStore {
     }
   }
 
+  /** All documents in a collection the caller may read, without the list cap. */
+  countDocuments(caller: Caller, collection: Collection): number {
+    const params: SqlValue[] = []
+    const filter = this.readFilter(caller, collection, params)
+    const sql = `SELECT count(*) AS n FROM ${q(collection.table)} t${filter ? ` WHERE ${filter}` : ''}`
+    return (this.db.sqlite.query(sql).get(...bindings(params)) as { n: number }).n
+  }
+
   // ---------------------------------------------------------------- write helpers
 
   /** Resolve the permissions a write will store, enforcing who may grant what. */

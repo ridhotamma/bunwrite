@@ -4,6 +4,8 @@
  * tone badges and short sentence-case copy.
  */
 import { confirmDialog, DIALOG_SCRIPT } from './dialog'
+import { FORM_SCRIPT } from './form-script'
+import { PERMISSIONS_SCRIPT } from './permissions'
 import { html, raw, type Html } from './html'
 import { CONSOLE_CSS } from './styles'
 import { alert, icon, type IconName } from './ui'
@@ -65,6 +67,8 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <div id="nav-tooltip" class="nav-tooltip" role="tooltip" hidden></div>
 ${confirmDialog()}
 <script>${raw(DIALOG_SCRIPT)}</script>
+<script>${raw(PERMISSIONS_SCRIPT)}</script>
+<script>${raw(FORM_SCRIPT)}</script>
 </body>
 </html>`
 }

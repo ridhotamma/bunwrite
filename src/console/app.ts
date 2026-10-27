@@ -5,6 +5,7 @@
  */
 import type { Server } from 'bun'
 
+import { clearInstanceApiKey } from '~/instance/bootstrap'
 import { AppwriteError } from '~/lib/errors'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
@@ -69,12 +70,22 @@ export function createConsole(services: Services) {
           try {
             await auth.upsert(email, String(form.password ?? ''))
           } catch (error) {
-            return signInPage(auth, { setup: true, email, error: error instanceof Error ? error.message : String(error), projectName: services.config.projectName })
+            return signInPage(auth, {
+              setup: true,
+              email,
+              error: error instanceof Error ? error.message : String(error),
+              projectName: services.config.projectName,
+              instance: services.config.bootstrap,
+            })
           }
+          const bootstrapKey = services.config.bootstrap?.apiKey
+          clearInstanceApiKey(services.db)
+          if (bootstrapKey) services.config.apiKeys = services.config.apiKeys.filter((key) => key !== bootstrapKey)
+          if (services.config.bootstrap) services.config.bootstrap.apiKey = undefined
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth, { setup: true, projectName: services.config.projectName })
+        return signInPage(auth, { setup: true, projectName: services.config.projectName, instance: services.config.bootstrap })
       }
 
       if (url.pathname === '/console/login') {

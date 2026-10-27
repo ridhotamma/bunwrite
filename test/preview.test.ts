@@ -129,3 +129,17 @@ describe('previews from S3', () => {
     }
   })
 })
+
+describe('AVIF limit', () => {
+  test('large AVIF previews are refused before encoding', async () => {
+    const { previewSize, maxAvifPixels } = await import('~/storage/transform')
+    const src = await image(3000, 2000)
+    expect(await previewSize(sharp, src, opts('width=300'))).toEqual({ width: 300, height: 200 })
+    expect(await previewSize(sharp, src, opts('width=100&height=100&borderWidth=5'))).toEqual({ width: 110, height: 110 })
+    expect(await previewSize(sharp, src, opts('width=300&rotation=90'))).toEqual({ width: 200, height: 300 })
+    expect(maxAvifPixels()).toBe(4_000_000)
+    await expect(renderPreview(sharp, src, opts('output=avif'))).rejects.toThrow(/AVIF output is limited/)
+    const small = await renderPreview(sharp, src, opts('width=600&output=avif'))
+    expect((await sharp(small).metadata()).format).toBe('heif')
+  })
+})

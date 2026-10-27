@@ -15,7 +15,7 @@ import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
 import { functionRoutes } from './functions/routes'
-import { pdfRoutes } from './pdf/routes'
+import { renderRoutes } from './render/routes'
 import { storageRoutes } from './storage/routes'
 import { teamRoutes } from './teams/routes'
 
@@ -52,7 +52,7 @@ export function createApp(services: Services) {
   teamRoutes(router)
   storageRoutes(router)
   functionRoutes(router)
-  pdfRoutes(router)
+  renderRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
   const cors = (request: Request): Record<string, string> => {

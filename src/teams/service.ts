@@ -15,6 +15,11 @@ const MEMBERSHIP_SELECT = `SELECT m.*, u.name AS user_name, u.email AS user_emai
 
 const ROLE = /^[a-zA-Z0-9._-]{1,32}$/
 
+export interface TeamSuggestion {
+  id: string
+  name: string
+}
+
 export function validRoles(roles: unknown): string[] {
   if (roles === undefined || roles === null) return []
   if (!Array.isArray(roles) || roles.length > 100 || roles.some((r) => typeof r !== 'string' || !ROLE.test(r))) {
@@ -42,6 +47,29 @@ export class TeamService {
       .get(id)
     if (!team) throw err('team_not_found')
     return team
+  }
+
+  /** Number of teams. */
+  count(): number {
+    return (this.sql.query('SELECT count(*) AS n FROM _teams').get() as { n: number }).n
+  }
+
+  /** A team by ID, or null when it does not exist. */
+  findTeam(id: string): TeamRow | null {
+    return this.sql.query<TeamRow, [string]>('SELECT * FROM _teams WHERE id = ?').get(id) ?? null
+  }
+
+  /** Teams for role pickers, newest first, capped so a page stays small. */
+  directory(limit = 300): TeamSuggestion[] {
+    return this.sql.query<TeamSuggestion, [number]>('SELECT id, name FROM _teams ORDER BY seq DESC LIMIT ?').all(limit)
+  }
+
+  /** Distinct roles used by team memberships, capped. */
+  memberRoles(limit = 100): string[] {
+    return this.sql
+      .query<{ value: string }, [number]>('SELECT DISTINCT j.value AS value FROM _memberships, json_each(_memberships.roles) j LIMIT ?')
+      .all(limit)
+      .map((row) => row.value)
   }
 
   membership(teamId: string, membershipId: string): MembershipRowFull {

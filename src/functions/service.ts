@@ -64,6 +64,21 @@ export interface ExecutionRow {
   updated_at: string
 }
 
+export interface ExecutionStatus {
+  function_id: string
+  status: string
+  created_at: string
+}
+
+export interface ExecutionSummary {
+  id: string
+  function_id: string
+  status: string
+  trigger: string
+  duration: number
+  created_at: string
+}
+
 export interface ExecutionRequest {
   trigger: 'http' | 'schedule' | 'event'
   method?: string
@@ -275,6 +290,35 @@ export class FunctionService {
       : []
     const bySeq = new Map(rows.map((r) => [r.seq, r]))
     return { total, executions: seqs.map((s) => bySeq.get(s)!).filter(Boolean).map(executionModel) }
+  }
+
+  /** The newest execution for each function, keyed by function ID. */
+  latestByFunction(): Map<string, ExecutionStatus> {
+    const rows = this.sql
+      .query<ExecutionStatus, []>('SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)')
+      .all()
+    return new Map(rows.map((row) => [row.function_id, row]))
+  }
+
+  /** Recent executions across all functions, newest first. */
+  recent(limit = 6): ExecutionSummary[] {
+    return this.sql
+      .query<ExecutionSummary, [number]>('SELECT id, function_id, status, trigger, duration, created_at FROM _executions ORDER BY seq DESC LIMIT ?')
+      .all(limit)
+  }
+
+  /** Executions of one function, newest first. */
+  runsFor(functionId: string, limit = 20): ExecutionRow[] {
+    return this.sql
+      .query<ExecutionRow, [string, number]>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT ?')
+      .all(functionId, limit)
+  }
+
+  /** Number of failed executions created after `since`, an ISO timestamp. */
+  failedSince(since: string): number {
+    return (this.sql
+      .query<{ n: number }, [string]>("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?")
+      .get(since) as { n: number }).n
   }
 
   /** Who may run it: API keys always; others need a role in `execute`. */

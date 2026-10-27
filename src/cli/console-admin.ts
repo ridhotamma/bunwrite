@@ -5,6 +5,7 @@
  */
 import { openDb } from '~/db/connection'
 import { ConsoleAuth } from '~/console/auth'
+import { clearInstanceApiKey } from '~/instance/bootstrap'
 
 const [email, flag] = process.argv.slice(2)
 if (!email) {
@@ -21,6 +22,7 @@ if (flag === '--remove') {
 } else {
   const password = process.env.CONSOLE_ADMIN_PASSWORD ?? prompt('Password (8+ characters):') ?? ''
   await auth.upsert(email, password)
+  clearInstanceApiKey(db)
   console.log(`Admin ${email} saved. Sign in at /console.`)
 }
 db.sqlite.close()

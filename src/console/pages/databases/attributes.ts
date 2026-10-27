@@ -6,7 +6,16 @@ import { html, type Html } from '~/console/html'
 import { badge, destroy, emptyState, header } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
-const TYPES = ['string', 'integer', 'double', 'boolean', 'datetime', 'email', 'url', 'enum']
+const TYPES: [string, string][] = [
+  ['string', 'Text'],
+  ['integer', 'Whole number'],
+  ['double', 'Decimal number'],
+  ['boolean', 'True / false'],
+  ['datetime', 'Date and time'],
+  ['email', 'Email'],
+  ['url', 'URL'],
+  ['enum', 'One of a list (enum)'],
+]
 
 /** Parse the value typed for a default/document field into the attribute's type. */
 function typedDefault(type: string, raw: unknown): unknown {
@@ -15,6 +24,8 @@ function typedDefault(type: string, raw: unknown): unknown {
   if (type === 'integer') return Number.parseInt(text, 10)
   if (type === 'double') return Number(text)
   if (type === 'boolean') return text === 'true'
+  // datetime-local has no zone; the console shows and stores UTC.
+  if (type === 'datetime' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(text)) return new Date(`${text}Z`).toISOString()
   return text
 }
 
@@ -22,21 +33,26 @@ const typeOf = (a: Collection['attributes'][number]) => (a.format && a.format !=
 
 function attributeForm(c: Collection, a: Collection['attributes'][number] | null): Html {
   const type = a ? (a.format && a.format !== '' && a.format !== 'ip' ? a.format : a.type) : 'string'
+  const d = a?.default === null || a?.default === undefined ? '' : a.default
+  const show = (types: string) => html`data-show-for="${types}" data-for-select="type"`
   return html`<form method="post" action="${collectionUrl(c)}/attributes${a ? `/${encodeURIComponent(a.key)}` : ''}" class="card">
     <div class="fields">
-      <label>Key<input name="key" class="mono" value="${a?.key ?? ''}" ${a ? 'readonly' : ''} required pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}"></label>
-      <label>Type<select name="type">${TYPES.map((t) => html`<option ${t === type ? 'selected' : ''}>${t}</option>`)}</select>${a ? html`<small>Changing the type rebuilds the table and keeps the data.</small>` : ''}</label>
+      <label>Key<input name="key" class="mono" value="${a?.key ?? ''}" ${a ? 'readonly' : 'autofocus'} required pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="title"><small>${a ? 'The key cannot change.' : 'The field name in every document, e.g. title or createdBy.'}</small></label>
+      <label>Type<select name="type" data-show-by>${TYPES.map(([t, label]) => html`<option value="${t}" ${t === type ? 'selected' : ''}>${label}</option>`)}</select>${a ? html`<small>Changing the type rebuilds the table and keeps the data.</small>` : ''}</label>
     </div>
-    <div class="fields">
-      <label>Size<input name="size" type="number" min="1" value="${a?.size ?? 255}"><small>Characters, for text.</small></label>
-      <label>Min<input name="min" type="number" step="any" value="${a?.min ?? ''}"></label>
-      <label>Max<input name="max" type="number" step="any" value="${a?.max ?? ''}"></label>
+    <div ${show('string')}><label>Maximum length<input name="size" type="number" min="1" value="${a?.size ?? 255}"><small>Characters. Over 255 shows a multi-line box in the document form.</small></label></div>
+    <div class="fields" ${show('integer double')}>
+      <label>Minimum<input name="min" type="number" step="any" value="${a?.min ?? ''}" placeholder="No minimum"></label>
+      <label>Maximum<input name="max" type="number" step="any" value="${a?.max ?? ''}" placeholder="No maximum"></label>
     </div>
-    <label>Enum values<input name="elements" value="${a?.elements?.join(', ') ?? ''}"><small>Comma-separated, for enum.</small></label>
-    <label>Default<input name="default" class="mono" value="${a?.default === null || a?.default === undefined ? '' : String(a.default)}"><small>Not allowed on required attributes.</small></label>
-    <label class="check"><input type="checkbox" name="required" ${a?.required ? 'checked' : ''}>Required</label>
-    <label class="check"><input type="checkbox" name="array" ${a?.array ? 'checked' : ''}>Array</label>
-    <div class="foot"><a class="btn" href="${collectionUrl(c)}/attributes">Cancel</a><button class="primary">${a ? 'Save' : 'Add'}</button></div>
+    <div ${show('enum')}><label>Allowed values<textarea name="elements" class="mono" rows="3" placeholder="draft&#10;published&#10;archived">${a?.elements?.join('\n') ?? ''}</textarea><small>One per line.</small></label></div>
+    <label class="check"><input type="checkbox" name="required" ${a?.required ? 'checked' : ''}>Required<small>&nbsp;· every document must have a value</small></label>
+    <label class="check"><input type="checkbox" name="array" ${a?.array ? 'checked' : ''}>List of values<small>&nbsp;· an array, e.g. tags</small></label>
+    <div ${show('string email url enum')}><label>Default<input name="default" data-disable-when="required" value="${String(d)}" placeholder="Empty means no default"><small>Used when a document leaves it out. Not allowed on required attributes.</small></label></div>
+    <div ${show('integer double')}><label>Default<input name="default" type="number" step="any" data-disable-when="required" value="${String(d)}" placeholder="Empty means no default"><small>Not allowed on required attributes.</small></label></div>
+    <div ${show('boolean')}><label>Default<select name="default" data-disable-when="required"><option value="" ${d === '' ? 'selected' : ''}>No default</option><option value="true" ${d === true ? 'selected' : ''}>True</option><option value="false" ${d === false ? 'selected' : ''}>False</option></select><small>Not allowed on required attributes.</small></label></div>
+    <div ${show('datetime')}><label>Default (UTC)<input name="default" type="datetime-local" step="1" data-disable-when="required" value="${typeof d === 'string' && d ? new Date(d).toISOString().slice(0, 19) : ''}"><small>Not allowed on required attributes.</small></label></div>
+    <div class="foot"><a class="btn" href="${collectionUrl(c)}/attributes">Cancel</a><button class="primary">${a ? 'Save' : 'Add attribute'}</button></div>
   </form>`
 }
 
@@ -53,7 +69,8 @@ function attributeFromForm(form: Record<string, any>) {
     min: numberOrUndefined(form.min),
     max: numberOrUndefined(form.max),
     elements: type === 'enum' ? lines(form.elements) : undefined,
-    default: checked(form.required) ? null : typedDefault(base, form.default),
+    // Several typed default inputs share the name; the visible one is the last non-empty value.
+    default: checked(form.required) ? null : typedDefault(base, [form.default ?? ''].flat().filter((v: unknown) => String(v ?? '').trim() !== '').pop()),
   }
 }
 

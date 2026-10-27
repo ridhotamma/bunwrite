@@ -4,7 +4,7 @@
  * values remain the defaults. API keys made here live in `_api_keys`.
  */
 import type { BackupsConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
-import type { PdfConfig } from '~/pdf/service'
+import type { RenderConfig } from '~/render/service'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -17,9 +17,9 @@ export interface ProjectSettings {
   sessionsLimit: number
 }
 
-export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups' | 'pdf'
+export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups' | 'render'
 
-export const SETTING_KEYS: SettingKey[] = ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups', 'pdf']
+export const SETTING_KEYS: SettingKey[] = ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups', 'render']
 
 export interface ApiKeyRow {
   id: string
@@ -46,7 +46,7 @@ export class SettingsService {
     | 'logIp'
     | 's3'
     | 'backups'
-    | 'pdf'
+    | 'render'
   >
 
   constructor(
@@ -67,7 +67,7 @@ export class SettingsService {
       logIp: config.logIp,
       s3: { ...config.s3 },
       backups: { ...config.backups, s3: { ...config.backups.s3 } },
-      pdf: { ...config.pdf },
+      render: { ...config.render },
     }
     for (const key of SETTING_KEYS) this.apply(key)
   }
@@ -133,9 +133,9 @@ export class SettingsService {
         c.backups = v ? { ...v, s3: { ...v.s3 } } : { ...this.defaults.backups, s3: { ...this.defaults.backups.s3 } }
         break
       }
-      case 'pdf': {
-        const v = this.read<Partial<PdfConfig>>('pdf')
-        c.pdf = { ...this.defaults.pdf, ...v }
+      case 'render': {
+        const v = this.read<Partial<RenderConfig>>('render')
+        c.render = { ...this.defaults.render, ...v }
         break
       }
     }

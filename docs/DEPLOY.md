@@ -51,17 +51,20 @@ sudo -u bunwrite chmod 600 /opt/bunwrite/.env
 sudo -u bunwrite vi /opt/bunwrite/.env
 ```
 
-At minimum set:
+The first start generates the identity values below and stores them in the
+database. Set any of them to override the generated values:
 
+- `ORG_ID` — optional organization ID for the console.
 - `PROJECT_ID` — the project ID your apps send in `X-Appwrite-Project`.
 - `API_KEYS` — one or more server keys, comma-separated.
-- `SECRET` — at least 32 random characters (`openssl rand -hex 32`).
+- `SECRET` — at least 32 random characters when set (`openssl rand -hex 32`).
 - `PUBLIC_ENDPOINT` — the public URL including `/v1`.
 - `ALLOWED_ORIGINS` — the browser origins allowed by CORS.
 - `HOST` — bind address; defaults to `0.0.0.0`. Set `127.0.0.1` when a
   reverse proxy or tunnel on the same host is the only entry point.
 - `CONSOLE_ADMIN_EMAIL` and `CONSOLE_ADMIN_PASSWORD` — optional first admin; the
-  server creates it once at startup. Otherwise run the command below.
+  server creates it once at startup. Otherwise open `/console/setup` on the
+  server to see the generated credentials and create the admin.
 
 Create or reset the first console admin:
 
@@ -70,13 +73,20 @@ cd /opt/bunwrite
 sudo -u bunwrite /usr/local/bin/bunwrite console:admin you@example.com
 ```
 
+Alternatively, start the service first and open `/console/setup` from the
+server (or through an SSH tunnel). That page creates the admin and shows the
+generated organization ID, project ID and API key. The same values are printed
+in the startup log until the first admin exists. If you create the admin with
+the command above before the first start, create an API key later in
+**Console → Settings → Access**.
+
 Email, Google sign-in, storage, backups, functions and request-log settings can
 be changed later in the console.
 
 ### 4. Run with systemd
 
 The included unit assumes the app lives in `/opt/bunwrite`, runs as the
-`bunwrite` user and executes the installed binary:
+`bunwrite` user and runs the autotune wrapper before the installed binary:
 
 ```bash
 sudo cp /opt/bunwrite/deploy/bunwrite.service /etc/systemd/system/
@@ -85,6 +95,13 @@ sudo systemctl enable --now bunwrite
 curl http://localhost:8080/v1/health
 sudo journalctl -u bunwrite -f
 ```
+
+The unit runs `deploy/bunwrite-autotune.sh`, which applies the startup-only
+limits (JSC heap and glibc malloc arenas) before the server starts. The image,
+render, SQLite and upload limits are applied inside the process. Run
+`bunwrite autotune` to see what was detected. `MemoryMax=80%` leaves the rest
+of the host's RAM for the OS and other work; set a fixed value when it shares
+the machine.
 
 ### 5. Put it online
 
@@ -98,17 +115,19 @@ its own sign-in and rate limiting, but the admin UI should not be public. Set
 
 ## Option B: Docker Compose
 
-`docker-compose.yml` runs the same standalone binary on `debian:bookworm-slim`,
-limited to **1 vCPU and 512 MB RAM** (no swap). Measured on that limit: about
-20 MB idle, 5,000+ API requests/s, and a 114 MB peak while resizing four
-3000×3000 images at once. With PDF on, 12 large invoices and 24 image
-previews with borders, rounded corners and rotation, all at once, peaked at
-about 410 MB with no out-of-memory kills. Chromium stops after a minute idle
-and memory drops back to about 70 MB.
+`docker-compose.yml` runs the same standalone binary on `debian:trixie-slim`.
+It auto-tunes to the host's CPU and RAM, and there are no CPU/memory caps by
+default. Measured with a **1 vCPU / 512 MB** cgroup limit: about 20 MB idle,
+5,000+ API requests/s, and a 114 MB peak while resizing four 3000×3000 images
+at once. With HTML rendering on, 6 large PDFs, 6 full-page
+2× screenshots, 6 social cards and 25 image previews with borders, rounded
+corners and rotation, all at once, peaked at about 455 MB with no
+out-of-memory kills. Chromium stops after a minute idle and memory drops back
+to about 70 MB.
 
 ```bash
 cp .env.example .env
-$EDITOR .env          # PROJECT_ID, API_KEYS, SECRET, PUBLIC_ENDPOINT, ALLOWED_ORIGINS
+$EDITOR .env          # optional: PUBLIC_ENDPOINT, ALLOWED_ORIGINS and overrides
 docker compose up -d --build
 curl http://localhost:8080/v1/health
 ```
@@ -118,6 +137,11 @@ Create the first console admin:
 ```bash
 docker compose exec bunwrite bunwrite console:admin you@example.com
 ```
+
+The first start prints the generated organization ID, project ID and API key to
+`docker compose logs bunwrite`. The signing secret is stored in the database
+volume. Set `ORG_ID`, `PROJECT_ID`, `SECRET` or `API_KEYS` in `.env` to override
+the generated values.
 
 Notes:
 
@@ -131,17 +155,19 @@ Notes:
   `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are
   read from `/app/functions/functions.env`.
 - Python functions need `BUNWRITE_WITH_PYTHON=true docker compose up -d --build`.
-- HTML to PDF needs Chromium in the image:
-  `BUNWRITE_WITH_PDF=true docker compose up -d --build`, then turn it on in
-  **Console → Settings → PDF**. This makes the image about 960 MB on disk
-  (230 MB without it). See [PDF.md](PDF.md).
+- HTML to PDF and images need Chromium in the image:
+  `BUNWRITE_WITH_CHROMIUM=true docker compose up -d --build`, then turn it on
+  in **Console → Settings → HTML rendering**. This makes the image about
+  960 MB on disk (230 MB without it). See [RENDER.md](RENDER.md).
 - Each function run is a separate process: about 10 MB for a trivial one, more
   with heavy dependencies. Many large functions running at once are what can
-  push a 512 MB container to its limit.
-- Low-memory tuning is set in the compose file: `BUN_JSC_forceRAMSize`
-  (JS heap target), `MALLOC_ARENA_MAX=2`, `SHARP_CONCURRENCY=1`,
-  `SHARP_CACHE_MB=16` and `PREVIEW_CONCURRENCY=2`. Raise them on a bigger host, or raise the limits under
-  `deploy.resources`.
+  push a small container to its limit.
+- Bunwrite auto-tunes image previews, rendering, SQLite cache, upload size, the
+  JSC heap and malloc arenas from the cgroup (Docker/systemd/Kubernetes) or host
+  CPU and RAM. Explicit env values win; `AUTOTUNE=false` disables it. On a shared
+  host, uncomment `cpus`/`memory` under `deploy.resources`; autotune will respect
+  those cgroup limits. Check the result with
+  `docker compose exec bunwrite bunwrite autotune`.
 
 Upgrade with `git pull && docker compose up -d --build`.
 
@@ -149,8 +175,9 @@ Upgrade with `git pull && docker compose up -d --build`.
 
 - Uploaded files use local disk by default. Enable S3-compatible storage in
   **Settings → File storage**; existing files are not migrated automatically.
-- HTML to PDF on a VPS without Docker: `sudo apt install chromium
-  fonts-liberation`, then enable it in **Settings → PDF**. See [PDF.md](PDF.md).
+- HTML to PDF and images on a VPS without Docker: `sudo apt install chromium
+  fonts-liberation`, then enable it in **Settings → HTML rendering**. See
+  [RENDER.md](RENDER.md).
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - Enable daily database backups and optional S3 backup storage in
@@ -172,5 +199,7 @@ sudo install -m 0755 dist/bunwrite /usr/local/bin/bunwrite
 sudo systemctl restart bunwrite
 ```
 
-Drizzle migrations run automatically at startup. Back up the database and
+If the bundled unit or `deploy/bunwrite-autotune.sh` changed, copy the unit
+again and run `sudo systemctl daemon-reload` before restarting. Drizzle
+migrations run automatically at startup. Back up the database and
 `/opt/bunwrite/.env` before a major upgrade.

@@ -30,14 +30,7 @@ const pretty = (text: string) => {
 export function functionPages(router: ConsoleRouter): void {
   router.get(FN, ({ ctx }) => {
     const fns = ctx.services.functions.list()
-    const last = new Map(
-      ctx.services.db.sqlite
-        .query<{ function_id: string; status: string; created_at: string }, []>(
-          'SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)',
-        )
-        .all()
-        .map((r) => [r.function_id, r]),
-    )
+    const last = ctx.services.functions.latestByFunction()
     const skipped = ctx.services.config.skipSchedules
     const missing = fns.filter((f) => !ctx.services.functions.codeDir(f).dir).length
     return ctx.render(
@@ -64,7 +57,7 @@ export function functionPages(router: ConsoleRouter): void {
 
   router.get(`${FN}/:id`, ({ ctx, path }) => {
     const f: FunctionRow = ctx.services.functions.fn(path.id!)
-    const runs = ctx.services.db.sqlite.query<ExecutionRow, [string]>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT 20').all(f.id)
+    const runs = ctx.services.functions.runsFor(f.id)
     const vars = ctx.services.functions.variables(f.id)
     const live = runs.some((r) => r.status === 'waiting' || r.status === 'processing')
     const base = `${FN}/${f.id}`

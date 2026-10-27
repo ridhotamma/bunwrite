@@ -24,10 +24,18 @@ export function indexPages(router: ConsoleRouter): void {
         </div>
         <form method="post" action="${collectionUrl(c)}/indexes" class="card">
           <h2>Add index</h2>
-          <label>Key<input name="key" class="mono" required pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}"></label>
-          <label>Type<select name="type"><option value="key">Key</option><option value="unique">Unique</option><option value="fulltext">Full text (for search)</option></select></label>
-          <label>Attributes<select name="attributes" multiple size="6" required>${options.map((o) => html`<option>${o}</option>`)}</select><small>Hold ⌘/Ctrl to pick several, in order.</small></label>
-          <label class="check"><input type="checkbox" name="desc">Descending</label>
+          <label>Key<input name="key" class="mono" required pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="idx_status"></label>
+          <label>Type<select name="type" data-show-by>
+            <option value="key">Key: faster filters and sorting</option>
+            <option value="unique">Unique: no two documents share these values</option>
+            <option value="fulltext">Full text: for search queries</option>
+          </select></label>
+          <span class="subdued">Attributes</span>
+          <div class="attr-order">
+            ${options.map((o) => html`<label><input type="checkbox" name="attributes" value="${o}"><span class="mono">${o}</span>
+              <select name="order:${o}" aria-label="Order for ${o}" data-show-for="key unique" data-for-select="type"><option value="ASC">Ascending</option><option value="DESC">Descending</option></select></label>`)}
+          </div>
+          <small class="help" style="margin:-8px 0 12px">Ticked attributes are indexed in the order listed. Most indexes need only one.</small>
           <div class="foot"><button class="primary">Add index</button></div>
         </form>
       </div>`,
@@ -41,7 +49,7 @@ export function indexPages(router: ConsoleRouter): void {
       key: value(ctx.form, 'key'),
       type: value(ctx.form, 'type') || 'key',
       attributes,
-      orders: attributes.map(() => (checked(ctx.form.desc) ? 'DESC' : 'ASC')),
+      orders: attributes.map((a) => (value(ctx.form, `order:${a}`) === 'DESC' || checked(ctx.form.desc) ? 'DESC' : 'ASC')),
     })
     return ctx.go(`${collectionUrl(c)}/indexes`, { tone: 'success', text: 'Index added' })
   })

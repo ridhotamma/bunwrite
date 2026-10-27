@@ -1,0 +1,8 @@
+#!/bin/sh
+# systemd wrapper: apply the startup-only limits before bunwrite starts.
+# The rest of the autotune values are applied inside the process.
+if tuned=$(/usr/local/bin/bunwrite autotune --shell 2>/dev/null); then
+  eval "$tuned"
+fi
+
+exec /usr/local/bin/bunwrite serve

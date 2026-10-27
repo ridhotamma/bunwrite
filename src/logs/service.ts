@@ -37,6 +37,17 @@ export interface RequestLogFilter {
   status?: string
 }
 
+export interface HourlyBandwidth {
+  hour: string
+  inbound: number
+  outbound: number
+}
+
+export interface BandwidthConsumer {
+  path: string
+  bytes: number
+}
+
 const STATUS_RANGES: Record<string, [number, number]> = {
   '2xx': [200, 300],
   '3xx': [300, 400],
@@ -139,6 +150,28 @@ export class RequestLogService {
   get(seq: number): RequestLogRow | null {
     this.flush()
     return this.db.sqlite.query<RequestLogRow, [number]>(`SELECT ${COLUMNS} FROM _request_logs WHERE seq = ?`).get(seq) ?? null
+  }
+
+  /** Request and response bytes per hour since `since`, an ISO timestamp. */
+  bandwidthByHour(since: string): HourlyBandwidth[] {
+    this.flush()
+    return this.db.sqlite
+      .query<HourlyBandwidth, [string]>(
+        `SELECT substr(created_at, 1, 13) AS hour, coalesce(sum(request_bytes), 0) AS inbound, coalesce(sum(response_bytes), 0) AS outbound
+         FROM _request_logs WHERE created_at >= ? GROUP BY hour`,
+      )
+      .all(since)
+  }
+
+  /** Paths with the most traffic since `since`, largest first. */
+  topConsumers(since: string, limit = 6): BandwidthConsumer[] {
+    this.flush()
+    return this.db.sqlite
+      .query<BandwidthConsumer, [string, number]>(
+        `SELECT path, coalesce(sum(request_bytes + response_bytes), 0) AS bytes
+         FROM _request_logs WHERE created_at >= ? GROUP BY path ORDER BY bytes DESC LIMIT ?`,
+      )
+      .all(since, limit)
   }
 
   clear(): void {

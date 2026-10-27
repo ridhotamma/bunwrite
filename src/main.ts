@@ -18,6 +18,8 @@ Usage:
   bunwrite snapshot [dir]      Copy the database consistently
   bunwrite schema:push ...     Apply appwrite.config.json
   bunwrite migrate ...         Import an Appwrite project
+  bunwrite autotune [--json]   Show the auto-tuned resource limits
+  bunwrite autotune --shell    Print startup-only env (JSC heap, malloc arenas)
   bunwrite health              Exit 0 when the local server answers /v1/health
 
 Environment is read from .env in the working directory, like the source CLI.`
@@ -58,6 +60,11 @@ switch (command) {
     runCli(...args)
     await import('./cli/migrate')
     break
+  case 'autotune': {
+    const { reportAutotune } = await import('./system/autotune')
+    reportAutotune(args)
+    break
+  }
   case 'help':
   case '--help':
   case '-h':

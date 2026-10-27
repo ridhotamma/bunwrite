@@ -79,6 +79,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     port: 0,
     hostname: '127.0.0.1',
     databasePath: ':memory:',
+    orgId: 'org_test',
     projectId: PROJECT,
     projectName: 'Test Project',
     apiKeys: [KEY],
@@ -105,7 +106,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
       s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
     },
     backupsPath: './data/test-backups',
-    pdf: { enabled: false, allowRemote: false },
+    render: { enabled: false, allowRemote: false },
     ...over,
   }
 }

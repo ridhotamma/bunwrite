@@ -22,6 +22,8 @@ the Appwrite API most apps use. Existing apps keep using the official
   processes with Appwrite's `context` API.
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
+- **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
+  the host's CPU and RAM, including cgroup limits.
 - **Small footprint.** Designed for a 1 vCPU / 1 GB VPS.
 
 ## Quick start
@@ -29,12 +31,18 @@ the Appwrite API most apps use. Existing apps keep using the official
 Requires **Bun 1.4+**.
 
 ```bash
-cp .env.example .env    # set PROJECT_ID, API_KEYS, SECRET, PUBLIC_ENDPOINT
+cp .env.example .env    # optional: set PUBLIC_ENDPOINT and other overrides
 bun install
 bun run dev             # API at http://localhost:8080/v1, console at /console
 ```
 
-On a fresh database, create an admin:
+On first start, Bunwrite generates an organization ID, project ID, signing
+secret and an initial API key, stores them in the database, and shows them on
+the first-run console setup page. Set `ORG_ID`, `PROJECT_ID`, `SECRET` or
+`API_KEYS` in `.env` to override the generated values.
+
+On a fresh database, open `/console/setup` to create the first admin and see the
+generated instance credentials, or create the admin from the command line:
 
 ```bash
 bun run console:admin you@example.com
@@ -97,7 +105,7 @@ phone.
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
-| Settings | Project, email, sign-in, storage, backups, functions, logs, PDF and access |
+| Settings | Project, email, sign-in, storage, backups, functions, logs, HTML rendering and access |
 
 Settings saved in the console override the matching env vars and take effect
 immediately. Each setting shows whether it comes from env or from the console
@@ -112,7 +120,7 @@ and can be reset to env.
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
 | Storage | uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
-| PDF (extension) | `POST /v1/pdf`: HTML to PDF with headless Chromium, returned or saved to a bucket. Off by default; see [docs/PDF.md](docs/PDF.md) |
+| HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
 | Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` |
 | Realtime | WebSocket at `/v1/realtime`: document events to subscribers who may read them |
 | Email | SMTP via nodemailer, Appwrite's English templates |
@@ -144,18 +152,28 @@ cancel the real one.
 | `bun run schema:push <appwrite.config.json> [--prune]` | Create/alter tables, indexes, buckets and functions |
 | `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
 | `bun run snapshot [dir]` | Consistent database copy while the server runs |
+| `bun run autotune` | Show the resource limits detected from the host/cgroup |
+| `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
 | `bun run typecheck` | TypeScript check |
 | `bun test` | Contract tests through the real SDKs |
+
+## Stress testing
+
+`bun run stress` seeds a collection through the normal API and measures
+throughput and latency with `oha` (or a built-in Bun client). See
+[scripts/stress/README.md](scripts/stress/README.md) for the 2 vCPU / 2 GB
+Docker recipe and custom targets.
 
 ## Deploy
 
 For an Ubuntu + systemd setup with the standalone binary, see
 [docs/DEPLOY.md](docs/DEPLOY.md).
 
-Or run it with Docker Compose, limited to 1 vCPU and 512 MB RAM:
+Or run it with Docker Compose. It auto-tunes to the host's CPU and RAM; set
+cgroup limits in `docker-compose.yml` if you share the host with other services:
 
 ```bash
-cp .env.example .env   # then set PROJECT_ID, API_KEYS, SECRET
+cp .env.example .env   # optional: set PUBLIC_ENDPOINT and other overrides
 docker compose up -d --build
 ```
 

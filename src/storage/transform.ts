@@ -12,6 +12,43 @@ export type OutputFormat = (typeof OUTPUTS)[number]
 /** Sources larger than this are refused, which keeps decoding inside a small memory limit. */
 export const MAX_INPUT_PIXELS = 40_000_000
 
+/**
+ * AVIF encoding needs about 30 bytes per output pixel (460 MB for 15 MP), so
+ * the auto-tuned default caps it at 4 MP on a 512 MB host. AVIF_MAX_MEGAPIXELS
+ * overrides it.
+ */
+export function maxAvifPixels(): number {
+  const megapixels = Number(process.env.AVIF_MAX_MEGAPIXELS)
+  return (Number.isFinite(megapixels) && megapixels > 0 ? megapixels : 4) * 1_000_000
+}
+
+export const avifTooLarge = () =>
+  err('general_argument_invalid', `AVIF output is limited to ${maxAvifPixels() / 1_000_000} megapixels on this server. Use a smaller size, or webp.`)
+
+/** The size renderPreview will produce, worked out from the source header without decoding it. */
+export async function previewSize(sharp: any, source: string | Uint8Array, o: PreviewOptions): Promise<{ width: number; height: number }> {
+  const meta = await sharp(source, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
+  const turned = (meta.orientation ?? 1) >= 5
+  let w: number = turned ? meta.height : meta.width
+  let h: number = turned ? meta.width : meta.height
+  if (o.width && o.height) {
+    ;[w, h] = [Math.min(o.width, w), Math.min(o.height, h)]
+  } else if (o.width || o.height) {
+    const ratio = Math.min(1, o.width ? o.width / w : Infinity, o.height ? o.height / h : Infinity)
+    ;[w, h] = [Math.round(w * ratio), Math.round(h * ratio)]
+  }
+  w += 2 * o.borderWidth
+  h += 2 * o.borderWidth
+  if (o.rotation) {
+    const a = (o.rotation * Math.PI) / 180
+    const cos = Math.abs(Math.cos(a))
+    const sin = Math.abs(Math.sin(a))
+    // The small epsilon stops float noise (cos 90° ≈ 6e-17) rounding up a whole pixel.
+    ;[w, h] = [Math.ceil(w * cos + h * sin - 1e-9), Math.ceil(w * sin + h * cos - 1e-9)]
+  }
+  return { width: w, height: h }
+}
+
 const GRAVITY: Record<string, string> = {
   center: 'centre',
   'top-left': 'northwest',
@@ -117,6 +154,10 @@ interface Raw {
 
 /** Run the transformations with sharp and return the encoded image. */
 export async function renderPreview(sharp: any, source: string | Uint8Array, o: PreviewOptions): Promise<Buffer> {
+  if (o.format === 'avif') {
+    const size = await previewSize(sharp, source, o)
+    if (size.width * size.height > maxAvifPixels()) throw avifTooLarge()
+  }
   const effects = hasEffects(o)
   // Animated GIFs keep their frames only for plain resizes.
   let pipeline = sharp(source, { animated: o.format === 'gif' && !effects, limitInputPixels: MAX_INPUT_PIXELS }).rotate()

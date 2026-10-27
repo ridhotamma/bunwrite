@@ -26,7 +26,11 @@
     "test": "bun test",
     "migrate": "bun src/cli/migrate.ts",
     "snapshot": "bun src/cli/snapshot.ts",
-    "console:admin": "bun src/cli/console-admin.ts"
+    "console:admin": "bun src/cli/console-admin.ts",
+    "autotune": "bun src/main.ts autotune",
+    "stress": "bun scripts/stress/index.ts",
+    "stress:seed": "bun scripts/stress/index.ts seed",
+    "stress:run": "bun scripts/stress/index.ts run"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",

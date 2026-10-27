@@ -16,20 +16,22 @@ RUN bun run build && ./dist/bunwrite --help >/dev/null
 # Same Debian release as the build stage.
 FROM debian:trixie-slim
 # Optional extras, off by default to keep the image small:
-#   WITH_PYTHON=true  python3 for python-* functions (~50 MB)
-#   WITH_PDF=true     Chromium + fonts for HTML to PDF (~500 MB on disk)
+#   WITH_PYTHON=true    python3 for python-* functions (~50 MB)
+#   WITH_CHROMIUM=true  Chromium + fonts for HTML to PDF and images (~730 MB more on disk)
 ARG WITH_PYTHON=false
-ARG WITH_PDF=false
+ARG WITH_CHROMIUM=false
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3; fi \
- && if [ "$WITH_PDF" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
+ && if [ "$WITH_CHROMIUM" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --home-dir /home/bunwrite bunwrite \
  && mkdir -p /app/data/storage /app/data/backups /app/functions \
  && chown -R bunwrite:bunwrite /app
 
 COPY --from=build /src/dist/bunwrite /usr/local/bin/bunwrite
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /app
 USER bunwrite
@@ -44,4 +46,5 @@ VOLUME ["/app/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["bunwrite", "health"]
-CMD ["bunwrite", "serve"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["serve"]

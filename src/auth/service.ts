@@ -27,6 +27,18 @@ export interface TokenRowFull extends TokenRow {
   secret_hash: string
 }
 
+export interface UserSuggestion {
+  id: string
+  name: string
+  email: string | null
+}
+
+export interface UserIdentity {
+  provider: string
+  provider_email: string | null
+  created_at: string
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE = /^\+[1-9]\d{6,14}$/
 
@@ -93,6 +105,31 @@ export class AuthService {
 
   userByEmail(email: string): UserRowFull | null {
     return this.sql.query<UserRowFull, [string]>('SELECT * FROM _users WHERE email = ?').get(email.toLowerCase()) ?? null
+  }
+
+  /** Number of user accounts. */
+  countUsers(): number {
+    return (this.sql.query('SELECT count(*) AS n FROM _users').get() as { n: number }).n
+  }
+
+  /** Users for role pickers, newest first, capped so a page stays small. */
+  userDirectory(limit = 300): UserSuggestion[] {
+    return this.sql.query<UserSuggestion, [number]>('SELECT id, name, email FROM _users ORDER BY seq DESC LIMIT ?').all(limit)
+  }
+
+  /** Distinct labels in use, capped. */
+  userLabels(limit = 100): string[] {
+    return this.sql
+      .query<{ value: string }, [number]>('SELECT DISTINCT j.value AS value FROM _users, json_each(_users.labels) j LIMIT ?')
+      .all(limit)
+      .map((row) => row.value)
+  }
+
+  /** OAuth identities linked to a user. */
+  identities(userId: string): UserIdentity[] {
+    return this.sql
+      .query<UserIdentity, [string]>('SELECT provider, provider_email, created_at FROM _identities WHERE user_id = ?')
+      .all(userId)
   }
 
   async createUser(input: {

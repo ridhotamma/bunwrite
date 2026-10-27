@@ -1,6 +1,7 @@
 import { aggregatePermissions } from '~/auth/permissions'
 import type { ConsoleRouter } from '~/console/context'
 import { checked, lines, value } from '~/console/forms'
+import { COLLECTION_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html } from '~/console/html'
 import { badge, destroy, emptyState, formFooter, header, when } from '~/console/ui'
 import { COL, DB, collectionUrl, countDocuments } from './shared'
@@ -31,7 +32,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       'databases',
       html`${header('Create database', { back: DB })}
       <form method="post" action="${DB}" class="card">
-        <div class="fields"><label>Name<input name="name" required></label><label>ID<input name="id" class="mono" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" required><small>Apps use this ID. It cannot change later.</small></label></div>
+        <div class="fields"><label>Name<input name="name" required data-slug-source autofocus placeholder="Main"></label><label>ID<input name="id" class="mono" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" required data-slug-from="name" placeholder="main"><small>Apps use this ID. Filled in from the name; it cannot change later.</small></label></div>
         ${formFooter(DB, 'Create')}
       </form>`,
     ),
@@ -88,9 +89,14 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       'databases',
       html`${header('Create collection', { back: `${DB}/${d.id}` })}
       <form method="post" action="${DB}/${d.id}/collections" class="card">
-        <div class="fields"><label>Name<input name="name" required></label><label>ID<input name="id" class="mono" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" required></label></div>
-        <label class="check"><input type="checkbox" name="documentSecurity" checked>Row security<small>&nbsp;· each document carries its own permissions</small></label>
-        <label>Collection permissions<textarea name="permissions" class="mono" placeholder='read("any")'></textarea><small>One per line. Leave empty so only API keys and row permissions apply.</small></label>
+        <div class="fields">
+          <label>Name<input name="name" required data-slug-source autofocus placeholder="Orders"></label>
+          <label>ID<input name="id" class="mono" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" required data-slug-from="name" placeholder="orders"><small>Apps use this ID. Filled in from the name; it cannot change later.</small></label>
+        </div>
+        <h2 style="margin-top:4px">Who can access documents</h2>
+        ${securityChoice('documentSecurity', true, 'document')}
+        <h2>Collection permissions</h2>
+        ${permissionsField(ctx, { value: [], actions: COLLECTION_ACTIONS, note: html`Applies to every document. API keys and server functions always have full access.` })}
         ${formFooter(`${DB}/${d.id}`, 'Create')}
       </form>`,
     )
@@ -98,7 +104,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
 
   router.post(`${DB}/:db/collections`, ({ ctx, path }) => {
     const id = value(ctx.form, 'id')
-    ctx.schema.createCollection(path.db!, id, value(ctx.form, 'name'), checked(ctx.form.documentSecurity), aggregatePermissions(lines(ctx.form.permissions)) ?? [])
+    ctx.schema.createCollection(path.db!, id, value(ctx.form, 'name'), checked(ctx.form.documentSecurity), aggregatePermissions(lines(ctx.form.permissions), COLLECTION_ACTIONS) ?? [])
     return ctx.go(`${DB}/${path.db}/collections/${id}/attributes`, { tone: 'success', text: 'Collection created. Add its attributes next.' })
   })
 

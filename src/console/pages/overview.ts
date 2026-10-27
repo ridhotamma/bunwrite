@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs'
 
+import { keyCaller } from '~/auth/caller'
 import { addSeconds } from '~/lib/datetime'
 import { lineChart } from '~/console/chart'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
@@ -14,48 +15,28 @@ export function overviewPages(router: ConsoleRouter): void {
 
 function overview(ctx: ConsoleContext): Html {
   const { services } = ctx
-  const sql = services.db.sqlite
-  const n = (q: string) => (sql.query(q).get() as { n: number }).n
   let documents = 0
-  for (const c of services.registry.collections.values()) {
-    documents += (sql.query(`SELECT count(*) AS n FROM "${c.table.replace(/"/g, '""')}"`).get() as { n: number }).n
-  }
-  const files = sql.query('SELECT count(*) AS n, coalesce(sum(size_original), 0) AS bytes FROM _files').get() as { n: number; bytes: number }
+  for (const c of services.registry.collections.values()) documents += services.store.countDocuments(keyCaller(), c)
+  const files = services.storage.totals()
   let dbBytes = 0
   try {
     dbBytes = statSync(services.config.databasePath).size
   } catch {
     /* in-memory database */
   }
-  const failed = (sql.query("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?").get(addSeconds(-86400)) as { n: number }).n
-  const runs = sql
-    .query<any, []>('SELECT e.id, e.function_id, e.status, e.trigger, e.duration, e.created_at FROM _executions e ORDER BY e.seq DESC LIMIT 6')
-    .all()
+  const failed = services.functions.failedSince(addSeconds(-86400))
+  const runs = services.functions.recent(6)
   const uptime = Math.round((Date.now() - started) / 60000)
   const smtpOff = !services.config.smtp
-  services.requestLogs.flush()
   const since = addSeconds(-86400)
   const now = new Date()
   now.setUTCMinutes(0, 0, 0)
   const hours = Array.from({ length: 24 }, (_, i) => new Date(now.getTime() - (23 - i) * 3600_000).toISOString().slice(0, 13))
-  const hourly = new Map(
-    sql
-      .query<{ hour: string; inbound: number; outbound: number }, [string]>(
-        `SELECT substr(created_at, 1, 13) AS hour, coalesce(sum(request_bytes), 0) AS inbound, coalesce(sum(response_bytes), 0) AS outbound
-         FROM _request_logs WHERE created_at >= ? GROUP BY hour`,
-      )
-      .all(since)
-      .map((row) => [row.hour, row]),
-  )
+  const hourly = new Map(services.requestLogs.bandwidthByHour(since).map((row) => [row.hour, row]))
   const inbound = hours.map((hour) => hourly.get(hour)?.inbound ?? 0)
   const outbound = hours.map((hour) => hourly.get(hour)?.outbound ?? 0)
   const totalBytes = [...inbound, ...outbound].reduce((sum, value) => sum + value, 0)
-  const consumers = sql
-    .query<{ path: string; bytes: number }, [string]>(
-      `SELECT path, coalesce(sum(request_bytes + response_bytes), 0) AS bytes
-       FROM _request_logs WHERE created_at >= ? GROUP BY path ORDER BY bytes DESC LIMIT 6`,
-    )
-    .all(since)
+  const consumers = services.requestLogs.topConsumers(since, 6)
   const traffic = html`<div class="layout" style="margin-bottom:16px">
     <div class="card">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px"><h2 style="margin:0">Bandwidth over time</h2><a class="subdued" style="margin-left:auto" href="/console/logs">View request logs</a></div>
@@ -81,9 +62,9 @@ function overview(ctx: ConsoleContext): Html {
     <div class="stats" style="margin-bottom:16px">
       ${stat('Documents', documents.toLocaleString('en-US'), '/console/databases')}
       ${stat('Collections', services.registry.collections.size, '/console/databases')}
-      ${stat('Users', n('SELECT count(*) AS n FROM _users'), '/console/auth/users')}
-      ${stat('Teams', n('SELECT count(*) AS n FROM _teams'), '/console/auth/teams')}
-      ${stat('Files', `${files.n} · ${formatBytes(files.bytes)}`, '/console/storage')}
+      ${stat('Users', services.auth.countUsers(), '/console/auth/users')}
+      ${stat('Teams', services.teams.count(), '/console/auth/teams')}
+      ${stat('Files', `${files.files} · ${formatBytes(files.bytes)}`, '/console/storage')}
       ${stat('Failed runs, 24h', failed, '/console/functions')}
     </div>
     ${traffic}

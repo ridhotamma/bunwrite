@@ -1,6 +1,8 @@
-# Bunwrite with Docker Compose, sized for a 1 vCPU / 512 MB host.
+# Bunwrite with Docker Compose. The app auto-tunes itself from the host (or
+# from the cgroup limits below), so the same file works on a small VPS or a
+# larger machine.
 #
-#   cp .env.example .env    # set PROJECT_ID, API_KEYS, SECRET, PUBLIC_ENDPOINT
+#   cp .env.example .env    # optional: set PUBLIC_ENDPOINT and other overrides
 #   docker compose up -d --build
 #
 # See docs/DEPLOY.md ("Docker Compose") for admin setup, functions and backups.
@@ -12,8 +14,9 @@ services:
       args:
         # Set to true if you run python-* functions.
         WITH_PYTHON: ${BUNWRITE_WITH_PYTHON:-false}
-        # Set to true for HTML to PDF (adds Chromium). Then enable it in Console > Settings > PDF.
-        WITH_PDF: ${BUNWRITE_WITH_PDF:-false}
+        # Set to true for HTML to PDF and images (adds Chromium).
+        # Then enable it in Console > Settings > HTML rendering.
+        WITH_CHROMIUM: ${BUNWRITE_WITH_CHROMIUM:-false}
     image: bunwrite:latest
     restart: unless-stopped
     init: true
@@ -26,17 +29,9 @@ services:
       STORAGE_PATH: /app/data/storage
       BACKUPS_PATH: /app/data/backups
       FUNCTIONS_ENV_FILE: /app/functions/functions.env
-      # Low-memory tuning (the defaults assume a bigger machine):
-      # GC heap target for Bun's JS engine, in bytes (256 MB).
-      BUN_JSC_forceRAMSize: "268435456"
-      # Fewer glibc malloc arenas: less RSS from image-processing threads.
-      MALLOC_ARENA_MAX: "2"
-      # One libvips thread and a small cache for image previews.
-      SHARP_CONCURRENCY: "1"
-      SHARP_CACHE_MB: "16"
-      # At most two image previews render at once; the rest wait.
-      PREVIEW_CONCURRENCY: "2"
-      # Chromium for HTML to PDF (only present when built with WITH_PDF=true).
+      # Image previews, renders, SQLite cache, upload size, JSC heap and malloc
+      # arenas are auto-tuned. Set any of them in .env to override autotune.
+      # Chromium for HTML rendering (only present when built with WITH_CHROMIUM=true).
       CHROME_PATH: /usr/bin/chromium
       CHROME_NO_SANDBOX: "true"
     ports:
@@ -46,17 +41,17 @@ services:
       - bunwrite-data:/app/data
       # appwrite.config.json and function code. Set SCHEMA_PATH=/app/functions/appwrite.config.json.
       # - ./functions:/app/functions:ro
+    # Bunwrite reads these cgroup limits when they are set, so it stays inside
+    # them automatically. Uncomment cpus/memory on a shared VPS, then set
+    # memswap_limit to the same memory value if you want no swap.
     deploy:
       resources:
         limits:
-          cpus: "1"
-          memory: 512M
-          # Chromium uses many threads; this still stops a fork bomb.
+          # cpus: "2"
+          # memory: 2G
+          # Chromium and function runs use many processes; this stops a fork bomb.
           pids: 512
-        reservations:
-          memory: 128M
-    # No swap beyond the memory limit.
-    memswap_limit: 512M
+    # memswap_limit: 2G
     logging:
       driver: json-file
       options:

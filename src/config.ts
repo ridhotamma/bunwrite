@@ -1,7 +1,7 @@
 import { dirname, resolve } from 'node:path'
 
 import type { LogFormat } from './lib/log'
-import type { PdfConfig } from './pdf/service'
+import type { RenderConfig } from './render/service'
 
 export interface SmtpConfig {
   host: string
@@ -43,12 +43,23 @@ export interface BackupsConfig {
 
 export const emptyS3 = (): S3Config => ({ enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false })
 
+/** Values generated on first start; shown once on the console setup page. */
+export interface BootstrapInfo {
+  orgId: string
+  projectId: string
+  /** Present only until the first console admin exists. */
+  apiKey?: string
+  generated: boolean
+}
+
 export interface Config {
   port: number
   /** Interface to bind (defaults to all interfaces). */
   hostname: string
   /** SQLite file path. */
   databasePath: string
+  /** Organization grouping for this instance. Generated on first start when unset. */
+  orgId: string
   /** Must match the X-Appwrite-Project header (keep the old Appwrite project ID). */
   projectId: string
   /** Shown in emails as {{project}}. */
@@ -97,8 +108,10 @@ export interface Config {
   backups: BackupsConfig
   /** Local folder for backups when backup S3 storage is off. */
   backupsPath: string
-  /** HTML to PDF rendering (POST /v1/pdf). */
-  pdf: PdfConfig
+  /** HTML to PDF and image rendering (POST /v1/pdf, /v1/image). */
+  render: RenderConfig
+  /** Set by the first-run bootstrap; not part of the environment. */
+  bootstrap?: BootstrapInfo
 }
 
 const list = (value: string | undefined) =>
@@ -118,6 +131,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     port,
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
+    orgId: env.ORG_ID ?? '',
     projectId,
     projectName: env.PROJECT_NAME ?? 'Bunwrite',
     apiKeys: list(env.API_KEYS),
@@ -161,6 +175,6 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     s3: emptyS3(),
     backups: { enabled: false, keep: 7, s3: emptyS3() },
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
-    pdf: { enabled: env.PDF_ENABLED === 'true', allowRemote: env.PDF_ALLOW_REMOTE === 'true' },
+    render: { enabled: env.RENDER_ENABLED === 'true', allowRemote: env.RENDER_ALLOW_REMOTE === 'true' },
   }
 }

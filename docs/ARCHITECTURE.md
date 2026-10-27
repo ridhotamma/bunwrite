@@ -35,7 +35,9 @@ folder of uploaded files.
 | `src/transactions/` | Staged operations and commit with conflict detection |
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/` | One service and its routes each |
+| `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
 | `src/settings/` | Console-edited settings over env, console API keys |
+| `src/instance/` | First-run generated organization/project IDs, signing secret and initial API key |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
 | `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
@@ -53,6 +55,17 @@ The console keeps the same boundaries as the API:
   builders and UI pieces (list cards, live search, pagers, badges, polling).
 - `pages/` has one module per console area. `pages/databases/` splits databases,
   documents, attributes, indexes and collection settings.
+- `views/` holds the markup for pages that mix a lot of HTML with data loading.
+  Page modules keep writes, validation and redirects; view functions render the
+  active page. Markup stays in TypeScript `html` templates, so it is escaped by
+  default and checked by the compiler.
+- Page and view modules do not run SQL. Queries live with the service that owns
+  the data (`DocumentStore`, `AuthService`, `TeamService`, `StorageService`,
+  `FunctionService`, `RequestLogService`), and the page calls that service.
+- `instance/bootstrap.ts` runs at startup. It uses `ORG_ID`, `PROJECT_ID`,
+  `SECRET` and `API_KEYS` from the environment when set, otherwise generates
+  them and stores the defaults in `_settings` under `instance`. The generated
+  API key is shown once on `/console/setup` and kept hashed in `_api_keys`.
 
 ## Data model
 

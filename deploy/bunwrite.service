@@ -8,11 +8,13 @@ User=bunwrite
 WorkingDirectory=/opt/bunwrite
 Environment=HOME=/home/bunwrite
 EnvironmentFile=/opt/bunwrite/.env
-ExecStart=/usr/local/bin/bunwrite serve
+# Applies the startup-only limits (JSC heap and glibc arenas) from `bunwrite autotune`.
+ExecStart=/bin/sh /opt/bunwrite/deploy/bunwrite-autotune.sh
 Restart=always
 RestartSec=2
-# The API itself usually uses ~80-150 MB.
-MemoryMax=700M
+# Let the app use most of the host's RAM. Autotune reads this cgroup limit; set
+# a fixed value (for example 700M) when Bunwrite shares the machine with others.
+MemoryMax=80%
 LimitNOFILE=65536
 
 [Install]

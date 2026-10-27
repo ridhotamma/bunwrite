@@ -13,7 +13,7 @@ import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
 import { now } from '~/lib/datetime'
-import { err } from '~/lib/errors'
+import { AppwriteError, err } from '~/lib/errors'
 import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
@@ -179,6 +179,23 @@ export class StorageService {
 
   buckets(): BucketRow[] {
     return this.sql.query<BucketRow, []>('SELECT * FROM _buckets ORDER BY seq').all()
+  }
+
+  /** File count and total original bytes per bucket. */
+  usageByBucket(): Map<string, { files: number; bytes: number }> {
+    const rows = this.sql
+      .query<{ bucket_id: string; files: number; bytes: number }, []>(
+        'SELECT bucket_id, count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files GROUP BY bucket_id',
+      )
+      .all()
+    return new Map(rows.map((row) => [row.bucket_id, { files: row.files, bytes: row.bytes }]))
+  }
+
+  /** File count and total original bytes across all buckets. */
+  totals(): { files: number; bytes: number } {
+    return this.sql
+      .query<{ files: number; bytes: number }, []>('SELECT count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files')
+      .get() as { files: number; bytes: number }
   }
 
   path(bucketId: string, fileId: string): string {
@@ -457,6 +474,7 @@ export class StorageService {
       try {
         await job
       } catch (error) {
+        if (error instanceof AppwriteError) throw error
         const code = (error as Error).message ?? ''
         if (/pixel limit/i.test(code)) throw err('general_argument_invalid', 'The image is too large to transform.')
         throw err('storage_file_type_unsupported', 'This image could not be transformed.')

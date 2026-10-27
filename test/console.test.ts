@@ -211,7 +211,7 @@ describe('settings through the console', () => {
     expect(general).not.toContain('Global function variables')
     const functions = await (await get('/console/settings/functions')).text()
     expect(functions).toContain('Global function variables')
-    expect(functions).not.toContain('API keys')
+    expect(functions).not.toContain('id="keys"') // the Access tab's API keys card
   })
 
   test('project settings apply at once and can go back to env', async () => {
@@ -244,18 +244,18 @@ describe('settings through the console', () => {
     expect([server.config.logRetentionDays, server.config.logIp]).toEqual([7, true])
   })
 
-  test('PDF rendering can be switched on and off', async () => {
-    expect(server.config.pdf).toEqual({ enabled: false, allowRemote: false })
-    const offPage = await (await get('/console/settings/pdf')).text()
-    expect(offPage).toContain('Enable PDF rendering')
-    expect(offPage).not.toContain('/console/settings/pdf/test')
-    const saved = await form('/console/settings/pdf', { enabled: 'on' })
-    expect(flash(saved).get('ok')).toBe('PDF settings saved')
-    expect(server.config.pdf).toEqual({ enabled: true, allowRemote: false })
-    await form('/console/settings/pdf', { enabled: 'on', allowRemote: 'on' })
-    expect(server.config.pdf).toEqual({ enabled: true, allowRemote: true })
-    await form('/console/settings/pdf/reset', {})
-    expect(server.config.pdf).toEqual({ enabled: false, allowRemote: false })
+  test('HTML rendering can be switched on and off', async () => {
+    expect(server.config.render).toEqual({ enabled: false, allowRemote: false })
+    const offPage = await (await get('/console/settings/render')).text()
+    expect(offPage).toContain('Enable HTML rendering')
+    expect(offPage).not.toContain('/console/settings/render/test')
+    const saved = await form('/console/settings/render', { enabled: 'on' })
+    expect(flash(saved).get('ok')).toBe('Rendering settings saved')
+    expect(server.config.render).toEqual({ enabled: true, allowRemote: false })
+    await form('/console/settings/render', { enabled: 'on', allowRemote: 'on' })
+    expect(server.config.render).toEqual({ enabled: true, allowRemote: true })
+    await form('/console/settings/render/reset', {})
+    expect(server.config.render).toEqual({ enabled: false, allowRemote: false })
   })
 
   test('global function variables can be added and removed', async () => {
@@ -386,6 +386,55 @@ describe('settings through the console', () => {
     await form(`/console/settings/admins/${admins[1]!.seq}/delete`, {})
     const last = await form(`/console/settings/admins/${admins[0]!.seq}/delete`, {})
     expect(flash(last).get('err')).toBe('The last admin cannot be removed.')
+  })
+
+  test('database, user and storage pages read through their services', async () => {
+    const admin = adminClient(server.endpoint)
+    await admin.users.create({ userId: 'page-user', email: 'page@example.com', name: 'Page User' })
+    await admin.users.updateLabels({ userId: 'page-user', labels: ['pagelabel'] })
+    await admin.teams.create({ teamId: 'page-team', name: 'Page Team' })
+    await admin.teams.createMembership({ teamId: 'page-team', userId: 'page-user', roles: ['pagerole'] })
+    try {
+      // countDocuments + collection list on the database page
+      const database = await get('/console/databases/main')
+      expect(database.status).toBe(200)
+      expect(await database.text()).toContain('products')
+
+      // user/team/label/role directories used by the permissions picker
+      const formPage = await get('/console/databases/main/collections/products/documents/new')
+      expect(formPage.status).toBe(200)
+      const formHtml = await formPage.text()
+      expect(formHtml).toContain('Quick add:')
+      expect(formHtml).toContain('pagelabel')
+      expect(formHtml).toContain('Page Team')
+      expect(formHtml).toContain('pagerole')
+
+      // identities query on the user detail page
+      const userPage = await get('/console/auth/users/page-user')
+      expect(userPage.status).toBe(200)
+      expect(await userPage.text()).toContain('page@example.com')
+
+      // latest-run lookup on the functions list
+      const functionsPage = await get('/console/functions')
+      expect(functionsPage.status).toBe(200)
+      expect(await functionsPage.text()).toContain('Functions')
+
+      // bucket usage query on the storage page
+      const created = await form('/console/storage', { id: 'page-bucket', name: 'Page bucket', maxMb: '5', extensions: '', enabled: 'on', transformations: 'on', permissions: '' })
+      expect(created.status).toBe(303)
+      const upload = new FormData()
+      upload.set('file', new File(['hello'], 'hello.txt', { type: 'text/plain' }))
+      upload.set('permissions', '')
+      const uploaded = await fetch(`${base}/console/storage/page-bucket/files`, { method: 'POST', body: upload, headers: { cookie }, redirect: 'manual' })
+      expect(uploaded.status).toBe(303)
+      const storage = await (await get('/console/storage')).text()
+      expect(storage).toContain('Page bucket')
+      expect(storage).toContain('5 B')
+      await form('/console/storage/page-bucket/delete', {})
+    } finally {
+      await admin.teams.delete({ teamId: 'page-team' }).catch(() => {})
+      await admin.users.delete({ userId: 'page-user' })
+    }
   })
 
   test('signing out ends the session', async () => {

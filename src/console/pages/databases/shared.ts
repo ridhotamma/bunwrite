@@ -1,4 +1,4 @@
-import { q } from '~/db/connection'
+import { keyCaller } from '~/auth/caller'
 import type { Collection } from '~/schema/types'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
@@ -11,7 +11,7 @@ export const collectionUrl = (c: { databaseId: string; id: string }) =>
   `${DB}/${encodeURIComponent(c.databaseId)}/collections/${encodeURIComponent(c.id)}`
 
 export function countDocuments(ctx: ConsoleContext, c: Collection): number {
-  return (ctx.services.db.sqlite.query(`SELECT count(*) AS n FROM ${q(c.table)}`).get() as { n: number }).n
+  return ctx.services.store.countDocuments(keyCaller(), c)
 }
 
 export function loadCollection(ctx: ConsoleContext, path: Record<string, string>): Collection {

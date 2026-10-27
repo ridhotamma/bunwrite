@@ -61,7 +61,7 @@ export function userPages(router: ConsoleRouter): void {
     const u = ctx.services.auth.user(path.id!)
     const sessions = ctx.services.auth.sessions(u.id)
     const memberships = ctx.services.teams.listMemberships({ userId: u.id }, [JSON.stringify({ method: 'limit', values: [100] })]).memberships.map(membershipModel)
-    const identities = ctx.services.db.sqlite.query<any, [string]>('SELECT provider, provider_email, created_at FROM _identities WHERE user_id = ?').all(u.id)
+    const identities = ctx.services.auth.identities(u.id)
     const model = userModel(u) as Record<string, any>
     const base = `${USERS}/${u.id}`
     return ctx.render(

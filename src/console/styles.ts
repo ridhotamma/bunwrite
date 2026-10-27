@@ -1,7 +1,7 @@
 /** Console stylesheet, kept as a string so the console has no build step. */
 export const CONSOLE_CSS = `
 :root{--bg:#f1f1f1;--surface:#fff;--nav:#ebebeb;--nav-hover:#e3e3e3;--nav-on:#fafafa;--text:#303030;--subdued:#616161;--disabled:#b5b5b5;--border:#e3e3e3;--border-strong:#8a8a8a;--primary:#303030;--primary-hover:#1a1a1a;--critical:#8e1f0b;--critical-bg:#fedad9;--success:#0c5132;--success-bg:#cdfee1;--attention:#7a3a00;--attention-bg:#ffe7d1;--info:#00527c;--info-bg:#e0f0ff;--focus:#005bd3;--shadow:0 1px 0 rgba(26,26,26,.07),inset 0 -1px 0 rgba(0,0,0,.08),inset 0 0 0 1px rgba(0,0,0,.06)}
-*{box-sizing:border-box}html,body{margin:0}
+*{box-sizing:border-box}html,body{margin:0}[hidden]{display:none!important}
 body{font:13px/20px "Inter",-apple-system,BlinkMacSystemFont,"San Francisco","Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
 a{color:var(--focus);text-decoration:none}a:hover{text-decoration:underline}
 .icon{display:inline-block;vertical-align:-.15em;flex:none}
@@ -133,6 +133,31 @@ details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
   html.nav-collapsed .nav .nav-collapse-icon{display:none}
   html.nav-collapsed .nav .nav-expand-icon{display:flex}
 }
+.perm-presets{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px}
+.perm-table{border:1px solid var(--border);border-radius:8px;border-collapse:separate;border-spacing:0;overflow:hidden;margin-bottom:10px}
+.perm-table th{background:#f7f7f7}.perm-table td{padding:8px 12px}
+.perm-table .perm-col{width:72px;text-align:center}.perm-table .perm-col input{width:16px;min-height:16px;margin:0;cursor:pointer}
+.perm-role{font-weight:550}.perm-sub{font-size:11px;line-height:16px}
+.perm-empty{border:1px dashed var(--border-strong);border-radius:8px;padding:12px;margin:0 0 10px;text-align:center}
+.perm-add{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}.perm-add select{flex:1 1 220px}.perm-add input{flex:1 1 160px;min-width:0}
+.perm-add [hidden]{display:none}
+.perm-error{color:var(--critical);font-size:12px;margin:0 0 8px}
+.perm-summary .list li{padding:6px 0}.perm-summary{margin-bottom:4px}
+.perm-text{margin-top:8px}.perm-text textarea{width:100%}
+.choice{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-bottom:12px}
+.choice label{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:0;cursor:pointer}
+.choice label:has(input:checked){border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.choice input{width:16px;min-height:16px;margin:2px 0 0}.choice b{display:block;font-weight:600}.choice span{color:var(--subdued);font-size:12px}
+.docform-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}.docform-head h2{margin:0}
+.seg{display:inline-flex;background:#ebebeb;border-radius:8px;padding:2px;gap:2px}
+.seg button{box-shadow:none;background:none;min-height:24px;padding:2px 10px;font-size:12px;color:var(--subdued)}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.doc-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 16px}
+.doc-label{display:flex;gap:8px;align-items:center}.doc-field textarea{min-height:64px}
+.doc-json textarea{width:100%}
+.doc-inline{display:flex;gap:8px;margin-top:4px}.doc-inline input{flex:1;margin:0}
+.attr-order{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px 0 12px}
+.attr-order label{display:flex;align-items:center;gap:8px;margin:0}.attr-order label input{width:16px;min-height:16px;margin:0}.attr-order select{margin-left:auto;min-height:26px;padding:2px 30px 2px 8px;font-size:12px}
 @media(prefers-reduced-motion:reduce){dialog,.banner{animation:none!important;transition:none!important}}
 @media(max-width:768px){
   .frame{grid-template-columns:1fr}

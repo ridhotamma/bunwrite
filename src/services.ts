@@ -12,7 +12,7 @@ import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
 import { SettingsService } from './settings/service'
-import { PdfService } from './pdf/service'
+import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
 import { TeamService } from './teams/service'
 import { TransactionService } from './transactions/service'
@@ -33,7 +33,7 @@ export interface Services {
   settings: SettingsService
   requestLogs: RequestLogService
   backups: BackupService
-  pdf: PdfService
+  render: RenderService
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
@@ -53,13 +53,13 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   })
   const requestLogs = new RequestLogService(db, config)
   const backups = new BackupService(db, config)
-  const pdf = new PdfService(config)
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, pdf } as Services
+  const render = new RenderService(config)
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render } as Services
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {
     if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
-    // Turning PDF rendering off frees Chromium's memory right away.
-    if (key === 'pdf' && !config.pdf.enabled) services.pdf.shutdown()
+    // Turning HTML rendering off frees Chromium's memory right away.
+    if (key === 'render' && !config.render.enabled) services.render.shutdown()
   })
   if (!overrides.mailer) services.mailer = makeMailer()
   return Object.assign(services, overrides)
