@@ -97,7 +97,7 @@ phone.
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
-| Settings | Project, email, sign-in, storage, backups, functions, logs and access |
+| Settings | Project, email, sign-in, storage, backups, functions, logs, PDF and access |
 
 Settings saved in the console override the matching env vars and take effect
 immediately. Each setting shows whether it comes from env or from the console
@@ -111,7 +111,8 @@ and can be reset to env.
 | Account | email + password, email OTP, token sessions, Google OAuth2 token flow, recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
-| Storage | uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, resized previews (sharp), permissions |
+| Storage | uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
+| PDF (extension) | `POST /v1/pdf`: HTML to PDF with headless Chromium, returned or saved to a bucket. Off by default; see [docs/PDF.md](docs/PDF.md) |
 | Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` |
 | Realtime | WebSocket at `/v1/realtime`: document events to subscribers who may read them |
 | Email | SMTP via nodemailer, Appwrite's English templates |
@@ -129,6 +130,7 @@ cancel the real one.
   lists it after; the SDKs parse both to the same object.
 - Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
   login; magic URLs; messaging; scheduled executions.
+- Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
 - `studio-render` (Chromium) does not fit in 1 GB of memory.
 
 ## Commands

@@ -13,13 +13,17 @@ COPY . .
 RUN bun run build && ./dist/bunwrite --help >/dev/null
 
 # ---- Runtime ----
-FROM debian:bookworm-slim
-# Python functions need python3. Off by default to keep the image small:
-#   docker compose build --build-arg WITH_PYTHON=true
+# Same Debian release as the build stage.
+FROM debian:trixie-slim
+# Optional extras, off by default to keep the image small:
+#   WITH_PYTHON=true  python3 for python-* functions (~50 MB)
+#   WITH_PDF=true     Chromium + fonts for HTML to PDF (~500 MB on disk)
 ARG WITH_PYTHON=false
+ARG WITH_PDF=false
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3; fi \
+ && if [ "$WITH_PDF" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --home-dir /home/bunwrite bunwrite \
  && mkdir -p /app/data/storage /app/data/backups /app/functions \
@@ -33,7 +37,9 @@ ENV HOST=0.0.0.0 \
     PORT=8080 \
     DATABASE_PATH=/app/data/bunwrite.sqlite \
     STORAGE_PATH=/app/data/storage \
-    BACKUPS_PATH=/app/data/backups
+    BACKUPS_PATH=/app/data/backups \
+    CHROME_PATH=/usr/bin/chromium \
+    CHROME_NO_SANDBOX=true
 VOLUME ["/app/data"]
 EXPOSE 8080
 

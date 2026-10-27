@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path'
 
 import type { LogFormat } from './lib/log'
+import type { PdfConfig } from './pdf/service'
 
 export interface SmtpConfig {
   host: string
@@ -96,6 +97,8 @@ export interface Config {
   backups: BackupsConfig
   /** Local folder for backups when backup S3 storage is off. */
   backupsPath: string
+  /** HTML to PDF rendering (POST /v1/pdf). */
+  pdf: PdfConfig
 }
 
 const list = (value: string | undefined) =>
@@ -158,5 +161,6 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     s3: emptyS3(),
     backups: { enabled: false, keep: 7, s3: emptyS3() },
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
+    pdf: { enabled: env.PDF_ENABLED === 'true', allowRemote: env.PDF_ALLOW_REMOTE === 'true' },
   }
 }

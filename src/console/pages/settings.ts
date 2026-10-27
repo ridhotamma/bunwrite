@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs'
 
 import type { BackupFile } from '~/backups/service'
 import type { S3Config } from '~/config'
-import type { SettingKey } from '~/settings/service'
+import { SETTING_KEYS, type SettingKey } from '~/settings/service'
+import { SAMPLE_INVOICE } from '~/pdf/sample'
 import { err } from '~/lib/errors'
 import { SmtpMailer } from '~/mail/mailer'
 import { dialog } from '~/console/dialog'
@@ -21,6 +22,7 @@ const TABS = [
   { key: 'backups', label: 'Backups', href: `${SETTINGS}/backups` },
   { key: 'functions', label: 'Functions', href: `${SETTINGS}/functions` },
   { key: 'logs', label: 'Request logs', href: `${SETTINGS}/logs` },
+  { key: 'pdf', label: 'PDF', href: `${SETTINGS}/pdf` },
   { key: 'access', label: 'Access', href: `${SETTINGS}/access` },
 ] as const
 
@@ -34,6 +36,7 @@ const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   logs: 'logs',
   s3: 'storage',
   backups: 'backups',
+  pdf: 'pdf',
 }
 
 const tabPath = (tab: SettingsTab) => `${SETTINGS}/${tab}`
@@ -216,6 +219,28 @@ function logsCard(ctx: ConsoleContext): Html {
     </form>`)
 }
 
+function pdfCards(ctx: ConsoleContext): Html {
+  const c = ctx.services.config.pdf
+  const status = ctx.services.pdf.status()
+  const chrome = status.chrome
+    ? html`Chromium: <code>${status.chrome}</code>${status.running ? ' · running' : ' · starts on the first render, stops after a minute idle'}`
+    : html`<b style="color:var(--critical)">Chromium not found.</b> Install <code>chromium</code> (Docker: build with <code>BUNWRITE_WITH_PDF=true</code>) or set <code>CHROME_PATH</code>.`
+  return html`${card(ctx, 'pdf', 'HTML to PDF', 'pdf', 'Render HTML (invoices, receipts) to PDF with POST /v1/pdf and an API key. Uses headless Chromium, about 150 MB while rendering.', html`
+    <form method="post" action="${SETTINGS}/pdf">
+      <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}>Enable PDF rendering</label>
+      <label class="check"><input type="checkbox" name="allowRemote" ${c.allowRemote ? 'checked' : ''}>Allow remote images, fonts and stylesheets<small>&nbsp;· off blocks every http(s) request; embed assets as data: URLs</small></label>
+      <p class="help">${chrome}</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`)}
+    ${c.enabled && status.chrome
+      ? card(ctx, 'pdf-test', 'Try it', null, 'Renders this HTML and opens the PDF in a new tab.', html`
+    <form method="post" action="${SETTINGS}/pdf/test" target="_blank" hx-boost="false">
+      <label>HTML<textarea name="html" class="mono tall" spellcheck="false">${SAMPLE_INVOICE}</textarea></label>
+      <div class="foot"><button>Render PDF</button></div>
+    </form>`)
+      : ''}`
+}
+
 function accessCards(ctx: ConsoleContext): Html {
   const keys = ctx.services.settings.listKeys()
   const admins = ctx.auth.list()
@@ -265,6 +290,9 @@ async function view(ctx: ConsoleContext, tab: SettingsTab, created?: string): Pr
       break
     case 'logs':
       body = logsCard(ctx)
+      break
+    case 'pdf':
+      body = pdfCards(ctx)
       break
     case 'access':
       body = accessCards(ctx)
@@ -382,6 +410,16 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('logs'), { tone: 'success', text: 'Log settings saved' })
   })
 
+  router.post(`${SETTINGS}/pdf`, ({ ctx }) => {
+    ctx.services.settings.set('pdf', { enabled: checked(ctx.form.enabled), allowRemote: checked(ctx.form.allowRemote) })
+    return ctx.go(tabPath('pdf'), { tone: 'success', text: 'PDF settings saved' })
+  })
+
+  router.post(`${SETTINGS}/pdf/test`, async ({ ctx }) => {
+    const pdf = await ctx.services.pdf.render(value(ctx.form, 'html'))
+    return new Response(pdf, { headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="test.pdf"', 'cache-control': 'no-store' } })
+  })
+
   router.post(`${SETTINGS}/storage`, ({ ctx }) => {
     ctx.services.settings.set('s3', s3FromForm(ctx.form, 's3', ctx.services.config.s3))
     return ctx.go(tabPath('storage'), { tone: 'success', text: 'Storage settings saved' })
@@ -407,7 +445,7 @@ export function settingsPages(router: ConsoleRouter): void {
 
   router.post(`${SETTINGS}/:key/reset`, ({ ctx, path }) => {
     const key = path.key as SettingKey
-    if (!['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups'].includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
+    if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
     ctx.services.settings.reset(key)
     if (key === 'logs') ctx.services.requestLogs.prune()
     return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Back to the env value' })

@@ -105,6 +105,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
       s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
     },
     backupsPath: './data/test-backups',
+    pdf: { enabled: false, allowRemote: false },
     ...over,
   }
 }

@@ -12,6 +12,8 @@ services:
       args:
         # Set to true if you run python-* functions.
         WITH_PYTHON: ${BUNWRITE_WITH_PYTHON:-false}
+        # Set to true for HTML to PDF (adds Chromium). Then enable it in Console > Settings > PDF.
+        WITH_PDF: ${BUNWRITE_WITH_PDF:-false}
     image: bunwrite:latest
     restart: unless-stopped
     init: true
@@ -32,6 +34,11 @@ services:
       # One libvips thread and a small cache for image previews.
       SHARP_CONCURRENCY: "1"
       SHARP_CACHE_MB: "16"
+      # At most two image previews render at once; the rest wait.
+      PREVIEW_CONCURRENCY: "2"
+      # Chromium for HTML to PDF (only present when built with WITH_PDF=true).
+      CHROME_PATH: /usr/bin/chromium
+      CHROME_NO_SANDBOX: "true"
     ports:
       # Use 127.0.0.1:8080:8080 when a reverse proxy on this host is the only entry point.
       - "${BUNWRITE_PORT:-8080}:8080"
@@ -44,7 +51,8 @@ services:
         limits:
           cpus: "1"
           memory: 512M
-          pids: 256
+          # Chromium uses many threads; this still stops a fork bomb.
+          pids: 512
         reservations:
           memory: 128M
     # No swap beyond the memory limit.

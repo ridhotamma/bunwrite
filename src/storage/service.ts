@@ -19,6 +19,13 @@ import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { s3Client, s3Key } from './s3'
 import { loadSharp } from './sharp'
+import { previewKey, previewOptions, renderPreview } from './transform'
+
+/** Previews rendered at once (PREVIEW_CONCURRENCY, default 4); more wait in line. */
+function previewConcurrency(): number {
+  const n = Number(process.env.PREVIEW_CONCURRENCY)
+  return Number.isInteger(n) && n > 0 ? n : 4
+}
 
 export interface BucketRow {
   id: string
@@ -400,20 +407,34 @@ export class StorageService {
     return new Response(blob, { headers: { ...headers, 'content-length': String(blob.size) } })
   }
 
-  /** Resized copy (width/height/quality/output), cached on disk. Non-images are served as they are. */
+  /** Previews being rendered, so identical requests share one render. */
+  private rendering = new Map<string, Promise<void>>()
+  private previewSlots = previewConcurrency()
+  private previewQueue: (() => void)[] = []
+
+  private async withPreviewSlot<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.previewSlots > 0) this.previewSlots--
+    else await new Promise<void>((resolve) => this.previewQueue.push(resolve))
+    try {
+      return await fn()
+    } finally {
+      const next = this.previewQueue.shift()
+      if (next) next()
+      else this.previewSlots++
+    }
+  }
+
+  /**
+   * Transformed copy with Appwrite's preview options, from local disk or S3,
+   * cached on local disk. Non-images are served as they are.
+   */
   async preview(request: Request, url: URL, bucket: BucketRow, file: FileRow): Promise<Response> {
-    const width = Math.min(4000, Math.max(0, Number(url.searchParams.get('width') ?? 0) || 0))
-    const height = Math.min(4000, Math.max(0, Number(url.searchParams.get('height') ?? 0) || 0))
-    const qualityRaw = Number(url.searchParams.get('quality') ?? -1)
-    const quality = qualityRaw >= 0 && qualityRaw <= 100 ? qualityRaw : 80
-    const output = (url.searchParams.get('output') || '').toLowerCase().replace('jpeg', 'jpg')
-    const gravity = (url.searchParams.get('gravity') || 'center').toLowerCase()
     const image = file.mime_type.startsWith('image/') && file.mime_type !== 'image/svg+xml'
     if (!image || !bucket.transformations) return this.serve(request, bucket.id, file, 'inline')
 
-    const format = (['jpg', 'png', 'webp', 'avif', 'gif'].includes(output) ? output : file.mime_type.split('/')[1]!.replace('jpeg', 'jpg')) as string
-    const key = `${width}x${height}-q${quality}-${gravity}.${format}`
-    const cached = join(this.config.storagePath, '.previews', bucket.id, file.id, key)
+    const options = previewOptions(url.searchParams, file.mime_type)
+    const format = options.format
+    const cached = join(this.config.storagePath, '.previews', bucket.id, file.id, previewKey(options))
     if (!existsSync(cached)) {
       let sharp: any
       try {
@@ -421,14 +442,25 @@ export class StorageService {
       } catch {
         return this.serve(request, bucket.id, file, 'inline')
       }
-      const position = { center: 'centre', 'top-left': 'northwest', top: 'north', 'top-right': 'northeast', left: 'west', right: 'east', 'bottom-left': 'southwest', bottom: 'south', 'bottom-right': 'southeast' }[gravity] ?? 'centre'
-      const source = this.config.s3.enabled ? await s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes() : this.path(bucket.id, file.id)
-      let pipeline = sharp(source, { animated: format === 'gif' }).rotate()
-      if (width || height) pipeline = pipeline.resize({ width: width || undefined, height: height || undefined, fit: width && height ? 'cover' : 'inside', position, withoutEnlargement: true })
-      pipeline = pipeline.toFormat(format === 'jpg' ? 'jpeg' : format, { quality })
-      mkdirSync(dirname(cached), { recursive: true })
-      await pipeline.toFile(`${cached}.tmp`)
-      renameSync(`${cached}.tmp`, cached)
+      let job = this.rendering.get(cached)
+      if (!job) {
+        job = this.withPreviewSlot(async () => {
+          const source = this.config.s3.enabled ? await s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes() : this.path(bucket.id, file.id)
+          const out = await renderPreview(sharp, source, options)
+          mkdirSync(dirname(cached), { recursive: true })
+          const tmp = `${cached}.${process.pid}.${Date.now()}.tmp`
+          await Bun.write(tmp, out)
+          renameSync(tmp, cached)
+        }).finally(() => this.rendering.delete(cached))
+        this.rendering.set(cached, job)
+      }
+      try {
+        await job
+      } catch (error) {
+        const code = (error as Error).message ?? ''
+        if (/pixel limit/i.test(code)) throw err('general_argument_invalid', 'The image is too large to transform.')
+        throw err('storage_file_type_unsupported', 'This image could not be transformed.')
+      }
     }
     const mime = format === 'jpg' ? 'image/jpeg' : `image/${format}`
     return new Response(Bun.file(cached), {

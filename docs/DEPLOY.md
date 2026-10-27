@@ -120,7 +120,10 @@ its own sign-in and rate limiting, but the admin UI should not be public. Set
 `docker-compose.yml` runs the same standalone binary on `debian:bookworm-slim`,
 limited to **1 vCPU and 512 MB RAM** (no swap). Measured on that limit: about
 20 MB idle, 5,000+ API requests/s, and a 114 MB peak while resizing four
-3000×3000 images at once.
+3000×3000 images at once. With PDF on, 12 large invoices and 24 image
+previews with borders, rounded corners and rotation, all at once, peaked at
+about 410 MB with no out-of-memory kills. Chromium stops after a minute idle
+and memory drops back to about 70 MB.
 
 ```bash
 cp .env.example .env
@@ -147,12 +150,16 @@ Notes:
   `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are
   read from `/app/functions/functions.env`.
 - Python functions need `BUNWRITE_WITH_PYTHON=true docker compose up -d --build`.
+- HTML to PDF needs Chromium in the image:
+  `BUNWRITE_WITH_PDF=true docker compose up -d --build`, then turn it on in
+  **Console → Settings → PDF**. This makes the image about 960 MB on disk
+  (230 MB without it). See [PDF.md](PDF.md).
 - Each function run is a separate process: about 10 MB for a trivial one, more
   with heavy dependencies. Many large functions running at once are what can
   push a 512 MB container to its limit.
 - Low-memory tuning is set in the compose file: `BUN_JSC_forceRAMSize`
-  (JS heap target), `MALLOC_ARENA_MAX=2`, `SHARP_CONCURRENCY=1` and
-  `SHARP_CACHE_MB=16`. Raise them on a bigger host, or raise the limits under
+  (JS heap target), `MALLOC_ARENA_MAX=2`, `SHARP_CONCURRENCY=1`,
+  `SHARP_CACHE_MB=16` and `PREVIEW_CONCURRENCY=2`. Raise them on a bigger host, or raise the limits under
   `deploy.resources`.
 
 Upgrade with `git pull && docker compose up -d --build`.
@@ -161,6 +168,8 @@ Upgrade with `git pull && docker compose up -d --build`.
 
 - Uploaded files use local disk by default. Enable S3-compatible storage in
   **Settings → File storage**; existing files are not migrated automatically.
+- HTML to PDF on a VPS without Docker: `sudo apt install chromium
+  fonts-liberation`, then enable it in **Settings → PDF**. See [PDF.md](PDF.md).
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - Enable daily database backups and optional S3 backup storage in

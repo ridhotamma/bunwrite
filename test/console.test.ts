@@ -244,6 +244,20 @@ describe('settings through the console', () => {
     expect([server.config.logRetentionDays, server.config.logIp]).toEqual([7, true])
   })
 
+  test('PDF rendering can be switched on and off', async () => {
+    expect(server.config.pdf).toEqual({ enabled: false, allowRemote: false })
+    const offPage = await (await get('/console/settings/pdf')).text()
+    expect(offPage).toContain('Enable PDF rendering')
+    expect(offPage).not.toContain('/console/settings/pdf/test')
+    const saved = await form('/console/settings/pdf', { enabled: 'on' })
+    expect(flash(saved).get('ok')).toBe('PDF settings saved')
+    expect(server.config.pdf).toEqual({ enabled: true, allowRemote: false })
+    await form('/console/settings/pdf', { enabled: 'on', allowRemote: 'on' })
+    expect(server.config.pdf).toEqual({ enabled: true, allowRemote: true })
+    await form('/console/settings/pdf/reset', {})
+    expect(server.config.pdf).toEqual({ enabled: false, allowRemote: false })
+  })
+
   test('global function variables can be added and removed', async () => {
     await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
     expect(server.services.functions.globalVariables()).toMatchObject([
