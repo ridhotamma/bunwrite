@@ -9,8 +9,8 @@
  */
 import { dirname, resolve } from 'node:path'
 
-import { openDb } from '../db/connection'
-import { importFromAppwrite, verifyAgainstAppwrite, type ImportOptions } from '../migrate/importer'
+import { openDb } from '~/db/connection'
+import { importFromAppwrite, verifyAgainstAppwrite, type ImportOptions } from '~/migrate/importer'
 
 const args = process.argv.slice(2)
 const flag = (name: string) => {

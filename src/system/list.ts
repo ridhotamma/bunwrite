@@ -3,10 +3,10 @@
  * SQL view (drizzle/0002_list_views.sql) shaped like a collection table, so the
  * document query compiler handles filters, ordering, cursors and totals.
  */
-import { keyCaller } from '../auth/caller'
-import type { DocumentStore } from '../documents/store'
-import { AppwriteError, err } from '../lib/errors'
-import { normalizeAttribute, type Attribute, type Collection } from '../schema/types'
+import { keyCaller } from '~/auth/caller'
+import type { DocumentStore } from '~/documents/store'
+import { AppwriteError, err } from '~/lib/errors'
+import { normalizeAttribute, type Attribute, type Collection } from '~/schema/types'
 
 type Spec = [key: string, type: Attribute['type'], array?: boolean]
 

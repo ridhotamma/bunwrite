@@ -4,11 +4,11 @@
  * to find every collection and its columns. Schema changes go through
  * `schema:push`, not these routes.
  */
-import type { AppContext } from '../app'
-import { requireKey } from '../auth/routes'
-import { err } from '../lib/errors'
-import { json, list } from '../lib/http'
-import type { Router } from '../lib/router'
+import type { AppContext } from '~/app'
+import { requireKey } from '~/auth/routes'
+import { err } from '~/lib/errors'
+import { json, list } from '~/lib/http'
+import type { Router } from '~/lib/router'
 import type { DatabaseInfo } from './registry'
 import type { Attribute, Collection, Index } from './types'
 

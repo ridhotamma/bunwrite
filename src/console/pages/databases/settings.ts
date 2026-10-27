@@ -1,8 +1,8 @@
-import { aggregatePermissions } from '../../../auth/permissions'
-import type { ConsoleRouter } from '../../context'
-import { checked, lines, value } from '../../forms'
-import { html } from '../../html'
-import { destroy } from '../../ui'
+import { aggregatePermissions } from '~/auth/permissions'
+import type { ConsoleRouter } from '~/console/context'
+import { checked, lines, value } from '~/console/forms'
+import { html } from '~/console/html'
+import { destroy } from '~/console/ui'
 import { COL, DB, collectionHeader, collectionUrl, countDocuments, loadCollection, tabs } from './shared'
 
 export function collectionSettingsPages(router: ConsoleRouter): void {

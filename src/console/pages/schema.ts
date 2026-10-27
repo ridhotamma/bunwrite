@@ -1,11 +1,11 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { err } from '../../lib/errors'
-import type { ConsoleContext, ConsoleRouter } from '../context'
-import { checked, value } from '../forms'
-import { html, type Html } from '../html'
-import { badge, header } from '../ui'
+import { err } from '~/lib/errors'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { checked, value } from '~/console/forms'
+import { html, type Html } from '~/console/html'
+import { badge, header } from '~/console/ui'
 
 const SCHEMA = '/console/schema'
 

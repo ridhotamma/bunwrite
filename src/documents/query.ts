@@ -4,10 +4,10 @@
  * `equal` is exact, `contains`/`startsWith` ignore ASCII case, `search` matches
  * whole words with OR between words, and values must match the column type.
  */
-import { q } from '../db/connection'
-import { normalizeDate } from '../lib/datetime'
-import { invalidQuery } from '../lib/errors'
-import { ftsTableName, type Attribute, type Collection } from '../schema/types'
+import { q } from '~/db/connection'
+import { normalizeDate } from '~/lib/datetime'
+import { invalidQuery } from '~/lib/errors'
+import { ftsTableName, type Attribute, type Collection } from '~/schema/types'
 import type { SqlValue } from './codec'
 
 export interface Query {

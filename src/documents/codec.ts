@@ -2,9 +2,9 @@
  * Convert between Appwrite documents and SQLite rows, validating writes the
  * way Appwrite's Structure validator does.
  */
-import { normalizeDate } from '../lib/datetime'
-import { invalidStructure } from '../lib/errors'
-import type { Attribute, Collection } from '../schema/types'
+import { normalizeDate } from '~/lib/datetime'
+import { invalidStructure } from '~/lib/errors'
+import type { Attribute, Collection } from '~/schema/types'
 
 export type SqlValue = string | number | null
 

@@ -11,12 +11,12 @@
  * The callback URL is the same as Appwrite's, so the redirect URI registered
  * in Google Cloud keeps working when this server takes over the hostname.
  */
-import type { Config, GoogleConfig } from '../config'
-import type { Db } from '../db/connection'
-import { now } from '../lib/datetime'
-import { AppwriteError, err } from '../lib/errors'
-import { uniqueId } from '../lib/ids'
-import { assertRedirect, withQuery } from '../lib/origins'
+import type { Config, GoogleConfig } from '~/config'
+import type { Db } from '~/db/connection'
+import { now } from '~/lib/datetime'
+import { AppwriteError, err } from '~/lib/errors'
+import { uniqueId } from '~/lib/ids'
+import { assertRedirect, withQuery } from '~/lib/origins'
 import type { AuthService } from './service'
 
 const OAUTH2_TOKEN_TTL = 15 * 60

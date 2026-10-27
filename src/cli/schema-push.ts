@@ -1,8 +1,8 @@
 /** Apply an appwrite.config.json to the database: `bun run schema:push <path> [--prune]`. */
 import { dirname, resolve } from 'node:path'
 
-import { openDb } from '../db/connection'
-import { pushConfig } from '../schema/push'
+import { openDb } from '~/db/connection'
+import { pushConfig } from '~/schema/push'
 
 const args = process.argv.slice(2)
 const path = args.find((a) => !a.startsWith('--')) ?? process.env.SCHEMA_PATH

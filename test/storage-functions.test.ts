@@ -291,7 +291,7 @@ describe('functions', () => {
   })
 
   test('an uploaded import keeps relative function paths', () => {
-    const { pushConfig } = require('../src/schema/push') as typeof import('../src/schema/push')
+    const { pushConfig } = require('~/schema/push') as typeof import('~/schema/push')
     pushConfig(server.db, { functions: [{ $id: 'uploaded', name: 'Uploaded', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/cron' }] })
     const row = server.services.functions.fn('uploaded')
     expect(row.path).toBe('functions/cron')

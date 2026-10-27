@@ -3,11 +3,11 @@
  * over the env-derived Config in place, so the next request sees them; env
  * values remain the defaults. API keys made here live in `_api_keys`.
  */
-import type { Config, GoogleConfig, SmtpConfig } from '../config'
-import type { Db } from '../db/connection'
-import { now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { randomSecret, sha256, uniqueId } from '../lib/ids'
+import type { Config, GoogleConfig, SmtpConfig } from '~/config'
+import type { Db } from '~/db/connection'
+import { now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { randomSecret, sha256, uniqueId } from '~/lib/ids'
 
 export interface ProjectSettings {
   projectName: string

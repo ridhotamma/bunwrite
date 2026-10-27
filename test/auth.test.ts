@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { ID, Permission, Query, Role } from 'node-appwrite'
 
-import { DisabledMailer } from '../src/mail/mailer'
+import { DisabledMailer } from '~/mail/mailer'
 import { adminClient, DB, failure, jwtClient, PROJECT, sessionClient, startServer, type TestServer } from './helpers'
 
 let server: TestServer

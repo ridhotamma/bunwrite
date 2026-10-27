@@ -6,13 +6,13 @@
  *   `any`, `users`, `user:ID`, verified variants, team and label roles.
  * - Nothing: a guest, with `any` and `guests`.
  */
-import type { Db } from '../db/connection'
-import { now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { sha256 } from '../lib/ids'
-import type { Config } from '../config'
+import type { Db } from '~/db/connection'
+import { now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { sha256 } from '~/lib/ids'
+import type { Config } from '~/config'
 import { verifyJwt } from './jwt'
-import { apiKeyValid } from '../settings/service'
+import { apiKeyValid } from '~/settings/service'
 
 export interface UserRow {
   seq: number

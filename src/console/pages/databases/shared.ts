@@ -1,8 +1,8 @@
-import { q } from '../../../db/connection'
-import type { Collection } from '../../../schema/types'
-import type { ConsoleContext } from '../../context'
-import { html, type Html } from '../../html'
-import { badge, header } from '../../ui'
+import { q } from '~/db/connection'
+import type { Collection } from '~/schema/types'
+import type { ConsoleContext } from '~/console/context'
+import { html, type Html } from '~/console/html'
+import { badge, header } from '~/console/ui'
 
 export const DB = '/console/databases'
 export const COL = `${DB}/:db/collections/:col`

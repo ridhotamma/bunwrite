@@ -1,8 +1,8 @@
-import type { AppContext } from '../app'
-import { requireKey } from '../auth/routes'
-import { err } from '../lib/errors'
-import { bool, json, list, noContent, str } from '../lib/http'
-import type { Router } from '../lib/router'
+import type { AppContext } from '~/app'
+import { requireKey } from '~/auth/routes'
+import { err } from '~/lib/errors'
+import { bool, json, list, noContent, str } from '~/lib/http'
+import type { Router } from '~/lib/router'
 import { executionModel, functionModel } from './service'
 
 const HOP_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection'])

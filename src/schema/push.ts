@@ -5,8 +5,8 @@
  */
 import { resolve } from 'node:path'
 
-import { q, type Db } from '../db/connection'
-import { now } from '../lib/datetime'
+import { q, type Db } from '~/db/connection'
+import { now } from '~/lib/datetime'
 import {
   ftsTableName,
   normalizeAttribute,

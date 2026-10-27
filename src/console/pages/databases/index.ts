@@ -1,4 +1,4 @@
-import type { ConsoleRouter } from '../../context'
+import type { ConsoleRouter } from '~/console/context'
 import { attributePages } from './attributes'
 import { databaseAndCollectionPages } from './databases'
 import { documentPages } from './documents'

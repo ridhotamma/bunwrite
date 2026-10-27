@@ -1,10 +1,10 @@
-import { keyCaller } from '../../../auth/caller'
-import type { Collection } from '../../../schema/types'
-import type { ConsoleContext, ConsoleRouter } from '../../context'
-import { lines, parseJsonObject, value } from '../../forms'
-import { html, type Html } from '../../html'
-import { pageCount, pageParams } from '../../query'
-import { destroy, emptyState, header, listCard, pager, searchForm, when } from '../../ui'
+import { keyCaller } from '~/auth/caller'
+import type { Collection } from '~/schema/types'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { lines, parseJsonObject, value } from '~/console/forms'
+import { html, type Html } from '~/console/html'
+import { pageCount, pageParams } from '~/console/query'
+import { destroy, emptyState, header, listCard, pager, searchForm, when } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
 const documentUrl = (c: Collection, id: unknown) => `${collectionUrl(c)}/documents/${encodeURIComponent(String(id))}`

@@ -1,7 +1,7 @@
-import type { AppContext } from '../app'
-import { requireKey } from '../auth/routes'
-import { bool, json, list, noContent, str } from '../lib/http'
-import type { Router } from '../lib/router'
+import type { AppContext } from '~/app'
+import { requireKey } from '~/auth/routes'
+import { bool, json, list, noContent, str } from '~/lib/http'
+import type { Router } from '~/lib/router'
 import { bucketModel, fileModel } from './service'
 
 const FILES = '/storage/buckets/:bucketId/files'

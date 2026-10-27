@@ -5,7 +5,7 @@
  */
 import { createHash, scryptSync, timingSafeEqual } from 'node:crypto'
 
-import { err } from '../lib/errors'
+import { err } from '~/lib/errors'
 
 export const HASH_OPTIONS = { type: 'argon2', memoryCost: 7168, timeCost: 5, threads: 1 } as const
 

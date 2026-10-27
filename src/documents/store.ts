@@ -5,13 +5,13 @@
  */
 import type { SQLQueryBindings } from 'bun:sqlite'
 
-import type { Caller } from '../auth/caller'
-import { aggregatePermissions, grants, parsePermission, type PermissionType } from '../auth/permissions'
-import { q, type Db } from '../db/connection'
-import { normalizeDate, now } from '../lib/datetime'
-import { AppwriteError, err, invalidStructure } from '../lib/errors'
-import { resolveId } from '../lib/ids'
-import type { Collection } from '../schema/types'
+import type { Caller } from '~/auth/caller'
+import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
+import { q, type Db } from '~/db/connection'
+import { normalizeDate, now } from '~/lib/datetime'
+import { AppwriteError, err, invalidStructure } from '~/lib/errors'
+import { resolveId } from '~/lib/ids'
+import type { Collection } from '~/schema/types'
 import { decodeRow, encodeAttributes, type Doc, type SqlValue } from './codec'
 import { compileQueries, cursorCondition, orderExpr, parseQueries, type Compiled, type Query } from './query'
 

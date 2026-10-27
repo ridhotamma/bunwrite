@@ -5,8 +5,8 @@
  */
 import nodemailer from 'nodemailer'
 
-import type { SmtpConfig } from '../config'
-import { err } from '../lib/errors'
+import type { SmtpConfig } from '~/config'
+import { err } from '~/lib/errors'
 
 export interface Mail {
   to: string

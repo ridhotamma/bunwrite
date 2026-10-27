@@ -11,12 +11,12 @@
  */
 import type { ServerWebSocket } from 'bun'
 
-import { findSessionUser, guestCaller, userCaller, type Caller } from '../auth/caller'
-import { accountModel, type UserRowFull } from '../auth/models'
-import { grants } from '../auth/permissions'
-import type { Db } from '../db/connection'
-import type { DocEvent } from '../documents/store'
-import { now } from '../lib/datetime'
+import { findSessionUser, guestCaller, userCaller, type Caller } from '~/auth/caller'
+import { accountModel, type UserRowFull } from '~/auth/models'
+import { grants } from '~/auth/permissions'
+import type { Db } from '~/db/connection'
+import type { DocEvent } from '~/documents/store'
+import { now } from '~/lib/datetime'
 
 export interface SocketData {
   caller: Caller

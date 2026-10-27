@@ -2,13 +2,13 @@
  * Users, sessions and tokens. Secrets are random and only their sha256 is
  * stored, so a copy of the database cannot be used to sign in.
  */
-import type { Config } from '../config'
-import type { Db } from '../db/connection'
-import type { DocumentStore } from '../documents/store'
-import { addSeconds, now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { randomSecret, resolveId, sha256, uniqueId } from '../lib/ids'
-import { listSeqs, USERS, type ListOptions } from '../system/list'
+import type { Config } from '~/config'
+import type { Db } from '~/db/connection'
+import type { DocumentStore } from '~/documents/store'
+import { addSeconds, now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { randomSecret, resolveId, sha256, uniqueId } from '~/lib/ids'
+import { listSeqs, USERS, type ListOptions } from '~/system/list'
 import type { SessionRow, TokenRow, UserRowFull } from './models'
 import { appwriteHashOptions, hashPassword, validatePassword } from './passwords'
 

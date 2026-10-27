@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
 
-import { err } from '../../lib/errors'
-import { SmtpMailer } from '../../mail/mailer'
-import type { SettingKey } from '../../settings/service'
-import type { ConsoleContext, ConsoleRouter } from '../context'
-import { arrayOf, checked, lines, value } from '../forms'
-import { html, page, type Html } from '../html'
-import { badge, destroy, header, when } from '../ui'
+import { err } from '~/lib/errors'
+import { SmtpMailer } from '~/mail/mailer'
+import type { SettingKey } from '~/settings/service'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { arrayOf, checked, lines, value } from '~/console/forms'
+import { html, page, type Html } from '~/console/html'
+import { badge, destroy, header, when } from '~/console/ui'
 
 const SETTINGS = '/console/settings'
 

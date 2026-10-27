@@ -1,8 +1,8 @@
-import type { ExecutionRow, FunctionRow } from '../../functions/service'
-import type { ConsoleRouter } from '../context'
-import { checked, lines, value } from '../forms'
-import { html, type Html } from '../html'
-import { badge, destroy, emptyState, header, poll, statusBadge, when } from '../ui'
+import type { ExecutionRow, FunctionRow } from '~/functions/service'
+import type { ConsoleRouter } from '~/console/context'
+import { checked, lines, value } from '~/console/forms'
+import { html, type Html } from '~/console/html'
+import { badge, destroy, emptyState, header, poll, statusBadge, when } from '~/console/ui'
 
 const FN = '/console/functions'
 

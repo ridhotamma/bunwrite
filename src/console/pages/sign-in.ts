@@ -1,6 +1,6 @@
-import type { ConsoleAuth } from '../auth'
-import { html, page } from '../html'
-import { bare } from '../layout'
+import type { ConsoleAuth } from '~/console/auth'
+import { html, page } from '~/console/html'
+import { bare } from '~/console/layout'
 
 export interface SignInOptions {
   setup?: boolean

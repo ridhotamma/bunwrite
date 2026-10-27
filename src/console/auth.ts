@@ -3,13 +3,13 @@
  * sessions are random secrets in an HttpOnly, SameSite=Strict cookie scoped to
  * /console, stored as sha256.
  */
-import type { Db } from '../db/connection'
-import { addSeconds, now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { randomSecret, sha256 } from '../lib/ids'
-import { hashPassword, validatePassword } from '../auth/passwords'
-import { validEmail } from '../auth/service'
-import { parseCookies } from '../auth/caller'
+import type { Db } from '~/db/connection'
+import { addSeconds, now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { randomSecret, sha256 } from '~/lib/ids'
+import { hashPassword, validatePassword } from '~/auth/passwords'
+import { validEmail } from '~/auth/service'
+import { parseCookies } from '~/auth/caller'
 
 export const CONSOLE_COOKIE = 'pesanle_console'
 const SESSION_TTL = 7 * 24 * 3600

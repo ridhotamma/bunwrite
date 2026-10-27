@@ -13,15 +13,15 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { keyCaller } from '../auth/caller'
-import { parsePermission } from '../auth/permissions'
-import { q, type Db } from '../db/connection'
-import { decodeRow, type Doc } from '../documents/codec'
-import { DocumentStore } from '../documents/store'
-import { normalizeDate, now } from '../lib/datetime'
-import { pushConfig } from '../schema/push'
-import { Registry } from '../schema/registry'
-import type { Attribute, Collection } from '../schema/types'
+import { keyCaller } from '~/auth/caller'
+import { parsePermission } from '~/auth/permissions'
+import { q, type Db } from '~/db/connection'
+import { decodeRow, type Doc } from '~/documents/codec'
+import { DocumentStore } from '~/documents/store'
+import { normalizeDate, now } from '~/lib/datetime'
+import { pushConfig } from '~/schema/push'
+import { Registry } from '~/schema/registry'
+import type { Attribute, Collection } from '~/schema/types'
 
 export interface ImportOptions {
   endpoint: string

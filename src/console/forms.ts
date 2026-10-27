@@ -1,5 +1,5 @@
 /** Reading and normalising console form values. */
-import { err } from '../lib/errors'
+import { err } from '~/lib/errors'
 
 export type Form = Record<string, any>
 

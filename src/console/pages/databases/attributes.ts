@@ -1,9 +1,9 @@
-import { err } from '../../../lib/errors'
-import type { Collection } from '../../../schema/types'
-import type { ConsoleRouter } from '../../context'
-import { checked, lines, numberOrUndefined, value } from '../../forms'
-import { html, type Html } from '../../html'
-import { badge, destroy, emptyState, header } from '../../ui'
+import { err } from '~/lib/errors'
+import type { Collection } from '~/schema/types'
+import type { ConsoleRouter } from '~/console/context'
+import { checked, lines, numberOrUndefined, value } from '~/console/forms'
+import { html, type Html } from '~/console/html'
+import { badge, destroy, emptyState, header } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
 const TYPES = ['string', 'integer', 'double', 'boolean', 'datetime', 'email', 'url', 'enum']

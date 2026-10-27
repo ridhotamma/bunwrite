@@ -1,15 +1,15 @@
-import type { AppContext } from '../app'
-import { now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { bool, json, list, noContent, num, str } from '../lib/http'
-import { assertRedirect, withQuery } from '../lib/origins'
-import type { RouteContext, Router } from '../lib/router'
-import { otpMail, recoveryMail, verificationMail } from '../mail/mailer'
+import type { AppContext } from '~/app'
+import { now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { bool, json, list, noContent, num, str } from '~/lib/http'
+import { assertRedirect, withQuery } from '~/lib/origins'
+import type { RouteContext, Router } from '~/lib/router'
+import { otpMail, recoveryMail, verificationMail } from '~/mail/mailer'
 import { signJwt } from './jwt'
 import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type SessionRow, type UserRowFull } from './models'
 import { verifyPassword } from './passwords'
 import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from './service'
-import { FailedAttempts, RateLimiter } from '../lib/limits'
+import { FailedAttempts, RateLimiter } from '~/lib/limits'
 
 const limiter = new RateLimiter()
 const failures = new FailedAttempts()

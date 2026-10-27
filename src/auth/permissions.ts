@@ -1,4 +1,4 @@
-import { err } from '../lib/errors'
+import { err } from '~/lib/errors'
 
 export type PermissionType = 'read' | 'create' | 'update' | 'delete' | 'write'
 

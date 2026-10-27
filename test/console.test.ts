@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Query } from 'node-appwrite'
 
-import { ConsoleAuth } from '../src/console/auth'
+import { ConsoleAuth } from '~/console/auth'
 import { adminClient, DB, PROJECT, startServer, type TestServer } from './helpers'
 
 let server: TestServer

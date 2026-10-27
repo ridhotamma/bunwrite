@@ -30,7 +30,7 @@ Object.assign(process.env, {
   ...(existsSync(schema) ? { SCHEMA_PATH: schema, SCHEMA_SYNC_ON_START: fresh ? 'true' : 'false' } : {}),
 })
 
-await import('../src/index.ts')
+await import('~/index')
 
 if (fresh && existsSync(schema)) {
   const client = new Client().setEndpoint(process.env.PUBLIC_ENDPOINT!).setProject('demo-project').setKey('demo-key')

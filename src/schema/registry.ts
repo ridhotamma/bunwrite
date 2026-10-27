@@ -1,5 +1,5 @@
-import type { Db } from '../db/connection'
-import { err } from '../lib/errors'
+import type { Db } from '~/db/connection'
+import { err } from '~/lib/errors'
 import {
   normalizeAttribute,
   normalizeIndex,

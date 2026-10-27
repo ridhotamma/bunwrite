@@ -1,8 +1,8 @@
-import { bool, json, list, noContent, num, str, type Params } from '../lib/http'
-import { err } from '../lib/errors'
-import type { Router } from '../lib/router'
-import type { AppContext } from '../app'
-import { mockDocument, type Action } from '../transactions/service'
+import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
+import { err } from '~/lib/errors'
+import type { Router } from '~/lib/router'
+import type { AppContext } from '~/app'
+import { mockDocument, type Action } from '~/transactions/service'
 
 const DOCS = '/databases/:databaseId/collections/:collectionId/documents'
 

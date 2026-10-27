@@ -1,7 +1,7 @@
 /** The context every console page handler receives. */
-import type { RouteContext, Router } from '../lib/router'
-import type { SchemaAdmin } from '../schema/admin'
-import type { Services } from '../services'
+import type { RouteContext, Router } from '~/lib/router'
+import type { SchemaAdmin } from '~/schema/admin'
+import type { Services } from '~/services'
 import type { Admin, ConsoleAuth } from './auth'
 import type { Form } from './forms'
 import type { Html } from './html'

@@ -1,9 +1,9 @@
 import { statSync } from 'node:fs'
 
-import { addSeconds } from '../../lib/datetime'
-import type { ConsoleContext, ConsoleRouter } from '../context'
-import { html, type Html } from '../html'
-import { emptyState, formatBytes, header, stat, statusBadge, when } from '../ui'
+import { addSeconds } from '~/lib/datetime'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { html, type Html } from '~/console/html'
+import { emptyState, formatBytes, header, stat, statusBadge, when } from '~/console/ui'
 
 const started = Date.now()
 

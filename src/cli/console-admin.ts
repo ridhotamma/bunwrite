@@ -3,8 +3,8 @@
  *   bun run console:admin you@example.com            (asks for the password)
  *   bun run console:admin you@example.com --remove
  */
-import { openDb } from '../db/connection'
-import { ConsoleAuth } from '../console/auth'
+import { openDb } from '~/db/connection'
+import { ConsoleAuth } from '~/console/auth'
 
 const [email, flag] = process.argv.slice(2)
 if (!email) {

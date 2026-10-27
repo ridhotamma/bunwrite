@@ -4,10 +4,10 @@
  * `schema:push` alter tables the same way. Export/import use the
  * appwrite.config.json shape Pesanle keeps in its repo.
  */
-import type { Db } from '../db/connection'
-import { now } from '../lib/datetime'
-import { err } from '../lib/errors'
-import { isValidId } from '../lib/ids'
+import type { Db } from '~/db/connection'
+import { now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
+import { isValidId } from '~/lib/ids'
 import { dropCollectionTables, pushCollection, pushConfig, type ConfigCollection } from './push'
 import type { Registry } from './registry'
 import { normalizeAttribute, normalizeIndex, tableName, type Attribute, type Index } from './types'

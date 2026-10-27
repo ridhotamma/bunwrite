@@ -10,16 +10,16 @@
  * Reads sent with a `transactionId` see the staged writes: the operations are
  * replayed inside a savepoint, the read runs, and the savepoint is rolled back.
  */
-import { keyCaller, type Caller } from '../auth/caller'
-import { aggregatePermissions, grants, parsePermission } from '../auth/permissions'
-import type { Db } from '../db/connection'
-import { addSeconds, now } from '../lib/datetime'
-import { AppwriteError, err } from '../lib/errors'
-import { resolveId, uniqueId } from '../lib/ids'
-import { encodeAttributes, type Doc } from '../documents/codec'
-import { ConflictError, DocumentStore, type Guard } from '../documents/store'
-import type { Registry } from '../schema/registry'
-import type { Collection } from '../schema/types'
+import { keyCaller, type Caller } from '~/auth/caller'
+import { aggregatePermissions, grants, parsePermission } from '~/auth/permissions'
+import type { Db } from '~/db/connection'
+import { addSeconds, now } from '~/lib/datetime'
+import { AppwriteError, err } from '~/lib/errors'
+import { resolveId, uniqueId } from '~/lib/ids'
+import { encodeAttributes, type Doc } from '~/documents/codec'
+import { ConflictError, DocumentStore, type Guard } from '~/documents/store'
+import type { Registry } from '~/schema/registry'
+import type { Collection } from '~/schema/types'
 
 export const TTL_MIN = 60
 export const TTL_MAX = 3600

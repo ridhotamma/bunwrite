@@ -1,10 +1,10 @@
-import type { AppContext } from '../app'
-import { membershipModel, teamModel } from '../auth/models'
-import { err } from '../lib/errors'
-import { bool, json, list, noContent, str } from '../lib/http'
-import { assertRedirect, withQuery } from '../lib/origins'
-import type { Router } from '../lib/router'
-import { invitationMail } from '../mail/mailer'
+import type { AppContext } from '~/app'
+import { membershipModel, teamModel } from '~/auth/models'
+import { err } from '~/lib/errors'
+import { bool, json, list, noContent, str } from '~/lib/http'
+import { assertRedirect, withQuery } from '~/lib/origins'
+import type { Router } from '~/lib/router'
+import { invitationMail } from '~/mail/mailer'
 
 export function teamRoutes(router: Router<AppContext>): void {
   router.get('/teams', ({ ctx, params }) => {

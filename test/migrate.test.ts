@@ -8,10 +8,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Permission, Query, Role } from 'node-appwrite'
 
-import { createApp, createServices } from '../src/app'
-import { openDb } from '../src/db/connection'
-import { importFromAppwrite, verifyAgainstAppwrite } from '../src/migrate/importer'
-import { MemoryMailer } from '../src/mail/mailer'
+import { createApp, createServices } from '~/app'
+import { openDb } from '~/db/connection'
+import { importFromAppwrite, verifyAgainstAppwrite } from '~/migrate/importer'
+import { MemoryMailer } from '~/mail/mailer'
 import { adminClient, DB, KEY, PROJECT, sessionClient, startServer, testConfig, testSchema, type TestServer } from './helpers'
 
 let dir: string

@@ -1,8 +1,8 @@
-import { aggregatePermissions } from '../../../auth/permissions'
-import type { ConsoleRouter } from '../../context'
-import { checked, lines, value } from '../../forms'
-import { html } from '../../html'
-import { badge, destroy, emptyState, formFooter, header, when } from '../../ui'
+import { aggregatePermissions } from '~/auth/permissions'
+import type { ConsoleRouter } from '~/console/context'
+import { checked, lines, value } from '~/console/forms'
+import { html } from '~/console/html'
+import { badge, destroy, emptyState, formFooter, header, when } from '~/console/ui'
 import { COL, DB, collectionUrl, countDocuments } from './shared'
 
 /** Database and collection index/detail pages. */

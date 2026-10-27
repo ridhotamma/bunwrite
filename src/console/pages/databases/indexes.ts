@@ -1,7 +1,7 @@
-import type { ConsoleRouter } from '../../context'
-import { arrayOf, checked, value } from '../../forms'
-import { html } from '../../html'
-import { badge, destroy, emptyState } from '../../ui'
+import type { ConsoleRouter } from '~/console/context'
+import { arrayOf, checked, value } from '~/console/forms'
+import { html } from '~/console/html'
+import { badge, destroy, emptyState } from '~/console/ui'
 import { COL, collectionHeader, collectionUrl, loadCollection, tabs } from './shared'
 
 export function indexPages(router: ConsoleRouter): void {
