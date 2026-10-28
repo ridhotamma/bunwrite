@@ -160,7 +160,8 @@ transactional flows on this.
 
 ## Functions
 
-Each execution is a child process: `bun src/functions/runner-node.ts <entry>` or
+Each execution is a child process: `bun src/functions/runner-node.mjs <entry>` (or
+`bunwrite __bunwrite-runner-node <entry>` in a compiled binary) or
 `python3 src/functions/runner-python.py <entry>`. The runner builds Appwrite's
 `context` (`req`, `res`, `log`, `error`) and gets `BUNWRITE_FUNCTION_*`
 variables; with `API_COMPAT=appwrite` also the `APPWRITE_FUNCTION_*` ones that

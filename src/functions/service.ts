@@ -31,7 +31,6 @@ const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 /** Request headers a function never sees: credentials. */
 const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
 const SYNC_TIMEOUT = 30
-const RUNNER_NODE = join(import.meta.dir, 'runner-node.ts')
 const NODE_RUNNER_MODE = '__bunwrite-runner-node'
 /** Server-only settings a function never needs to see. */
 const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
@@ -651,7 +650,9 @@ export class FunctionService {
     // A downloaded Node.js or Bun runs the plain-JavaScript runner itself.
     if (runtime?.bin) return [join(runtime.bin, runtime.kind === 'node' ? 'node' : 'bun'), nodeRunner(this.config), entry]
     if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) {
-      return Bun.isStandaloneExecutable ? [process.execPath, NODE_RUNNER_MODE, entry] : [process.execPath, RUNNER_NODE, entry]
+      // A compiled binary has no runner file on disk; its `__bunwrite-runner-node`
+      // mode imports the embedded one. In source mode Bun can run the .mjs directly.
+      return Bun.isStandaloneExecutable ? [process.execPath, NODE_RUNNER_MODE, entry] : [process.execPath, nodeRunner(this.config), entry]
     }
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
   }

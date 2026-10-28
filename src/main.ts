@@ -30,7 +30,7 @@ switch (command) {
     await import('./index')
     break
   case '__bunwrite-runner-node': {
-    const { runNodeFunction } = await import('./functions/runner-node')
+    const { runNodeFunction } = await import('./functions/runtime')
     await runNodeFunction(args[0] ?? '')
     break
   }

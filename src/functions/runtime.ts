@@ -12,6 +12,17 @@ import pythonRunnerPath from './runner-python.py' with { type: 'file' }
 import nodeRunnerPath from './runner-node.mjs' with { type: 'file' }
 import { allowPassThrough } from './sandbox'
 
+/**
+ * Run one function in this process, for `bunwrite __bunwrite-runner-node <entry>`
+ * on the server's own Bun. The runner is imported here, at run time, so the
+ * build can embed it as a file: importing it as a module in the same bundle
+ * would clash with that file asset.
+ */
+export async function runNodeFunction(entry: string): Promise<void> {
+  const runner = (await import(nodeRunnerPath)) as { runNodeFunction(entry: string): Promise<void> }
+  await runner.runNodeFunction(entry)
+}
+
 /** Isolated functions run as other users: shared runtime files must be usable by them (the server's umask is 077). */
 function shareWithFunctions(config: Config, dir: string, files: [path: string, mode: number][]): void {
   if (!config.functionsSandbox) return
