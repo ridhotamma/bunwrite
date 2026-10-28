@@ -136,11 +136,21 @@ function project(ctx: ConsoleApiContext, id: string): ProjectRuntime {
   return found
 }
 
-/** A project of the organization the request names; another organization's project is not found. */
+/**
+ * A project of the organization the request names. The CLI sends the
+ * `organizationId` from appwrite.config.json, which is often still the one
+ * from Appwrite Cloud after a migration, so say which ID to use instead.
+ */
 function orgProject(ctx: ConsoleApiContext, id: string): ProjectRuntime {
   const found = project(ctx, id)
   const named = ctx.request.headers.get('x-appwrite-organization')
-  if (named && named !== found.info.orgId) throw err('project_not_found')
+  if (named && named !== found.info.orgId) {
+    throw err(
+      'general_argument_invalid',
+      `Project "${found.info.id}" belongs to organization "${found.info.orgId}", not "${named}". ` +
+        `Set "organizationId" in appwrite.config.json to "${found.info.orgId}", or run: appwrite init project --organization-id ${found.info.orgId} --project-id ${found.info.id}`,
+    )
+  }
   return found
 }
 

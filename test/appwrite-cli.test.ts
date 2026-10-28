@@ -206,7 +206,7 @@ describe('appwrite init project', () => {
     const ws = new Workspace('init-org')
     await ws.ok('login', '--email', ADMIN.email, '--password', ADMIN.password, '--endpoint', server.endpoint)
     const result = await ws.run(['init', 'project', '--organization-id', 'someone-else', '--project-id', PROJECT, '--project-name', 'x'], 'n\n')
-    expect(result.out).toContain('does not exist on this server')
+    expect(result.out).toContain(`belongs to organization "${ORG}", not "someone-else"`)
     // The CLI empties appwrite.config.json before asking; no project gets linked.
     expect(existsSync(join(ws.dir, 'appwrite.config.json')) ? ws.config.projectId : undefined).toBeUndefined()
   })
@@ -297,6 +297,16 @@ describe('pull and push settings', () => {
     ws.config = config
     await ws.ok('push', 'settings', '--force')
     expect(server.services.access.mockPhones().map((m) => m.number)).toEqual(['+15555550101'])
+  })
+
+  test('a config with another organization ID gets told the right one, and works once fixed', async () => {
+    const config = ws.config
+    ws.config = { ...config, organizationId: '6ac930f300361e32cde4' }
+    const result = await ws.run(['push', 'settings', '--force'])
+    expect(result.out).toContain(`belongs to organization "${ORG}", not "6ac930f300361e32cde4"`)
+    expect(result.out).not.toContain('could not be found')
+    ws.config = config
+    expect(await ws.ok('push', 'settings', '--force')).toContain('Successfully pushed all project settings')
   })
 
   test('settings need a console sign-in; an API key is not enough', async () => {

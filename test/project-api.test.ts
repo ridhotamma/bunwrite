@@ -441,7 +441,11 @@ describe('console API for the CLI', () => {
     expect((await consoleCall('GET', '/teams')).body.teams).toEqual([expect.objectContaining({ $id: 'org_test' })])
     expect((await consoleCall('GET', `/projects/${PROJECT}`)).body).toMatchObject({ $id: PROJECT, teamId: 'org_test' })
     expect((await consoleCall('GET', '/organization/projects')).body).toMatchObject({ total: 1, projects: [{ $id: PROJECT }] })
-    expect((await consoleCall('GET', `/organization/projects/${PROJECT}`, { headers: { 'x-appwrite-organization': 'other' } })).status).toBe(404)
+    // An organization ID left over from Appwrite Cloud gets a message naming the right one.
+    const wrongOrg = await consoleCall('GET', `/organization/projects/${PROJECT}`, { headers: { 'x-appwrite-organization': 'other' } })
+    expect(wrongOrg.status).toBe(400)
+    expect(wrongOrg.body.message).toContain(`belongs to organization "org_test", not "other"`)
+    expect((await consoleCall('PATCH', `/organization/projects/${PROJECT}`, { headers: { 'x-appwrite-organization': 'other' }, body: { name: 'x' } })).status).toBe(400)
     expect((await consoleCall('GET', '/organization/projects', { headers: { 'x-appwrite-organization': 'other' } })).status).toBe(400)
     expect((await consoleCall('GET', '/projects/missing')).body.type).toBe('project_not_found')
 
