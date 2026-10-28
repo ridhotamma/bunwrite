@@ -254,11 +254,14 @@ Notes:
   `/app/functions` (see the commented volume) and set
   `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are
   read from `/app/functions/functions.env`.
-- Python functions need `BUNWRITE_WITH_PYTHON=true docker compose up -d --build`.
-- HTML to PDF and images need Chromium in the image:
-  `BUNWRITE_WITH_CHROMIUM=true docker compose up -d --build`, then turn it on
-  in **Console → Settings → HTML rendering**. This makes the image about
-  960 MB on disk (230 MB without it). See [RENDER.md](RENDER.md).
+- Python functions need the image built with `WITH_PYTHON=true`: set
+  `BUNWRITE_WITH_PYTHON=true` in `.env`, then `docker compose up -d --build`.
+  (Build args are baked in, so rebuild after changing it.)
+- HTML to PDF and images need Chromium in the image: set
+  `BUNWRITE_WITH_CHROMIUM=true` in `.env` and run
+  `docker compose up -d --build`, then turn it on in **Console → Settings →
+  HTML rendering**. This makes the image about 960 MB on disk (230 MB without
+  it). See [RENDER.md](RENDER.md).
 - Each function run is a separate process: about 10 MB for a trivial one, more
   with heavy dependencies. Many large functions running at once are what can
   push a small container to its limit.

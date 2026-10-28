@@ -14,7 +14,8 @@ same thing Puppeteer and Playwright do, without either dependency.
 ## Turn it on
 
 1. Install Chromium:
-   - Docker: `BUNWRITE_WITH_CHROMIUM=true docker compose up -d --build`
+   - Docker: set `BUNWRITE_WITH_CHROMIUM=true` in `.env`, then
+     `docker compose up -d --build`
    - Ubuntu/Debian: `sudo apt install chromium fonts-liberation`
    - Elsewhere: install Chrome or Chromium, or set `CHROME_PATH`.
 2. Open **Console → Settings → HTML rendering**, tick **Enable HTML
