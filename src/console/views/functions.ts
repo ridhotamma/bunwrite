@@ -2,7 +2,7 @@
 import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, poll, when } from '~/console/ui'
+import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
 import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
@@ -33,6 +33,8 @@ interface CodeFieldsOptions {
   buildCommands: boolean
   /** GitHub installations, for a new function's "GitHub repository" choice. */
   installations?: { id: string; organization: string }[]
+  /** The section title already says "Code". */
+  hideLegend?: boolean
 }
 
 /** Where the code comes from: a starter template, an uploaded archive, or one file of code. */
@@ -54,7 +56,7 @@ function codeFields(options: CodeFieldsOptions): Html {
   const github = installations.length ? [choice('github', 'GitHub repository', 'Build on every push to the production branch.', false)] : []
   const choices = existing ? (options.current ? [paste, upload, template] : [upload, paste, template]) : [template, upload, paste, ...github]
   return html`<fieldset class="code-source">
-      <legend>Code</legend>
+      <legend class="${options.hideLegend ? 'visually-hidden' : ''}">Code</legend>
       <div class="choice">${choices}</div>
     </fieldset>
     <div data-show-for="upload" data-for-select="source" hidden>
@@ -70,26 +72,32 @@ function codeFields(options: CodeFieldsOptions): Html {
     </div>`
 }
 
-export function createFunctionDialog(open: boolean, buildCommands: boolean, installations: { id: string; organization: string }[] = []): Html {
-  return dialog({
-    id: 'create-function',
-    title: 'Create function',
-    open,
-    body: html`<form id="create-function-form" method="post" action="${FN}" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
-      <p class="dialog-message">Functions run server code on demand, on a schedule or from the HTTP endpoint.</p>
-      <div class="fields">
-        <label>Name<input name="name" required data-slug-source placeholder="Send welcome email" autofocus></label>
-        <label>Function ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="send-welcome-email"><small>Used in the API and the HTTP endpoint. It cannot change later.</small></label>
-      </div>
-      <div class="fields">
-        <label>Runtime<select name="runtime">${RUNTIME_OPTIONS.map((r) => html`<option value="${r.id}">${r.label}</option>`)}</select><small>Node.js and Bun code runs under this server's Bun; Python under python3.</small></label>
-        <label>Entry file<input name="entrypoint" class="mono" required value="${defaultEntrypoint(RUNTIME_OPTIONS[0]!.id)}" data-follow="runtime" data-follow-values="${JSON.stringify({ python: 'src/main.py', '*': 'src/main.js' })}"><small>The file that exports the function.</small></label>
-      </div>
-      <label>Schedule <span class="subdued">(optional)</span><input name="schedule" class="mono" placeholder="0 * * * *"><small>Cron, in UTC. Leave empty to run only on demand.</small></label>
-      ${codeFields({ runtime: null, commands: '', buildCommands, installations })}
-    </form>`,
-    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="create-function-form" class="primary">Create function</button>`,
-  })
+/** The Create function page: general settings and code in sections, like the other create pages. */
+export function functionCreateView(buildCommands: boolean, installations: { id: string; organization: string }[] = []): Html {
+  return html`${header('Create function', { back: FN })}
+    <form method="post" action="${FN}" enctype="multipart/form-data" hx-boost="false">
+      ${settingsSection(
+        'General',
+        'Functions run server code on demand, on a schedule or from the HTTP endpoint.',
+        html`<div class="fields">
+          <label>Name<input name="name" required data-slug-source placeholder="Send welcome email" autofocus></label>
+          <label>Function ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="send-welcome-email"><small>Used in the API and the HTTP endpoint. It cannot change later.</small></label>
+        </div>
+        <div class="fields">
+          <label>Runtime<select name="runtime">${RUNTIME_OPTIONS.map((r) => html`<option value="${r.id}">${r.label}</option>`)}</select><small>Node.js and Bun code runs under this server's Bun; Python under python3.</small></label>
+          <label>Entry file<input name="entrypoint" class="mono" required value="${defaultEntrypoint(RUNTIME_OPTIONS[0]!.id)}" data-follow="runtime" data-follow-values="${JSON.stringify({ python: 'src/main.py', '*': 'src/main.js' })}"><small>The file that exports the function.</small></label>
+        </div>
+        <label>Schedule <span class="subdued">(optional)</span><input name="schedule" class="mono" placeholder="0 * * * *"><small>Cron, in UTC. Leave empty to run only on demand.</small></label>`,
+      )}
+      ${settingsSection(
+        'Code',
+        installations.length
+          ? 'Start from the template, upload a folder, write the code, or build a GitHub repository on every push.'
+          : 'Start from the template, upload a folder, or write the code. Add a GitHub installation in Settings → Git to deploy from a repository.',
+        html`<div class="stack-fields">${codeFields({ runtime: null, commands: '', buildCommands, installations, hideLegend: true })}</div>`,
+      )}
+      ${pageFooter(FN, 'Create function')}
+    </form>`
 }
 
 /** The deploy form, shared by the dialog and its no-JavaScript page. */

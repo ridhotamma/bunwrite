@@ -13,7 +13,7 @@ const repoUrlOf = (d: SourceColumns) => d.provider_commit_url.replace(/\/commit\
 
 /** A short "branch · sha message" line for deployment lists; empty for uploads. */
 export function sourceCell(d: SourceColumns): Html {
-  if (d.type !== 'vcs') return html`<span class="subdued">Upload</span>`
+  if (d.type !== 'vcs') return html`<span class="subdued">Manual</span>`
   const label = d.provider_pull_request ? `PR #${d.provider_pull_request}` : d.provider_branch
   return html`<span class="mono">${label}</span> · <a class="mono" href="${d.provider_commit_url}" target="_blank" rel="noopener">${d.provider_commit_hash.slice(0, 7)}</a>
     <div class="subdued cell-sub" title="${firstLine(d.provider_commit_message)}">${firstLine(d.provider_commit_message)}</div>`

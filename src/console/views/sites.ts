@@ -2,7 +2,7 @@
 import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, poll, when } from '~/console/ui'
+import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
 import { FRAMEWORKS } from '~/sites/frameworks'
 import { SITE_IN_PROGRESS, type SiteDeploymentRow, type SiteRow } from '~/sites/service'
@@ -28,7 +28,7 @@ export function siteStatus(site: SiteRow, latest: SiteDeploymentRow | null): Htm
 }
 
 /** Where the files come from: a starter page, an uploaded folder, one HTML file, or (new sites) a GitHub repository. */
-function sourceFields(existing: boolean, installations: { id: string; organization: string }[] = []): Html {
+function sourceFields(existing: boolean, installations: { id: string; organization: string }[] = [], hideLegend = false): Html {
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
   const choices = [
@@ -38,7 +38,7 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
     ...(installations.length ? [choice('github', 'GitHub repository', 'Build on every push; other branches get previews.', false)] : []),
   ]
   return html`<fieldset class="code-source">
-      <legend>Files</legend>
+      <legend class="${hideLegend ? 'visually-hidden' : ''}">Files</legend>
       <div class="choice">${existing ? choices : [choices[1], choices[0], ...choices.slice(2)]}</div>
     </fieldset>
     ${installations.length ? gitSourceFields(installations, 'create-site', 'Detect the framework and commands from the repository') : ''}
@@ -113,23 +113,34 @@ export function buildFields(site?: SiteRow): Html {
     ${ssrFields(site, ssr)}`
 }
 
-export function createSiteDialog(open: boolean, sitesDomain: string, installations: { id: string; organization: string }[] = []): Html {
-  return dialog({
-    id: 'create-site',
-    title: 'Create site',
-    open,
-    wide: true,
-    body: html`<form id="create-site-form" method="post" action="${SITES}" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
-      <p class="dialog-message">Static files are served from this server. An SSR framework is built here and run behind the site's address.</p>
-      <div class="fields">
-        <label>Name<input name="name" required data-slug-source placeholder="Company website" autofocus></label>
-        <label>Site ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-z0-9]([a-z0-9\\-]{0,34}[a-z0-9])?" placeholder="company-website"><small>Becomes the address <span class="mono">&lt;id&gt;.${sitesDomain}</span>. Lowercase letters, digits and hyphens.</small></label>
-      </div>
-      ${buildFields()}
-      ${sourceFields(false, installations)}
-    </form>`,
-    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="create-site-form" class="primary">Create site</button>`,
-  })
+/** The Create site page: general, files and build settings in sections, like the other create pages. */
+export function siteCreateView(sitesDomain: string, installations: { id: string; organization: string }[] = []): Html {
+  return html`${header('Create site', { back: SITES })}
+    <form method="post" action="${SITES}" enctype="multipart/form-data" hx-boost="false">
+      ${settingsSection(
+        'General',
+        "The name shown in the console, and the ID that becomes the site's address.",
+        html`<div class="fields">
+          <label>Name<input name="name" required data-slug-source placeholder="Company website" autofocus></label>
+          <label>Site ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-z0-9]([a-z0-9\\-]{0,34}[a-z0-9])?" placeholder="company-website"><small>Becomes the address <span class="mono">&lt;id&gt;.${sitesDomain}</span>. Lowercase letters, digits and hyphens.</small></label>
+        </div>`,
+      )}
+      ${settingsSection(
+        'Files',
+        installations.length
+          ? 'Start from a page, upload a folder, write HTML, or build a GitHub repository on every push.'
+          : 'Start from a page, upload a folder, or write HTML. Add a GitHub installation in Settings → Git to deploy from a repository.',
+        html`<div class="stack-fields">${sourceFields(false, installations, true)}</div>`,
+      )}
+      ${settingsSection(
+        'Build and run',
+        installations.length
+          ? 'Static sites are served as they are; SSR frameworks are built and run here. From a GitHub repository with Detect on, these come from the repository.'
+          : 'Static sites are served as they are; SSR frameworks are built and run here.',
+        buildFields(),
+      )}
+      ${pageFooter(SITES, 'Create site')}
+    </form>`
 }
 
 export function deploySiteForm(site: SiteRow, id = 'deploy-site-form'): Html {

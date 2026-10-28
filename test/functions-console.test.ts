@@ -105,14 +105,16 @@ function zip(files: Record<string, string>, deflate = true): Uint8Array {
 const nodeFn = (message: string) => `export default async ({ res }) => res.json({ message: ${JSON.stringify(message)} })\n`
 
 describe('console function creation', () => {
-  test('the functions page offers a Create function dialog', async () => {
+  test('Create function has its own page, like the other create pages', async () => {
     const page = await (await get('/console/functions')).text()
-    expect(page).toContain('data-dialog-open="#create-function"')
-    expect(page).toContain('id="create-function-form"')
-    expect(page).toContain('enctype="multipart/form-data"')
-    expect(page).toContain('value="node-22"')
-    const open = await (await get('/console/functions?create=1')).text()
-    expect(open).toMatch(/<dialog id="create-function" class="dialog" open data-open/)
+    expect(page).toContain('href="/console/functions/new"')
+    const create = await (await get('/console/functions/new')).text()
+    expect(create).toContain('<form method="post" action="/console/functions" enctype="multipart/form-data"')
+    expect(create).toContain('value="node-22"')
+    expect(create).toContain('class="page-foot"')
+    // The old dialog link now goes to the page.
+    const old = await get('/console/functions?create=1')
+    expect(old.headers.get('location')).toBe('/console/functions/new')
   })
 
   test('creates a function from the starter template, live and runnable', async () => {

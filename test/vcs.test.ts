@@ -463,8 +463,9 @@ describe('Git: deployments', () => {
     expect(list.text).toContain('Source')
     expect(list.text).toContain(server.services.sites.deployment('web', server.services.sites.site('web').deployment_id).provider_commit_hash.slice(0, 7))
 
-    const sites = await get('/console/sites')
+    const sites = await get('/console/sites/new')
     expect(sites.text).toContain('value="github"')
+    expect((await get('/console/functions/new')).text).toContain('value="github"')
     const repos = await get(`/console/vcs/repositories?installation_id=${installationId}`)
     expect(repos.text).toContain('acme/web (private)')
 

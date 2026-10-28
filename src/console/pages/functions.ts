@@ -11,7 +11,7 @@ import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
-import { createFunctionDialog, deployDialog, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
+import { deployDialog, functionCreateView, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
 import { err } from '~/lib/errors'
 import { requestEndpoint } from '~/lib/origins'
@@ -186,6 +186,8 @@ function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'de
 
 export function functionPages(router: ConsoleRouter): void {
   router.get(FN, ({ ctx, url }) => {
+    // Old links opened a dialog; creating now has its own page.
+    if (url.searchParams.get('create') === '1') return ctx.go(`${FN}/new`)
     const fns = ctx.services.functions.list()
     const last = ctx.services.functions.latestByFunction()
     const skipped = ctx.services.config.skipSchedules
@@ -193,7 +195,7 @@ export function functionPages(router: ConsoleRouter): void {
     const latest = new Map(fns.map((f) => [f.id, deployments.latest(f.id)]))
     // Functions with no code folder and nothing deployed: the code folder setting is likely wrong.
     const missing = fns.filter((f) => !ctx.services.functions.codeDir(f).dir && !latest.get(f.id)).length
-    const create = html`<button type="button" class="primary" data-dialog-open="#create-function">${icon('plus')}<span>Create function</span></button>`
+    const create = html`<a class="btn primary" href="${FN}/new">${icon('plus')}<span>Create function</span></a>`
     return ctx.render(
       'Functions',
       'functions',
@@ -213,10 +215,13 @@ export function functionPages(router: ConsoleRouter): void {
             })}
             </tbody></table></div>`
           : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
-      })}
-      ${createFunctionDialog(url.searchParams.get('create') === '1', ctx.services.config.functionsBuildCommands, ctx.hub.apps.get() ? ctx.services.vcs.list() : [])}`,
+      })}`,
     )
   })
+
+  router.get(`${FN}/new`, ({ ctx }) =>
+    ctx.render('Create function', 'functions', functionCreateView(ctx.services.config.functionsBuildCommands, ctx.hub.apps.get() ? ctx.services.vcs.list() : [])),
+  )
 
   router.post(FN, async ({ ctx }) => {
     const id = value(ctx.form, 'id')

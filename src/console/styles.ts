@@ -102,7 +102,7 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}.stack-fields .fields{row-gap:14px}
 .card.narrow{max-width:520px}
-#create-function,#deploy-code{max-width:min(680px,calc(100vw - 32px))}
+#deploy-code{max-width:min(680px,calc(100vw - 32px))}
 .code-source{border:0;padding:0;margin:0;min-width:0}.code-source legend{padding:0;margin-bottom:6px;font-weight:450}
 .code-source .choice{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
 .code-source .choice.two,.code-source .choice:has(>label:nth-child(4)){grid-template-columns:repeat(2,minmax(0,1fr))}

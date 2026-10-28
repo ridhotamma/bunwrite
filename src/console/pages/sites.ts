@@ -12,11 +12,11 @@ import { customDomainsSection } from '~/console/views/domains'
 import {
   apiFunctionSelect,
   buildFields,
-  createSiteDialog,
   deploySiteDialog,
   deploySiteForm,
   SITES,
   siteDeploymentsCard,
+  siteCreateView,
   siteDeploymentView,
   siteStatus,
   siteUrl,
@@ -238,8 +238,10 @@ function addressesSection(ctx: ConsoleContext, site: SiteRow): Html {
 
 export function sitePages(router: ConsoleRouter): void {
   router.get(SITES, ({ ctx, url }) => {
+    // Old links opened a dialog; creating now has its own page.
+    if (url.searchParams.get('create') === '1') return ctx.go(`${SITES}/new`)
     const sites = ctx.services.sites.list()
-    const create = html`<button type="button" class="primary" data-dialog-open="#create-site">${icon('plus')}<span>Create site</span></button>`
+    const create = html`<a class="btn primary" href="${SITES}/new">${icon('plus')}<span>Create site</span></a>`
     return ctx.render(
       'Sites',
       'sites',
@@ -258,10 +260,13 @@ export function sitePages(router: ConsoleRouter): void {
             })}
             </tbody></table></div>`
           : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
-      })}
-      ${createSiteDialog(url.searchParams.get('create') === '1', sitesDomainOf(ctx.services.config), ctx.hub.apps.get() ? ctx.services.vcs.list() : [])}`,
+      })}`,
     )
   })
+
+  router.get(`${SITES}/new`, ({ ctx }) =>
+    ctx.render('Create site', 'sites', siteCreateView(sitesDomainOf(ctx.services.config), ctx.hub.apps.get() ? ctx.services.vcs.list() : [])),
+  )
 
   router.post(SITES, async ({ ctx }) => {
     if (value(ctx.form, 'source') === 'github') return createFromGit(ctx)

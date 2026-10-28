@@ -468,7 +468,10 @@ describe('SSR sites: modes and limits', () => {
       expect(general).not.toContain('Site ID')
 
       const list = await (await fetch(`${base()}/console/sites`, { headers: { cookie } })).text()
-      expect(list).toContain('id="create-site" class="dialog dialog-wide"')
+      expect(list).toContain('href="/console/sites/new"')
+      const create = await (await fetch(`${base()}/console/sites/new`, { headers: { cookie } })).text()
+      expect(create).toContain('<form method="post" action="/console/sites" enctype="multipart/form-data"')
+      expect(create).toContain('name="start_command"')
 
       const live = server.services.sites.site('app').deployment_id
       const view = await (await fetch(`${base()}/console/sites/app/deployments/${live}`, { headers: { cookie } })).text()
