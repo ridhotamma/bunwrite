@@ -33,6 +33,9 @@ export const lines = (v: unknown): string[] =>
 export const arrayOf = (v: unknown): string[] =>
   (Array.isArray(v) ? v : v === undefined || v === null || v === '' ? [] : [v]).map(String)
 
+/** One or many submitted values, each a newline- or comma-separated list. */
+export const arrayLines = (v: unknown): string[] => (Array.isArray(v) ? v : [v]).flatMap((one) => lines(one))
+
 /** An optional number; blank means undefined. */
 export function numberOrUndefined(v: unknown): number | undefined {
   return String(v ?? '').trim() === '' ? undefined : Number(v)

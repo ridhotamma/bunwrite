@@ -108,13 +108,19 @@ export const FORM_SCRIPT = `
   function follow(t) {
     const form = t.form
     if (!form || !t.name) return
+    let toggled = false
     for (const el of form.querySelectorAll('[data-follow="' + t.name + '"]')) {
       if (el.dataset.touched) continue
       const values = JSON.parse(el.dataset.followValues || "{}")
-      const key = String(t.value).split("-")[0]
-      const next = key in values ? values[key] : values["*"]
-      if (next !== undefined) el.value = next
+      const key = String(t.value)
+      const next = key in values ? values[key] : key.split("-")[0] in values ? values[key.split("-")[0]] : values["*"]
+      if (next !== undefined) {
+        el.value = next
+        if (el.matches("[data-show-by]")) toggled = true
+      }
     }
+    // A followed select may control which blocks are visible (the site adapter).
+    if (toggled) { showFor(form); disableWhen(form) }
   }
   document.addEventListener("change", (e) => {
     const t = e.target
@@ -122,6 +128,7 @@ export const FORM_SCRIPT = `
     if (doc && t.name && t.name.startsWith("field:")) fieldsToJson(doc)
     if (t.matches && t.matches("[data-show-by]")) { showFor(t.form || document); disableWhen(t.form || document) }
     if (t.type === "checkbox") disableWhen(t.form || document)
+    if (t.matches && t.matches("[data-follow]")) t.dataset.touched = "1"
     follow(t)
   })
   document.addEventListener("click", (e) => {

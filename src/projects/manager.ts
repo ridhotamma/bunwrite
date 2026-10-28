@@ -289,6 +289,7 @@ export class ProjectManager implements ProjectResolver {
     this.runtimes.delete(id)
 
     runtime.services.functions.stop()
+    runtime.services.sites.stop()
     runtime.services.backups.stop()
     runtime.services.render.shutdown()
 
@@ -336,6 +337,7 @@ export class ProjectManager implements ProjectResolver {
     for (const [id, runtime] of this.runtimes) {
       // Schedulers would otherwise tick on into a closed database.
       runtime.services.functions.stop()
+      runtime.services.sites.stop()
       runtime.services.backups.stop()
       runtime.services.requestLogs.flush()
       if (id !== this.config.projectId) runtime.services.db.sqlite.close()

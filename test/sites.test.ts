@@ -6,6 +6,7 @@ import { gzipSync } from 'node:zlib'
 import { Client, Proxy, Sites } from 'node-appwrite'
 import { InputFile } from 'node-appwrite/file'
 
+import { ConsoleAuth } from '~/console/auth'
 import { failure, KEY, makeUser, PROJECT, startServer, testSchema, type TestServer } from './helpers'
 
 let dir: string
@@ -339,6 +340,33 @@ describe('custom domains', () => {
     await sites.delete({ siteId: 'shop' })
     const res = await visit('/', { host: `shop.sites.localhost:${server.config.port}` })
     expect(res.status).not.toBe(200)
+  })
+
+  test('the console saves domains separately from the general settings form', async () => {
+    const auth = new ConsoleAuth(server.db)
+    await auth.upsert('sites-admin@example.com', 'console-password')
+    const cookie = `bunwrite_console=${(await auth.login('sites-admin@example.com', 'console-password'))!}; console_project=${PROJECT}`
+    const base = server.endpoint.replace(/\/v1$/, '')
+    const post = (path: string, fields: Record<string, string>) =>
+      fetch(`${base}${path}`, {
+        method: 'POST',
+        body: new URLSearchParams(fields),
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        redirect: 'manual',
+      })
+
+    const saved = await post('/console/sites/blog/domains', { domains: 'shop.example.org, new.example.org' })
+    expect(saved.status).toBe(303)
+    expect(await rulesFor('blog')).toEqual(['shop.example.org', 'new.example.org'])
+
+    // Saving the general form must not wipe the domains, which have their own form.
+    const general = await post('/console/sites/blog', { name: 'Blog', enabled: 'on', framework: 'vite', output_directory: 'dist', fallback_file: 'index.html', api_function_id: 'api' })
+    expect(general.status).toBe(303)
+    expect(await rulesFor('blog')).toEqual(['shop.example.org', 'new.example.org'])
+
+    const removed = await post('/console/sites/blog/domains/remove', { remove: 'shop.example.org' })
+    expect(removed.status).toBe(303)
+    expect(await rulesFor('blog')).toEqual(['new.example.org'])
   })
 
   test('the API host itself is never a site', async () => {

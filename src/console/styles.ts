@@ -177,6 +177,10 @@ th{background:#f7f7f7;color:var(--subdued);font-weight:550;font-size:12px;text-a
 td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}tbody tr.row-link{cursor:pointer}tbody tr.row-link:hover{background:#f7f7f7}
 td.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}td.num{text-align:right;font-variant-numeric:tabular-nums}
+.record-table td{padding:8px 12px}
+.domain-table td{padding:6px 12px}
+.domain-table td.actions-col{text-align:right;white-space:nowrap}
+.domain-table .mono{font-size:13px}
 .row-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 .toolbar{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center}
 .toolbar input{flex:1}
@@ -247,6 +251,7 @@ details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 .page-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .member-role{display:flex;gap:6px;align-items:center}.member-role input{min-width:140px;margin:0}
 dialog:has(.perm){max-width:min(640px,calc(100vw - 32px))}
+dialog.dialog-wide{max-width:min(760px,calc(100vw - 32px))}
 .pager{display:flex;gap:8px;justify-content:center;align-items:center;padding:10px;border-top:1px solid var(--border)}
 .auth{max-width:432px;margin:14vh auto 0;padding:0 16px}.auth .brand{display:flex;gap:10px;align-items:center;justify-content:center;font-weight:650;font-size:16px;margin-bottom:16px}.auth .brand img{width:28px;height:28px}
 .htmx-request{opacity:.6;transition:opacity .2s}

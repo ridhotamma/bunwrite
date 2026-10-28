@@ -305,8 +305,9 @@ export const deployments = sqliteTable(
 )
 
 /**
- * Static sites: uploaded files served as they are on `<id>.<SITES_DOMAIN>` or
- * a custom domain. No build step runs on this server.
+ * Sites: uploaded files served as they are on `<id>.<SITES_DOMAIN>` or a
+ * custom domain, or (`adapter: ssr`) an app built here and run behind the
+ * server.
  */
 export const sites = sqliteTable('_sites', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
@@ -325,7 +326,9 @@ export const sites = sqliteTable('_sites', {
   domain: text('domain').notNull().default(''),
   /** Function that answers `/api/*` on the site's own domain; empty for none. */
   apiFunctionId: text('api_function_id').notNull().default(''),
-  /** Appwrite settings with no effect here (there is no build), kept so the API returns what was set. */
+  /** Command that starts the app for `adapter: ssr`; empty for static sites. */
+  startCommand: text('start_command').notNull().default(''),
+  /** Appwrite settings; `installCommand` and `buildCommand` run for SSR sites. */
   installCommand: text('install_command').notNull().default(''),
   buildCommand: text('build_command').notNull().default(''),
   buildRuntime: text('build_runtime').notNull().default(''),
@@ -347,6 +350,8 @@ export const siteDeployments = sqliteTable(
     /** Files and bytes served, counted once unpacked. */
     fileCount: integer('file_count').notNull().default(0),
     totalSize: integer('total_size').notNull().default(0),
+    /** The site's start command when this deployment was made, so a rollback keeps its runtime. */
+    startCommand: text('start_command').notNull().default(''),
     activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
     chunksTotal: integer('chunks_total').notNull().default(1),
     chunksUploaded: integer('chunks_uploaded').notNull().default(0),

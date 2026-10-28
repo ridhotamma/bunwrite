@@ -8,10 +8,12 @@ export interface DialogOptions {
   actions: Html
   /** Open as soon as the page (or an htmx swap) renders it. */
   open?: boolean
+  /** Wider than a plain confirmation: for forms with several fields side by side. */
+  wide?: boolean
 }
 
-export function dialog({ id, title, body, actions, open = false }: DialogOptions): Html {
-  return html`<dialog id="${id}" class="dialog" ${open ? html`open data-open` : ''} aria-labelledby="${id}-title">
+export function dialog({ id, title, body, actions, open = false, wide = false }: DialogOptions): Html {
+  return html`<dialog id="${id}" class="dialog${wide ? ' dialog-wide' : ''}" ${open ? html`open data-open` : ''} aria-labelledby="${id}-title">
     <div class="dialog-body">
       <h2 id="${id}-title">${title}</h2>
       ${body}

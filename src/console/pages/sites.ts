@@ -2,16 +2,16 @@ import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { checked, lines, value } from '~/console/forms'
+import { checked, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, copyableId, destroy, emptyState, header, icon, listCard, menu, settingsSection, tabs, when } from '~/console/ui'
+import { customDomainsSection } from '~/console/views/domains'
 import {
   apiFunctionSelect,
+  buildFields,
   createSiteDialog,
   deploySiteDialog,
   deploySiteForm,
-  folderFields,
-  frameworkSelect,
   SITES,
   siteDeploymentsCard,
   siteDeploymentView,
@@ -20,7 +20,9 @@ import {
 } from '~/console/views/sites'
 import { err } from '~/lib/errors'
 import { sitesDomainOf } from '~/lib/hosts'
+import { frameworkOf } from '~/sites/frameworks'
 import type { SiteDeploymentRow, SiteFile, SiteRow, SiteSettings } from '~/sites/service'
+import { registerDomainRoutes } from './domains'
 
 /** What the deploy form asks for, checked before anything is created. */
 type FilesSource = { kind: 'starter' } | { kind: 'upload'; file: File } | { kind: 'paste'; text: string }
@@ -76,6 +78,9 @@ function starterFiles(site: SiteRow): SiteFile[] {
 }
 
 async function deploy(ctx: ConsoleContext, site: SiteRow, source: FilesSource, activate: boolean): Promise<SiteDeploymentRow> {
+  if (site.adapter === 'ssr' && site.start_command.trim() && source.kind !== 'upload') {
+    throw err('general_argument_invalid', 'An SSR app needs an uploaded source archive (.zip or .tar.gz), not the starter page or pasted HTML.')
+  }
   const sites = ctx.services.sites
   if (source.kind === 'upload') return sites.upload(site, { code: source.file, activate, contentRange: null, uploadId: null })
   if (source.kind === 'paste') {
@@ -111,18 +116,48 @@ function siteShell(ctx: ConsoleContext, site: SiteRow, active: 'deployments' | '
     ${active === 'deployments' ? deploySiteDialog(site) : ''}`
 }
 
-function settingsFromForm(ctx: ConsoleContext, base: SiteSettings): SiteSettings {
-  const apiFunctionId = value(ctx.form, 'api_function_id')
-  if (apiFunctionId) ctx.services.functions.fn(apiFunctionId)
+/**
+ * Merge one settings card into the site. Each card posts only its own fields,
+ * so a field that is absent (or hidden/disabled for the current adapter) keeps
+ * its stored value instead of being cleared.
+ */
+function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: string): SiteSettings {
+  const form = ctx.form
+  const text = (key: string, current: string) => (key in form ? value(form, key) : current)
+  if (section === 'general') {
+    return { ...base, name: text('name', base.name) || base.name, enabled: checked(form.enabled) }
+  }
+  if (section === 'build') {
+    return {
+      ...base,
+      framework: text('framework', base.framework) || base.framework,
+      outputDirectory: text('output_directory', base.outputDirectory),
+      fallbackFile: text('fallback_file', base.fallbackFile),
+      adapter: text('adapter', base.adapter) || base.adapter,
+      installCommand: text('install_command', base.installCommand),
+      buildCommand: text('build_command', base.buildCommand),
+      startCommand: text('start_command', base.startCommand),
+    }
+  }
+  if (section === 'api') {
+    const apiFunctionId = text('api_function_id', base.apiFunctionId)
+    if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.services.functions.fn(apiFunctionId)
+    return { ...base, apiFunctionId }
+  }
+  const apiFunctionId = text('api_function_id', base.apiFunctionId)
+  if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.services.functions.fn(apiFunctionId)
   return {
     ...base,
-    name: value(ctx.form, 'name') || base.name,
-    enabled: checked(ctx.form.enabled),
-    framework: value(ctx.form, 'framework') || base.framework,
-    outputDirectory: value(ctx.form, 'output_directory'),
-    fallbackFile: value(ctx.form, 'fallback_file'),
-    domains: lines(ctx.form.domains),
+    name: text('name', base.name) || base.name,
+    enabled: 'enabled' in form ? checked(form.enabled) : base.enabled,
+    framework: text('framework', base.framework) || base.framework,
+    outputDirectory: text('output_directory', base.outputDirectory),
+    fallbackFile: text('fallback_file', base.fallbackFile),
     apiFunctionId,
+    adapter: text('adapter', base.adapter) || base.adapter,
+    installCommand: text('install_command', base.installCommand),
+    buildCommand: text('build_command', base.buildCommand),
+    startCommand: text('start_command', base.startCommand),
   }
 }
 
@@ -132,8 +167,12 @@ function addressesSection(ctx: ConsoleContext, site: SiteRow): Html {
   return settingsSection(
     'Addresses',
     'Where the site answers. The browser SDK may call the API from these without adding them to allowed origins.',
-    html`<ul class="list">${urls.map((u, i) => html`<li><span class="subdued">${i === 0 ? 'Site URL' : 'Custom domain'}</span>${copyableId(u, `site-url-${i}`, 'Copy URL')}</li>`)}
-      ${site.api_function_id ? html`<li><span class="subdued">API</span><span class="mono">/api/* → ${site.api_function_id}</span></li>` : ''}</ul>`,
+    html`<ul class="list">
+      ${urls[0] ? html`<li><span class="subdued">Site URL</span>${copyableId(urls[0], 'site-url-0', 'Copy URL')}</li>` : ''}
+      <li><span class="subdued">Site ID</span>${copyableId(site.id, 'site-id-label')}</li>
+      ${urls.slice(1).map((u, i) => html`<li><span class="subdued">Custom domain</span>${copyableId(u, `site-url-${i + 1}`, 'Copy URL')}</li>`)}
+      ${site.api_function_id ? html`<li><span class="subdued">API</span><span class="mono">/api/* → ${site.api_function_id}</span></li>` : ''}
+    </ul>`,
     { id: 'site-addresses' },
   )
 }
@@ -159,7 +198,7 @@ export function sitePages(router: ConsoleRouter): void {
                 <td class="subdued hide-sm">${when(latest?.created_at ?? s.updated_at)}</td></tr>`
             })}
             </tbody></table></div>`
-          : emptyState('No sites yet', 'Host plain HTML, htmx pages or a built single-page app on this server. Nothing is built here: upload the files as they should be served.', create),
+          : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
       })}
       ${createSiteDialog(url.searchParams.get('create') === '1', sitesDomainOf(ctx.services.config))}`,
     )
@@ -168,18 +207,25 @@ export function sitePages(router: ConsoleRouter): void {
   router.post(SITES, async ({ ctx }) => {
     const id = value(ctx.form, 'id')
     const source = filesSource(ctx)
+    const preset = frameworkOf(value(ctx.form, 'framework'))
+    const adapter = value(ctx.form, 'adapter') || preset.adapter
+    const startCommand = value(ctx.form, 'start_command') || preset.startCommand
+    if (adapter === 'ssr' && startCommand.trim() && source.kind !== 'upload') {
+      throw err('general_argument_invalid', 'An SSR app needs an uploaded source archive (.zip or .tar.gz), not the starter page or pasted HTML.')
+    }
     const site = ctx.services.sites.create(id, {
       name: value(ctx.form, 'name') || id,
       enabled: true,
-      framework: value(ctx.form, 'framework') || 'other',
+      framework: preset.key,
       outputDirectory: value(ctx.form, 'output_directory'),
       fallbackFile: value(ctx.form, 'fallback_file'),
       domains: [],
       apiFunctionId: '',
-      installCommand: '',
-      buildCommand: '',
+      installCommand: value(ctx.form, 'install_command') || preset.installCommand,
+      buildCommand: value(ctx.form, 'build_command') || preset.buildCommand,
+      startCommand,
       buildRuntime: '',
-      adapter: 'static',
+      adapter,
     })
     const d = await deploy(ctx, site, source, true)
     if (d.status === 'failed') return ctx.go(`${siteUrl(site.id)}/deployments/${d.id}`, { tone: 'critical', text: 'Site created, but its files could not be deployed' })
@@ -213,7 +259,8 @@ export function sitePages(router: ConsoleRouter): void {
 
   router.get(`${SITES}/:id/deployments/:did`, ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    return ctx.render(`Deployment · ${site.name}`, 'sites', siteDeploymentView(site, ctx.services.sites.deployment(site.id, path.did!)))
+    const deployment = ctx.services.sites.deployment(site.id, path.did!)
+    return ctx.render(`Deployment · ${site.name}`, 'sites', siteDeploymentView(site, deployment, ctx.services.sites.runtimeLogs(site.id)))
   })
 
   router.get(`${SITES}/:id/deployments/:did/download`, async ({ ctx, path }) => {
@@ -233,10 +280,17 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.go(siteUrl(path.id!), { tone: 'success', text: 'Deployment deleted' })
   })
 
-  router.get(`${SITES}/:id/settings`, ({ ctx, path }) => {
+  router.get(`${SITES}/:id/settings`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    const sitesDomain = sitesDomainOf(ctx.services.config)
     const apiHost = new URL(ctx.services.config.publicEndpoint).hostname
+    const domainSettings = await customDomainsSection({
+      ctx,
+      type: 'site',
+      id: site.id,
+      action: `${siteUrl(site.id)}/domains`,
+      sectionId: 'site-domain',
+      note: html`Do not add <code>${apiHost}</code>; it is the API.`,
+    })
     return ctx.render(
       site.name,
       'sites',
@@ -245,33 +299,38 @@ export function sitePages(router: ConsoleRouter): void {
         site,
         'settings',
         html`${addressesSection(ctx, site)}
-        <form method="post" action="${siteUrl(site.id)}">
         ${settingsSection(
           'General',
           'The name in the console, and whether the site is served.',
-          html`<label>Name<input name="name" required value="${site.name}"></label>
+          html`<form method="post" action="${siteUrl(site.id)}">
+            <input type="hidden" name="section" value="general">
+            <label>Name<input name="name" required value="${site.name}"></label>
             <label class="check"><input type="checkbox" name="enabled" ${site.enabled ? 'checked' : ''}>Serve this site</label>
-            <ul class="list" style="margin-top:12px"><li><span class="subdued">Site ID</span>${copyableId(site.id, 'site-id-label')}</li></ul>`,
+            <div class="foot"><button class="primary">Save</button></div>
+          </form>`,
+          { id: 'site-general' },
         )}
         ${settingsSection(
-          'Files',
-          'Which uploaded folder is served. Takes effect right away.',
-          html`${frameworkSelect(site.framework)}${folderFields(site)}`,
+          'Build and run',
+          html`Static sites serve the upload as it is. SSR sites are installed, built and started here; the start command is saved with each new deployment, so a rollback keeps its own runtime.`,
+          html`<form method="post" action="${siteUrl(site.id)}">
+            <input type="hidden" name="section" value="build">
+            ${buildFields(site)}
+            <div class="foot"><button class="primary">Save</button></div>
+          </form>`,
+          { id: 'site-runtime' },
         )}
         ${settingsSection(
           'API',
           html`Let pages call a function on the same origin, for example <code>hx-post="/api/todos"</code>. No CORS setup needed.`,
-          apiFunctionSelect(site, ctx.services.functions.list()),
+          html`<form method="post" action="${siteUrl(site.id)}">
+            <input type="hidden" name="section" value="api">
+            ${apiFunctionSelect(site, ctx.services.functions.list())}
+            <div class="foot"><button class="primary">Save</button></div>
+          </form>`,
           { id: 'site-api' },
         )}
-        ${settingsSection(
-          'Custom domains',
-          html`Point a CNAME record for each domain at <code>${site.id}.${sitesDomain}</code> (or an A record at this server). Caddy gets certificates on the first visit. The default site URL above always keeps working.`,
-          html`<label>Domains<textarea name="domains" class="mono" rows="3" placeholder="www.example.com&#10;shop.example.com">${ctx.services.sites.settingsOf(site).domains.join('\n')}</textarea><small>One per line. Empty for none. Not <code>${apiHost}</code>, which is the API.</small></label>`,
-          { id: 'site-domain' },
-        )}
-        <div class="page-foot"><button class="primary">Save</button></div>
-        </form>
+        ${domainSettings}
         ${settingsSection('Delete site', 'Removes the site, its deployments and files. This cannot be undone.', destroy(`${siteUrl(site.id)}/delete`, 'Delete site', `Delete ${site.name}?`))}`,
       ),
     )
@@ -279,8 +338,14 @@ export function sitePages(router: ConsoleRouter): void {
 
   router.post(`${SITES}/:id`, ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    ctx.services.sites.update(site.id, settingsFromForm(ctx, ctx.services.sites.settingsOf(site)))
+    ctx.services.sites.update(site.id, settingsFromForm(ctx, ctx.services.sites.settingsOf(site), value(ctx.form, 'section')))
     return ctx.go(`${siteUrl(site.id)}/settings`, { tone: 'success', text: 'Saved' })
+  })
+
+  registerDomainRoutes(router, {
+    base: `${SITES}/:id/domains`,
+    target: ({ ctx, path }) => ({ type: 'site', id: ctx.services.sites.site(path.id!).id }),
+    then: (_route, target) => `${siteUrl(target.id)}/settings`,
   })
 
   router.post(`${SITES}/:id/delete`, ({ ctx, path }) => {

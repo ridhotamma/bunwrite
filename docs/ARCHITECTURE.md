@@ -38,7 +38,7 @@ plus their own storage, backups and function folder.
 | `src/transactions/` | Staged operations and commit with conflict detection |
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/`, `src/webhooks/`, `src/messaging/` | One service and its routes each |
-| `src/sites/` | Static sites: `service.ts` (sites, deployments, lookup by Host), `serve.ts` (files, fallback, `/api/*` to a function), `routes.ts` (Appwrite's Sites API). `app.ts` serves a request as a site when its Host is `<id>.<SITES_DOMAIN>` or a custom domain, before anything else |
+| `src/sites/` | Sites: `service.ts` (sites, deployments, lookup by Host, build), `serve.ts` (static files, fallback, `/api/*` to a function), `ssr.ts` (an SSR app's process, proxy and idle reaper), `routes.ts` (Appwrite's Sites API). `app.ts` serves a request as a site when its Host is `<id>.<SITES_DOMAIN>` or a custom domain, before anything else |
 | `src/proxy/` | Appwrite-compatible custom domains: `service.ts` stores one `_proxy_rules` row per domain for a site or function, `routes.ts` serves `/v1/proxy/rules`. A site/function keeps its default `<id>.<sites/functions domain>` and any number of custom domains |
 | `src/platform/` | What the Appwrite CLI needs beyond the client APIs: the console-project API (`appwrite login`, organizations, projects) and the Project API (`pull/push settings`) |
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |

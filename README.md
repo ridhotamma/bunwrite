@@ -63,9 +63,10 @@ you can back up, Bunwrite is for you.
   `<function-id>.<FUNCTIONS_DOMAIN>` plus any number of custom domains. In the
   Docker image each function builds and runs as its own Linux user, so it cannot
   read the database, uploads or other functions.
-- **Static sites, no build step.** Host plain HTML, htmx pages or a built
-  single-page app on `<site-id>.<SITES_DOMAIN>` plus any number of custom
-  domains. `/api/*` on the site can run a function on the same origin. See
+- **Sites, static or server-rendered.** Host plain HTML, htmx pages, a built
+  single-page app, or an SSR app (`adapter: ssr`) that Bunwrite builds and runs
+  on demand, on `<site-id>.<SITES_DOMAIN>` plus any number of custom domains.
+  `/api/*` on the site can run a function on the same origin. See
   [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
@@ -618,7 +619,7 @@ assets, saving to S3 and the HTTP examples.
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
 | Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
-| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files only, see [docs/SITES.md](docs/SITES.md) |
+| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files, or `adapter: ssr` built and run on this server, see [docs/SITES.md](docs/SITES.md) |
 | Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |

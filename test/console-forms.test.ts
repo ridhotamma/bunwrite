@@ -31,4 +31,10 @@ describe('console loading state', () => {
     expect(PROGRESS_SCRIPT).not.toContain('"htmx:beforeRequest"')
     expect(CONSOLE_CSS).toContain('button[aria-busy="true"]::before')
   })
+
+  test('a followed select re-runs the conditional blocks it controls', () => {
+    // Choosing an SSR framework sets the adapter select, which must show the SSR fields.
+    expect(FORM_SCRIPT).toContain('if (toggled) { showFor(form); disableWhen(form) }')
+    expect(CONSOLE_CSS).toContain('dialog.dialog-wide')
+  })
 })

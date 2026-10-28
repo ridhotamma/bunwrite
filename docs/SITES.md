@@ -1,13 +1,16 @@
-# Sites: static hosting
+# Sites: static and server-rendered
 
-Bunwrite serves static sites from the same process as the API: plain HTML,
-htmx pages, or the output of a framework build (Vite, React, Vue, Svelte,
-Astro, Angular). **Nothing is built on the server.** Files are served exactly
-as you upload them, so a deploy takes as long as the upload.
+Bunwrite serves sites from the same process as the API. Plain HTML, htmx pages
+and the output of a framework build (Vite, React, Vue, Svelte, Astro, Angular)
+are uploaded as they should be served and return instantly. With
+`adapter: 'ssr'` the upload is the app's source instead: Bunwrite installs and
+builds it here, then runs its start command behind the site's address.
 
 For dynamic parts, give the site an **API function**: `/api/*` on the site's
 own domain then runs that function. htmx pages can `hx-get="/api/..."` and
-get HTML fragments back, with no CORS setup and no separate backend host.
+get HTML fragments back, with no CORS setup and no separate backend host. An
+SSR site with no start command sends *every* path to that function, which is
+the lightest way to render pages per request.
 
 ## Addresses
 
@@ -62,7 +65,8 @@ Behind your own proxy, forward site and function hosts to Bunwrite with their
 
 **Deploy** on the site page uploads a new version. The old one keeps serving
 until the new one is ready. **Make live** on an older deployment rolls back at
-once. The live deployment and the last five ready ones are kept.
+once. The live deployment and the last five ready ones are kept (the last two
+for SSR sites, whose source trees may include installed packages).
 
 ### CLI
 
@@ -91,9 +95,12 @@ npm run build --prefix web
 bunwrite push sites
 ```
 
-Only `outputDirectory` inside `path` is uploaded, and `.gitignore` is not
-applied there (build output is usually ignored by git). Add `"ignore": [...]`
-to leave files out. `bunwrite pull sites` writes the live files back.
+For static sites only `outputDirectory` inside `path` is uploaded, and
+`.gitignore` is not applied there (build output is usually ignored by git). An
+SSR site uploads its whole source folder, without `node_modules`; the server
+installs and builds it. Add `"ignore": [...]` to leave more files out.
+`bunwrite push sites` follows an SSR build until it is ready, and
+`bunwrite pull sites` writes the live files back.
 
 ### SDK
 
@@ -107,10 +114,69 @@ await sites.create({ siteId: 'landing', name: 'Landing', framework: Framework.Ot
 await sites.createDeployment({ siteId: 'landing', code: InputFile.fromPath('site.tar.gz'), activate: true })
 ```
 
-`apiFunctionId` and `domains` are Bunwrite extensions; with `node-appwrite`,
-set them in the console or with a plain `PUT /v1/sites/<id>` call.
+`apiFunctionId`, `domains`, `adapter` and `startCommand` are Bunwrite
+extensions; with `node-appwrite`, set them in the console or with a plain
+`PUT /v1/sites/<id>` call.
+
+## Server-side rendering
+
+An SSR site is still a site deployment; only the adapter changes:
+
+```json
+{
+  "sites": [
+    {
+      "$id": "app",
+      "name": "App",
+      "framework": "nuxt",
+      "path": "web",
+      "adapter": "ssr",
+      "installCommand": "npm install",
+      "buildCommand": "npm run build",
+      "startCommand": "node .output/server/index.mjs"
+    }
+  ]
+}
+```
+
+On deploy, the source is unpacked, `installCommand` then `buildCommand` run in
+the deployment folder, and the result becomes ready. The start command is
+saved **with the deployment**, so rolling back runs the app that belonged to
+that version, not the current settings.
+
+Requests are proxied to the app's process:
+
+- it starts on the first request and listens on `127.0.0.1:$PORT`;
+- it is stopped after `SITES_SSR_IDLE_MS` without a request;
+- at most `SITES_SSR_MAX_PROCESSES` apps run per project (least recently used
+  first out);
+- a crash answers `502` once, then the next request starts it again after a
+  short backoff;
+- activating another deployment, deleting the site or project, and shutting
+  down stop it.
+
+The app receives `PORT`, `HOST`/`HOSTNAME=127.0.0.1` and
+`NODE_ENV=production`, plus `X-Forwarded-Host` and `X-Forwarded-Proto` on every
+request. It does not receive the public request's `Host` header. Set `ORIGIN`
+in the framework's own config when it builds absolute URLs; the server already
+passes `PROTOCOL_HEADER` and `HOST_HEADER` through for adapters that read them.
+
+Only SSR frameworks that produce a normal HTTP server work: Next.js
+(`.next/standalone/server.js`), Nuxt, SvelteKit, Astro, Remix, or a Bun/Hono
+app. For Next.js, copy `public` and `.next/static` into `.next/standalone`
+from the build command. Any HTTP method and request body is proxied; WebSocket
+upgrades and background workers that outlive a request are not.
+
+The console shows the app's recent output on the live deployment page. Builds
+run under the site's own user when `FUNCTIONS_SANDBOX` is on, with the same
+trust model as functions: the uploaded commands run on the server. Keep
+`SITES_SSR_MAX_PROCESSES` small on a 1 GB machine; memory, not CPU, is the
+limit.
 
 ## Serving rules
+
+These rules apply to static sites. An SSR site sends every path and method to
+its app, or to its API function when it has no start command.
 
 | Request | Served |
 | --- | --- |
@@ -163,7 +229,11 @@ redirect targets.
 
 ## Not supported
 
-- Build commands. `installCommand` and `buildCommand` are stored and returned
-  for Appwrite compatibility, but never run; the deployment log says so.
-- Server-side rendering (`adapter: ssr`), site variables, Git deployments and
-  preview URLs per deployment.
+- Site variables, Git deployments and preview URLs per deployment.
+- WebSockets or HTTP upgrades into an SSR app, and background workers that
+  outlive a request.
+- Uploading a `.zip` of an SSR app with `node_modules`: packages are installed
+  on the server instead. `SITES_BUILD_COMMANDS=false` runs no install or build,
+  so the upload must already be complete.
+- One step of the build generating a `.next/standalone` tree: copy `public` and
+  `.next/static` into it yourself, in the build command.

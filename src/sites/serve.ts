@@ -9,6 +9,7 @@
  *   (`app.3f9a1c2b.js`) are cached for a year.
  * - `file.br` / `file.gz` next to a file are sent when the browser accepts them.
  * - With an API function set, `/api` and `/api/*` run that function.
+ * - `adapter: 'ssr'` sites run an app instead (see ssr.ts).
  */
 import { statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
@@ -18,22 +19,14 @@ import { functionHttpResponse } from '~/functions/http'
 import { pickEncoding } from '~/lib/compress'
 import { errorResponse } from '~/lib/http'
 import type { Services } from '~/services'
+import { sitePage, SECURITY_HEADERS } from './pages'
 import type { SiteRow } from './service'
+import { ssrResponse } from './ssr'
 
 const API_PREFIX = '/api'
 const HASHED = /[.-][a-zA-Z0-9_-]{8,}\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gif|webp|avif|svg|ico|wasm|map)$/
-const SECURITY_HEADERS = {
-  'x-content-type-options': 'nosniff',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-}
 
-const page = (status: number, title: string, text: string) =>
-  new Response(
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
-<style>body{font:15px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#333}main{text-align:center;padding:16px}h1{font-size:20px;margin:0 0 4px}p{margin:0;color:#777}</style></head>
-<body><main><h1>${title}</h1><p>${text}</p></main></body></html>`,
-    { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...SECURITY_HEADERS } },
-  )
+const page = (status: number, title: string, text: string) => sitePage(status, title, text)
 
 const isFile = (path: string) => {
   try {
@@ -112,6 +105,8 @@ async function apiResponse(services: Services, site: SiteRow, request: Request, 
 export async function serveSite(services: Services, site: SiteRow, request: Request): Promise<Response> {
   const url = new URL(request.url)
   if (!site.enabled) return page(503, 'Site paused', 'This site is turned off for now.')
+  // An SSR app answers every path, including /api, and handles methods itself.
+  if (site.adapter === 'ssr') return ssrResponse(services, site, request)
   if (site.api_function_id && (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`))) {
     return apiResponse(services, site, request, url)
   }

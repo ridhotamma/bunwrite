@@ -152,6 +152,27 @@ describe('console function creation', () => {
     expect(settings).toContain('Empty means API keys only')
   })
 
+  test('saves custom domains from the settings table and removes one', async () => {
+    const saved = await post('/console/functions/hello/domains', { domains: 'api.example.org, hooks.example.org' })
+    expect(flash(saved).get('ok')).toBe('Domains saved')
+    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual(['api.example.org', 'hooks.example.org'])
+
+    const page = await (await get('/console/functions/hello/settings')).text()
+    expect(page).toContain('id="function-domains"')
+    expect(page).toContain('api.example.org')
+    expect(page).toContain('hooks.example.org')
+    expect(page).toContain('Save domains')
+    expect(page).toContain('Status')
+
+    const removed = await post('/console/functions/hello/domains/remove', { remove: 'api.example.org' })
+    expect(flash(removed).get('ok')).toBe('Domain removed')
+    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual(['hooks.example.org'])
+
+    // Do not leave a custom domain on the shared fixture.
+    await post('/console/functions/hello/domains', {})
+    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual([])
+  })
+
   test('refuses bad input before creating anything', async () => {
     const badId = await post('/console/functions', { name: 'Bad', id: '-bad id', runtime: 'node-22', entrypoint: 'src/main.js', source: 'template' })
     expect(flash(badId).get('err')).toContain('Function ID')

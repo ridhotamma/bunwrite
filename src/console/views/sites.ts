@@ -3,7 +3,7 @@ import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, poll, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
-import { FRAMEWORKS } from '~/sites/routes'
+import { FRAMEWORKS } from '~/sites/frameworks'
 import { SITE_IN_PROGRESS, type SiteDeploymentRow, type SiteRow } from '~/sites/service'
 
 export const SITES = '/console/sites'
@@ -13,12 +13,14 @@ export function siteDeploymentBadge(d: SiteDeploymentRow, liveId: string): Html 
   if (d.id === liveId) return badge('Live', 'success')
   if (d.status === 'ready') return badge('Ready')
   if (d.status === 'failed') return badge('Failed', 'critical')
+  if (d.status === 'building') return badge('Building', 'info')
   return badge('Uploading', 'info')
 }
 
 /** A site's state for lists: live, waiting for code, or the last deployment failed. */
 export function siteStatus(site: SiteRow, latest: SiteDeploymentRow | null): Html {
   if (!site.enabled) return badge('Paused', 'attention')
+  if (latest?.status === 'building') return badge('Building', 'info')
   if (latest && SITE_IN_PROGRESS.includes(latest.status)) return badge('Uploading', 'info')
   if (site.deployment_id) return latest?.status === 'failed' ? html`${badge('Live', 'success')} ${badge('Last deploy failed', 'critical')}` : badge('Live', 'success')
   return latest?.status === 'failed' ? badge('Deploy failed', 'critical') : badge('No deployment')
@@ -39,7 +41,7 @@ function sourceFields(existing: boolean): Html {
     </fieldset>
     <div data-show-for="upload" data-for-select="source" hidden>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
-        <small>Served exactly as uploaded: nothing is installed or built. For a framework, run its build first and upload the project or just the output folder. For large sites use <code>bunwrite push sites</code>.</small></label>
+        <small>Static: served exactly as uploaded, so build before uploading. SSR: the source is installed and built here. For large sites use <code>bunwrite push sites</code>.</small></label>
     </div>
     <div data-show-for="paste" data-for-select="source" hidden>
       <label>index.html<textarea name="html" class="mono tall code-editor" spellcheck="false" required><!doctype html>
@@ -54,16 +56,44 @@ function sourceFields(existing: boolean): Html {
 
 function frameworkSelect(current = 'other'): Html {
   return html`<label>Framework<select name="framework">${FRAMEWORKS.map((f) => html`<option value="${f.key}" ${f.key === current ? 'selected' : ''}>${f.name}</option>`)}</select>
-    <small>Sets the usual output folder. Everything is served as static files.</small></label>`
+    <small>Static frameworks are uploaded after your own build. SSR frameworks are built and run here.</small></label>`
 }
 
-const follow = (field: 'outputDirectory' | 'fallbackFile') => JSON.stringify(Object.fromEntries(FRAMEWORKS.map((f) => [f.key, f[field]])))
+const follow = (field: 'outputDirectory' | 'fallbackFile' | 'adapter' | 'startCommand') =>
+  JSON.stringify(Object.fromEntries(FRAMEWORKS.map((f) => [f.key, f[field]])))
 
-function folderFields(site?: SiteRow): Html {
-  return html`<div class="fields">
-      <label>Output directory<input name="output_directory" class="mono" value="${site?.output_directory ?? ''}" placeholder="dist" data-follow="framework" data-follow-values="${follow('outputDirectory')}"><small>The folder inside the upload to serve. Empty serves the top.</small></label>
-      <label>Fallback file<input name="fallback_file" class="mono" value="${site?.fallback_file ?? ''}" placeholder="index.html" data-follow="framework" data-follow-values="${follow('fallbackFile')}"><small>For single-page apps: served for paths with no file.</small></label>
+function adapterField(site?: SiteRow): Html {
+  return html`<label>Adapter<select name="adapter" data-show-by data-follow="framework" data-follow-values="${follow('adapter')}">
+      <option value="static" ${!site || site.adapter === 'static' ? 'selected' : ''}>Static files (uploaded as they are)</option>
+      <option value="ssr" ${site?.adapter === 'ssr' ? 'selected' : ''}>SSR app (built and run here)</option>
+    </select><small>Static serves the upload as it is. SSR installs, builds and starts it.</small></label>`
+}
+
+function outputDirectoryField(site?: SiteRow): Html {
+  return html`<label>Output directory<input name="output_directory" class="mono" value="${site?.output_directory ?? ''}" placeholder="dist" data-follow="framework" data-follow-values="${follow('outputDirectory')}"><small>Static: the folder inside the upload to serve. SSR: the app folder the start command runs in.</small></label>`
+}
+
+function fallbackField(site?: SiteRow): Html {
+  return html`<label>Fallback file<input name="fallback_file" class="mono" value="${site?.fallback_file ?? ''}" placeholder="index.html" data-follow="framework" data-follow-values="${follow('fallbackFile')}"><small>For static single-page apps: served for paths with no file.</small></label>`
+}
+
+function ssrFields(site: SiteRow | undefined, ssr: boolean): Html {
+  return html`<div class="stack-fields" data-show-for="ssr" data-for-select="adapter" ${ssr ? '' : 'hidden'}>
+      <label>Start command<input name="start_command" class="mono" value="${site?.start_command ?? ''}" placeholder="node .output/server/index.mjs" data-follow="framework" data-follow-values="${follow('startCommand')}"><small>Runs in the deployment folder with <code>PORT</code> and <code>HOST=127.0.0.1</code>. Empty runs the API function for every path instead.</small></label>
+      <div class="fields">
+        <label>Install command<input name="install_command" class="mono" value="${site?.install_command ?? ''}" placeholder="npm install"><small>Runs in the deployment folder before the build.</small></label>
+        <label>Build command<input name="build_command" class="mono" value="${site?.build_command ?? ''}" placeholder="npm run build"><small>Runs after the install command.</small></label>
+      </div>
     </div>`
+}
+
+/** Framework and adapter, plus only the fields that adapter uses. */
+export function buildFields(site?: SiteRow): Html {
+  const ssr = site?.adapter === 'ssr'
+  return html`${frameworkSelect(site?.framework)}
+    <div class="fields">${adapterField(site)}${outputDirectoryField(site)}</div>
+    <div class="fields" data-show-for="static" data-for-select="adapter" ${ssr ? 'hidden' : ''}>${fallbackField(site)}</div>
+    ${ssrFields(site, ssr)}`
 }
 
 export function createSiteDialog(open: boolean, sitesDomain: string): Html {
@@ -71,14 +101,14 @@ export function createSiteDialog(open: boolean, sitesDomain: string): Html {
     id: 'create-site',
     title: 'Create site',
     open,
+    wide: true,
     body: html`<form id="create-site-form" method="post" action="${SITES}" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
-      <p class="dialog-message">Static files served from this server: HTML, CSS, JavaScript, images. Pair it with a function for <code>/api</code>.</p>
+      <p class="dialog-message">Static files are served from this server. An SSR framework is built here and run behind the site's address.</p>
       <div class="fields">
         <label>Name<input name="name" required data-slug-source placeholder="Company website" autofocus></label>
         <label>Site ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-z0-9]([a-z0-9\\-]{0,34}[a-z0-9])?" placeholder="company-website"><small>Becomes the address <span class="mono">&lt;id&gt;.${sitesDomain}</span>. Lowercase letters, digits and hyphens.</small></label>
       </div>
-      ${frameworkSelect()}
-      ${folderFields()}
+      ${buildFields()}
       ${sourceFields(false)}
     </form>`,
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="create-site-form" class="primary">Create site</button>`,
@@ -131,9 +161,10 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
   </div>`
 }
 
-export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow): Html {
+export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeLog = ''): Html {
   const base = siteUrl(site.id)
   const busy = SITE_IN_PROGRESS.includes(d.status)
+  const live = d.id === site.deployment_id
   return html`<div id="deployment" ${busy ? poll(`${base}/deployments/${d.id}`, 'deployment', 2) : ''}>
     ${header('Deployment', {
       back: base,
@@ -148,6 +179,11 @@ export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow): Html {
       <div class="stat"><span>Size</span><b>${formatBytes(d.total_size || d.source_size)}</b></div>
     </div>
     <div class="card"><h2>Log</h2>${d.build_logs ? html`<pre>${d.build_logs}</pre>` : html`<p class="subdued" style="margin:0">${busy ? 'Uploading…' : 'Nothing logged.'}</p>`}</div>
+    ${live && site.adapter === 'ssr'
+      ? html`<div class="card" style="margin-top:16px"><h2>Runtime</h2>
+          <p class="subdued" style="margin:0 0 8px">Output of the app process. It starts on the first request and stops when idle.</p>
+          ${runtimeLog ? html`<pre>${runtimeLog}</pre>` : html`<p class="subdued" style="margin:0">Not running.</p>`}</div>`
+      : ''}
   </div>`
 }
 
@@ -158,4 +194,4 @@ export function apiFunctionSelect(site: SiteRow, functions: FunctionRow[]): Html
     </select><small>Requests to <code>/api/…</code> on the site run this function, on the site's own domain. <code>/api/todos</code> reaches it as <code>/todos</code>. Its "Who may run it" setting still applies.</small></label>`
 }
 
-export { frameworkSelect, folderFields }
+export { frameworkSelect }

@@ -533,11 +533,13 @@ async function pushFunctions(ctx: Ctx): Promise<string> {
 // ---- Sites ----
 
 /**
- * Sites are uploaded as they should be served; nothing is built on the
- * server. Only the output folder is packed (`outputDirectory` inside `path`),
- * and .gitignore is not applied there, since build output is usually ignored.
+ * Static sites are uploaded as they should be served: only the output folder
+ * is packed (`outputDirectory` inside `path`), and .gitignore is not applied
+ * there, since build output is usually ignored. SSR sites upload their source
+ * instead: the server installs, builds and runs it, so `node_modules` is left
+ * out and the deployment is followed until the build is ready.
  */
-const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain', 'domains']
+const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'startCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain', 'domains']
 
 const siteParams = (site: Item) => ({ ...pick(site, SITE_FIELDS), framework: site.framework ?? 'other', buildRuntime: site.buildRuntime ?? 'static-1' })
 
@@ -571,17 +573,28 @@ async function pullSites(ctx: Ctx): Promise<string> {
 async function deploySite(ctx: Ctx, site: Item): Promise<void> {
   const sites = new Sites(ctx.client)
   const root = resolve(site.path ?? `sites/${slug(site.name ?? site.$id)}`)
+  const ssr = site.adapter === 'ssr'
   const out = String(site.outputDirectory ?? '').replace(/^\.?\/+|\/+$/g, '')
-  const folder = out ? join(root, out) : root
-  if (!existsSync(folder)) throw new CliError(`The files of ${site.$id} are not at ${folder}.${out ? ' Run the build first.' : ''}`)
-  const files = collect(folder, site.ignore ?? []).map((f) => (out ? { ...f, path: `${out}/${f.path}` } : f))
+  // Static sites upload their built output; SSR sites upload the source and build here.
+  const folder = ssr || !out ? root : join(root, out)
+  if (!existsSync(folder)) throw new CliError(`The files of ${site.$id} are not at ${folder}.${out && !ssr ? ' Run the build first.' : ''}`)
+  const ignore = ssr ? ['node_modules', ...(site.ignore ?? [])] : site.ignore ?? []
+  const files = collect(folder, ignore).map((f) => (!ssr && out ? { ...f, path: `${out}/${f.path}` } : f))
   if (!files.length) throw new CliError(`No files to deploy in ${folder}`)
   const code = packGzip(files)
   const activate = bool(ctx.args, 'activate', true)
   info(`Deploying ${site.name ?? site.$id}: ${files.length} files, ${(code.length / 1024).toFixed(1)} KB`)
-  const deployment = await sites.createDeployment({ siteId: site.$id, code: InputFile.fromBuffer(code, 'site.tar.gz'), activate })
+  let deployment = await sites.createDeployment({ siteId: site.$id, code: InputFile.fromBuffer(code, 'site.tar.gz'), activate })
+  // Static deployments are ready at once; an SSR build keeps running in the background.
+  const started = Date.now()
+  const timeout = Number(flag(ctx.args, 'timeout') ?? 900) * 1000
+  while (!['ready', 'failed', 'canceled'].includes(deployment.status)) {
+    if (Date.now() - started > timeout) throw new CliError(`${site.$id}: the build is still running after ${timeout / 1000}s (deployment ${deployment.$id}).`)
+    await sleep(500)
+    deployment = await sites.getDeployment({ siteId: site.$id, deploymentId: deployment.$id })
+  }
   if (deployment.status !== 'ready') {
-    throw new CliError(`Failed to deploy ${site.name ?? site.$id} ( ${site.$id} ): ${deployment.status}.\n${deployment.buildLogs ?? ''}`.trimEnd())
+    throw new CliError(`Failed to deploy ${site.name ?? site.$id} ( ${site.$id} ): the build ${deployment.status}.\n${deployment.buildLogs ?? ''}`.trimEnd())
   }
   const remote = (await sites.get({ siteId: site.$id })) as Item
   success(`Deployed ${site.name ?? site.$id}${activate ? `, live at ${remote.url ?? ''}` : ''}`)

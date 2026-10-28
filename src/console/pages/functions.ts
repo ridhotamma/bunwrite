@@ -7,10 +7,12 @@ import { envBulkDialog } from '~/console/env-vars'
 import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
+import { customDomainsSection } from '~/console/views/domains'
 import { createFunctionDialog, deployDialog, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
 import { err } from '~/lib/errors'
 import { requestEndpoint } from '~/lib/origins'
+import { registerDomainRoutes } from './domains'
 import { registerVariableRoutes } from './variables'
 
 const FN = '/console/functions'
@@ -264,11 +266,18 @@ export function functionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${FN}/:id/settings`, ({ ctx, path }) => {
+  router.get(`${FN}/:id/settings`, async ({ ctx, path }) => {
     const f = ctx.services.functions.fn(path.id!)
     const code = ctx.services.functions.codeDir(f)
     const deployments = deploymentsOf(ctx).list(f.id)
     const fromDeployment = Boolean(f.deployment_id) && code.dir === deploymentDir(ctx.services.config, f.id, f.deployment_id)
+    const domainSettings = await customDomainsSection({
+      ctx,
+      type: 'function',
+      id: f.id,
+      action: `${functionUrl(f.id)}/domains`,
+      sectionId: 'function-domains',
+    })
     return ctx.render(
       f.name,
       'functions',
@@ -303,13 +312,7 @@ export function functionPages(router: ConsoleRouter): void {
           </ul>
           <p class="help">${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'} <a href="${functionUrl(f.id)}/deployments">View deployments</a></p>`,
         )}
-        ${settingsSection(
-          'Custom domains',
-          html`Point a CNAME record for each domain at <code>${new URL(ctx.services.functions.url(f)).host}</code> (or an A record at this server). The default function URL above always keeps working.`,
-          html`<form method="post" action="${functionUrl(f.id)}/domains"><label>Domains<textarea name="domains" class="mono" rows="3" placeholder="api.example.com&#10;hooks.example.com">${ctx.services.functions.domains(f).join('\n')}</textarea><small>One per line. Empty for none.</small></label>
-          <div class="foot"><button class="primary">Save domains</button></div></form>`,
-          { id: 'function-domains' },
-        )}
+        ${domainSettings}
         ${settingsSection(
           'Delete function',
           'Permanently removes the function, its deployments, runs and variables. This cannot be undone.',
@@ -329,10 +332,10 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.go(`${functionUrl(path.id!)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${FN}/:id/domains`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    ctx.services.proxy.set('function', f.id, lines(ctx.form.domains))
-    return ctx.go(`${functionUrl(f.id)}/settings`, { tone: 'success', text: 'Domains saved' })
+  registerDomainRoutes(router, {
+    base: `${FN}/:id/domains`,
+    target: ({ ctx, path }) => ({ type: 'function', id: ctx.services.functions.fn(path.id!).id }),
+    then: (_route, target) => `${functionUrl(target.id)}/settings`,
   })
 
   router.post(`${FN}/:id/run`, async ({ ctx, path }) => {

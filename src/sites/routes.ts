@@ -1,10 +1,11 @@
 /**
  * Appwrite's Sites API (`/v1/sites`), so `node-appwrite`, `@bunwrite/sdk` and
- * `appwrite push sites` work. Everything is served as static files; build
- * settings are stored and returned but nothing is built.
+ * `appwrite push sites` work. `adapter: 'static'` (the default) serves the
+ * uploaded files; `adapter: 'ssr'` builds and runs them on this server.
  *
- * Bunwrite extensions on create and update: `domain` (a custom domain) and
- * `apiFunctionId` (the function that answers `/api/*` on the site's domain).
+ * Bunwrite extensions on create and update: `domain` (a custom domain),
+ * `domains` (several), `apiFunctionId` (the function that answers `/api/*`, or
+ * every path when an SSR site has no start command) and `startCommand`.
  */
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
@@ -14,18 +15,10 @@ import { bool, json, list, noContent, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
+import { FRAMEWORKS, frameworkOf } from './frameworks'
 import type { SiteDeploymentRow, SiteRow, SiteSettings } from './service'
 
-/** Frameworks the console and `appwrite init sites` offer; all are served as static output. */
-export const FRAMEWORKS = [
-  { key: 'other', name: 'Plain HTML / htmx', outputDirectory: '', fallbackFile: '' },
-  { key: 'vite', name: 'Vite', outputDirectory: 'dist', fallbackFile: 'index.html' },
-  { key: 'react', name: 'React', outputDirectory: 'dist', fallbackFile: 'index.html' },
-  { key: 'vue', name: 'Vue', outputDirectory: 'dist', fallbackFile: 'index.html' },
-  { key: 'svelte', name: 'Svelte', outputDirectory: 'dist', fallbackFile: 'index.html' },
-  { key: 'astro', name: 'Astro (static)', outputDirectory: 'dist', fallbackFile: '' },
-  { key: 'angular', name: 'Angular', outputDirectory: 'dist/browser', fallbackFile: 'index.html' },
-]
+export { FRAMEWORKS }
 
 export function siteDeploymentModel(d: SiteDeploymentRow) {
   return {
@@ -37,7 +30,7 @@ export function siteDeploymentModel(d: SiteDeploymentRow) {
     resourceType: 'sites',
     entrypoint: '',
     sourceSize: d.source_size,
-    buildSize: 0,
+    buildSize: d.total_size,
     totalSize: d.total_size || d.source_size,
     buildId: d.id,
     activate: Boolean(d.activate),
@@ -90,7 +83,7 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     timeout: 30,
     installCommand: s.install_command,
     buildCommand: s.build_command,
-    startCommand: '',
+    startCommand: s.start_command,
     outputDirectory: s.output_directory,
     installationId: '',
     providerRepositoryId: '',
@@ -126,6 +119,7 @@ function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSetti
     apiFunctionId,
     installCommand: str(p.installCommand) ?? base.installCommand,
     buildCommand: str(p.buildCommand) ?? base.buildCommand,
+    startCommand: str(p.startCommand) ?? base.startCommand,
     buildRuntime: str(p.buildRuntime) ?? base.buildRuntime,
     adapter: str(p.adapter) || base.adapter,
   }
@@ -143,19 +137,20 @@ export function siteRoutes(router: Router<AppContext>): void {
     const raw = str(params.siteId)
     if (!raw) throw err('general_argument_invalid', 'Param "siteId" is not optional.')
     const id = raw === 'unique()' ? uniqueId() : raw
-    const framework = FRAMEWORKS.find((f) => f.key === str(params.framework))
+    const framework = frameworkOf(str(params.framework))
     const settings = settingsFrom(ctx, params, {
       name: id,
       enabled: true,
-      framework: str(params.framework) || 'other',
-      outputDirectory: framework?.outputDirectory ?? '',
-      fallbackFile: framework?.fallbackFile ?? '',
+      framework: framework.key,
+      outputDirectory: framework.outputDirectory,
+      fallbackFile: framework.fallbackFile,
       domains: [],
       apiFunctionId: '',
-      installCommand: '',
-      buildCommand: '',
+      installCommand: framework.installCommand,
+      buildCommand: framework.buildCommand,
+      startCommand: framework.startCommand,
       buildRuntime: '',
-      adapter: 'static',
+      adapter: framework.adapter,
     })
     return json(siteModel(ctx, ctx.sites.create(id, settings)), 201)
   })
@@ -166,9 +161,18 @@ export function siteRoutes(router: Router<AppContext>): void {
       frameworks: FRAMEWORKS.map((f) => ({
         key: f.key,
         name: f.name,
-        buildRuntime: 'static-1',
-        runtimes: ['static-1'],
-        adapters: [{ key: 'static', installCommand: '', buildCommand: '', outputDirectory: f.outputDirectory, fallbackFile: f.fallbackFile }],
+        buildRuntime: f.adapter === 'ssr' ? 'node-22' : 'static-1',
+        runtimes: [f.adapter === 'ssr' ? 'node-22' : 'static-1'],
+        adapters: [
+          {
+            key: f.adapter,
+            installCommand: f.installCommand,
+            buildCommand: f.buildCommand,
+            startCommand: f.startCommand,
+            outputDirectory: f.outputDirectory,
+            fallbackFile: f.fallbackFile,
+          },
+        ],
       })),
     }),
   )
@@ -209,7 +213,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     const code = params.code
     if (!(code instanceof Blob)) throw err('general_argument_invalid', 'Param "code" must be a .tar.gz or .zip file.')
     // Build settings sent with a deployment update the site, as on Appwrite.
-    const changes = ['installCommand', 'buildCommand', 'outputDirectory'].filter((k) => str(params[k]) !== undefined)
+    const changes = ['installCommand', 'buildCommand', 'startCommand', 'outputDirectory'].filter((k) => str(params[k]) !== undefined)
     if (changes.length) ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
     const deployment = await ctx.sites.upload(ctx.sites.site(s.id), {
       code,
@@ -250,7 +254,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     return json(siteModel(ctx, ctx.sites.activate(path.siteId!, deploymentId)))
   })
 
-  /** Sites run no code on this server, so they have no variables; an empty list keeps `appwrite pull sites` going. */
+  /** Sites have no variables; an empty list keeps `appwrite pull sites` going. */
   router.get('/sites/:siteId/variables', ({ ctx, path }) => {
     requireKey(ctx, 'sites.read')
     ctx.sites.site(path.siteId!)

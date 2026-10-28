@@ -37,6 +37,8 @@ export interface FunctionSandbox {
   owns(dir: string, uid: number): boolean
   /** Delete a tree under the data folder, whoever owns the files in it. */
   remove(path: string): void
+  /** Signal a process group owned by any user (an app or build started as one). */
+  signal(pid: number, signal: 'TERM' | 'KILL'): void
 }
 
 /** Delete a folder: through the sandbox when it is on, since function users own what is inside. */
@@ -140,6 +142,12 @@ class SetprivSandbox implements FunctionSandbox {
 
   remove(path: string): void {
     this.asRoot('rm -rf -- "$1"', this.inside(path))
+  }
+
+  signal(pid: number, signal: 'TERM' | 'KILL'): void {
+    if (!Number.isInteger(pid) || pid <= 0) return
+    // `-pid` is the whole process group: the app's start command is a session leader.
+    this.asRoot('kill -s "$1" -- "$2" 2>/dev/null || true', signal, `-${pid}`)
   }
 }
 

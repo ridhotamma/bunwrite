@@ -133,6 +133,14 @@ export interface Config {
   sitesPrefix: string
   /** Prefix of the default function host under DOMAIN; `functions` unless FUNCTIONS_PREFIX says otherwise. */
   functionsPrefix: string
+  /** Run an SSR site's install and build commands on this server (SITES_BUILD_COMMANDS). */
+  sitesBuildCommands: boolean
+  /** Allow sites with `adapter: ssr` to run an app process (SITES_SSR). */
+  sitesSsr: boolean
+  /** Stop an idle SSR app after this many milliseconds; 0 keeps it running (SITES_SSR_IDLE_MS). */
+  sitesSsrIdleMs: number
+  /** Most SSR app processes running at once per project (SITES_SSR_MAX_PROCESSES). */
+  sitesSsrMaxProcesses: number
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -233,6 +241,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const sitesDomain = dnsName(env.SITES_DOMAIN || (domain ? `${sitesPrefix}.${domain}` : `${sitesPrefix}.localhost`))
   const functionsDomain = dnsName(env.FUNCTIONS_DOMAIN || (domain ? `${functionsPrefix}.${domain}` : `${functionsPrefix}.localhost`))
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
+  const ssrIdle = wholeNumber(env.SITES_SSR_IDLE_MS, 5 * 60 * 1000)
+  const ssrMax = wholeNumber(env.SITES_SSR_MAX_PROCESSES, 2)
   return {
     port,
     apiCompat: parseApiCompat(env.API_COMPAT),
@@ -261,6 +271,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     functionsDomain,
     sitesPrefix,
     functionsPrefix,
+    sitesBuildCommands: env.SITES_BUILD_COMMANDS !== 'false',
+    sitesSsr: env.SITES_SSR !== 'false',
+    sitesSsrIdleMs: ssrIdle,
+    sitesSsrMaxProcesses: Math.max(1, ssrMax),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

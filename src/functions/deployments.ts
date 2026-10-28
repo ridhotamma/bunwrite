@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
+import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
@@ -30,7 +31,6 @@ import { extractZip, isZip } from './zip'
 /** The SDKs upload in chunks of this size. */
 const CHUNK_SIZE = 5 * 1024 * 1024
 const MAX_SIZE = 512 * 1024 * 1024
-const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 const MAX_LOG = 1_000_000
 /** Ready deployments kept on disk besides the active one. */
 const KEEP_PREVIOUS = 2
@@ -146,9 +146,10 @@ export async function unpackArchive(archive: string, dir: string): Promise<void>
   if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
 }
 
-/** Pack a folder as .tar.gz in memory. */
-export async function packFolder(dir: string): Promise<Blob> {
-  const pack = Bun.spawn(['tar', '-czf', '-', '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+/** Pack a folder as .tar.gz in memory. `exclude` entries are tar patterns relative to the folder. */
+export async function packFolder(dir: string, exclude: string[] = []): Promise<Blob> {
+  const args = ['tar', '-czf', '-', ...exclude.map((pattern) => `--exclude=${pattern}`), '-C', dir, '.']
+  const pack = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
   const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
   if (code !== 0) throw new Error(`Could not pack ${dir}: ${errText.trim()}`)
   return new Blob([bytes], { type: 'application/gzip' })
@@ -364,23 +365,16 @@ export class Deployments {
         logs.push(`$ ${d.commands}`)
         set('building')
         const f = this.functions.fn(functionId)
-        const command = ['sh', '-c', d.commands]
-        const proc = Bun.spawn(sandbox && uid !== undefined ? sandbox.wrap(uid, dir, command) : command, {
-          cwd: sandbox ? undefined : dir,
+        const result = await runShell({
+          command: d.commands,
+          cwd: sandbox && uid !== undefined ? undefined : dir,
+          wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv) : undefined,
           env: this.buildEnv(f, dir),
-          stdout: 'pipe',
-          stderr: 'pipe',
+          timeoutMs: BUILD_TIMEOUT_MS,
         })
-        let timedOut = false
-        const timer = setTimeout(() => {
-          timedOut = true
-          proc.kill()
-        }, BUILD_TIMEOUT_MS)
-        const [out, errOut, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
-        clearTimeout(timer)
-        logs.push([out.trim(), errOut.trim()].filter(Boolean).join('\n'))
-        if (timedOut) throw new Error(`Build timed out after ${BUILD_TIMEOUT_MS / 60000} minutes.`)
-        if (code !== 0) throw new Error(`Build command exited with code ${code}.`)
+        logs.push(result.output)
+        if (result.timedOut) throw new Error(`Build timed out after ${BUILD_TIMEOUT_MS / 60000} minutes.`)
+        if (result.code !== 0) throw new Error(`Build command exited with code ${result.code}.`)
       }
 
       logs.push('Build ready.')
