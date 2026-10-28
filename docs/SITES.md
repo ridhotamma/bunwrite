@@ -56,12 +56,31 @@ Behind your own proxy, forward site and function hosts to Bunwrite with their
 
 ### Console
 
-**Console → Sites → Create site**. Pick one of:
+**Console → Sites → Create site** (`/console/sites/new`). Pick the source
+first; it decides what else the page asks for:
 
-- **htmx starter**: `index.html`, a fragment and `htmx.min.js`, live at once.
-- **Upload a folder**: a `.zip` or `.tar.gz`. If everything sits inside one
-  folder (as when you zip a folder), that folder becomes the site.
-- **Write HTML**: one `index.html`.
+| Source | Then you choose | What happens |
+| --- | --- | --- |
+| **GitHub repository** | Account, repository, branch, folder. The framework, runtime and commands are detected from the repository and can be changed | Installed and built here on every push ([GIT.md](GIT.md)) |
+| **Upload a folder** | A framework. A static one needs only the output folder; a server app also gets a runtime, install, build and start commands | Static: served as uploaded (build first). Server app: upload the source; it is installed, built and started here |
+| **htmx starter** | Nothing | `index.html`, a fragment and `htmx.min.js`, live at once |
+| **Write HTML** | Nothing | One `index.html`, live at once |
+
+The starter and Write HTML are always plain static files, so they have no
+framework or runtime. If everything in an upload sits inside one folder (as
+when you zip a folder), that folder becomes the site.
+
+The framework list has two groups:
+
+- **Static site:** Plain HTML, Vite, React, Vue, Svelte, Solid, Angular, Astro,
+  Next.js (static export), Nuxt (`nuxt generate`), SvelteKit (static adapter),
+  Docusaurus, VitePress, Gatsby, Eleventy, and **Other static build**.
+- **Server app (SSR):** Next.js, Nuxt, SvelteKit (Node adapter), Astro (Node
+  adapter), TanStack Start, React Router 7, Remix, SolidStart, Analog, Hono,
+  Node.js servers (Express, Fastify, Koa…), and **Other server**.
+
+The adapter (`static` or `ssr`) follows from the group. The "Other" entries
+take any commands.
 
 **Deploy** on the site page uploads a new version. The old one keeps serving
 until the new one is ready. **Make live** on an older deployment rolls back at
@@ -117,6 +136,32 @@ await sites.createDeployment({ siteId: 'landing', code: InputFile.fromPath('site
 `apiFunctionId`, `domains`, `adapter` and `startCommand` are Bunwrite
 extensions; with `node-appwrite`, set them in the console or with a plain
 `PUT /v1/sites/<id>` call.
+
+## Runtimes
+
+Builds and server apps run on the site's **runtime** (`buildRuntime`):
+
+| Runtime | Versions |
+| --- | --- |
+| Node.js | `node-20`, `node-22` (default), `node-24`, `node-26`, or any `node-<major>` |
+| Bun | `bun-1.1` to `bun-1.4`, or any `bun-<major>.<minor>` |
+
+- **Download:** the first build that needs a version downloads the official
+  build (from nodejs.org, or Bun's GitHub releases), checks it against the
+  published SHA-256 sums, and keeps it in `<data>/.runtimes/<id>/<version>/`.
+  The build log says so. Later builds and app starts reuse it, offline too.
+- **This server's Bun** (the Bun line the server itself runs on, marked "this
+  server" in the console) needs no download. Its `node`, `npm` and `npx` run
+  through Bun.
+- **Rollbacks:** each deployment remembers its runtime, so a rollback runs on
+  the runtime it was built with.
+- **No network:** set `RUNTIMES_DOWNLOAD=false` to run every Node.js and Bun
+  runtime on this server's Bun, with a line in the build log.
+  `RUNTIMES_NODE_MIRROR` points at another Node.js mirror.
+- **Older deployments:** those made before runtimes were real have none, and
+  keep running as before.
+
+Functions use the same runtimes; see the functions guide.
 
 ## Server-side rendering
 

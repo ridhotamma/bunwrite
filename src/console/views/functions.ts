@@ -6,6 +6,8 @@ import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, page
 import type { DeploymentRow } from '~/functions/deployments'
 import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
+import { DEFAULT_RUNTIME, FUNCTION_RUNTIMES } from '~/runtimes/catalog'
+import { runtimeSelect } from '~/console/views/runtimes'
 
 const FN = '/console/functions'
 
@@ -66,7 +68,7 @@ function codeFields(options: CodeFieldsOptions): Html {
     <div data-show-for="paste" data-for-select="source" hidden>
       <label>Entry file code<textarea name="code_text" class="mono tall code-editor" spellcheck="false" required ${followCode}>${pasteDefault}</textarea></label>
     </div>
-    ${github.length ? gitSourceFields(installations, 'create-function', 'Detect the runtime, entry file and build command from the repository') : ''}
+    ${github.length ? gitSourceFields(installations, 'create-function', { detectLabel: 'Detect the runtime, entry file and build command from the repository' }) : ''}
     <div data-show-for="upload paste github" data-for-select="source" hidden>
       <label>Build command<input name="commands" class="mono" value="${options.commands}" placeholder="${options.runtime ? (python ? 'pip install -r requirements.txt' : 'npm install') : 'npm install'}">${buildHint(options.buildCommands)}</label>
     </div>`
@@ -84,7 +86,7 @@ export function functionCreateView(buildCommands: boolean, installations: { id: 
           <label>Function ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="send-welcome-email"><small>Used in the API and the HTTP endpoint. It cannot change later.</small></label>
         </div>
         <div class="fields">
-          <label>Runtime<select name="runtime">${RUNTIME_OPTIONS.map((r) => html`<option value="${r.id}">${r.label}</option>`)}</select><small>Node.js and Bun code runs under this server's Bun; Python under python3.</small></label>
+          ${runtimeSelect('runtime', DEFAULT_RUNTIME, FUNCTION_RUNTIMES, "Node.js and Bun are downloaded the first time a function uses that version; this server's Bun needs no download. Python runs on the server's python3.")}
           <label>Entry file<input name="entrypoint" class="mono" required value="${defaultEntrypoint(RUNTIME_OPTIONS[0]!.id)}" data-follow="runtime" data-follow-values="${JSON.stringify({ python: 'src/main.py', '*': 'src/main.js' })}"><small>The file that exports the function.</small></label>
         </div>
         <label>Schedule <span class="subdued">(optional)</span><input name="schedule" class="mono" placeholder="0 * * * *"><small>Cron, in UTC. Leave empty to run only on demand.</small></label>`,

@@ -12,6 +12,7 @@ import { customDomainsSection } from '~/console/views/domains'
 import {
   apiFunctionSelect,
   buildFields,
+  buildValuesOf,
   deploySiteDialog,
   deploySiteForm,
   SITES,
@@ -23,6 +24,7 @@ import {
 } from '~/console/views/sites'
 import { err } from '~/lib/errors'
 import { sitesDomainOf } from '~/lib/hosts'
+import { DEFAULT_RUNTIME } from '~/runtimes/catalog'
 import { frameworkOf } from '~/sites/frameworks'
 import type { SiteDeploymentRow, SiteFile, SiteRow, SiteSettings } from '~/sites/service'
 import { registerDomainRoutes } from './domains'
@@ -93,7 +95,48 @@ async function deploy(ctx: ConsoleContext, site: SiteRow, source: FilesSource, a
   return sites.deployFiles(site, starterFiles(site), activate)
 }
 
-/** A new site that builds from a GitHub repository: detect how to build it, connect, and deploy the branch. */
+/** The build settings a new site gets from its source. */
+interface BuildSettings {
+  framework: string
+  adapter: string
+  outputDirectory: string
+  fallbackFile: string
+  installCommand: string
+  buildCommand: string
+  startCommand: string
+  buildRuntime: string
+  pruneMode: string
+}
+
+/** A static Plain HTML site: what the starter and Write HTML always make, whatever else the form says. */
+const PLAIN_FILES: BuildSettings = { framework: 'other', adapter: 'static', outputDirectory: '', fallbackFile: '', installCommand: '', buildCommand: '', startCommand: '', buildRuntime: '', pruneMode: 'auto' }
+
+/**
+ * Build settings from the Create site form. `select` is the framework select
+ * of the chosen source. `built`: the source is built here (GitHub), so a static
+ * framework keeps its commands and runtime too; an uploaded static site is
+ * served as it is. A field the form did not send takes the framework's value.
+ */
+function buildFromForm(ctx: ConsoleContext, select: string, built: boolean): BuildSettings {
+  const form = ctx.form
+  const preset = frameworkOf(value(form, select) || 'other')
+  const server = preset.group === 'server'
+  const runs = built || server
+  const field = (key: string, fallback: string) => (key in form ? value(form, key) : fallback)
+  return {
+    framework: preset.key,
+    adapter: preset.adapter,
+    outputDirectory: field('output_directory', preset.outputDirectory),
+    fallbackFile: server ? '' : field('fallback_file', preset.fallbackFile),
+    installCommand: runs ? field('install_command', preset.installCommand) : '',
+    buildCommand: runs ? field('build_command', preset.buildCommand) : '',
+    startCommand: server ? field('start_command', preset.startCommand) : '',
+    buildRuntime: runs ? field('build_runtime', DEFAULT_RUNTIME) : '',
+    pruneMode: value(form, 'prune_mode') || 'auto',
+  }
+}
+
+/** A new site that builds from a GitHub repository: connect it, and deploy the branch. */
 async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   const installationId = value(ctx.form, 'installation_id')
   const repositoryId = value(ctx.form, 'provider_repository_id')
@@ -101,31 +144,22 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   const installation = ctx.services.vcs.get(installationId)
   const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
   const branch = value(ctx.form, 'provider_branch')
-  let preset = frameworkOf(value(ctx.form, 'framework'))
-  let fields = {
-    framework: preset.key,
-    adapter: value(ctx.form, 'adapter') || preset.adapter,
-    outputDirectory: value(ctx.form, 'output_directory') || preset.outputDirectory,
-    fallbackFile: value(ctx.form, 'fallback_file') || preset.fallbackFile,
-    installCommand: value(ctx.form, 'install_command') || preset.installCommand,
-    buildCommand: value(ctx.form, 'build_command') || preset.buildCommand,
-    startCommand: value(ctx.form, 'start_command') || preset.startCommand,
-  }
+  let fields = buildFromForm(ctx, 'git_framework', true)
+  // The page fills the build settings from the repository as you pick it; without
+  // JavaScript (or from a script), `detect` asks the server to do it on create.
   if (checked(ctx.form.detect)) {
     const gh = ctx.hub.github
     const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
     const found = await detectFramework(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
-    preset = frameworkOf(found.framework)
-    fields = { ...found }
+    fields = { ...found, pruneMode: 'auto' }
   }
+  const preset = frameworkOf(fields.framework)
   const id = value(ctx.form, 'id')
   const site = ctx.services.sites.create(id, {
     name: value(ctx.form, 'name') || id,
     enabled: true,
     domains: [],
     apiFunctionId: '',
-    buildRuntime: '',
-    pruneMode: 'auto',
     ...fields,
   })
   const project = ctx.projects.get(ctx.currentProject.id)!
@@ -185,15 +219,18 @@ function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: stri
     return { ...base, name: text('name', base.name) || base.name, enabled: checked(form.enabled) }
   }
   if (section === 'build') {
+    // The adapter follows from the framework: static or server.
+    const preset = frameworkOf(text('framework', base.framework) || base.framework)
     return {
       ...base,
-      framework: text('framework', base.framework) || base.framework,
+      framework: preset.key,
+      adapter: preset.adapter,
       outputDirectory: text('output_directory', base.outputDirectory),
       fallbackFile: text('fallback_file', base.fallbackFile),
-      adapter: text('adapter', base.adapter) || base.adapter,
       installCommand: text('install_command', base.installCommand),
       buildCommand: text('build_command', base.buildCommand),
       startCommand: text('start_command', base.startCommand),
+      buildRuntime: text('build_runtime', base.buildRuntime),
       pruneMode: text('prune_mode', base.pruneMode) || base.pruneMode,
     }
   }
@@ -272,26 +309,14 @@ export function sitePages(router: ConsoleRouter): void {
     if (value(ctx.form, 'source') === 'github') return createFromGit(ctx)
     const id = value(ctx.form, 'id')
     const source = filesSource(ctx)
-    const preset = frameworkOf(value(ctx.form, 'framework'))
-    const adapter = value(ctx.form, 'adapter') || preset.adapter
-    const startCommand = value(ctx.form, 'start_command') || preset.startCommand
-    if (adapter === 'ssr' && startCommand.trim() && source.kind !== 'upload') {
-      throw err('general_argument_invalid', 'An SSR app needs an uploaded source archive (.zip or .tar.gz), not the starter page or pasted HTML.')
-    }
+    // Only an upload has a framework; the starter and Write HTML are plain files.
+    const fields = source.kind === 'upload' ? buildFromForm(ctx, 'framework', false) : PLAIN_FILES
     const site = ctx.services.sites.create(id, {
       name: value(ctx.form, 'name') || id,
       enabled: true,
-      framework: preset.key,
-      outputDirectory: value(ctx.form, 'output_directory'),
-      fallbackFile: value(ctx.form, 'fallback_file'),
       domains: [],
       apiFunctionId: '',
-      installCommand: value(ctx.form, 'install_command') || preset.installCommand,
-      buildCommand: value(ctx.form, 'build_command') || preset.buildCommand,
-      startCommand,
-      buildRuntime: '',
-      adapter,
-      pruneMode: value(ctx.form, 'prune_mode') || 'auto',
+      ...fields,
     })
     const d = await deploy(ctx, site, source, true)
     if (d.status === 'failed') return ctx.go(`${siteUrl(site.id)}/deployments/${d.id}`, { tone: 'critical', text: 'Site created, but its files could not be deployed' })
@@ -380,10 +405,12 @@ export function sitePages(router: ConsoleRouter): void {
         )}
         ${settingsSection(
           'Build and run',
-          html`Static sites serve the upload as it is. SSR sites are installed, built and started here; the start command is saved with each new deployment, so a rollback keeps its own runtime.`,
-          html`<form method="post" action="${siteUrl(site.id)}">
+          site.provider_repository_id
+            ? 'Each push is installed and built here on this runtime. Server apps are then started; static sites serve the output folder.'
+            : 'A static site is served as you upload it. A server app is installed, built and started here. Each deployment keeps the runtime and start command it was made with, so a rollback runs as before.',
+          html`<form method="post" action="${siteUrl(site.id)}" class="stack-fields">
             <input type="hidden" name="section" value="build">
-            ${buildFields(site)}
+            ${buildFields(site.provider_repository_id ? 'git' : 'upload', buildValuesOf(site))}
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
           { id: 'site-runtime' },

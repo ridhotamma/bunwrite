@@ -429,7 +429,7 @@ describe('SSR sites: modes and limits', () => {
     server.services.sites.remove('crash')
   })
 
-  test('the console shows only the fields of the current adapter, and saves each card on its own', async () => {
+  test('the console shows only the fields of the current framework group, and saves each card on its own', async () => {
     createSite('static-console', { adapter: 'static', startCommand: '', installCommand: 'npm install', buildCommand: 'npm run build' })
     try {
       const auth = new ConsoleAuth(server.db)
@@ -439,19 +439,24 @@ describe('SSR sites: modes and limits', () => {
       const ssrPage = await (await fetch(`${base()}/console/sites/app/settings`, { headers: { cookie } })).text()
       expect(ssrPage).toContain('name="start_command"')
       expect(ssrPage).toContain('value="bun server.js two"')
-      expect(ssrPage).toContain('name="adapter"')
+      // The adapter follows from the framework, so there is no adapter select any more.
+      expect(ssrPage).not.toContain('name="adapter"')
       expect(ssrPage).toContain('name="install_command"')
+      expect(ssrPage).toContain('name="build_runtime"')
+      expect(ssrPage).toContain('<optgroup label="Server app: rendered on each request (SSR)">')
       expect(ssrPage).toContain('name="prune_mode"')
       expect(ssrPage).toMatch(/<option value="auto"\s+selected>/)
-      // SSR: the SSR block is visible and the static block is hidden.
-      expect(ssrPage).toMatch(/data-show-for="ssr"[^>]*>/)
-      expect(ssrPage).not.toMatch(/data-show-for="ssr"[^>]* hidden[^>]*>/)
-      expect(ssrPage).toMatch(/data-show-for="static"[^>]* hidden[^>]*>/)
+      // A server app (framework "other" with adapter ssr shows as "Other server"): its block shows, the static one is hidden.
+      expect(ssrPage).toMatch(/<option value="ssr-other"\s+selected>/)
+      const serverBlock = /data-show-for="[^"]*\bnextjs\b[^"]*" data-for-select="framework"([^>]*)>/g
+      const staticBlock = /data-show-for="other [^"]*" data-for-select="framework"([^>]*)>/
+      expect([...ssrPage.matchAll(serverBlock)].every((m) => !m[1]!.includes('hidden'))).toBe(true)
+      expect(staticBlock.exec(ssrPage)![1]).toContain('hidden')
 
       const staticPage = await (await fetch(`${base()}/console/sites/static-console/settings`, { headers: { cookie } })).text()
-      expect(staticPage).toMatch(/data-show-for="static"[^>]*>/)
-      expect(staticPage).not.toMatch(/data-show-for="static"[^>]* hidden[^>]*>/)
-      expect(staticPage).toMatch(/data-show-for="ssr"[^>]* hidden[^>]*>/)
+      expect(staticBlock.exec(staticPage)![1]).not.toContain('hidden')
+      // An uploaded static site has nothing built here: no runtime or commands.
+      expect([...staticPage.matchAll(serverBlock)].every((m) => m[1]!.includes('hidden'))).toBe(true)
 
       // Each card is its own form, with its own Save inside the card.
       for (const section of ['general', 'build', 'api']) {

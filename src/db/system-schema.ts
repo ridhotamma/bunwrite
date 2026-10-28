@@ -323,6 +323,8 @@ export const deployments = sqliteTable(
     activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
     chunksTotal: integer('chunks_total').notNull().default(1),
     chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    /** The function's runtime when this deployment was built; '' ran on the server's Bun. */
+    runtime: text('runtime').notNull().default(''),
     ...deploymentSource,
     ...timestamps,
   },
@@ -383,6 +385,8 @@ export const siteDeployments = sqliteTable(
     activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
     chunksTotal: integer('chunks_total').notNull().default(1),
     chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    /** The site's build runtime when this deployment was made, so a rollback runs on its own runtime; '' is the server's Bun. */
+    runtime: text('runtime').notNull().default(''),
     ...deploymentSource,
     ...timestamps,
   },

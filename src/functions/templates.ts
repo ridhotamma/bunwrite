@@ -1,4 +1,5 @@
 /** Runtimes the console offers and the starter code for each. */
+import { DEFAULT_RUNTIME, FUNCTION_RUNTIMES } from '~/runtimes/catalog'
 import type { CodeFile } from './deployments'
 
 export interface RuntimeOption {
@@ -7,16 +8,14 @@ export interface RuntimeOption {
 }
 
 /**
- * Node and Bun functions run under this server's Bun, Python ones under
- * python3, so the version is a label kept for Appwrite compatibility.
+ * Node.js and Bun functions run on that runtime, downloaded on first use (see
+ * runtimes/install.ts); Python ones on the server's python3. The default comes
+ * first.
  */
 export const RUNTIME_OPTIONS: RuntimeOption[] = [
-  { id: 'node-22', label: 'Node.js 22' },
-  { id: 'node-20', label: 'Node.js 20' },
-  { id: 'bun-1.1', label: 'Bun 1.1' },
-  { id: 'python-3.12', label: 'Python 3.12' },
-  { id: 'python-3.9', label: 'Python 3.9' },
-]
+  ...FUNCTION_RUNTIMES.filter((r) => r.id === DEFAULT_RUNTIME),
+  ...FUNCTION_RUNTIMES.filter((r) => r.id !== DEFAULT_RUNTIME),
+].map((r) => ({ id: r.id, label: r.note ? `${r.label} (${r.note})` : r.label }))
 
 export const SUPPORTED_RUNTIME_IDS = RUNTIME_OPTIONS.map((r) => r.id)
 

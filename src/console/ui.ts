@@ -80,9 +80,9 @@ export function settingsSection(
   title: string,
   hint: Html | string,
   body: Html,
-  options: { id?: string; badge?: Html; flush?: boolean } = {},
+  options: { id?: string; badge?: Html; flush?: boolean; attrs?: Html } = {},
 ): Html {
-  return html`<section class="settings-section" ${options.id ? html`id="${options.id}"` : ''}>
+  return html`<section class="settings-section" ${options.id ? html`id="${options.id}"` : ''} ${options.attrs ?? ''}>
     <div class="settings-aside">
       <div class="settings-heading"><h2>${title}</h2>${options.badge ? html`<span class="settings-badge">${options.badge}</span>` : ''}</div>
       <p class="subdued">${hint}</p>

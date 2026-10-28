@@ -205,14 +205,23 @@ export function repositoryPicker(installations: { id: string; organization: stri
 }
 
 /** The "GitHub repository" source of a create dialog: account, repository, branch and folder. */
-export function gitSourceFields(installations: { id: string; organization: string }[], idBase: string, detectLabel: string): Html {
-  return html`<div class="stack-fields" data-show-for="github" data-for-select="source" hidden>
+/**
+ * The "GitHub repository" source of a create page: account, repository,
+ * branch and folder. With `detectInto`, picking or changing any of them asks
+ * the server to detect the build settings and swaps them into that element.
+ * Otherwise a checkbox says whether the server detects them on create.
+ */
+export function gitSourceFields(installations: { id: string; organization: string }[], idBase: string, options: { detectInto?: string; detectLabel?: string } = {}): Html {
+  const detect = options.detectInto
+    ? html`hx-get="/console/vcs/detect-site" hx-trigger="change delay:300ms, repos-loaded" hx-include="this" hx-target="#${options.detectInto}" hx-swap="innerHTML" hx-sync="this:replace"`
+    : html``
+  return html`<div class="stack-fields" data-show-for="github" data-for-select="source" hidden ${detect}>
     ${repositoryPicker(installations, idBase)}
     <div class="fields">
       <label>Production branch<input name="provider_branch" class="mono" placeholder="The default branch"></label>
-      <label>Root directory<input name="provider_root_directory" class="mono" placeholder="./"><small>For monorepos.</small></label>
+      <label>Root directory<input name="provider_root_directory" class="mono" placeholder="./"><small>For monorepos: the folder with the app's package.json.</small></label>
     </div>
-    <label class="check"><input type="checkbox" name="detect" checked>${detectLabel}</label>
+    ${options.detectLabel ? html`<label class="check"><input type="checkbox" name="detect" checked>${options.detectLabel}</label>` : ''}
   </div>`
 }
 

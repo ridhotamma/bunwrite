@@ -75,14 +75,19 @@ export const FORM_SCRIPT = `
   // ---- Generic helpers ----
   const slug = (s) => s.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").replace(/-+$/, "").slice(0, 36)
   function showFor(scope) {
+    const blocks = new Set()
     for (const select of scope.querySelectorAll("[data-show-by]")) {
       if (select.type === "radio" && !select.checked) continue
       const form = select.form || document
       for (const el of form.querySelectorAll('[data-show-for][data-for-select="' + select.name + '"]')) {
         el.hidden = !el.dataset.showFor.split(" ").includes(select.value)
-        // Inputs in hidden blocks are disabled so they are not submitted.
-        for (const input of el.querySelectorAll("input,select,textarea")) input.disabled = el.hidden
+        blocks.add(el)
       }
+    }
+    // Inputs in hidden blocks are disabled so they are not submitted. Blocks
+    // can sit inside other blocks, so look at every hidden ancestor.
+    for (const el of blocks) {
+      for (const input of el.querySelectorAll("input,select,textarea")) input.disabled = Boolean(input.closest("[hidden]"))
     }
   }
   function disableWhen(scope) {

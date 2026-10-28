@@ -20,6 +20,8 @@ import { err } from '~/lib/errors'
 import { hostOf, siteHost, sitesDomainOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
 import type { ProxyService } from '~/proxy/service'
+import { parseRuntime, SERVER_BUN_LINE } from '~/runtimes/catalog'
+import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { siteBaseEnv } from './env'
 import { SITE_ADAPTERS } from './frameworks'
 import { siteHome, sitesDir } from './paths'
@@ -71,6 +73,8 @@ export interface SiteDeploymentRow extends SourceColumns {
   file_count: number
   total_size: number
   start_command: string
+  /** The build runtime when this deployment was made; '' is the server's Bun. */
+  runtime: string
   activate: number
   chunks_total: number
   chunks_uploaded: number
@@ -303,6 +307,12 @@ export class SiteService {
     if (!SITE_ADAPTERS.includes(adapter as (typeof SITE_ADAPTERS)[number])) {
       throw err('general_argument_invalid', `Adapter must be one of: ${SITE_ADAPTERS.join(', ')}.`)
     }
+    // Appwrite's static-1 means "no runtime": served as uploaded, or built on the server's Bun.
+    const buildRuntime = settings.buildRuntime.trim() === 'static-1' ? '' : settings.buildRuntime.trim()
+    const parsedRuntime = buildRuntime ? parseRuntime(buildRuntime) : null
+    if (buildRuntime && (!parsedRuntime || parsedRuntime.kind === 'python')) {
+      throw err('general_argument_invalid', `Build runtime must be a Node.js or Bun runtime, such as node-22 or bun-${SERVER_BUN_LINE}.`)
+    }
     const pruneMode = settings.pruneMode.trim() || 'auto'
     if (!isPruneMode(pruneMode)) throw err('general_argument_invalid', `Prune mode must be one of: ${PRUNE_MODES.join(', ')}.`)
     return {
@@ -310,6 +320,7 @@ export class SiteService {
       name,
       adapter,
       pruneMode,
+      buildRuntime,
       installCommand: settings.installCommand.trim(),
       buildCommand: settings.buildCommand.trim(),
       startCommand: settings.startCommand.trim(),
@@ -431,7 +442,7 @@ export class SiteService {
     if (!command) return null
     const cwd = join(sitesDir(this.config, site.id, deployment.id), site.output_directory)
     if (!existsSync(cwd)) return null
-    return { key: `${site.id}/${deployment.id}`, siteId: site.id, deploymentId: deployment.id, command, cwd }
+    return { key: `${site.id}/${deployment.id}`, siteId: site.id, deploymentId: deployment.id, command, cwd, runtime: deployment.runtime }
   }
 
   /** The last output of the site's app, for the console. */
@@ -470,12 +481,13 @@ export class SiteService {
 
   private insert(siteId: string, id: string, status: string, size: number, activate: boolean, chunks: number, uploaded: number, startCommand: string): void {
     const stamp = now()
+    const runtime = this.site(siteId).build_runtime
     this.sql
       .query(
-        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, siteId, status, size, startCommand, activate ? 1 : 0, chunks, uploaded, stamp, stamp)
+      .run(id, siteId, status, size, startCommand, runtime, activate ? 1 : 0, chunks, uploaded, stamp, stamp)
   }
 
   /** Store one upload (or one chunk of it). The files go live once every chunk is in. */
@@ -519,10 +531,10 @@ export class SiteService {
     const stamp = now()
     this.sql
       .query(
-        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
-         VALUES (?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+         VALUES (?, ?, 'processing', 0, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, site.id, site.start_command, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+      .run(id, site.id, site.start_command, site.build_runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
     const dir = sitesDir(this.config, site.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -591,7 +603,11 @@ export class SiteService {
       }
       const fromGit = this.deployment(siteId, id).type === 'vcs'
       const counts =
-        site.adapter === 'ssr' ? await this.buildSsr(site, id, dir, logs, set) : fromGit ? await this.buildStatic(site, dir, logs, set) : this.checkStatic(site, dir, logs)
+        site.adapter === 'ssr'
+          ? await this.buildSsr(site, id, dir, logs, set)
+          : fromGit
+            ? await this.buildStatic(site, this.deployment(siteId, id).runtime, dir, logs, set)
+            : this.checkStatic(site, dir, logs)
       logs.push('Ready.')
       set('ready', counts)
       if (this.deployment(siteId, id).activate) this.activate(siteId, id)
@@ -631,6 +647,7 @@ export class SiteService {
    */
   private async buildStatic(
     site: SiteRow,
+    runtime: string,
     dir: string,
     logs: string[],
     set: (status: string, counts?: { files: number; bytes: number }) => void,
@@ -643,7 +660,7 @@ export class SiteService {
     const sandbox = this.config.functionsSandbox
     const uid = sandbox?.uidFor(this.config.projectId, `site:${site.id}`)
     if (!sandbox || uid === undefined) {
-      await this.runSiteCommands(site, dir, logs, set, null)
+      await this.runSiteCommands(site, runtime, dir, logs, set, null)
       // Static files need no packages, and node_modules must not be served.
       rmSync(join(dir, 'node_modules'), { recursive: true, force: true })
       return this.checkStatic(site, dir, logs, true)
@@ -654,7 +671,7 @@ export class SiteService {
     mkdirSync(dir, { recursive: true })
     try {
       sandbox.adopt(work, siteHome(this.config, site.id), uid)
-      await this.runSiteCommands(site, work, logs, set, { sandbox, uid })
+      await this.runSiteCommands(site, runtime, work, logs, set, { sandbox, uid })
       const out = site.output_directory || '.'
       const pack = Bun.spawn(sandbox.wrap(uid, work, ['tar', '-cf', '-', out]), { stdout: 'pipe', stderr: 'pipe' })
       const unpack = Bun.spawn(['tar', '-xf', '-', '-C', dir], { stdin: pack.stdout, stdout: 'ignore', stderr: 'pipe' })
@@ -699,8 +716,8 @@ export class SiteService {
     if (!this.config.sitesBuildCommands) {
       if (site.install_command.trim() || site.build_command.trim()) logs.push('Skipped install and build commands (SITES_BUILD_COMMANDS=false).')
     } else {
-      const ran = await this.runSiteCommands(site, dir, logs, set, isolated ? { sandbox, uid } : null)
-      if (ran) await this.pruneBuild(site, command, dir, logs, isolated ? { sandbox, uid } : null)
+      const env = await this.runSiteCommands(site, deployment.runtime, dir, logs, set, isolated ? { sandbox, uid } : null)
+      if (env) await this.pruneBuild(site, command, dir, logs, isolated ? { sandbox, uid } : null, env)
     }
 
     const cwd = join(dir, site.output_directory)
@@ -746,6 +763,7 @@ export class SiteService {
     dir: string,
     logs: string[],
     sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
+    env: Record<string, string>,
   ): Promise<void> {
     const mode = (isPruneMode(site.prune_mode) ? site.prune_mode : 'auto') as PruneMode
     const script = pruneScript({ mode, startCommand, installCommand: site.install_command, appDir: site.output_directory })
@@ -758,7 +776,7 @@ export class SiteService {
       command: script,
       cwd: sandboxed ? undefined : dir,
       wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
-      env: siteBaseEnv(this.config, site.id),
+      env,
       timeoutMs: BUILD_TIMEOUT_MS,
     })
     const size = new RegExp(`^${SIZE_MARKER} (\\d+) (\\d+)$`, 'm').exec(result.output)
@@ -771,22 +789,34 @@ export class SiteService {
     if (size) logs.push(`Deployment size: ${formatSize(Number(size[1]) * 1024)} → ${formatSize(Number(size[2]) * 1024)}.`)
   }
 
-  /** Run `install_command` then `build_command`, as the site's user when isolated. True when any ran. */
+  /**
+   * Run `install_command` then `build_command` on the deployment's runtime, as
+   * the site's user when isolated. Returns the environment they ran with, or
+   * null when there was nothing to run.
+   */
   private async runSiteCommands(
     site: SiteRow,
+    runtimeId: string,
     dir: string,
     logs: string[],
     set: (status: string, counts?: { files: number; bytes: number }) => void,
     sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
-  ): Promise<boolean> {
+  ): Promise<Record<string, string> | null> {
     const commands = [
       ['install', site.install_command.trim()],
       ['build', site.build_command.trim()],
     ].filter(([, command]) => Boolean(command)) as [string, string][]
     if (!commands.length) {
       logs.push('No install or build command; using the upload as it is.')
-      return false
+      return null
     }
+    set('building')
+    const runtime = await ensureRuntime(this.config, runtimeId, (line) => {
+      logs.push(line)
+      set('building')
+    })
+    logs.push(`Runtime: ${runtime.version ? `${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}` : `this server's Bun ${process.versions.bun}`}`)
+    const env = withRuntime(siteBaseEnv(this.config, site.id), runtime)
     for (const [label, command] of commands) {
       logs.push(`$ ${command}`)
       set('building')
@@ -794,14 +824,14 @@ export class SiteService {
         command,
         cwd: sandboxed ? undefined : dir,
         wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
-        env: siteBaseEnv(this.config, site.id),
+        env,
         timeoutMs: BUILD_TIMEOUT_MS,
       })
       logs.push(result.output)
       if (result.timedOut) throw new Error(`The ${label} command timed out after ${BUILD_TIMEOUT_MS / 60000} minutes.`)
       if (result.code !== 0) throw new Error(`The ${label} command exited with code ${result.code}.`)
     }
-    return true
+    return env
   }
 
   /** Make a ready deployment the one that is served. Instant, so it is also how you roll back. */

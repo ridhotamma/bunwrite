@@ -23,7 +23,9 @@ import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
+import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { SOURCE_COLUMNS, sourceModel, sourceValues, type DeploymentSource, type SourceColumns } from '~/vcs/source'
+import { isPython } from './templates'
 import type { FunctionRow, FunctionService } from './service'
 import { buildToolsDir, PYTHON_PACKAGES_DIR } from './runtime'
 import { removeTree } from './sandbox'
@@ -50,6 +52,8 @@ export interface DeploymentRow extends SourceColumns {
   build_logs: string
   build_duration: number
   source_size: number
+  /** The function's runtime when this was built; '' runs on the server's Bun. */
+  runtime: string
   activate: number
   chunks_total: number
   chunks_uploaded: number
@@ -240,10 +244,10 @@ export class Deployments {
       const stamp = now()
       this.sql
         .query(
-          `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, 0, ?, ?)`,
+          `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, 0, ?, ?)`,
         )
-        .run(id, f.id, input.entrypoint, input.commands, total, input.activate ? 1 : 0, chunksFor(total), stamp, stamp)
+        .run(id, f.id, input.entrypoint, input.commands, total, f.runtime, input.activate ? 1 : 0, chunksFor(total), stamp, stamp)
       row = this.get(f.id, id)
       mkdirSync(deploymentDir(this.config, f.id), { recursive: true })
     }
@@ -313,10 +317,10 @@ export class Deployments {
     const stamp = now()
     this.sql
       .query(
-        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'processing', ?, ?, 1, 1, ?, ?)`,
+        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'processing', ?, ?, ?, 1, 1, ?, ?)`,
       )
-      .run(id, f.id, input.entrypoint, input.commands, size, input.activate ? 1 : 0, stamp, stamp)
+      .run(id, f.id, input.entrypoint, input.commands, size, f.runtime, input.activate ? 1 : 0, stamp, stamp)
     rmSync(dir, { recursive: true, force: true })
     for (const file of input.files) {
       const target = resolve(root, file.path)
@@ -337,10 +341,10 @@ export class Deployments {
     const stamp = now()
     this.sql
       .query(
-        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'processing', 0, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, f.id, f.entrypoint, f.commands, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+      .run(id, f.id, f.entrypoint, f.commands, f.runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
     const dir = deploymentDir(this.config, f.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -393,6 +397,13 @@ export class Deployments {
       const uid = sandbox?.uidFor(this.config.projectId, functionId)
       if (sandbox && uid !== undefined) sandbox.adopt(dir, functionHome(this.config, functionId), uid)
 
+      // Install the runtime now, so the first execution does not wait for a download.
+      const runtime = isPython(d.runtime) ? null : await ensureRuntime(this.config, d.runtime, (line) => {
+        logs.push(line)
+        set('building')
+      })
+      if (runtime?.version) logs.push(`Runtime: ${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}`)
+
       if (d.commands.trim() && !this.config.functionsBuildCommands) {
         logs.push(`Skipped the build command (FUNCTIONS_BUILD_COMMANDS=false): ${d.commands}`)
       } else if (d.commands.trim()) {
@@ -403,7 +414,7 @@ export class Deployments {
           command: d.commands,
           cwd: sandbox && uid !== undefined ? undefined : dir,
           wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv) : undefined,
-          env: this.buildEnv(f, dir),
+          env: withRuntime(this.buildEnv(f, dir), runtime),
           timeoutMs: BUILD_TIMEOUT_MS,
         })
         logs.push(result.output)

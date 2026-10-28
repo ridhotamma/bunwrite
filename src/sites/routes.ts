@@ -17,6 +17,7 @@ import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { applyProvider, projectOf } from '~/vcs/routes'
 import { NO_PROVIDER, providerOf, sourceModel } from '~/vcs/source'
+import { DEFAULT_RUNTIME, SITE_RUNTIMES } from '~/runtimes/catalog'
 import { FRAMEWORKS, frameworkOf } from './frameworks'
 import type { SiteDeploymentRow, SiteRow, SiteSettings } from './service'
 
@@ -160,8 +161,10 @@ export function siteRoutes(router: Router<AppContext>): void {
       frameworks: FRAMEWORKS.map((f) => ({
         key: f.key,
         name: f.name,
-        buildRuntime: f.adapter === 'ssr' ? 'node-22' : 'static-1',
-        runtimes: [f.adapter === 'ssr' ? 'node-22' : 'static-1'],
+        buildRuntime: f.buildCommand || f.adapter === 'ssr' ? DEFAULT_RUNTIME : 'static-1',
+        runtimes: f.buildCommand || f.adapter === 'ssr' ? SITE_RUNTIMES.map((r) => r.id) : ['static-1'],
+        // Bunwrite: static or server, for grouping in a picker.
+        group: f.group,
         adapters: [
           {
             key: f.adapter,

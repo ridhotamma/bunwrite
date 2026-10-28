@@ -61,9 +61,10 @@ adding it, so nobody can connect someone else's installation.
 
 - **New:** in **Create site** or **Create function**, choose **GitHub
   repository**, then pick the account, repository, branch and (for monorepos)
-  root directory. With "Detect" on, the framework and commands (or the
-  function's runtime, entry file and build command) are read from the
-  repository's `package.json`, lockfile or `requirements.txt`.
+  root directory. For a site, picking the repository fills in the framework, runtime and
+  commands from its `package.json`, lockfile, `.nvmrc` or `engines.node`; change
+  anything before creating it. For a function, "Detect" reads its runtime,
+  entry file and build command the same way (or from `requirements.txt`).
 - **Existing:** the **Git repository** card on its Settings page.
 - **API:** send `installationId`, `providerRepositoryId`, `providerBranch`,
   `providerRootDirectory` and `providerSilentMode` to create or update a site

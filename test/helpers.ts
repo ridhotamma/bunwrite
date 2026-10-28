@@ -101,6 +101,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sitesSsrMaxProcesses: 2,
     sitesSsrKeepPrevious: 2,
     vcsGithub: vcsGithubFromEnv({}),
+    // Tests never download runtimes unless they point this at a fake mirror.
+    runtimes: { download: false, nodeMirror: 'http://127.0.0.1:9/dist', bunReleases: 'http://127.0.0.1:9/releases' },
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,

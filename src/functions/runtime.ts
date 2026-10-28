@@ -8,6 +8,8 @@ import { dirname, join, resolve } from 'node:path'
 
 import type { Config } from '~/config'
 import pythonRunnerPath from './runner-python.py' with { type: 'file' }
+// @ts-expect-error TypeScript sees runner-node.d.mts; Bun's file loader gives this file's path.
+import nodeRunnerPath from './runner-node.mjs' with { type: 'file' }
 import { allowPassThrough } from './sandbox'
 
 /** Isolated functions run as other users: shared runtime files must be usable by them (the server's umask is 077). */
@@ -29,6 +31,26 @@ export function pythonRunner(config: Config): string {
   return path
 }
 
+/**
+ * The JavaScript runner for functions on a downloaded Node.js or Bun. In a
+ * compiled binary it is embedded, so it is copied next to the runtimes where
+ * those processes (and isolated function users) can read it.
+ */
+export function nodeRunner(config: Config): string {
+  if (!Bun.isStandaloneExecutable) return nodeRunnerPath
+  const dir = runtimesRoot(config)
+  const path = join(dir, 'runner-node.mjs')
+  mkdirSync(dir, { recursive: true })
+  const text = readFileSync(nodeRunnerPath)
+  let current: Buffer | null = null
+  try {
+    current = readFileSync(path)
+  } catch {}
+  if (!current || !current.equals(text)) writeFileSync(path, text)
+  shareWithFunctions(config, dir, [[path, 0o644]])
+  return path
+}
+
 /** Where `pip install` puts packages during a Python build; the runner imports from it. */
 export const PYTHON_PACKAGES_DIR = '.python_packages'
 
@@ -42,11 +64,26 @@ const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
  * real npm or bun on the server is used when there is one.
  */
 export function buildToolsDir(config: Config): string {
-  const base = config.databasePath === ':memory:' ? join(tmpdir(), 'bunwrite') : dirname(resolve(config.databasePath))
-  const dir = join(base, '.runtimes', 'bin')
+  const dir = join(runtimesRoot(config), 'bin')
   const bun = `BUN_BE_BUN=1 exec ${shellQuote(process.execPath)}`
-  const scripts: Record<string, string> = {
-    bun: `${bun} "$@"`,
+  writeShims(config, dir, { bun: `${bun} "$@"`, ...bunShims(bun) })
+  return dir
+}
+
+/** `<data>/.runtimes`: shims, runners and downloaded Node.js and Bun builds. */
+export function runtimesRoot(config: Config): string {
+  const base = config.databasePath === ':memory:' ? join(tmpdir(), 'bunwrite') : dirname(resolve(config.databasePath))
+  return join(base, '.runtimes')
+}
+
+/**
+ * `node`, `npm`, `npx` and `bunx` for a Bun with no Node.js beside it. `bun`
+ * is the command that runs that Bun, such as `exec /path/to/bun`.
+ */
+export function bunShims(bun: string): Record<string, string> {
+  return {
+    // Bun runs Node.js scripts, so start commands such as `node server.js` work.
+    node: `${bun} "$@"`,
     bunx: `${bun} x "$@"`,
     npx: `${bun} x "$@"`,
     npm: `# npm is not installed here; the common commands run through Bun.
@@ -73,6 +110,10 @@ case "$cmd" in
   *) echo "npm is not installed on this server. Build commands can use npm install, npm ci, npm run and npx (run through Bun), or bun itself." >&2; exit 127 ;;
 esac`,
   }
+}
+
+/** Write small `#!/bin/sh` commands into `dir`, usable by isolated sites and functions. */
+export function writeShims(config: Config, dir: string, scripts: Record<string, string>): void {
   mkdirSync(dir, { recursive: true })
   for (const [name, body] of Object.entries(scripts)) {
     const path = join(dir, name)
@@ -84,5 +125,4 @@ esac`,
     if (current !== text) writeFileSync(path, text, { mode: 0o755 })
   }
   shareWithFunctions(config, dir, Object.keys(scripts).map((name) => [join(dir, name), 0o755]))
-  return dir
 }

@@ -2,9 +2,12 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html, page } from '~/console/html'
-import { header } from '~/console/ui'
+import { alert, header } from '~/console/ui'
 import { approveView, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
-import { SITES } from '~/console/views/sites'
+import { buildFields, presetValues, SITES } from '~/console/views/sites'
+import { runtimeLabel } from '~/runtimes/catalog'
+import { frameworkOf } from '~/sites/frameworks'
+import { detectFramework } from '~/vcs/detect'
 import { err } from '~/lib/errors'
 import type { ProjectRuntime } from '~/projects/types'
 import type { GithubPull } from '~/vcs/github'
@@ -71,9 +74,32 @@ export function vcsPages(router: ConsoleRouter): void {
     const installation = ctx.services.vcs.find(url.searchParams.get('installation_id') ?? '')
     if (!installation) return page(repositoryOptions([], 'Pick an account.'))
     try {
-      return page(repositoryOptions(await ctx.hub.github.repositories(installation.provider_installation_id)))
+      // The Create site page detects the build settings of the first repository once the list is in.
+      return page(repositoryOptions(await ctx.hub.github.repositories(installation.provider_installation_id)), 200, { 'hx-trigger': 'repos-loaded' })
     } catch (error) {
       return page(repositoryOptions([], error instanceof Error ? error.message : String(error)))
+    }
+  })
+
+  /** htmx partial: a site's build settings, detected from the picked repository, branch and folder. */
+  router.get('/console/vcs/detect-site', async ({ ctx, url }) => {
+    const q = url.searchParams
+    const installation = ctx.services.vcs.find(q.get('installation_id') ?? '')
+    const repositoryId = q.get('provider_repository_id') ?? ''
+    if (!installation || !/^\d+$/.test(repositoryId)) return page(buildFields('git', presetValues('other'), 'git_framework'))
+    const root = (q.get('provider_root_directory') ?? '').replace(/^\.?\/+|\/+$/g, '')
+    const branch = q.get('provider_branch') ?? ''
+    const gh = ctx.hub.github
+    try {
+      const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
+      const found = await detectFramework(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
+      const preset = frameworkOf(found.framework)
+      return page(html`${alert('success', html`Detected <b>${preset.name}</b> on ${runtimeLabel(found.buildRuntime)}. Check the commands, then create the site.`)}
+        ${buildFields('git', { ...found, pruneMode: 'auto' }, 'git_framework')}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return page(html`${alert('warning', html`Could not read the repository (${message}). Pick the framework yourself.`)}
+        ${buildFields('git', presetValues('other'), 'git_framework')}`)
     }
   })
 

@@ -26,6 +26,7 @@ import { errorResponse } from '~/lib/http'
 import type { Services } from '~/services'
 import { sitePage } from './pages'
 import type { SiteDeploymentRow, SiteRow } from './service'
+import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { siteRuntimeEnv } from './env'
 
 /** How long an app may take to open its port. */
@@ -57,6 +58,8 @@ export interface SsrTarget {
   command: string
   /** Working directory: the deployment folder plus `outputDirectory`. */
   cwd: string
+  /** The deployment's runtime, such as node-22; '' runs on the server's Bun. */
+  runtime: string
 }
 
 interface RunningApp {
@@ -271,9 +274,11 @@ export class SsrRuntime {
     const sandboxed = this.sandbox !== null && uid !== undefined
     let proc: Bun.Subprocess
     try {
+      // Installed by the build; only a runtime removed since then downloads here.
+      const runtime = await ensureRuntime(this.config, target.runtime, (line) => this.log(app, `[runtime] ${line}`))
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
-        env: siteRuntimeEnv(this.config, target.siteId, port),
+        env: withRuntime(siteRuntimeEnv(this.config, target.siteId, port), runtime),
         stdout: 'pipe',
         stderr: 'pipe',
         // One session per app: stopping it takes `npm start`'s children too.

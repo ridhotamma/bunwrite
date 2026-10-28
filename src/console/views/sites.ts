@@ -4,7 +4,9 @@ import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
-import { FRAMEWORKS } from '~/sites/frameworks'
+import { DEFAULT_RUNTIME, SERVER_BUN, SITE_RUNTIMES } from '~/runtimes/catalog'
+import { FRAMEWORKS, frameworkForSite, frameworkOf } from '~/sites/frameworks'
+import { runtimeSelect } from '~/console/views/runtimes'
 import { SITE_IN_PROGRESS, type SiteDeploymentRow, type SiteRow } from '~/sites/service'
 
 export const SITES = '/console/sites'
@@ -27,24 +29,31 @@ export function siteStatus(site: SiteRow, latest: SiteDeploymentRow | null): Htm
   return latest?.status === 'failed' ? badge('Deploy failed', 'critical') : badge('No deployment')
 }
 
-/** Where the files come from: a starter page, an uploaded folder, one HTML file, or (new sites) a GitHub repository. */
+/** Where the files come from: a GitHub repository (new sites), an uploaded folder, a starter page, or one HTML file. */
 function sourceFields(existing: boolean, installations: { id: string; organization: string }[] = [], hideLegend = false): Html {
+  const github = installations.length > 0
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
-  const choices = [
-    choice('upload', 'Upload a folder', 'A .zip or .tar.gz of the site, or of its build output.', existing),
-    choice('starter', 'htmx starter', 'A page with htmx, ready to edit. No build step.', !existing),
-    choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
-    ...(installations.length ? [choice('github', 'GitHub repository', 'Build on every push; other branches get previews.', false)] : []),
-  ]
+  const choices = existing
+    ? [
+        choice('upload', 'Upload a folder', 'A .zip or .tar.gz of the site, or of its build output.', true),
+        choice('starter', 'htmx starter', 'A page with htmx, ready to edit. No build step.', false),
+        choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
+      ]
+    : [
+        ...(github ? [choice('github', 'GitHub repository', 'Builds here on every push; other branches get previews.', true)] : []),
+        choice('upload', 'Upload a folder', 'A .zip or .tar.gz: built output, or source for a server app.', false),
+        choice('starter', 'htmx starter', 'A ready-made page. Plain files, nothing to build.', !github),
+        choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
+      ]
   return html`<fieldset class="code-source">
-      <legend class="${hideLegend ? 'visually-hidden' : ''}">Files</legend>
-      <div class="choice">${existing ? choices : [choices[1], choices[0], ...choices.slice(2)]}</div>
+      <legend class="${hideLegend ? 'visually-hidden' : ''}">Source</legend>
+      <div class="choice">${choices}</div>
     </fieldset>
-    ${installations.length ? gitSourceFields(installations, 'create-site', 'Detect the framework and commands from the repository') : ''}
+    ${github ? gitSourceFields(installations, 'create-site', { detectInto: 'git-build-fields' }) : ''}
     <div data-show-for="upload" data-for-select="source" hidden>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
-        <small>Static: served exactly as uploaded, so build before uploading. SSR: the source is installed and built here. For large sites use <code>bunwrite push sites</code>.</small></label>
+        <small>For a static site, upload what the build made. For a server app, upload the source: it is installed, built and started here. For large sites use <code>bunwrite push sites</code>.</small></label>
     </div>
     <div data-show-for="paste" data-for-select="source" hidden>
       <label>index.html<textarea name="html" class="mono tall code-editor" spellcheck="false" required><!doctype html>
@@ -54,40 +63,95 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
   <h1>Hello</h1>
 </body>
 </html></textarea></label>
-    </div>`
+    </div>
+    ${existing ? '' : html`<p class="help" data-show-for="starter paste" data-for-select="source" ${github ? 'hidden' : ''} style="margin:0">Served as plain files from this server. There is nothing to build, so no framework or runtime to pick.</p>`}`
 }
 
-function frameworkSelect(current = 'other'): Html {
-  return html`<label>Framework<select name="framework">${FRAMEWORKS.map((f) => html`<option value="${f.key}" ${f.key === current ? 'selected' : ''}>${f.name}</option>`)}</select>
-    <small>Static frameworks are uploaded after your own build. SSR frameworks are built and run here.</small></label>`
+const keysOf = (group: 'static' | 'server') => FRAMEWORKS.filter((f) => f.group === group).map((f) => f.key).join(' ')
+const STATIC_KEYS = keysOf('static')
+const SERVER_KEYS = keysOf('server')
+
+/** The value each framework puts in a field, for data-follow. */
+const follow = (select: string, field: 'outputDirectory' | 'fallbackFile' | 'startCommand' | 'installCommand' | 'buildCommand') =>
+  html`data-follow="${select}" data-follow-values="${JSON.stringify(Object.fromEntries(FRAMEWORKS.map((f) => [f.key, f[field]])))}"`
+
+function frameworkSelect(name: string, current: string): Html {
+  const option = (f: (typeof FRAMEWORKS)[number]) => html`<option value="${f.key}" ${f.key === current ? 'selected' : ''}>${f.name}</option>`
+  return html`<label>Framework<select name="${name}" data-show-by>
+      <optgroup label="Static site: files to serve">${FRAMEWORKS.filter((f) => f.group === 'static').map(option)}</optgroup>
+      <optgroup label="Server app: rendered on each request (SSR)">${FRAMEWORKS.filter((f) => f.group === 'server').map(option)}</optgroup>
+    </select><small>Pick "Other static build" or "Other server" when yours is not listed; the commands below can be anything.</small></label>`
 }
 
-const follow = (field: 'outputDirectory' | 'fallbackFile' | 'adapter' | 'startCommand') =>
-  JSON.stringify(Object.fromEntries(FRAMEWORKS.map((f) => [f.key, f[field]])))
-
-function adapterField(site?: SiteRow): Html {
-  return html`<label>Adapter<select name="adapter" data-show-by data-follow="framework" data-follow-values="${follow('adapter')}">
-      <option value="static" ${!site || site.adapter === 'static' ? 'selected' : ''}>Static files (uploaded as they are)</option>
-      <option value="ssr" ${site?.adapter === 'ssr' ? 'selected' : ''}>SSR app (built and run here)</option>
-    </select><small>Static serves the upload as it is. SSR installs, builds and starts it.</small></label>`
+/** What the build fields show: a site's settings, a framework's defaults, or what detection found. */
+export interface BuildValues {
+  framework: string
+  outputDirectory: string
+  fallbackFile: string
+  installCommand: string
+  buildCommand: string
+  startCommand: string
+  buildRuntime: string
+  pruneMode: string
 }
 
-function outputDirectoryField(site?: SiteRow): Html {
-  return html`<label>Output directory<input name="output_directory" class="mono" value="${site?.output_directory ?? ''}" placeholder="dist" data-follow="framework" data-follow-values="${follow('outputDirectory')}"><small>Static: the folder inside the upload to serve. SSR: the app folder the start command runs in.</small></label>`
+export function buildValuesOf(site: SiteRow): BuildValues {
+  return {
+    framework: frameworkForSite(site.framework, site.adapter).key,
+    outputDirectory: site.output_directory,
+    fallbackFile: site.fallback_file,
+    installCommand: site.install_command,
+    buildCommand: site.build_command,
+    startCommand: site.start_command,
+    buildRuntime: site.build_runtime,
+    pruneMode: site.prune_mode,
+  }
 }
 
-function fallbackField(site?: SiteRow): Html {
-  return html`<label>Fallback file<input name="fallback_file" class="mono" value="${site?.fallback_file ?? ''}" placeholder="index.html" data-follow="framework" data-follow-values="${follow('fallbackFile')}"><small>For static single-page apps: served for paths with no file.</small></label>`
+export function presetValues(key: string, buildRuntime = DEFAULT_RUNTIME): BuildValues {
+  const f = frameworkOf(key)
+  return {
+    framework: f.key,
+    outputDirectory: f.outputDirectory,
+    fallbackFile: f.fallbackFile,
+    installCommand: f.installCommand,
+    buildCommand: f.buildCommand,
+    startCommand: f.startCommand,
+    buildRuntime,
+    pruneMode: 'auto',
+  }
 }
 
-function ssrFields(site: SiteRow | undefined, ssr: boolean): Html {
-  return html`<div class="stack-fields" data-show-for="ssr" data-for-select="adapter" ${ssr ? '' : 'hidden'}>
-      <label>Start command<input name="start_command" class="mono" value="${site?.start_command ?? ''}" placeholder="node .output/server/index.mjs" data-follow="framework" data-follow-values="${follow('startCommand')}"><small>Runs in the deployment folder with <code>PORT</code> and <code>HOST=127.0.0.1</code>. Empty runs the API function for every path instead.</small></label>
+/**
+ * Framework, then only the fields it uses. `upload`: a static framework is
+ * served as uploaded, so it only needs the output folder; a server app is
+ * installed, built and started here. `git`: everything is built here, so the
+ * runtime and commands always show. `select` names the framework select (the
+ * Create site page has one per source).
+ */
+export function buildFields(mode: 'upload' | 'git', v: BuildValues, select = 'framework'): Html {
+  const server = frameworkOf(v.framework).group === 'server'
+  const forStatic = html`data-show-for="${STATIC_KEYS}" data-for-select="${select}"`
+  const forServer = html`data-show-for="${SERVER_KEYS}" data-for-select="${select}"`
+  const runtime = v.buildRuntime || SERVER_BUN
+  return html`${frameworkSelect(select, v.framework)}
+    <div class="stack-fields" ${mode === 'upload' ? forServer : ''} ${mode === 'upload' && !server ? 'hidden' : ''}>
+      ${runtimeSelect('build_runtime', runtime, SITE_RUNTIMES, "Install, build and start run on this. Node.js and Bun are downloaded the first time a site uses that version; this server's Bun needs no download.")}
       <div class="fields">
-        <label>Install command<input name="install_command" class="mono" value="${site?.install_command ?? ''}" placeholder="npm install"><small>Runs in the deployment folder before the build.</small></label>
-        <label>Build command<input name="build_command" class="mono" value="${site?.build_command ?? ''}" placeholder="npm run build"><small>Runs after the install command.</small></label>
+        <label>Install command<input name="install_command" class="mono" value="${v.installCommand}" placeholder="npm install" ${follow(select, 'installCommand')}><small>Runs first, in the app folder.</small></label>
+        <label>Build command<input name="build_command" class="mono" value="${v.buildCommand}" placeholder="npm run build" ${follow(select, 'buildCommand')}><small>Runs after the install command.</small></label>
       </div>
-      ${pruneField(site)}
+    </div>
+    <div class="fields" ${forStatic} ${server ? 'hidden' : ''}>
+      <label>Output folder<input name="output_directory" class="mono" value="${v.outputDirectory}" placeholder="dist" ${follow(select, 'outputDirectory')}><small>${mode === 'upload' ? 'The folder inside the upload to serve. Empty serves the top.' : 'The folder the build writes, which is served. Empty serves the top.'}</small></label>
+      <label>Fallback file<input name="fallback_file" class="mono" value="${v.fallbackFile}" placeholder="index.html" ${follow(select, 'fallbackFile')}><small>For single-page apps: served for paths with no file.</small></label>
+    </div>
+    <div class="stack-fields" ${forServer} ${server ? '' : 'hidden'}>
+      <div class="fields">
+        <label>Start command<input name="start_command" class="mono" value="${v.startCommand}" placeholder="node .output/server/index.mjs" ${follow(select, 'startCommand')}><small>Starts the app with <code>PORT</code> and <code>HOST=127.0.0.1</code> set.</small></label>
+        <label>App folder<input name="output_directory" class="mono" value="${server ? v.outputDirectory : ''}" placeholder="./" ${follow(select, 'outputDirectory')}><small>Where the start command runs, for monorepos. Empty is the top.</small></label>
+      </div>
+      ${pruneField(v.pruneMode)}
     </div>`
 }
 
@@ -98,23 +162,17 @@ const PRUNE_OPTIONS: [string, string][] = [
   ['none', 'Keep everything'],
 ]
 
-function pruneField(site?: SiteRow): Html {
-  const current = site?.prune_mode || 'auto'
-  return html`<label>After the build<select name="prune_mode">${PRUNE_OPTIONS.map(([key, label]) => html`<option value="${key}" ${key === current ? 'selected' : ''}>${label}</option>`)}</select>
+function pruneField(current: string): Html {
+  return html`<label>After the build<select name="prune_mode">${PRUNE_OPTIONS.map(([key, label]) => html`<option value="${key}" ${key === (current || 'auto') ? 'selected' : ''}>${label}</option>`)}</select>
     <small>Frees disk space on every kept deployment. Automatic removes node_modules when the start command runs a Next.js standalone or Nuxt <code>.output</code> build, and otherwise removes dev dependencies only. Pick "Keep everything" if the app needs a package listed under <code>devDependencies</code>.</small></label>`
 }
 
-/** Framework and adapter, plus only the fields that adapter uses. */
-export function buildFields(site?: SiteRow): Html {
-  const ssr = site?.adapter === 'ssr'
-  return html`${frameworkSelect(site?.framework)}
-    <div class="fields">${adapterField(site)}${outputDirectoryField(site)}</div>
-    <div class="fields" data-show-for="static" data-for-select="adapter" ${ssr ? 'hidden' : ''}>${fallbackField(site)}</div>
-    ${ssrFields(site, ssr)}`
-}
-
-/** The Create site page: general, files and build settings in sections, like the other create pages. */
+/**
+ * The Create site page. The source comes first and decides what follows:
+ * GitHub and uploads get build settings, the starter and Write HTML none.
+ */
 export function siteCreateView(sitesDomain: string, installations: { id: string; organization: string }[] = []): Html {
+  const github = installations.length > 0
   return html`${header('Create site', { back: SITES })}
     <form method="post" action="${SITES}" enctype="multipart/form-data" hx-boost="false">
       ${settingsSection(
@@ -126,18 +184,25 @@ export function siteCreateView(sitesDomain: string, installations: { id: string;
         </div>`,
       )}
       ${settingsSection(
-        'Files',
-        installations.length
-          ? 'Start from a page, upload a folder, write HTML, or build a GitHub repository on every push.'
-          : 'Start from a page, upload a folder, or write HTML. Add a GitHub installation in Settings → Git to deploy from a repository.',
+        'Source',
+        github
+          ? 'Where the code comes from. A repository builds on every push; the starter and Write HTML are plain files.'
+          : 'Where the code comes from. To deploy from a repository, add a GitHub installation in Settings → Git.',
         html`<div class="stack-fields">${sourceFields(false, installations, true)}</div>`,
       )}
+      ${github
+        ? settingsSection(
+            'Build and run',
+            'Filled in from the repository when you pick it. Change anything that is not right.',
+            html`<div id="git-build-fields" class="stack-fields">${buildFields('git', presetValues('other'), 'git_framework')}</div>`,
+            { attrs: html`data-show-for="github" data-for-select="source"` },
+          )
+        : ''}
       ${settingsSection(
         'Build and run',
-        installations.length
-          ? 'Static sites are served as they are; SSR frameworks are built and run here. From a GitHub repository with Detect on, these come from the repository.'
-          : 'Static sites are served as they are; SSR frameworks are built and run here.',
-        buildFields(),
+        'A static site is served as you upload it. A server app is uploaded as source, then installed, built and started here.',
+        html`<div class="stack-fields">${buildFields('upload', presetValues('vite'))}</div>`,
+        { attrs: html`data-show-for="upload" data-for-select="source" hidden` },
       )}
       ${pageFooter(SITES, 'Create site')}
     </form>`

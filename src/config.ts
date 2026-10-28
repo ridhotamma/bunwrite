@@ -4,6 +4,7 @@ import type { FunctionSandbox } from './functions/sandbox'
 import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
+import { DEFAULT_RUNTIMES, type RuntimesConfig } from './runtimes/install'
 
 export interface SmtpConfig {
   host: string
@@ -191,6 +192,8 @@ export interface Config {
   sitesSsrKeepPrevious: number
   /** GitHub App for Git deployments; see VcsGithubConfig. */
   vcsGithub: VcsGithubConfig
+  /** Node.js and Bun builds for sites and functions (RUNTIMES_*). */
+  runtimes: RuntimesConfig
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -328,6 +331,11 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sitesSsrMaxProcesses: Math.max(1, ssrMax),
     sitesSsrKeepPrevious: ssrKeep,
     vcsGithub: vcsGithubFromEnv(env),
+    runtimes: {
+      download: env.RUNTIMES_DOWNLOAD !== 'false',
+      nodeMirror: (env.RUNTIMES_NODE_MIRROR || DEFAULT_RUNTIMES.nodeMirror).replace(/\/+$/, ''),
+      bunReleases: env.RUNTIMES_BUN_RELEASES || DEFAULT_RUNTIMES.bunReleases,
+    },
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

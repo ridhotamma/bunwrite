@@ -8,6 +8,7 @@ import { vcsGithubFromEnv } from '~/config'
 import { ConsoleAuth } from '~/console/auth'
 import { sitesDir } from '~/sites/paths'
 import { branchSlug, parsePreview, slugify } from '~/sites/previews'
+import { SERVER_BUN } from '~/runtimes/catalog'
 import { detectFramework, detectRuntime } from '~/vcs/detect'
 import { signState } from '~/vcs/state'
 import { KEY, PROJECT, startServer, testSchema, type TestServer } from './helpers'
@@ -241,7 +242,21 @@ describe('Git: detection and preview names', () => {
     expect(vite).toMatchObject({ framework: 'react', adapter: 'static', outputDirectory: 'dist', installCommand: 'npm ci', buildCommand: 'npm run build' })
     expect((await detectFramework(['index.html'], async () => null)).framework).toBe('other')
     expect(await detectRuntime(['main.py', 'requirements.txt'], async () => null)).toEqual({ runtime: 'python-3.12', entrypoint: 'main.py', commands: 'pip install -r requirements.txt' })
-    expect((await detectRuntime(['package.json', 'bun.lock'], pkg({ hono: '4' }))).runtime).toBe('bun-1.1')
+    expect((await detectRuntime(['package.json', 'bun.lock'], pkg({ hono: '4' }))).runtime).toBe(SERVER_BUN)
+
+    // The frameworks added with real runtimes, and the runtime a project asks for.
+    expect(await detectFramework(['package.json'], pkg({ '@tanstack/react-start': '1', react: '19', vite: '7' }))).toMatchObject({ framework: 'tanstack-start', adapter: 'ssr', startCommand: 'node .output/server/index.mjs' })
+    expect(await detectFramework(['package.json'], pkg({ express: '5' }, { start: 'node server.js' }))).toMatchObject({ framework: 'node', adapter: 'ssr', startCommand: 'npm run start', buildCommand: '' })
+    expect((await detectFramework(['package.json'], pkg({ '@react-router/dev': '7' }))).framework).toBe('react-router')
+    expect((await detectFramework(['package.json'], pkg({ '@sveltejs/kit': '2', '@sveltejs/adapter-static': '3' }))).framework).toBe('sveltekit-static')
+    const nextExport = async (p: string) => (p === 'package.json' ? JSON.stringify({ dependencies: { next: '15' }, scripts: { build: 'next build' } }) : p === 'next.config.mjs' ? "export default { output: 'export' }" : null)
+    expect(await detectFramework(['package.json', 'next.config.mjs'], nextExport)).toMatchObject({ framework: 'next-static', adapter: 'static', outputDirectory: 'out' })
+    const engines = (node: string) => async (p: string) => (p === 'package.json' ? JSON.stringify({ dependencies: { next: '15' }, engines: { node } }) : null)
+    expect((await detectFramework(['package.json'], engines('>=18'))).buildRuntime).toBe('node-22')
+    expect((await detectFramework(['package.json'], engines('^24.1'))).buildRuntime).toBe('node-24')
+    const nvmrc = async (p: string) => (p === 'package.json' ? '{"dependencies":{"vite":"7"}}' : p === '.nvmrc' ? 'v20.11.0\n' : null)
+    expect((await detectFramework(['package.json', '.nvmrc'], nvmrc)).buildRuntime).toBe('node-20')
+    expect((await detectFramework(['package.json', 'bun.lock'], pkg({ hono: '4' }))).buildRuntime).toBe(SERVER_BUN)
   })
 
   test('preview labels fit a DNS label and split at the last --', () => {

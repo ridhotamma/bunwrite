@@ -186,10 +186,14 @@ logs and exits non-zero.
 
 ## Runtimes
 
-Available labels: `node-22`, `node-20`, `bun-1.1`, `python-3.12`, `python-3.9`.
-The Node/Bun labels select the same Bun runtime in Bunwrite; the version is kept
-for Appwrite compatibility. Python needs the Python runtime enabled on the
-server.
+Node.js (`node-20`, `node-22`, `node-24`, `node-26`) and Bun (`bun-1.1` …
+`bun-1.4`) are real: the server downloads that version the first time a
+deployment needs it and runs the function on it. The Bun line the server runs
+on needs no download. Code that uses Bun-only APIs (`Bun.*`) needs a `bun-*`
+runtime. Deployments made before this, and functions run from the code folder,
+keep running on the server's Bun. `RUNTIMES_DOWNLOAD=false` runs every Node.js
+and Bun runtime on the server's Bun. Python (`python-*`) uses the server's
+`python3` and needs the Python runtime enabled on the server.
 
 ## Function domains
 

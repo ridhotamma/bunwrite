@@ -24,7 +24,8 @@ import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
 import { deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
-import { pythonRunner } from './runtime'
+import { nodeRunner, pythonRunner } from './runtime'
+import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 /** Request headers a function never sees: credentials. */
@@ -627,25 +628,28 @@ export class FunctionService {
    * relative to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The
    * last one also repairs paths stored against the wrong folder by an uploaded import.
    */
-  codeDir(f: FunctionRow): { dir: string | null; tried: string[]; entrypoint: string } {
+  codeDir(f: FunctionRow): { dir: string | null; tried: string[]; entrypoint: string; runtime: string } {
     if (f.deployment_id) {
       const deployment = this.sql
-        .query<{ entrypoint: string }, [string, string]>("SELECT entrypoint FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'")
+        .query<{ entrypoint: string; runtime: string }, [string, string]>("SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'")
         .get(f.deployment_id, f.id)
       const dir = deploymentDir(this.config, f.id, f.deployment_id)
       // An isolated deployment folder is closed to the server; the build already checked the entrypoint.
       const present = existsSync(join(dir, deployment?.entrypoint ?? '')) || (Boolean(this.config.functionsSandbox) && existsSync(dir))
-      if (deployment && present) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint }
+      if (deployment && present) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint, runtime: deployment.runtime }
     }
+    // Code from the code folder (schema push) runs on the server's Bun, as it always has.
     const base = this.config.functionsDir
     const tried = [...new Set([isAbsolute(f.path) ? f.path : resolve(base, f.path), join(base, 'functions', f.id)])]
     const dir = tried.find((d) => existsSync(join(d, f.entrypoint))) ?? null
-    return { dir, tried: tried.map((d) => join(d, f.entrypoint)), entrypoint: f.entrypoint }
+    return { dir, tried: tried.map((d) => join(d, f.entrypoint)), entrypoint: f.entrypoint, runtime: '' }
   }
 
-  private command(f: FunctionRow, dir: string, entrypoint: string): string[] {
+  private command(f: FunctionRow, dir: string, entrypoint: string, runtime: ResolvedRuntime | null): string[] {
     const entry = join(dir, entrypoint)
     if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', pythonRunner(this.config), entry]
+    // A downloaded Node.js or Bun runs the plain-JavaScript runner itself.
+    if (runtime?.bin) return [join(runtime.bin, runtime.kind === 'node' ? 'node' : 'bun'), nodeRunner(this.config), entry]
     if (f.runtime.startsWith('node') || f.runtime.startsWith('bun')) {
       return Bun.isStandaloneExecutable ? [process.execPath, NODE_RUNNER_MODE, entry] : [process.execPath, RUNNER_NODE, entry]
     }
@@ -662,7 +666,7 @@ export class FunctionService {
     let logs = ''
     let errors = ''
     try {
-      const { dir, tried, entrypoint } = this.codeDir(f)
+      const { dir, tried, entrypoint, runtime: runtimeId } = this.codeDir(f)
       if (!dir) {
         throw new Error(
           `Function code not found. Looked for ${tried.join(' and ')}. ` +
@@ -670,8 +674,9 @@ export class FunctionService {
         )
       }
       const sandbox = this.config.functionsSandbox
-      let command = this.command(f, dir, entrypoint)
-      const env = this.env(f, request.trigger)
+      const runtime = runtimeId && !f.runtime.startsWith('python') ? await ensureRuntime(this.config, runtimeId) : null
+      let command = this.command(f, dir, entrypoint, runtime)
+      const env = withRuntime(this.env(f, request.trigger), runtime)
       if (sandbox) {
         const uid = sandbox.uidFor(this.config.projectId, f.id)
         const home = functionHome(this.config, f.id)

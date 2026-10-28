@@ -167,6 +167,17 @@ over the env file, and a function's own variable wins over a global one.
 SSR apps are started on the first request and always listen on loopback; the
 server proxies to them, so Caddy and custom domains need no extra setup.
 
+## Runtimes
+
+Sites and functions build and run on the Node.js or Bun version they choose.
+It is downloaded on first use; see [SITES.md](SITES.md#runtimes).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RUNTIMES_DOWNLOAD` | `true` | Download Node.js and Bun builds when a site or function needs them. `false` runs them all on this server's Bun (no network needed). |
+| `RUNTIMES_NODE_MIRROR` | `https://nodejs.org/dist` | Where Node.js builds come from: a mirror with the same layout (`index.json`, `v<version>/SHASUMS256.txt`). |
+| `RUNTIMES_BUN_RELEASES` | GitHub's oven-sh/bun releases API | Where Bun releases are listed. |
+
 ## Git deployments
 
 The server's GitHub App. Leave these unset to create the app from the console
