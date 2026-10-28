@@ -162,6 +162,7 @@ over the env file, and a function's own variable wins over a global one.
 | `SITES_SSR` | `true` | Allow sites with `adapter: ssr` to build and run. `false` answers those hosts with a "turned off" page. |
 | `SITES_SSR_IDLE_MS` | `300000` | Stop an SSR app that has had no requests for this long. `0` keeps apps running until the site changes. |
 | `SITES_SSR_MAX_PROCESSES` | `2` | Most SSR apps running at once per project. The least recently used app is stopped first. Memory, not CPU, is the limit: a warm Next/Nuxt app is often 80–150 MB. |
+| `SITES_SSR_KEEP_PREVIOUS` | `2` | Ready SSR deployments kept besides the live one, for rollback. Each one is a full app folder on disk; set `0` or `1` on a small disk. |
 
 SSR apps are started on the first request and always listen on loopback; the
 server proxies to them, so Caddy and custom domains need no extra setup.

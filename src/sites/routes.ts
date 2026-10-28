@@ -102,6 +102,7 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     domains,
     domain: domains[0] ?? '',
     apiFunctionId: s.api_function_id,
+    pruneMode: s.prune_mode,
   }
 }
 
@@ -122,6 +123,7 @@ function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSetti
     startCommand: str(p.startCommand) ?? base.startCommand,
     buildRuntime: str(p.buildRuntime) ?? base.buildRuntime,
     adapter: str(p.adapter) || base.adapter,
+    pruneMode: str(p.pruneMode) || base.pruneMode,
   }
 }
 
@@ -151,6 +153,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       startCommand: framework.startCommand,
       buildRuntime: '',
       adapter: framework.adapter,
+      pruneMode: 'auto',
     })
     return json(siteModel(ctx, ctx.sites.create(id, settings)), 201)
   })
@@ -213,7 +216,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     const code = params.code
     if (!(code instanceof Blob)) throw err('general_argument_invalid', 'Param "code" must be a .tar.gz or .zip file.')
     // Build settings sent with a deployment update the site, as on Appwrite.
-    const changes = ['installCommand', 'buildCommand', 'startCommand', 'outputDirectory'].filter((k) => str(params[k]) !== undefined)
+    const changes = ['installCommand', 'buildCommand', 'startCommand', 'outputDirectory', 'pruneMode'].filter((k) => str(params[k]) !== undefined)
     if (changes.length) ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
     const deployment = await ctx.sites.upload(ctx.sites.site(s.id), {
       code,

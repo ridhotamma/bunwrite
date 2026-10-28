@@ -23,12 +23,11 @@ import type { ProxyService } from '~/proxy/service'
 import { siteBaseEnv } from './env'
 import { SITE_ADAPTERS } from './frameworks'
 import { siteHome, sitesDir } from './paths'
+import { isPruneMode, PRUNE_MODES, pruneScript, SIZE_MARKER, type PruneMode } from './prune'
 import { SsrRuntime, type SsrTarget } from './ssr'
 
-/** Ready deployments kept besides the live one, for rollback. */
+/** Ready deployments kept besides the live one, for rollback. SSR sites use SITES_SSR_KEEP_PREVIOUS. */
 const KEEP_PREVIOUS = 5
-/** SSR deployments keep fewer, since each source tree may hold node_modules. */
-const KEEP_PREVIOUS_SSR = 2
 const MAX_LOG = 1_000_000
 
 export { sitesDir }
@@ -54,6 +53,7 @@ export interface SiteRow {
   start_command: string
   build_runtime: string
   adapter: string
+  prune_mode: string
   created_at: string
   updated_at: string
 }
@@ -89,6 +89,8 @@ export interface SiteSettings {
   startCommand: string
   buildRuntime: string
   adapter: string
+  /** After-build cleanup for SSR sites; see prune.ts. */
+  pruneMode: string
 }
 
 export interface SiteUpload {
@@ -222,10 +224,13 @@ export class SiteService {
     if (!SITE_ADAPTERS.includes(adapter as (typeof SITE_ADAPTERS)[number])) {
       throw err('general_argument_invalid', `Adapter must be one of: ${SITE_ADAPTERS.join(', ')}.`)
     }
+    const pruneMode = settings.pruneMode.trim() || 'auto'
+    if (!isPruneMode(pruneMode)) throw err('general_argument_invalid', `Prune mode must be one of: ${PRUNE_MODES.join(', ')}.`)
     return {
       ...settings,
       name,
       adapter,
+      pruneMode,
       installCommand: settings.installCommand.trim(),
       buildCommand: settings.buildCommand.trim(),
       startCommand: settings.startCommand.trim(),
@@ -248,10 +253,10 @@ export class SiteService {
     this.sql.transaction(() => {
       this.sql
         .query(
-          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, prune_mode, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, stamp, stamp)
+        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, stamp, stamp)
       this.proxy.set('site', id, s.domains)
     })()
     this.changed()
@@ -265,9 +270,9 @@ export class SiteService {
       this.sql
         .query(
           `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
-           install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, updated_at = ? WHERE id = ?`,
+           install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, prune_mode = ?, updated_at = ? WHERE id = ?`,
         )
-        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, now(), id)
+        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, now(), id)
       this.proxy.set('site', id, s.domains)
     })()
     this.changed()
@@ -292,6 +297,7 @@ export class SiteService {
       startCommand: site.start_command,
       buildRuntime: site.build_runtime,
       adapter: site.adapter,
+      pruneMode: site.prune_mode,
     }
   }
 
@@ -516,7 +522,8 @@ export class SiteService {
     if (!this.config.sitesBuildCommands) {
       if (site.install_command.trim() || site.build_command.trim()) logs.push('Skipped install and build commands (SITES_BUILD_COMMANDS=false).')
     } else {
-      await this.runSiteCommands(site, dir, logs, set, isolated ? { sandbox, uid } : null)
+      const ran = await this.runSiteCommands(site, dir, logs, set, isolated ? { sandbox, uid } : null)
+      if (ran) await this.pruneBuild(site, command, dir, logs, isolated ? { sandbox, uid } : null)
     }
 
     const cwd = join(dir, site.output_directory)
@@ -551,21 +558,57 @@ export class SiteService {
     }
   }
 
-  /** Run `install_command` then `build_command`, as the site's user when isolated. */
+  /**
+   * Remove what the build needed but the app does not (dev dependencies, build
+   * caches). A failure is logged and the deployment keeps going: the app may
+   * still start with the packages that are left.
+   */
+  private async pruneBuild(
+    site: SiteRow,
+    startCommand: string,
+    dir: string,
+    logs: string[],
+    sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
+  ): Promise<void> {
+    const mode = (isPruneMode(site.prune_mode) ? site.prune_mode : 'auto') as PruneMode
+    const script = pruneScript({ mode, startCommand, installCommand: site.install_command, appDir: site.output_directory })
+    if (!script) {
+      logs.push('Kept node_modules as built (prune mode: none).')
+      return
+    }
+    logs.push(`Cleaning up after the build (prune mode: ${mode}).`)
+    const result = await runShell({
+      command: script,
+      cwd: sandboxed ? undefined : dir,
+      wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
+      env: siteBaseEnv(this.config, site.id),
+      timeoutMs: BUILD_TIMEOUT_MS,
+    })
+    const size = new RegExp(`^${SIZE_MARKER} (\\d+) (\\d+)$`, 'm').exec(result.output)
+    const output = result.output.replace(new RegExp(`^${SIZE_MARKER} .*$`, 'm'), '').trim()
+    if (output) logs.push(output)
+    if (result.code !== 0 || result.timedOut) {
+      logs.push(`The cleanup ${result.timedOut ? 'timed out' : `exited with code ${result.code}`}; continuing with the packages that are left. If the app does not start, set the prune mode to "none" and deploy again.`)
+      return
+    }
+    if (size) logs.push(`Deployment size: ${formatSize(Number(size[1]) * 1024)} → ${formatSize(Number(size[2]) * 1024)}.`)
+  }
+
+  /** Run `install_command` then `build_command`, as the site's user when isolated. True when any ran. */
   private async runSiteCommands(
     site: SiteRow,
     dir: string,
     logs: string[],
     set: (status: string, counts?: { files: number; bytes: number }) => void,
     sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const commands = [
       ['install', site.install_command.trim()],
       ['build', site.build_command.trim()],
     ].filter(([, command]) => Boolean(command)) as [string, string][]
     if (!commands.length) {
       logs.push('No install or build command; using the upload as it is.')
-      return
+      return false
     }
     for (const [label, command] of commands) {
       logs.push(`$ ${command}`)
@@ -581,6 +624,7 @@ export class SiteService {
       if (result.timedOut) throw new Error(`The ${label} command timed out after ${BUILD_TIMEOUT_MS / 60000} minutes.`)
       if (result.code !== 0) throw new Error(`The ${label} command exited with code ${result.code}.`)
     }
+    return true
   }
 
   /** Make a ready deployment the one that is served. Instant, so it is also how you roll back. */
@@ -627,7 +671,7 @@ export class SiteService {
   /** Keep disk use flat: the live deployment plus the last few ready ones. */
   private prune(siteId: string): void {
     const site = this.site(siteId)
-    const keep = site.adapter === 'ssr' ? KEEP_PREVIOUS_SSR : KEEP_PREVIOUS
+    const keep = site.adapter === 'ssr' ? this.config.sitesSsrKeepPrevious : KEEP_PREVIOUS
     const live = site.deployment_id
     const ready = this.sql
       .query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? ORDER BY seq DESC")

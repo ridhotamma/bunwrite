@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
 import { ConsoleAuth } from '~/console/auth'
 import { configFromEnv } from '~/config'
+import { sitesDir } from '~/sites/paths'
+import { packageManagerOf, pruneScript } from '~/sites/prune'
 import type { SiteDeploymentRow, SiteSettings } from '~/sites/service'
 import { KEY, PROJECT, startServer, testSchema, type TestServer } from './helpers'
 
@@ -50,6 +52,7 @@ const settings = (over: Partial<SiteSettings> = {}): SiteSettings => ({
   startCommand: 'bun server.js',
   buildRuntime: '',
   adapter: 'ssr',
+  pruneMode: 'auto',
   ...over,
 })
 
@@ -154,6 +157,8 @@ describe('SSR sites: API and frameworks', () => {
     expect(defaults.sitesBuildCommands).toBe(true)
     expect(defaults.sitesSsrIdleMs).toBe(5 * 60 * 1000)
     expect(defaults.sitesSsrMaxProcesses).toBe(2)
+    expect(defaults.sitesSsrKeepPrevious).toBe(2)
+    expect(configFromEnv({ SITES_SSR_KEEP_PREVIOUS: '0' }).sitesSsrKeepPrevious).toBe(0)
     const off = configFromEnv({
       SITES_SSR: 'false',
       SITES_BUILD_COMMANDS: 'false',
@@ -436,6 +441,8 @@ describe('SSR sites: modes and limits', () => {
       expect(ssrPage).toContain('value="bun server.js two"')
       expect(ssrPage).toContain('name="adapter"')
       expect(ssrPage).toContain('name="install_command"')
+      expect(ssrPage).toContain('name="prune_mode"')
+      expect(ssrPage).toMatch(/<option value="auto"\s+selected>/)
       // SSR: the SSR block is visible and the static block is hidden.
       expect(ssrPage).toMatch(/data-show-for="ssr"[^>]*>/)
       expect(ssrPage).not.toMatch(/data-show-for="ssr"[^>]* hidden[^>]*>/)
@@ -468,6 +475,110 @@ describe('SSR sites: modes and limits', () => {
       expect(view).toContain('Runtime')
     } finally {
       server.services.sites.remove('static-console')
+    }
+  })
+})
+
+describe('SSR sites: cleanup after the build', () => {
+  const folder = (siteId: string, d: SiteDeploymentRow) => sitesDir(server.config, siteId, d.id)
+
+  test('the package manager comes from the install command', () => {
+    expect(packageManagerOf('npm ci')).toBe('npm')
+    expect(packageManagerOf('corepack enable && pnpm install --frozen-lockfile')).toBe('pnpm')
+    expect(packageManagerOf('yarn')).toBe('yarn')
+    expect(packageManagerOf('bun install')).toBe('bun')
+    expect(packageManagerOf('make deps')).toBeNull()
+  })
+
+  test('auto picks standalone only for a standalone start command', () => {
+    const script = (startCommand: string) => pruneScript({ mode: 'auto', startCommand, installCommand: 'npm install', appDir: '' })!
+    expect(script('node .next/standalone/server.js')).toContain('.next/standalone/server.js')
+    expect(script('node .output/server/index.mjs')).toContain('"$app/.output/server"')
+    expect(script('node build')).not.toContain('Removing node_modules')
+    expect(script('node build')).toContain('npm prune --omit=dev')
+    expect(pruneScript({ mode: 'none', startCommand: '', installCommand: '', appDir: '' })).toBeNull()
+  })
+
+  test('pruneMode is a site setting, and an unknown one is rejected', async () => {
+    const res = await api('/sites', { method: 'POST', body: JSON.stringify({ siteId: 'prune-api', name: 'Prune', framework: 'sveltekit', pruneMode: 'none' }) })
+    expect(res.status).toBe(201)
+    expect(((await res.json()) as any).pruneMode).toBe('none')
+    const bad = await api('/sites/prune-api', { method: 'PUT', body: JSON.stringify({ name: 'Prune', framework: 'sveltekit', pruneMode: 'everything' }) })
+    expect(bad.status).toBe(400)
+    const defaults = (await (await api('/sites', { method: 'POST', body: JSON.stringify({ siteId: 'prune-default', name: 'Default', framework: 'nuxt' }) })).json()) as any
+    expect(defaults.pruneMode).toBe('auto')
+    server.services.sites.remove('prune-api')
+    server.services.sites.remove('prune-default')
+  })
+
+  test('a Next.js standalone build loses node_modules and gains its static files', async () => {
+    createSite('next-like', { buildCommand: 'mkdir -p node_modules/next .next/cache && echo x > .next/cache/big', startCommand: 'bun .next/standalone/server.js' })
+    try {
+      const d = await deploy('next-like', {
+        '.next/standalone/server.js': APP,
+        '.next/static/chunks/app.js': 'chunk',
+        'public/logo.txt': 'logo',
+        'package.json': '{"name":"next-like"}',
+      })
+      expect(d.status).toBe('ready')
+      expect(d.build_logs).toContain('Cleaning up after the build (prune mode: auto).')
+      expect(d.build_logs).toContain('Copied public and .next/static into .next/standalone.')
+      expect(d.build_logs).toContain('Deployment size:')
+      expect(d.build_logs).not.toContain('@@prune-size')
+      const root = folder('next-like', d)
+      expect(existsSync(join(root, 'node_modules'))).toBe(false)
+      expect(existsSync(join(root, '.next/cache'))).toBe(false)
+      expect(readFileSync(join(root, '.next/standalone/public/logo.txt'), 'utf8')).toBe('logo')
+      expect(readFileSync(join(root, '.next/standalone/.next/static/chunks/app.js'), 'utf8')).toBe('chunk')
+      expect((await visit('/marker', { site: 'next-like' })).status).toBe(200)
+    } finally {
+      server.services.sites.remove('next-like')
+    }
+  })
+
+  test('auto removes dev dependencies when there is no standalone output', async () => {
+    createSite('kit-like', { installCommand: 'bun install', buildCommand: 'mkdir -p node_modules/vite && echo dev > node_modules/vite/index.js' })
+    try {
+      const d = await deploy('kit-like', { 'server.js': APP, 'package.json': '{"name":"kit-like","devDependencies":{}}' })
+      expect(d.status).toBe('ready')
+      expect(d.build_logs).toContain('$ bun install --production')
+      expect(existsSync(join(folder('kit-like', d), 'node_modules/vite'))).toBe(false)
+      expect(existsSync(join(folder('kit-like', d), 'server.js'))).toBe(true)
+    } finally {
+      server.services.sites.remove('kit-like')
+    }
+  })
+
+  test('none keeps node_modules, and a failed cleanup does not fail the deployment', async () => {
+    createSite('keep', { buildCommand: 'mkdir -p node_modules/tool', pruneMode: 'none' })
+    try {
+      const kept = await deploy('keep', { 'server.js': APP, 'package.json': '{"name":"keep"}' })
+      expect(kept.build_logs).toContain('Kept node_modules as built (prune mode: none).')
+      expect(existsSync(join(folder('keep', kept), 'node_modules/tool'))).toBe(true)
+
+      // The production reinstall fails on a missing package: the old install is
+      // put back and the deployment still goes live.
+      server.services.sites.update('keep', { ...server.services.sites.settingsOf(server.services.sites.site('keep')), installCommand: 'true bun', pruneMode: 'production' })
+      const failed = await deploy('keep', { 'server.js': APP, 'package.json': '{"name":"keep","dependencies":{"missing":"file:./nope"}}' })
+      expect(failed.status).toBe('ready')
+      expect(failed.build_logs).toContain('continuing with the packages that are left')
+      expect(existsSync(join(folder('keep', failed), 'node_modules/tool'))).toBe(true)
+    } finally {
+      server.services.sites.remove('keep')
+    }
+  })
+
+  test('SITES_SSR_KEEP_PREVIOUS sets how many earlier SSR deployments stay', async () => {
+    server.config.sitesSsrKeepPrevious = 0
+    createSite('keep-none', { buildCommand: 'true' })
+    try {
+      const one = await deploy('keep-none', { 'server.js': APP })
+      const two = await deploy('keep-none', { 'server.js': APP })
+      expect(server.services.sites.deployments('keep-none').map((d) => d.id)).toEqual([two.id])
+      expect(existsSync(folder('keep-none', one))).toBe(false)
+    } finally {
+      server.config.sitesSsrKeepPrevious = 2
+      server.services.sites.remove('keep-none')
     }
   })
 })

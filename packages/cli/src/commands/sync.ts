@@ -539,7 +539,7 @@ async function pushFunctions(ctx: Ctx): Promise<string> {
  * instead: the server installs, builds and runs it, so `node_modules` is left
  * out and the deployment is followed until the build is ready.
  */
-const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'startCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain', 'domains']
+const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'startCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain', 'domains', 'pruneMode']
 
 const siteParams = (site: Item) => ({ ...pick(site, SITE_FIELDS), framework: site.framework ?? 'other', buildRuntime: site.buildRuntime ?? 'static-1' })
 

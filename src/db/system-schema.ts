@@ -333,6 +333,8 @@ export const sites = sqliteTable('_sites', {
   buildCommand: text('build_command').notNull().default(''),
   buildRuntime: text('build_runtime').notNull().default(''),
   adapter: text('adapter').notNull().default('static'),
+  /** After-build cleanup of SSR sites: auto, standalone, production or none (see sites/prune.ts). */
+  pruneMode: text('prune_mode').notNull().default('auto'),
   ...timestamps,
 })
 

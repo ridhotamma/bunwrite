@@ -84,7 +84,21 @@ function ssrFields(site: SiteRow | undefined, ssr: boolean): Html {
         <label>Install command<input name="install_command" class="mono" value="${site?.install_command ?? ''}" placeholder="npm install"><small>Runs in the deployment folder before the build.</small></label>
         <label>Build command<input name="build_command" class="mono" value="${site?.build_command ?? ''}" placeholder="npm run build"><small>Runs after the install command.</small></label>
       </div>
+      ${pruneField(site)}
     </div>`
+}
+
+const PRUNE_OPTIONS: [string, string][] = [
+  ['auto', 'Automatic (recommended)'],
+  ['standalone', 'Remove node_modules (self-contained output)'],
+  ['production', 'Remove dev dependencies only'],
+  ['none', 'Keep everything'],
+]
+
+function pruneField(site?: SiteRow): Html {
+  const current = site?.prune_mode || 'auto'
+  return html`<label>After the build<select name="prune_mode">${PRUNE_OPTIONS.map(([key, label]) => html`<option value="${key}" ${key === current ? 'selected' : ''}>${label}</option>`)}</select>
+    <small>Frees disk space on every kept deployment. Automatic removes node_modules when the start command runs a Next.js standalone or Nuxt <code>.output</code> build, and otherwise removes dev dependencies only. Pick "Keep everything" if the app needs a package listed under <code>devDependencies</code>.</small></label>`
 }
 
 /** Framework and adapter, plus only the fields that adapter uses. */

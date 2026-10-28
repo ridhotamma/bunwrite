@@ -1,0 +1,1 @@
+ALTER TABLE `_sites` ADD `prune_mode` text DEFAULT 'auto' NOT NULL;

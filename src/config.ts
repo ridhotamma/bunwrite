@@ -141,6 +141,8 @@ export interface Config {
   sitesSsrIdleMs: number
   /** Most SSR app processes running at once per project (SITES_SSR_MAX_PROCESSES). */
   sitesSsrMaxProcesses: number
+  /** Ready SSR deployments kept besides the live one, for rollback (SITES_SSR_KEEP_PREVIOUS). */
+  sitesSsrKeepPrevious: number
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -243,6 +245,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   const ssrIdle = wholeNumber(env.SITES_SSR_IDLE_MS, 5 * 60 * 1000)
   const ssrMax = wholeNumber(env.SITES_SSR_MAX_PROCESSES, 2)
+  const ssrKeep = wholeNumber(env.SITES_SSR_KEEP_PREVIOUS, 2)
   return {
     port,
     apiCompat: parseApiCompat(env.API_COMPAT),
@@ -275,6 +278,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sitesSsr: env.SITES_SSR !== 'false',
     sitesSsrIdleMs: ssrIdle,
     sitesSsrMaxProcesses: Math.max(1, ssrMax),
+    sitesSsrKeepPrevious: ssrKeep,
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

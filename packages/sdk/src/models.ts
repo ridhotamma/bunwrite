@@ -3889,6 +3889,8 @@ export declare namespace Models {
         domain?: string;
         /** Bunwrite: all custom domains. */
         domains?: string[];
+        /** Bunwrite: after-build cleanup of an SSR site. */
+        pruneMode?: string;
     };
     /**
      * Function

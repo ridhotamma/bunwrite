@@ -137,6 +137,7 @@ function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: stri
       installCommand: text('install_command', base.installCommand),
       buildCommand: text('build_command', base.buildCommand),
       startCommand: text('start_command', base.startCommand),
+      pruneMode: text('prune_mode', base.pruneMode) || base.pruneMode,
     }
   }
   if (section === 'api') {
@@ -158,6 +159,7 @@ function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: stri
     installCommand: text('install_command', base.installCommand),
     buildCommand: text('build_command', base.buildCommand),
     startCommand: text('start_command', base.startCommand),
+    pruneMode: text('prune_mode', base.pruneMode) || base.pruneMode,
   }
 }
 
@@ -226,6 +228,7 @@ export function sitePages(router: ConsoleRouter): void {
       startCommand,
       buildRuntime: '',
       adapter,
+      pruneMode: value(ctx.form, 'prune_mode') || 'auto',
     })
     const d = await deploy(ctx, site, source, true)
     if (d.status === 'failed') return ctx.go(`${siteUrl(site.id)}/deployments/${d.id}`, { tone: 'critical', text: 'Site created, but its files could not be deployed' })

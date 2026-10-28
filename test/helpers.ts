@@ -96,6 +96,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sitesSsr: true,
     sitesSsrIdleMs: 5 * 60 * 1000,
     sitesSsrMaxProcesses: 2,
+    sitesSsrKeepPrevious: 2,
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,

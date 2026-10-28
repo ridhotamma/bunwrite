@@ -147,6 +147,8 @@ export class Sites {
         domain?: string;
         /** Bunwrite: all custom domains for the site. */
         domains?: string[];
+        /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+        pruneMode?: string;
         providerRepositoryId?: string;
         providerBranch?: string;
         providerSilentMode?: boolean;
@@ -238,6 +240,8 @@ export class Sites {
                   domain?: string;
                   /** Bunwrite: all custom domains for the site. */
                   domains?: string[];
+                  /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+                  pruneMode?: string;
                   providerRepositoryId?: string;
                   providerBranch?: string;
                   providerSilentMode?: boolean;
@@ -297,6 +301,8 @@ export class Sites {
             domain?: string;
             /** Bunwrite: all custom domains for the site. */
             domains?: string[];
+            /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+            pruneMode?: string;
             providerRepositoryId?: string;
             providerBranch?: string;
             providerSilentMode?: boolean;
@@ -335,6 +341,8 @@ export class Sites {
                 domain?: string;
                 /** Bunwrite: all custom domains for the site. */
                 domains?: string[];
+                /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+                pruneMode?: string;
                 providerRepositoryId?: string;
                 providerBranch?: string;
                 providerSilentMode?: boolean;
@@ -389,7 +397,7 @@ export class Sites {
         const adapter = params.adapter;
         const installationId = params.installationId;
         const fallbackFile = params.fallbackFile;
-        const { apiFunctionId, domain, domains } = params as { apiFunctionId?: string; domain?: string; domains?: string[] };
+        const { apiFunctionId, domain, domains, pruneMode } = params as { apiFunctionId?: string; domain?: string; domains?: string[]; pruneMode?: string };
         const providerRepositoryId = params.providerRepositoryId;
         const providerBranch = params.providerBranch;
         const providerSilentMode = params.providerSilentMode;
@@ -468,6 +476,9 @@ export class Sites {
         }
         if (typeof domains !== 'undefined') {
             apiPayload['domains'] = domains;
+        }
+        if (typeof pruneMode !== 'undefined') {
+            apiPayload['pruneMode'] = pruneMode;
         }
         if (typeof providerRepositoryId !== 'undefined') {
             apiPayload['providerRepositoryId'] = providerRepositoryId;
@@ -683,6 +694,8 @@ export class Sites {
         domain?: string;
         /** Bunwrite: all custom domains for the site. */
         domains?: string[];
+        /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+        pruneMode?: string;
         installationId?: string;
         providerRepositoryId?: string;
         providerBranch?: string;
@@ -774,6 +787,8 @@ export class Sites {
                   domain?: string;
                   /** Bunwrite: all custom domains for the site. */
                   domains?: string[];
+                  /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+                  pruneMode?: string;
                   installationId?: string;
                   providerRepositoryId?: string;
                   providerBranch?: string;
@@ -833,6 +848,8 @@ export class Sites {
             domain?: string;
             /** Bunwrite: all custom domains for the site. */
             domains?: string[];
+            /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+            pruneMode?: string;
             installationId?: string;
             providerRepositoryId?: string;
             providerBranch?: string;
@@ -871,6 +888,8 @@ export class Sites {
                 domain?: string;
                 /** Bunwrite: all custom domains for the site. */
                 domains?: string[];
+                /** Bunwrite: after-build cleanup of an SSR site: auto, standalone, production or none. */
+                pruneMode?: string;
                 installationId?: string;
                 providerRepositoryId?: string;
                 providerBranch?: string;
@@ -925,7 +944,7 @@ export class Sites {
         const buildRuntime = params.buildRuntime;
         const adapter = params.adapter;
         const fallbackFile = params.fallbackFile;
-        const { apiFunctionId, domain, domains } = params as { apiFunctionId?: string; domain?: string; domains?: string[] };
+        const { apiFunctionId, domain, domains, pruneMode } = params as { apiFunctionId?: string; domain?: string; domains?: string[]; pruneMode?: string };
         const installationId = params.installationId;
         const providerRepositoryId = params.providerRepositoryId;
         const providerBranch = params.providerBranch;
@@ -997,6 +1016,9 @@ export class Sites {
         }
         if (typeof domains !== 'undefined') {
             apiPayload['domains'] = domains;
+        }
+        if (typeof pruneMode !== 'undefined') {
+            apiPayload['pruneMode'] = pruneMode;
         }
         if (typeof installationId !== 'undefined') {
             apiPayload['installationId'] = installationId;

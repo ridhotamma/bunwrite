@@ -162,10 +162,37 @@ in the framework's own config when it builds absolute URLs; the server already
 passes `PROTOCOL_HEADER` and `HOST_HEADER` through for adapters that read them.
 
 Only SSR frameworks that produce a normal HTTP server work: Next.js
-(`.next/standalone/server.js`), Nuxt, SvelteKit, Astro, Remix, or a Bun/Hono
-app. For Next.js, copy `public` and `.next/static` into `.next/standalone`
-from the build command. Any HTTP method and request body is proxied; WebSocket
+(`.next/standalone/server.js`, with `output: 'standalone'` in `next.config`),
+Nuxt, SvelteKit, Astro, Remix, or a Bun/Hono app. Any HTTP method and request body is proxied; WebSocket
 upgrades and background workers that outlive a request are not.
+
+### Cleanup after the build
+
+The install step puts the whole development toolchain in `node_modules`
+(often 400–700 MB). The running app needs much less, so after a successful
+build the server removes what it does not need. The site's `pruneMode` picks
+how:
+
+| `pruneMode` | What it does | Use it for |
+| --- | --- | --- |
+| `auto` (default) | `standalone` when the start command runs `.next/standalone/…` or `.output/server/…` and that folder exists; `production` otherwise | Every framework |
+| `standalone` | Deletes `node_modules`. For Next.js it first copies `public` and `.next/static` into `.next/standalone` | Builds that carry their own dependencies: Next.js standalone, Nuxt and other Nitro apps, a bundled Bun/Node server |
+| `production` | Removes dev dependencies and keeps runtime ones: `npm prune --omit=dev`, `pnpm prune --prod`, `yarn` production install, or `bun install --production` | SvelteKit, Astro, Remix and any app that loads packages at runtime |
+| `none` | Keeps everything | An app that needs a package listed under `devDependencies` |
+
+The package manager comes from the install command, or from the lockfile when
+the command names none. Every mode except `none` also removes `.next/cache` and
+`node_modules/.cache`. The build log shows the deployment's size before and
+after. If the cleanup fails, the deployment still goes ahead with whatever is
+left, and the log says so.
+
+A runtime package listed under `devDependencies` is the usual reason an app
+stops starting after `production`; move it to `dependencies`, or set
+`pruneMode` to `none`. The cleanup only runs after this server's own install or
+build, so `SITES_BUILD_COMMANDS=false` leaves the upload as it is.
+
+`SITES_SSR_KEEP_PREVIOUS` (default `2`) sets how many earlier SSR deployments
+are kept for rollback.
 
 The console shows the app's recent output on the live deployment page. Builds
 run under the site's own user when `FUNCTIONS_SANDBOX` is on, with the same
@@ -235,5 +262,3 @@ redirect targets.
 - Uploading a `.zip` of an SSR app with `node_modules`: packages are installed
   on the server instead. `SITES_BUILD_COMMANDS=false` runs no install or build,
   so the upload must already be complete.
-- One step of the build generating a `.next/standalone` tree: copy `public` and
-  `.next/static` into it yourself, in the build command.
