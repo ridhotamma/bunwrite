@@ -1,8 +1,8 @@
 # Bunwrite CLI
 
 Command-line tool for [Bunwrite](../../README.md): sign in, keep a project's
-schema, functions, buckets, teams, webhooks, topics and settings in a config
-file, deploy functions, and call any API.
+schema, functions, sites, buckets, teams, webhooks, topics and settings in a
+config file, deploy functions and static sites, and call any API.
 
 Its commands and config format match the Appwrite CLI's, so a folder set up
 for the Appwrite CLI works as is. It is built on the [Bunwrite SDK](../sdk) and
@@ -47,7 +47,7 @@ current folder. An existing `appwrite.config.json` is used when neither is
 there; the format is the same. A new file is `bunwrite.config.json`.
 
 ```bash
-bunwrite pull all          # settings, tables, functions (with code), buckets, teams, webhooks, topics
+bunwrite pull all          # settings, tables, functions (with code), sites (with files), buckets, teams, webhooks, topics
 bunwrite push tables       # create and alter databases, tables, columns and indexes
 bunwrite push functions --function-id hello
 ```
@@ -57,6 +57,7 @@ bunwrite push functions --function-id hello
 | `settings` | project name, services, protocols, sign-in methods, security policies, mock phone numbers | same; renaming needs `bunwrite login` |
 | `tables` / `collections` | databases, tables (collections), columns (attributes), indexes | create and alter; type changes are refused |
 | `functions` | settings, and the code of the active deployment into each function's `path` | settings, then pack the folder, deploy, wait for the build and activate |
+| `sites` | settings, and the live files into each site's `path` | settings, then pack `outputDirectory` inside `path` (build it first; `.gitignore` is not applied) and make it live |
 | `buckets` | bucket settings | create and update |
 | `teams` | `$id` and `name` | create and rename |
 | `webhooks` | webhooks | create and update |
@@ -70,7 +71,8 @@ Options:
 
 - `--function-id <id>`, `--table-id <id>`, `--collection-id <id>`: only these
   (repeat the flag, or separate with commas).
-- `--no-code`: functions without their code.
+- `--no-code`: functions and sites without their code or files.
+- `--site-id <id>`: only these sites.
 - `--activate false`: deploy without activating the new code.
 - `--prune`: also delete what is on the server but not in the config. It lists
   them and asks first; `--force` skips the question.

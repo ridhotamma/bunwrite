@@ -268,7 +268,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     const { ctx, params } = route
     limit(route, 'recovery', params.email)
     const email = validEmail(params.email)
-    const url = assertRedirect(params.url, ctx.config.allowedOrigins, 'url')
+    const url = assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP Disabled')
     const user = ctx.auth.userByEmail(email)
     if (!user) throw err('user_not_found')
@@ -294,7 +294,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/verifications/email', async ({ ctx, params }) => {
     const user = me(ctx)
-    const url = assertRedirect(params.url, ctx.config.allowedOrigins, 'url')
+    const url = assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP Disabled')
     if (!user.email) throw err('user_email_not_found')
     const { token, secret } = ctx.auth.createToken(user.id, 'verification', { ttl: VERIFICATION_TTL })

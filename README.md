@@ -26,6 +26,9 @@ the Appwrite API most apps use. Existing apps keep using the official
   processes with Appwrite's `context` API. In the Docker image each function
   builds and runs as its own Linux user, so it cannot read the database,
   uploads or other functions.
+- **Static sites, no build step.** Host plain HTML, htmx pages or a built
+  single-page app on `<site>.<your domain>` or a custom domain. `/api/*` on the
+  site can run a function on the same origin. See [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
 - **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
@@ -216,6 +219,7 @@ phone.
 | Teams | Create teams; add members by email or ID; edit roles; prefs |
 | Storage | Buckets and their rules; upload, open and delete files; local or S3-compatible storage |
 | Functions | Schedule, timeout, who may run it, variables; run now; run history with logs |
+| Sites | Create from an htmx starter, an upload or pasted HTML; deploy, make an older deployment live (rollback), download; output folder, single-page fallback, API function, custom domain |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
@@ -251,6 +255,7 @@ so they can be shared directly.
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
 | Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`) |
+| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; custom domains as proxy rules. Static files only, see [docs/SITES.md](docs/SITES.md) |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
 | Messaging | topics (create, list, update, delete) |
@@ -269,7 +274,8 @@ cancel the real one.
 - On the raw wire, some documents list `$id` before their attributes where live
   lists it after; the SDKs parse both to the same object.
 - Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
-  login; magic URLs; sending messages (topics are stored only); Sites.
+  login; magic URLs; sending messages (topics are stored only); server-side
+  rendered Sites and site builds (sites are served as uploaded).
 - Switched-off services, protocols and sign-in methods stop clients; API keys
   and console admins are exempt, as on Appwrite. The password dictionary and
   history, session alert and invalidation, membership privacy and email-domain

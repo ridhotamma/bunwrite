@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Client, Databases, Functions, Storage, TablesDB, Teams } from '../packages/sdk/src'
+import { BuildRuntime, Client, Databases, Framework, Functions, Sites, Storage, TablesDB, Teams } from '../packages/sdk/src'
 import { pack, unpack } from '../packages/cli/src/tar'
 import { collect } from '../packages/cli/src/files'
 import { ConsoleAuth } from '~/console/auth'
@@ -432,6 +432,56 @@ describe('buckets, teams, webhooks and topics', () => {
     expect(fresh.config.webhooks).toEqual(config.webhooks)
     expect(fresh.config.topics).toEqual([{ $id: 'news', name: 'News', subscribe: ['team:staff'] }])
     expect(await fresh.ok('push', 'buckets')).toContain('No buckets were pushed')
+  })
+})
+
+describe('sites', () => {
+  test('push uploads only the output folder, even when .gitignore lists it', async () => {
+    const ws = new Workspace('sites')
+    await ws.withKey()
+    const site = join(ws.dir, 'sites', 'landing')
+    mkdirSync(join(site, 'dist', 'assets'), { recursive: true })
+    writeFileSync(join(site, '.gitignore'), 'dist/\nnode_modules/\n')
+    writeFileSync(join(site, 'package.json'), '{"name":"landing"}')
+    writeFileSync(join(site, 'dist', 'index.html'), '<h1>Landing from the CLI</h1>')
+    writeFileSync(join(site, 'dist', 'assets', 'app.js'), 'console.log(1)')
+    ws.config = {
+      projectId: PROJECT,
+      sites: [{ $id: 'landing', name: 'Landing', framework: 'vite', path: 'sites/landing', outputDirectory: 'dist', fallbackFile: 'index.html' }],
+    }
+    const out = await ws.ok('push', 'sites')
+    expect(out).toContain('Deployed 1 site')
+    expect(out).toContain(`http://landing.localhost:${server.config.port}`)
+
+    const page = (path: string) => fetch(`http://127.0.0.1:${server.config.port}${path}`, { headers: { host: `landing.localhost:${server.config.port}` } })
+    expect(await (await page('/')).text()).toContain('Landing from the CLI')
+    expect((await page('/assets/app.js')).status).toBe(200)
+    expect((await page('/package.json')).status).toBe(404)
+
+    const fresh = new Workspace('sites-pull')
+    await fresh.withKey()
+    expect(await fresh.ok('pull', 'sites')).toContain('Pulled 1 sites')
+    expect(fresh.config.sites[0]).toMatchObject({ $id: 'landing', outputDirectory: 'dist', fallbackFile: 'index.html', path: 'sites/landing' })
+    expect(readFileSync(join(fresh.dir, 'sites/landing/dist/index.html'), 'utf8')).toContain('Landing from the CLI')
+  })
+
+  test('a missing output folder says to build first', async () => {
+    const ws = new Workspace('sites-unbuilt')
+    await ws.withKey()
+    mkdirSync(join(ws.dir, 'web'), { recursive: true })
+    ws.config = { projectId: PROJECT, sites: [{ $id: 'unbuilt', name: 'Unbuilt', path: 'web', outputDirectory: 'dist' }] }
+    const result = await ws.run(['push', 'sites'])
+    expect(result.code).not.toBe(0)
+    expect(result.out).toContain('Run the build first')
+  })
+
+  test('the SDK sets the API function and domain on create', async () => {
+    const sites = new Sites(admin())
+    const created = (await sites.create({ siteId: 'sdk-site', name: 'SDK site', framework: Framework.Other, buildRuntime: BuildRuntime.Static1, domain: 'sdk.example.org' })) as any
+    expect(created.domain).toBe('sdk.example.org')
+    const updated = (await sites.update({ siteId: 'sdk-site', name: 'SDK site', framework: Framework.Other, domain: '' })) as any
+    expect(updated.domain).toBe('')
+    await sites.delete({ siteId: 'sdk-site' })
   })
 })
 

@@ -1,6 +1,8 @@
 // Written by scripts/sdk-sync.ts.
+export { Adapter } from './enums/adapter';
 export { AttributeStatus } from './enums/attribute-status';
 export { BillingPlanGroup } from './enums/billing-plan-group';
+export { BuildRuntime } from './enums/build-runtime';
 export { ColumnStatus } from './enums/column-status';
 export { Compression } from './enums/compression';
 export { DatabaseType } from './enums/database-type';
@@ -11,6 +13,7 @@ export { ExecutionMethod } from './enums/execution-method';
 export { ExecutionResourceType } from './enums/execution-resource-type';
 export { ExecutionStatus } from './enums/execution-status';
 export { ExecutionTrigger } from './enums/execution-trigger';
+export { Framework } from './enums/framework';
 export { ImageFormat } from './enums/image-format';
 export { ImageGravity } from './enums/image-gravity';
 export { IndexStatus } from './enums/index-status';

@@ -41,6 +41,8 @@ export class OAuthService {
     private db: Db,
     private config: Config,
     private auth: AuthService,
+    /** Redirect targets: the project's allowed origins and its sites. */
+    private origins: () => string[] = () => config.allowedOrigins,
   ) {}
 
   private google(provider: string): GoogleConfig {
@@ -57,8 +59,8 @@ export class OAuthService {
   async authorizeUrl(provider: string, success: unknown, failure: unknown, scopes: unknown): Promise<string> {
     const google = this.google(provider)
     const state: State = {
-      success: assertRedirect(success, this.config.allowedOrigins, 'success'),
-      failure: assertRedirect(failure ?? success, this.config.allowedOrigins, 'failure'),
+      success: assertRedirect(success, this.origins(), 'success'),
+      failure: assertRedirect(failure ?? success, this.origins(), 'failure'),
       token: true,
       exp: Math.floor(Date.now() / 1000) + STATE_TTL,
       nonce: uniqueId(),

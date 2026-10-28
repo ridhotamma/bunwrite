@@ -29,6 +29,7 @@ const MAIN: [string, string, string, IconName][] = [
   ['teams', 'Teams', '/console/auth/teams', 'users-three'],
   ['storage', 'Storage', '/console/storage', 'folder-simple'],
   ['functions', 'Functions', '/console/functions', 'lightning'],
+  ['sites', 'Sites', '/console/sites', 'globe'],
 ]
 const MANAGE: [string, string, string, IconName][] = [
   ['logs', 'Request logs', '/console/logs', 'list-bullets'],

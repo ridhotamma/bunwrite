@@ -30,13 +30,14 @@ ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing ap
   pull <what>     Write the server's state into the config
   push <what>     Apply the config to the server
 
-  <what> is settings, tables, collections, functions, buckets, teams,
+  <what> is settings, tables, collections, functions, sites, buckets, teams,
   webhooks, topics or all.
 
   --function-id <id>   pull/push only these functions (repeat, or comma-separate)
+  --site-id <id>       pull/push only these sites
   --table-id <id>      push only these tables (--collection-id for collections)
-  --no-code            pull/push functions without their code
-  --activate false     push functions without activating the new code
+  --no-code            pull/push functions and sites without their code or files
+  --activate false     push functions and sites without making the new version live
   --prune              push: delete what is on the server but not in the config
   --force              push: delete without asking
 

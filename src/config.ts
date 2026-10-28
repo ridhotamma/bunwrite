@@ -119,6 +119,11 @@ export interface Config {
   functionsSandbox?: FunctionSandbox | null
   /** Per-process key handed to function executions; never stored. */
   internalKey?: string
+  /**
+   * Sites answer on `<siteId>.<sitesDomain>` (SITES_DOMAIN). Defaults to
+   * `sites.<DOMAIN>`, or `localhost` so `<id>.localhost:<port>` works locally.
+   */
+  sitesDomain?: string
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -221,6 +226,12 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     skipSchedules: [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
+    sitesDomain: (env.SITES_DOMAIN || (domain ? `sites.${domain}` : 'localhost'))
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^\*\./, '')
+      .replace(/[/:].*$/, ''),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

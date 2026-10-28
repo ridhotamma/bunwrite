@@ -15,6 +15,7 @@ import { err } from '~/lib/errors'
 import { isValidId, randomSecret, resolveId, sha256 } from '~/lib/ids'
 import { removeTree } from '~/functions/sandbox'
 import { createServices, type Services } from '~/services'
+import type { SiteRow } from '~/sites/service'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
 
 interface ProjectRow {
@@ -68,6 +69,7 @@ export class ProjectManager implements ProjectResolver {
     this.dataDir = options.dataDir ?? dataDirOf(options.config)
     this.ensureDefault()
     this.load()
+    for (const runtime of this.runtimes.values()) this.linkSites(runtime.services)
   }
 
   private ensureDefault(): void {
@@ -188,6 +190,19 @@ export class ProjectManager implements ProjectResolver {
     return null
   }
 
+  findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null {
+    for (const runtime of this.runtimes.values()) {
+      const site = runtime.services.sites.byHost(host)
+      if (site) return { project: runtime, site }
+    }
+    return null
+  }
+
+  /** Site IDs and domains are subdomains and hosts, so they must be unique across projects. */
+  private linkSites(services: Services): void {
+    services.sites.peers = () => [...this.runtimes.values()].map((r) => r.services.sites)
+  }
+
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string } {
     const id = resolveId(input.id, 'Project ID')
     // `console` is how the Appwrite CLI addresses the console API.
@@ -224,6 +239,7 @@ export class ProjectManager implements ProjectResolver {
       if (config.bootstrap) config.bootstrap.apiKey = undefined
       const runtime: ProjectRuntime = { info, services }
       this.runtimes.set(id, runtime)
+      this.linkSites(services)
       services.functions.start()
       services.backups.start()
       return { project: runtime, apiKey }

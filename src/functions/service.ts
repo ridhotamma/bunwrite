@@ -242,6 +242,16 @@ export function readEnvFile(path: string | undefined): Record<string, string> {
   return out
 }
 
+/** Set by the server only: who called the function. A client sending these is ignored. */
+const CALLER_HEADERS = ['user-id', 'user-jwt'].flatMap((n) => [`x-bunwrite-${n}`, `x-appwrite-${n}`])
+
+/** Like Appwrite, tell the function which signed-in user called it (`x-appwrite-user-id`). */
+function withCallerHeaders(headers: Record<string, string> | undefined, userId: string | null | undefined): Record<string, string> {
+  const out = Object.fromEntries(Object.entries(headers ?? {}).filter(([k]) => !CALLER_HEADERS.includes(k.toLowerCase())))
+  if (userId) out['x-appwrite-user-id'] = out['x-bunwrite-user-id'] = userId
+  return out
+}
+
 export class FunctionService {
   private running = new Map<string, number>()
   private timer: ReturnType<typeof setInterval> | null = null
@@ -478,6 +488,7 @@ export class FunctionService {
   /** Create an execution. Async ones return at once with status `waiting`. */
   async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async'): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
     if (!f.enabled) throw err('function_not_found')
+    request = { ...request, headers: withCallerHeaders(request.headers, request.userId) }
     const id = uniqueId()
     const stamp = now()
     const headers = this.headerList(request.headers)

@@ -15,6 +15,7 @@ import {
   Organization,
   Project,
   Query,
+  Sites,
   Storage,
   Teams,
   Webhooks,
@@ -520,6 +521,90 @@ async function pushFunctions(ctx: Ctx): Promise<string> {
   return updated ? `Pushed ${updated} functions` : 'No functions were pushed: no changes'
 }
 
+// ---- Sites ----
+
+/**
+ * Sites are uploaded as they should be served; nothing is built on the
+ * server. Only the output folder is packed (`outputDirectory` inside `path`),
+ * and .gitignore is not applied there, since build output is usually ignored.
+ */
+const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain']
+
+const siteParams = (site: Item) => ({ ...pick(site, SITE_FIELDS), framework: site.framework ?? 'other', buildRuntime: site.buildRuntime ?? 'static-1' })
+
+async function pullSites(ctx: Ctx): Promise<string> {
+  const sites = new Sites(ctx.client)
+  const all = await listAll(async (queries) => (await sites.list({ queries })).sites)
+  const ids = flagList(ctx.args, 'site-id')
+  const chosen = ids.length ? all.filter((s) => ids.includes(s.$id)) : all
+  const withCode = bool(ctx.args, 'code', true)
+  const existing: Item[] = ctx.config.sites ?? []
+  const pulled: Item[] = []
+  for (const site of chosen) {
+    const local = existing.find((e) => e.$id === site.$id)
+    const path = local?.path ?? `sites/${slug(site.name)}`
+    pulled.push({ $id: site.$id, ...pick(site, SITE_FIELDS), path, ...(local?.ignore ? { ignore: local.ignore } : {}) })
+    if (!withCode || !site.deploymentId) continue
+    const archive = await orNull(sites.getDeploymentDownload({ siteId: site.$id, deploymentId: site.deploymentId }))
+    if (!archive) continue
+    const dir = resolve(path)
+    for (const file of unpackGzip(new Uint8Array(archive))) {
+      const target = join(dir, file.path)
+      mkdirSync(dirname(target), { recursive: true })
+      writeFileSync(target, file.data, { mode: file.mode ? file.mode & 0o777 : 0o644 })
+    }
+    success(`Pulled the files of ${site.name} into ${path}`)
+  }
+  ctx.config.sites = [...existing.filter((e) => !pulled.some((p) => p.$id === e.$id)), ...pulled]
+  return `Pulled ${pulled.length} sites`
+}
+
+async function deploySite(ctx: Ctx, site: Item): Promise<void> {
+  const sites = new Sites(ctx.client)
+  const root = resolve(site.path ?? `sites/${slug(site.name ?? site.$id)}`)
+  const out = String(site.outputDirectory ?? '').replace(/^\.?\/+|\/+$/g, '')
+  const folder = out ? join(root, out) : root
+  if (!existsSync(folder)) throw new CliError(`The files of ${site.$id} are not at ${folder}.${out ? ' Run the build first.' : ''}`)
+  const files = collect(folder, site.ignore ?? []).map((f) => (out ? { ...f, path: `${out}/${f.path}` } : f))
+  if (!files.length) throw new CliError(`No files to deploy in ${folder}`)
+  const code = packGzip(files)
+  const activate = bool(ctx.args, 'activate', true)
+  info(`Deploying ${site.name ?? site.$id}: ${files.length} files, ${(code.length / 1024).toFixed(1)} KB`)
+  const deployment = await sites.createDeployment({ siteId: site.$id, code: InputFile.fromBuffer(code, 'site.tar.gz'), activate })
+  if (deployment.status !== 'ready') {
+    throw new CliError(`Failed to deploy ${site.name ?? site.$id} ( ${site.$id} ): ${deployment.status}.\n${deployment.buildLogs ?? ''}`.trimEnd())
+  }
+  const remote = (await sites.get({ siteId: site.$id })) as Item
+  success(`Deployed ${site.name ?? site.$id}${activate ? `, live at ${remote.url ?? ''}` : ''}`)
+}
+
+async function pushSites(ctx: Ctx): Promise<string> {
+  const sites = new Sites(ctx.client)
+  const chosen = selected(ctx, (ctx.config.sites ?? []) as Item[], 'site-id')
+  const withCode = bool(ctx.args, 'code', true)
+  let deployed = 0
+  let updated = 0
+  for (const site of chosen) {
+    if (!site.$id || !site.name) throw new CliError('Every site needs $id and name.')
+    const remote = await orNull(sites.get({ siteId: site.$id }))
+    if (!remote) {
+      await sites.create({ siteId: site.$id, ...siteParams(site) } as any)
+      success(`Created ${site.name} ( ${site.$id} )`)
+      updated++
+    } else if (changedKeys(site, remote, SITE_FIELDS).length) {
+      await sites.update({ siteId: site.$id, ...siteParams({ ...pick(remote, SITE_FIELDS), ...site }) } as any)
+      success(`Updated the settings of ${site.name} ( ${site.$id} )`)
+      updated++
+    }
+    if (withCode) {
+      await deploySite(ctx, site)
+      deployed++
+    }
+  }
+  if (withCode) return `Deployed ${deployed} site${deployed === 1 ? '' : 's'}`
+  return updated ? `Pushed ${updated} sites` : 'No sites were pushed: no changes'
+}
+
 // ---- Settings ----
 
 /** Config key → server policy, and how to read and write it. */
@@ -617,7 +702,7 @@ async function pushSettings(ctx: Ctx): Promise<string> {
 
 // ---- Commands ----
 
-const KINDS = ['settings', 'tables', 'collections', 'functions', 'buckets', 'teams', 'webhooks', 'topics'] as const
+const KINDS = ['settings', 'tables', 'collections', 'functions', 'sites', 'buckets', 'teams', 'webhooks', 'topics'] as const
 type Kind = (typeof KINDS)[number]
 
 const resource = (key: string) => RESOURCES.find((r) => r.key === key)!
@@ -627,6 +712,7 @@ const PULL: Record<Kind, (ctx: Ctx) => Promise<string>> = {
   tables: (ctx) => pullSchema(ctx, TABLES),
   collections: (ctx) => pullSchema(ctx, COLLECTIONS),
   functions: pullFunctions,
+  sites: pullSites,
   buckets: (ctx) => pullResource(ctx, resource('buckets')),
   teams: (ctx) => pullResource(ctx, resource('teams')),
   webhooks: (ctx) => pullResource(ctx, resource('webhooks')),
@@ -638,6 +724,7 @@ const PUSH: Record<Kind, (ctx: Ctx) => Promise<string>> = {
   tables: (ctx) => pushSchema(ctx, TABLES),
   collections: (ctx) => pushSchema(ctx, COLLECTIONS),
   functions: pushFunctions,
+  sites: pushSites,
   buckets: (ctx) => pushResource(ctx, resource('buckets')),
   teams: (ctx) => pushResource(ctx, resource('teams')),
   webhooks: (ctx) => pushResource(ctx, resource('webhooks')),
@@ -646,7 +733,7 @@ const PUSH: Record<Kind, (ctx: Ctx) => Promise<string>> = {
 
 function kindsOf(what: string | undefined, config: ProjectConfig, direction: 'pull' | 'push'): Kind[] {
   if (what === 'all') {
-    if (direction === 'pull') return ['settings', 'tables', 'functions', 'buckets', 'teams', 'webhooks', 'topics']
+    if (direction === 'pull') return ['settings', 'tables', 'functions', 'sites', 'buckets', 'teams', 'webhooks', 'topics']
     return KINDS.filter((k) => (k === 'settings' ? config.settings : config[k]) !== undefined)
   }
   if (!what || !(KINDS as readonly string[]).includes(what)) {

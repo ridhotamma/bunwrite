@@ -26,6 +26,7 @@ export const SERVICES: Record<string, new (client: sdk.Client) => object> = {
   organization: sdk.Organization,
   health: sdk.Health,
   render: sdk.Render,
+  sites: sdk.Sites,
 }
 
 /** Flags that belong to the CLI, not the call. */

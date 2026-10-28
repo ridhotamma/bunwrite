@@ -101,6 +101,79 @@ export function deploymentModel(d: DeploymentRow) {
   }
 }
 
+/** Where one uploaded chunk goes, from its `Content-Range` (none for a single upload). */
+export function chunkRange(contentRange: string | null, length: number): { start: number; total: number } {
+  let start = 0
+  let total = length
+  if (contentRange) {
+    const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(contentRange.trim())
+    if (!m) throw err('general_argument_invalid', 'Invalid Content-Range header.')
+    start = Number(m[1])
+    total = Number(m[3])
+    if (Number(m[2]) - start + 1 !== length || start + length > total) throw err('general_argument_invalid', 'Content-Range does not match the chunk size.')
+  }
+  if (total === 0 || total > MAX_SIZE) throw err('deployment_invalid_file_size')
+  return { start, total }
+}
+
+/** Write a chunk at its offset in the upload file. */
+export function writeChunk(path: string, bytes: Uint8Array, start: number): void {
+  const fd = openSync(path, existsSync(path) ? 'r+' : 'w')
+  try {
+    writeSync(fd, bytes, 0, bytes.length, start)
+  } finally {
+    closeSync(fd)
+  }
+}
+
+export const chunksFor = (total: number) => Math.max(1, Math.ceil(total / CHUNK_SIZE))
+
+/** Unpack a .tar.gz or .zip upload into `dir`. */
+export async function unpackArchive(archive: string, dir: string): Promise<void> {
+  const head = new Uint8Array(4)
+  const fd = openSync(archive, 'r')
+  try {
+    readSync(fd, head, 0, 4, 0)
+  } finally {
+    closeSync(fd)
+  }
+  if (isZip(head)) {
+    extractZip(readFileSync(archive), dir)
+    return
+  }
+  const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir], { stdout: 'pipe', stderr: 'pipe' })
+  const [untarErr, untarCode] = await Promise.all([new Response(untar.stderr).text(), untar.exited])
+  if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
+}
+
+/** Pack a folder as .tar.gz in memory. */
+export async function packFolder(dir: string): Promise<Blob> {
+  const pack = Bun.spawn(['tar', '-czf', '-', '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+  const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
+  if (code !== 0) throw new Error(`Could not pack ${dir}: ${errText.trim()}`)
+  return new Blob([bytes], { type: 'application/gzip' })
+}
+
+/**
+ * Archives made by zipping a folder put everything under that folder. When
+ * `marker` is missing at the top but sits inside the only folder, move that
+ * folder's contents up. Returns the lifted folder's name.
+ */
+export function liftSingleFolder(dir: string, marker: string): string | null {
+  if (existsSync(join(dir, marker))) return null
+  const top = readdirSync(dir).filter((name) => !name.startsWith('.') && name !== '__MACOSX')
+  if (top.length !== 1) return null
+  const inner = join(dir, top[0]!)
+  if (!statSync(inner).isDirectory() || !existsSync(join(inner, marker))) return null
+  const temp = `${dir}.lift`
+  rmSync(temp, { recursive: true, force: true })
+  renameSync(inner, temp)
+  for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true })
+  for (const name of readdirSync(temp)) renameSync(join(temp, name), join(dir, name))
+  rmdirSync(temp)
+  return top[0]!
+}
+
 export interface UploadInput {
   code: Blob
   entrypoint: string
@@ -153,16 +226,7 @@ export class Deployments {
   /** Store one upload (or one chunk of it). The build starts once every chunk is in. */
   async upload(f: FunctionRow, input: UploadInput): Promise<DeploymentRow> {
     const bytes = new Uint8Array(await input.code.arrayBuffer())
-    let start = 0
-    let total = bytes.length
-    if (input.contentRange) {
-      const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(input.contentRange.trim())
-      if (!m) throw err('general_argument_invalid', 'Invalid Content-Range header.')
-      start = Number(m[1])
-      total = Number(m[3])
-      if (Number(m[2]) - start + 1 !== bytes.length || start + bytes.length > total) throw err('general_argument_invalid', 'Content-Range does not match the chunk size.')
-    }
-    if (total === 0 || total > MAX_SIZE) throw err('deployment_invalid_file_size')
+    const { start, total } = chunkRange(input.contentRange, bytes.length)
 
     let row: DeploymentRow
     if (input.uploadId && total > bytes.length && start > 0) {
@@ -176,18 +240,12 @@ export class Deployments {
           `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, 0, ?, ?)`,
         )
-        .run(id, f.id, input.entrypoint, input.commands, total, input.activate ? 1 : 0, Math.max(1, Math.ceil(total / CHUNK_SIZE)), stamp, stamp)
+        .run(id, f.id, input.entrypoint, input.commands, total, input.activate ? 1 : 0, chunksFor(total), stamp, stamp)
       row = this.get(f.id, id)
       mkdirSync(deploymentDir(this.config, f.id), { recursive: true })
     }
 
-    const archive = this.archivePath(f.id, row.id)
-    const fd = openSync(archive, existsSync(archive) ? 'r+' : 'w')
-    try {
-      writeSync(fd, bytes, 0, bytes.length, start)
-    } finally {
-      closeSync(fd)
-    }
+    writeChunk(this.archivePath(f.id, row.id), bytes, start)
     const counted = this.sql
       .query<{ chunks_uploaded: number }, [string, string]>('UPDATE _deployments SET chunks_uploaded = chunks_uploaded + 1, updated_at = ? WHERE id = ? RETURNING chunks_uploaded')
       .get(now(), row.id)!
@@ -220,10 +278,8 @@ export class Deployments {
     if (!existsSync(dir)) throw err('deployment_not_found', 'The code of this deployment is no longer kept on this server.')
     // An isolated function's folder is readable by its own user only, so pack it as that user.
     const sandbox = this.config.functionsSandbox
-    const tar = ['tar', '-czf', '-', '.']
-    const pack = sandbox
-      ? Bun.spawn(sandbox.wrap(sandbox.uidFor(this.config.projectId, functionId), dir, tar), { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
-      : Bun.spawn([...tar.slice(0, 3), '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+    if (!sandbox) return packFolder(dir)
+    const pack = Bun.spawn(sandbox.wrap(sandbox.uidFor(this.config.projectId, functionId), dir, ['tar', '-czf', '-', '.']), { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
     const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
     if (code !== 0) throw new Error(`Could not pack deployment ${id}: ${errText.trim()}`)
     return new Blob([bytes], { type: 'application/gzip' })
@@ -268,44 +324,6 @@ export class Deployments {
     return this.get(f.id, id)
   }
 
-  /** Unpack a .tar.gz or .zip upload into `dir`. */
-  private async unpack(archive: string, dir: string): Promise<void> {
-    const head = new Uint8Array(4)
-    const fd = openSync(archive, 'r')
-    try {
-      readSync(fd, head, 0, 4, 0)
-    } finally {
-      closeSync(fd)
-    }
-    if (isZip(head)) {
-      extractZip(readFileSync(archive), dir)
-      return
-    }
-    const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir], { stdout: 'pipe', stderr: 'pipe' })
-    const [untarErr, untarCode] = await Promise.all([new Response(untar.stderr).text(), untar.exited])
-    if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
-  }
-
-  /**
-   * Archives made by zipping a folder put everything under that folder. When
-   * the entrypoint is missing at the top but sits inside the only folder,
-   * use that folder as the function root.
-   */
-  private liftSingleFolder(dir: string, entrypoint: string): string | null {
-    if (existsSync(join(dir, entrypoint))) return null
-    const top = readdirSync(dir).filter((name) => !name.startsWith('.'))
-    if (top.length !== 1) return null
-    const inner = join(dir, top[0]!)
-    if (!statSync(inner).isDirectory() || !existsSync(join(inner, entrypoint))) return null
-    const temp = `${dir}.lift`
-    rmSync(temp, { recursive: true, force: true })
-    renameSync(inner, temp)
-    for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true })
-    for (const name of readdirSync(temp)) renameSync(join(temp, name), join(dir, name))
-    rmdirSync(temp)
-    return top[0]!
-  }
-
   /** Unpack, run the build command, and activate when asked. Sets status ready or failed. */
   async build(functionId: string, id: string, options: { unpacked?: boolean } = {}): Promise<DeploymentRow> {
     const started = performance.now()
@@ -322,14 +340,14 @@ export class Deployments {
         removeTree(this.config.functionsSandbox, dir)
         mkdirSync(dir, { recursive: true })
         try {
-          await this.unpack(archive, dir)
+          await unpackArchive(archive, dir)
         } finally {
           rmSync(archive, { force: true })
         }
       }
 
       const d = this.get(functionId, id)
-      const lifted = this.liftSingleFolder(dir, d.entrypoint)
+      const lifted = liftSingleFolder(dir, d.entrypoint)
       if (lifted) logs.push(`Using the "${lifted}" folder inside the upload as the function folder.`)
       if (!existsSync(join(dir, d.entrypoint))) {
         throw new Error(`Entrypoint "${d.entrypoint}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`)

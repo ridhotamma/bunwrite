@@ -38,6 +38,7 @@ plus their own storage, backups and function folder.
 | `src/transactions/` | Staged operations and commit with conflict detection |
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/`, `src/webhooks/`, `src/messaging/` | One service and its routes each |
+| `src/sites/` | Static sites: `service.ts` (sites, deployments, lookup by Host), `serve.ts` (files, fallback, `/api/*` to a function), `routes.ts` (Appwrite's Sites API). `app.ts` serves a request as a site when its Host is `<id>.<SITES_DOMAIN>` or a custom domain, before anything else |
 | `src/platform/` | What the Appwrite CLI needs beyond the client APIs: the console-project API (`appwrite login`, organizations, projects) and the Project API (`pull/push settings`) |
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
 | `src/settings/` | Console-edited project settings and API keys; `access.ts` holds services, protocols, sign-in methods, policies and mock phones |

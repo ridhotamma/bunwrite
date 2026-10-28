@@ -304,6 +304,57 @@ export const deployments = sqliteTable(
   (t) => [index('_deployments_function').on(t.functionId)],
 )
 
+/**
+ * Static sites: uploaded files served as they are on `<id>.<SITES_DOMAIN>` or
+ * a custom domain. No build step runs on this server.
+ */
+export const sites = sqliteTable('_sites', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  /** Appwrite's framework key; always served as static files here. */
+  framework: text('framework').notNull().default('other'),
+  /** Folder inside the upload to serve, such as `dist`. Empty serves the top. */
+  outputDirectory: text('output_directory').notNull().default(''),
+  /** Served for paths with no file (single-page apps), such as `index.html`. */
+  fallbackFile: text('fallback_file').notNull().default(''),
+  /** Live deployment; empty serves nothing yet. */
+  deploymentId: text('deployment_id').notNull().default(''),
+  /** Optional custom domain, such as `www.example.com`. */
+  domain: text('domain').notNull().default(''),
+  /** Function that answers `/api/*` on the site's own domain; empty for none. */
+  apiFunctionId: text('api_function_id').notNull().default(''),
+  /** Appwrite settings with no effect here (there is no build), kept so the API returns what was set. */
+  installCommand: text('install_command').notNull().default(''),
+  buildCommand: text('build_command').notNull().default(''),
+  buildRuntime: text('build_runtime').notNull().default(''),
+  adapter: text('adapter').notNull().default('static'),
+  ...timestamps,
+})
+
+export const siteDeployments = sqliteTable(
+  '_site_deployments',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    siteId: text('site_id').notNull(),
+    /** waiting (uploading), processing, ready or failed. */
+    status: text('status').notNull().default('waiting'),
+    buildLogs: text('build_logs').notNull().default(''),
+    buildDuration: real('build_duration').notNull().default(0),
+    sourceSize: integer('source_size').notNull().default(0),
+    /** Files and bytes served, counted once unpacked. */
+    fileCount: integer('file_count').notNull().default(0),
+    totalSize: integer('total_size').notNull().default(0),
+    activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
+    chunksTotal: integer('chunks_total').notNull().default(1),
+    chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    ...timestamps,
+  },
+  (t) => [index('_site_deployments_site').on(t.siteId, t.seq)],
+)
+
 export const executions = sqliteTable(
   '_executions',
   {

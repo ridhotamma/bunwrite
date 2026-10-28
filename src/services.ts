@@ -12,6 +12,7 @@ import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
 import { SettingsService } from './settings/service'
+import { SiteService } from './sites/service'
 import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
 import { TeamService } from './teams/service'
@@ -34,6 +35,8 @@ export interface Services {
   realtime: RealtimeHub
   storage: StorageService
   functions: FunctionService
+  /** Static sites served by Host header. */
+  sites: SiteService
   settings: SettingsService
   /** Services, protocols, sign-in methods and policies (`appwrite push settings`). */
   access: AccessService
@@ -53,7 +56,8 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const transactions = new TransactionService(db, registry, store)
   const auth = new AuthService(db, config, store)
   const teams = new TeamService(db, store, auth)
-  const oauth = new OAuthService(db, config, auth)
+  const sites = new SiteService(db, config)
+  const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db)
   const storage = new StorageService(db, config, store)
@@ -66,7 +70,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render, webhooks, topics, templates } as Services
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, requestLogs, backups, render, webhooks, topics, templates } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {

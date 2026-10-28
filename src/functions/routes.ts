@@ -8,10 +8,10 @@ import { uniqueId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { deploymentModel, Deployments } from './deployments'
+import { functionHttpResponse } from './http'
+import { siteRules } from '~/sites/routes'
 import { ENV_KEY_RE } from './env'
 import { executionModel, functionModel, type FunctionRow, type FunctionSettings } from './service'
-
-const HOP_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection'])
 
 const strings = (value: unknown, fallback: string[]): string[] => (value === undefined || value === null ? fallback : list(value).map(String))
 
@@ -110,12 +110,6 @@ export function functionRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'functions.read')
     const { total, items } = page(ctx.functions.list().map((f) => model(ctx, f)), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'runtime'] })
     return json({ total, functions: items })
-  })
-
-  /** This server hosts no Sites; an empty list lets `appwrite pull all` and `push all` carry on. */
-  router.get('/sites', ({ ctx }) => {
-    requireKey(ctx, 'sites.read')
-    return json({ total: 0, sites: [] })
   })
 
   router.post('/functions', ({ ctx, params }) => {
@@ -297,7 +291,7 @@ export function functionRoutes(router: Router<AppContext>): void {
 
   router.get('/proxy/rules', ({ ctx, params }) => {
     requireKey(ctx, 'rules.read')
-    let rules = ctx.functions.list().map((f) => functionRule(ctx, f))
+    let rules = [...ctx.functions.list().map((f) => functionRule(ctx, f)), ...ctx.sites.list().flatMap((s) => siteRules(ctx, s))]
     let limit = 25
     for (const raw of list(params.queries)) {
       const query = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { method?: string; attribute?: string; values?: unknown[] }
@@ -369,32 +363,7 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.on(
     'ANY',
     '/functions/:functionId/http/*',
-    async ({ ctx, path, request, url }) => {
-      const f = ctx.functions.fn(path.functionId!)
-      ctx.functions.assertCanExecute(ctx.caller, f)
-      // Keep the bytes: an upload (multipart, images, PDFs) is not valid UTF-8.
-      const bytes = request.method === 'GET' || request.method === 'HEAD' ? null : new Uint8Array(await request.arrayBuffer())
-      const { result } = await ctx.functions.execute(
-        f,
-        {
-          trigger: 'http',
-          method: request.method,
-          path: `/${path.rest ?? ''}${url.search}`,
-          headers: Object.fromEntries(request.headers),
-          body: bytes ? new TextDecoder().decode(bytes) : '',
-          ...(bytes && bytes.length > 0 ? { bodyBytes: bytes } : {}),
-          userId: ctx.caller.user?.id ?? null,
-        },
-        'sync',
-      )
-      const headers = Object.fromEntries(Object.entries(result!.headers).filter(([k]) => !HOP_HEADERS.has(k.toLowerCase())))
-      const binary = !/json|text|xml|javascript/i.test(headers['content-type'] ?? headers['Content-Type'] ?? 'text')
-      const payload = binary ? Buffer.from(result!.body, 'latin1') : result!.body
-      if (result!.statusCode !== 204) {
-        headers['content-length'] = String(typeof payload === 'string' ? Buffer.byteLength(payload) : payload.length)
-      }
-      return new Response(result!.statusCode === 204 ? null : payload, { status: result!.statusCode || 500, headers })
-    },
+    async ({ ctx, path, request, url }) => functionHttpResponse(ctx, ctx.functions.fn(path.functionId!), ctx.caller, request, `/${path.rest ?? ''}${url.search}`),
     { raw: true },
   )
 }

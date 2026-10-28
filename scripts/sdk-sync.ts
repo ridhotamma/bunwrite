@@ -159,6 +159,33 @@ interface ServiceSpec {
   fromWeb?: string[]
   /** Node methods kept under another name, next to the web method of the original name. */
   rename?: Record<string, string>
+  /** Bunwrite additions to the copied service. */
+  extend?: (text: string) => string
+}
+
+/**
+ * Sites: `apiFunctionId` and `domain` are Bunwrite settings with no Appwrite
+ * equivalent. Add them to the object form of create() and update().
+ */
+function extendSites(text: string): string {
+  const fields = (indent: string) =>
+    `${indent}/** Bunwrite: function that answers /api/* on the site's domain. */\n${indent}apiFunctionId?: string;\n${indent}/** Bunwrite: custom domain, such as www.example.com. */\n${indent}domain?: string;`
+  const before = text
+  text = text
+    // Object type members end in ';'; positional parameters end in ','.
+    .replace(/^(\s+)fallbackFile\?: string;$/gm, (line, indent: string) => `${line}\n${fields(indent)}`)
+    .replace(
+      /^(\s+)const fallbackFile = params\.fallbackFile;$/gm,
+      (line, indent: string) =>
+        `${line}\n${indent}const { apiFunctionId, domain } = params as { apiFunctionId?: string; domain?: string };`,
+    )
+    .replace(
+      /^(\s+)if \(typeof fallbackFile !== 'undefined'\) \{\n\s+apiPayload\['fallbackFile'\] = fallbackFile;\n\s+\}$/gm,
+      (block, indent: string) =>
+        `${block}\n${['apiFunctionId', 'domain'].map((k) => `${indent}if (typeof ${k} !== 'undefined') {\n${indent}    apiPayload['${k}'] = ${k};\n${indent}}`).join('\n')}`,
+    )
+  if (text === before) throw new Error('sites: could not add Bunwrite settings to create/update')
+  return text
 }
 
 const SERVICES: ServiceSpec[] = [
@@ -173,6 +200,7 @@ const SERVICES: ServiceSpec[] = [
     rename: { getFileDownload: 'getFileDownloadBytes', getFilePreview: 'getFilePreviewBytes', getFileView: 'getFileViewBytes' },
   },
   { file: 'functions' },
+  { file: 'sites', extend: extendSites },
   { file: 'teams' },
   { file: 'users' },
   { file: 'messaging' },
@@ -282,6 +310,7 @@ function buildService(spec: ServiceSpec): { text: string; kept: string[]; droppe
     throw new Error(`${spec.file}: Client is not imported`)
   }
   text = declareWindow(pruneImports(rebrand(text)))
+  if (spec.extend) text = spec.extend(text)
   noteEnums(text)
   const dropped = base.methods.length - base.methods.filter((m) => served(m.method, m.path)).length
   return { text: header(`node-appwrite ${NODE_VERSION}${spec.fromWeb ? ` and appwrite ${WEB_VERSION}` : ''}`) + text, kept, dropped }

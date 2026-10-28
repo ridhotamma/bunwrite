@@ -1,4 +1,5 @@
 import type { Services } from '~/services'
+import type { SiteRow } from '~/sites/service'
 
 export interface ProjectInfo {
   id: string
@@ -28,6 +29,8 @@ export interface ProjectResolver {
   list(): ProjectRuntime[]
   /** Function HTTP endpoints have no project header, so find the owner by function ID. */
   findFunction(functionId: string): ProjectRuntime | null
+  /** The project and site a request's Host header points at, if any. */
+  findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
   /** Keep the registry in step with a project's Settings page. */
   update(id: string, fields: { name?: string; orgId?: string }): ProjectInfo
@@ -50,6 +53,10 @@ export function singleProjectResolver(services: Services): ProjectResolver {
     get: (id) => (id === info.id ? runtime : null),
     list: () => [runtime],
     findFunction: (functionId) => (services.functions.list().some((f) => f.id === functionId) ? runtime : null),
+    findSite: (host) => {
+      const site = services.sites.byHost(host)
+      return site ? { project: runtime, site } : null
+    },
     create: () => {
       throw new Error('Project creation needs a ProjectManager.')
     },

@@ -25,6 +25,7 @@ export type {
     RealtimeResponseConnected,
 } from './services/realtime';
 export { Render } from './services/render';
+export { Sites } from './services/sites';
 export type { RenderPdfParams, RenderImageParams, RenderMargin } from './services/render';
 export { Storage } from './services/storage';
 export { TablesDB } from './services/tables-db';

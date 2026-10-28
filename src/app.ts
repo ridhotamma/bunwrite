@@ -20,6 +20,8 @@ import type { Services } from './services'
 import { functionRoutes } from './functions/routes'
 import { singleProjectResolver, type ProjectResolver, type ProjectRuntime } from './projects/types'
 import { renderRoutes } from './render/routes'
+import { serveSite } from './sites/serve'
+import { siteRoutes } from './sites/routes'
 import { storageRoutes } from './storage/routes'
 import { teamRoutes } from './teams/routes'
 import { topicRoutes } from './messaging/topics'
@@ -73,6 +75,7 @@ export function createApp(source: Services | ProjectResolver) {
   teamRoutes(router)
   storageRoutes(router)
   functionRoutes(router)
+  siteRoutes(router)
   renderRoutes(router)
   projectRoutes(router)
   webhookRoutes(router)
@@ -81,7 +84,8 @@ export function createApp(source: Services | ProjectResolver) {
 
   const cors = (request: Request, allowedOrigins: string[]): Record<string, string> => {
     const origin = request.headers.get('origin')
-    if (!origin || !originAllowed(origin, allowedOrigins)) return {}
+    // Sites hosted here may call the API from the browser without being listed.
+    if (!origin || !(originAllowed(origin, allowedOrigins) || siteOfOrigin(origin))) return {}
     return {
       'access-control-allow-origin': origin,
       'access-control-allow-credentials': 'true',
@@ -91,6 +95,21 @@ export function createApp(source: Services | ProjectResolver) {
       'access-control-max-age': '86400',
       vary: 'Origin',
     }
+  }
+
+  const siteOfOrigin = (origin: string) => {
+    try {
+      return projects.findSite(new URL(origin).host)
+    } catch {
+      return null
+    }
+  }
+
+  /** A site's own domain: `<siteId>.<SITES_DOMAIN>` or its custom domain. */
+  function siteFor(request: Request) {
+    const host = request.headers.get('host')
+    const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
+    return (host ? projects.findSite(host) : null) ?? (forwarded ? projects.findSite(forwarded) : null)
   }
 
   const consoleApp = createConsole(projects)
@@ -196,6 +215,17 @@ export function createApp(source: Services | ProjectResolver) {
 
   async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
     const url = new URL(request.url)
+    const hosted = siteFor(request)
+    if (hosted) {
+      meta.project = hosted.project.info.id
+      meta.auth = `site:${hosted.site.id}`
+      return serveSite(hosted.project.services, hosted.site, request)
+    }
+    // Caddy's on-demand TLS asks here before getting a certificate for a host.
+    if (url.pathname === '/.well-known/bunwrite/site-domain' && request.method === 'GET') {
+      const domain = url.searchParams.get('domain') ?? ''
+      return new Response(null, { status: domain && projects.findSite(domain) ? 200 : 404 })
+    }
     const brand = BRAND_FILES[url.pathname]
     if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
       const file = Bun.file(brand.path)

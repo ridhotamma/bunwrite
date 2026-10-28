@@ -68,6 +68,7 @@ export interface ProjectConfig {
   endpoint?: string
   settings?: any
   functions?: any[]
+  sites?: any[]
   tablesDB?: any[]
   tables?: any[]
   databases?: any[]
