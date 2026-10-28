@@ -1,0 +1,41 @@
+{
+  "name": "@bunwrite/sdk",
+  "version": "0.1.0",
+  "description": "SDK for Bunwrite: one client for browsers, Bun, Node.js and edge runtimes, with the API of Appwrite's SDKs.",
+  "license": "MIT AND BSD-3-Clause",
+  "keywords": [
+    "bunwrite",
+    "appwrite",
+    "sdk",
+    "backend"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

@@ -47,6 +47,8 @@ plus their own storage, backups and function folder.
 | `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
+| `packages/sdk/` | `@bunwrite/sdk`, its own package. `src/services`, the helpers, models and enums are generated from Appwrite's SDKs by `scripts/sdk-sync.ts`, which keeps the methods whose HTTP method and path the server routes; the client is written by hand |
+| `packages/cli/` | `@bunwrite/cli`, its own package on top of the SDK (bundled into its build): sign-in, `pull`/`push` of the project config, function deploys with its own tar.gz writer, and generic service commands |
 
 ### Console
 

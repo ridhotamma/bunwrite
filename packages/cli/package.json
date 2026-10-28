@@ -1,0 +1,33 @@
+{
+  "name": "@bunwrite/cli",
+  "version": "0.1.0",
+  "description": "Command-line tool for Bunwrite: sign in, pull and push project config, deploy functions and call any API.",
+  "license": "MIT AND BSD-3-Clause",
+  "keywords": [
+    "bunwrite",
+    "appwrite",
+    "cli"
+  ],
+  "type": "module",
+  "bin": {
+    "bunwrite": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "build:binary": "bun scripts/build.ts --binary",
+    "typecheck": "tsc --noEmit -p .",
+    "prepublishOnly": "bun run build"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "typescript": "^5.9.0"
+  }
+}

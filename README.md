@@ -147,6 +147,30 @@ const databases = new Databases(client)
 The same endpoint works with the browser `appwrite` SDK. `X-Appwrite-*`
 headers, sessions, cookies and error shapes follow Appwrite.
 
+## Bunwrite SDK and CLI
+
+Bunwrite also has its own SDK and CLI in `packages/`, each a separate package
+with no dependencies and no code shared with the server:
+
+- [`@bunwrite/sdk`](packages/sdk/README.md): one SDK for browsers, Bun,
+  Node.js and edge runtimes. Its services and methods are copied from
+  Appwrite's Web and Node.js SDKs, keeping only what Bunwrite serves, so
+  switching is usually a change of import. Adds `Render` for the HTML-to-PDF
+  and image endpoints.
+- [`@bunwrite/cli`](packages/cli/README.md): `bunwrite client`, `login`,
+  `init project`, `pull`/`push` of the same `appwrite.config.json` format
+  (or `bunwrite.config.json`), function deploys, and one command per SDK
+  method.
+
+```ts
+import { Client, Databases } from '@bunwrite/sdk'
+```
+
+```bash
+bunwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
+bunwrite pull all
+```
+
 ## Console
 
 Server-rendered pages with htmx, styled after Shopify Polaris, and usable on a
@@ -256,6 +280,8 @@ cancel the real one.
 | `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
 | `bun run typecheck` | TypeScript check |
 | `bun test` | Contract tests through the real SDKs |
+| `bun run sdk:sync` | Copy the Appwrite SDK code Bunwrite serves into `packages/sdk` |
+| `bun run sdk:build` / `bun run cli:build` | Build the SDK and CLI packages into their `dist/` |
 
 ## Stress testing
 

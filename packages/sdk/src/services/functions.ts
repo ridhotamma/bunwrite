@@ -1,0 +1,2349 @@
+// Copied from node-appwrite 29.0.0 (BSD-3-Clause, see LICENSE) by scripts/sdk-sync.ts,
+// keeping only what Bunwrite serves. Edit that script, not this file.
+
+import { BunwriteException, Client, type Payload, type UploadProgress } from '../client';
+import type { Models } from '../models';
+import { InputFile } from '../inputFile';
+
+import { Runtime } from '../enums/runtime';
+import { ProjectKeyScopes } from '../enums/project-key-scopes';
+import { DeploymentDownloadType } from '../enums/deployment-download-type';
+import { ExecutionMethod } from '../enums/execution-method';
+export class Functions {
+    client: Client;
+
+    constructor(client: Client) {
+        this.client = client;
+    }
+
+    /**
+     * Get a list of all the project's functions. You can use the query params to filter your results.
+     *
+     * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name, enabled, runtime, deploymentId, schedule, scheduleNext, schedulePrevious, timeout, entrypoint, commands, installationId
+     * @param {string} params.search - Search term to filter your list results. Max length: 256 chars.
+     * @param {boolean} params.total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.FunctionList>}
+     */
+    list(params?: {
+        queries?: string[];
+        search?: string;
+        total?: boolean;
+    }): Promise<Models.FunctionList>;
+    /**
+     * Get a list of all the project's functions. You can use the query params to filter your results.
+     *
+     * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name, enabled, runtime, deploymentId, schedule, scheduleNext, schedulePrevious, timeout, entrypoint, commands, installationId
+     * @param {string} search - Search term to filter your list results. Max length: 256 chars.
+     * @param {boolean} total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.FunctionList>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    list(
+        queries?: string[],
+        search?: string,
+        total?: boolean,
+    ): Promise<Models.FunctionList>;
+    list(
+        paramsOrFirst?:
+            { queries?: string[]; search?: string; total?: boolean } | string[],
+        ...rest: [string?, boolean?]
+    ): Promise<Models.FunctionList> {
+        let params: { queries?: string[]; search?: string; total?: boolean };
+
+        if (
+            !paramsOrFirst ||
+            (paramsOrFirst &&
+                typeof paramsOrFirst === 'object' &&
+                !Array.isArray(paramsOrFirst))
+        ) {
+            params = (paramsOrFirst || {}) as {
+                queries?: string[];
+                search?: string;
+                total?: boolean;
+            };
+        } else {
+            params = {
+                queries: paramsOrFirst as string[],
+                search: rest[0] as string,
+                total: rest[1] as boolean,
+            };
+        }
+
+        const queries = params.queries;
+        const search = params.search;
+        const total = params.total;
+        const apiPath = '/functions';
+        const apiPayload: Payload = {};
+        if (typeof queries !== 'undefined') {
+            apiPayload['queries'] = queries;
+        }
+        if (typeof search !== 'undefined') {
+            apiPayload['search'] = search;
+        }
+        if (typeof total !== 'undefined') {
+            apiPayload['total'] = total;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Create a new function. You can pass a list of [permissions](https://appwrite.io/docs/permissions) to allow different project users or team with access to execute the function using the client API.
+     *
+     * @param {string} params.functionId - Function ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} params.name - Function name. Max length: 128 chars.
+     * @param {Runtime} params.runtime - Execution runtime.
+     * @param {string[]} params.execute - An array of role strings with execution permissions. By default no user is granted with any execute permissions. [learn more about roles](https://appwrite.io/docs/permissions#permission-roles). Maximum of 100 roles are allowed, each 64 characters long.
+     * @param {string[]} params.events - Events list. Maximum of 100 events are allowed.
+     * @param {string} params.schedule - Schedule CRON syntax.
+     * @param {number} params.timeout - Function maximum execution time in seconds.
+     * @param {boolean} params.enabled - Is function enabled? When set to 'disabled', users cannot access the function but Server SDKs with and API key can still access the function. No data is lost when this is toggled.
+     * @param {boolean} params.logging - When disabled, executions will exclude logs and errors, and will be slightly faster.
+     * @param {string} params.entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
+     * @param {string} params.commands - Build Commands.
+     * @param {ProjectKeyScopes[]} params.scopes - List of scopes allowed for API key auto-generated for every execution. Maximum of 200 scopes are allowed.
+     * @param {string} params.installationId - Appwrite Installation ID for VCS (Version Control System) deployment.
+     * @param {string} params.providerRepositoryId - Repository ID of the repo linked to the function.
+     * @param {string} params.providerBranch - Production branch for the repo linked to the function.
+     * @param {boolean} params.providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
+     * @param {string} params.providerRootDirectory - Path to function code in the linked repo.
+     * @param {string[]} params.providerBranches - List of branch name patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all branches.
+     * @param {string[]} params.providerPaths - List of file path patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all file changes.
+     * @param {string} params.buildSpecification - Build specification for the function deployments.
+     * @param {string} params.runtimeSpecification - Runtime specification for the function executions.
+     * @param {number} params.deploymentRetention - Days to keep non-active deployments before deletion. Value 0 means all deployments will be kept.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     */
+    create(params: {
+        functionId: string;
+        name: string;
+        runtime: Runtime;
+        execute?: string[];
+        events?: string[];
+        schedule?: string;
+        timeout?: number;
+        enabled?: boolean;
+        logging?: boolean;
+        entrypoint?: string;
+        commands?: string;
+        scopes?: ProjectKeyScopes[];
+        installationId?: string;
+        providerRepositoryId?: string;
+        providerBranch?: string;
+        providerSilentMode?: boolean;
+        providerRootDirectory?: string;
+        providerBranches?: string[];
+        providerPaths?: string[];
+        buildSpecification?: string;
+        runtimeSpecification?: string;
+        deploymentRetention?: number;
+    }): Promise<Models.Function>;
+    /**
+     * Create a new function. You can pass a list of [permissions](https://appwrite.io/docs/permissions) to allow different project users or team with access to execute the function using the client API.
+     *
+     * @param {string} functionId - Function ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} name - Function name. Max length: 128 chars.
+     * @param {Runtime} runtime - Execution runtime.
+     * @param {string[]} execute - An array of role strings with execution permissions. By default no user is granted with any execute permissions. [learn more about roles](https://appwrite.io/docs/permissions#permission-roles). Maximum of 100 roles are allowed, each 64 characters long.
+     * @param {string[]} events - Events list. Maximum of 100 events are allowed.
+     * @param {string} schedule - Schedule CRON syntax.
+     * @param {number} timeout - Function maximum execution time in seconds.
+     * @param {boolean} enabled - Is function enabled? When set to 'disabled', users cannot access the function but Server SDKs with and API key can still access the function. No data is lost when this is toggled.
+     * @param {boolean} logging - When disabled, executions will exclude logs and errors, and will be slightly faster.
+     * @param {string} entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
+     * @param {string} commands - Build Commands.
+     * @param {ProjectKeyScopes[]} scopes - List of scopes allowed for API key auto-generated for every execution. Maximum of 200 scopes are allowed.
+     * @param {string} installationId - Appwrite Installation ID for VCS (Version Control System) deployment.
+     * @param {string} providerRepositoryId - Repository ID of the repo linked to the function.
+     * @param {string} providerBranch - Production branch for the repo linked to the function.
+     * @param {boolean} providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
+     * @param {string} providerRootDirectory - Path to function code in the linked repo.
+     * @param {string[]} providerBranches - List of branch name patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all branches.
+     * @param {string[]} providerPaths - List of file path patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all file changes.
+     * @param {string} buildSpecification - Build specification for the function deployments.
+     * @param {string} runtimeSpecification - Runtime specification for the function executions.
+     * @param {number} deploymentRetention - Days to keep non-active deployments before deletion. Value 0 means all deployments will be kept.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    create(
+        functionId: string,
+        name: string,
+        runtime: Runtime,
+        execute?: string[],
+        events?: string[],
+        schedule?: string,
+        timeout?: number,
+        enabled?: boolean,
+        logging?: boolean,
+        entrypoint?: string,
+        commands?: string,
+        scopes?: ProjectKeyScopes[],
+        installationId?: string,
+        providerRepositoryId?: string,
+        providerBranch?: string,
+        providerSilentMode?: boolean,
+        providerRootDirectory?: string,
+        providerBranches?: string[],
+        providerPaths?: string[],
+        buildSpecification?: string,
+        runtimeSpecification?: string,
+        deploymentRetention?: number,
+    ): Promise<Models.Function>;
+    create(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  name: string;
+                  runtime: Runtime;
+                  execute?: string[];
+                  events?: string[];
+                  schedule?: string;
+                  timeout?: number;
+                  enabled?: boolean;
+                  logging?: boolean;
+                  entrypoint?: string;
+                  commands?: string;
+                  scopes?: ProjectKeyScopes[];
+                  installationId?: string;
+                  providerRepositoryId?: string;
+                  providerBranch?: string;
+                  providerSilentMode?: boolean;
+                  providerRootDirectory?: string;
+                  providerBranches?: string[];
+                  providerPaths?: string[];
+                  buildSpecification?: string;
+                  runtimeSpecification?: string;
+                  deploymentRetention?: number;
+              }
+            | string,
+        ...rest: [
+            string?,
+            Runtime?,
+            string[]?,
+            string[]?,
+            string?,
+            number?,
+            boolean?,
+            boolean?,
+            string?,
+            string?,
+            ProjectKeyScopes[]?,
+            string?,
+            string?,
+            string?,
+            boolean?,
+            string?,
+            string[]?,
+            string[]?,
+            string?,
+            string?,
+            number?,
+        ]
+    ): Promise<Models.Function> {
+        let params: {
+            functionId: string;
+            name: string;
+            runtime: Runtime;
+            execute?: string[];
+            events?: string[];
+            schedule?: string;
+            timeout?: number;
+            enabled?: boolean;
+            logging?: boolean;
+            entrypoint?: string;
+            commands?: string;
+            scopes?: ProjectKeyScopes[];
+            installationId?: string;
+            providerRepositoryId?: string;
+            providerBranch?: string;
+            providerSilentMode?: boolean;
+            providerRootDirectory?: string;
+            providerBranches?: string[];
+            providerPaths?: string[];
+            buildSpecification?: string;
+            runtimeSpecification?: string;
+            deploymentRetention?: number;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                name: string;
+                runtime: Runtime;
+                execute?: string[];
+                events?: string[];
+                schedule?: string;
+                timeout?: number;
+                enabled?: boolean;
+                logging?: boolean;
+                entrypoint?: string;
+                commands?: string;
+                scopes?: ProjectKeyScopes[];
+                installationId?: string;
+                providerRepositoryId?: string;
+                providerBranch?: string;
+                providerSilentMode?: boolean;
+                providerRootDirectory?: string;
+                providerBranches?: string[];
+                providerPaths?: string[];
+                buildSpecification?: string;
+                runtimeSpecification?: string;
+                deploymentRetention?: number;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                name: rest[0] as string,
+                runtime: rest[1] as Runtime,
+                execute: rest[2] as string[],
+                events: rest[3] as string[],
+                schedule: rest[4] as string,
+                timeout: rest[5] as number,
+                enabled: rest[6] as boolean,
+                logging: rest[7] as boolean,
+                entrypoint: rest[8] as string,
+                commands: rest[9] as string,
+                scopes: rest[10] as ProjectKeyScopes[],
+                installationId: rest[11] as string,
+                providerRepositoryId: rest[12] as string,
+                providerBranch: rest[13] as string,
+                providerSilentMode: rest[14] as boolean,
+                providerRootDirectory: rest[15] as string,
+                providerBranches: rest[16] as string[],
+                providerPaths: rest[17] as string[],
+                buildSpecification: rest[18] as string,
+                runtimeSpecification: rest[19] as string,
+                deploymentRetention: rest[20] as number,
+            };
+        }
+
+        const functionId = params.functionId;
+        const name = params.name;
+        const runtime = params.runtime;
+        const execute = params.execute;
+        const events = params.events;
+        const schedule = params.schedule;
+        const timeout = params.timeout;
+        const enabled = params.enabled;
+        const logging = params.logging;
+        const entrypoint = params.entrypoint;
+        const commands = params.commands;
+        const scopes = params.scopes;
+        const installationId = params.installationId;
+        const providerRepositoryId = params.providerRepositoryId;
+        const providerBranch = params.providerBranch;
+        const providerSilentMode = params.providerSilentMode;
+        const providerRootDirectory = params.providerRootDirectory;
+        const providerBranches = params.providerBranches;
+        const providerPaths = params.providerPaths;
+        const buildSpecification = params.buildSpecification;
+        const runtimeSpecification = params.runtimeSpecification;
+        const deploymentRetention = params.deploymentRetention;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof name === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "name"');
+        }
+        if (typeof runtime === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "runtime"',
+            );
+        }
+        const apiPath = '/functions';
+        const apiPayload: Payload = {};
+        if (typeof functionId !== 'undefined') {
+            apiPayload['functionId'] = functionId;
+        }
+        if (typeof name !== 'undefined') {
+            apiPayload['name'] = name;
+        }
+        if (typeof runtime !== 'undefined') {
+            apiPayload['runtime'] = runtime;
+        }
+        if (typeof execute !== 'undefined') {
+            apiPayload['execute'] = execute;
+        }
+        if (typeof events !== 'undefined') {
+            apiPayload['events'] = events;
+        }
+        if (typeof schedule !== 'undefined') {
+            apiPayload['schedule'] = schedule;
+        }
+        if (typeof timeout !== 'undefined') {
+            apiPayload['timeout'] = timeout;
+        }
+        if (typeof enabled !== 'undefined') {
+            apiPayload['enabled'] = enabled;
+        }
+        if (typeof logging !== 'undefined') {
+            apiPayload['logging'] = logging;
+        }
+        if (typeof entrypoint !== 'undefined') {
+            apiPayload['entrypoint'] = entrypoint;
+        }
+        if (typeof commands !== 'undefined') {
+            apiPayload['commands'] = commands;
+        }
+        if (typeof scopes !== 'undefined') {
+            apiPayload['scopes'] = scopes;
+        }
+        if (typeof installationId !== 'undefined') {
+            apiPayload['installationId'] = installationId;
+        }
+        if (typeof providerRepositoryId !== 'undefined') {
+            apiPayload['providerRepositoryId'] = providerRepositoryId;
+        }
+        if (typeof providerBranch !== 'undefined') {
+            apiPayload['providerBranch'] = providerBranch;
+        }
+        if (typeof providerSilentMode !== 'undefined') {
+            apiPayload['providerSilentMode'] = providerSilentMode;
+        }
+        if (typeof providerRootDirectory !== 'undefined') {
+            apiPayload['providerRootDirectory'] = providerRootDirectory;
+        }
+        if (typeof providerBranches !== 'undefined') {
+            apiPayload['providerBranches'] = providerBranches;
+        }
+        if (typeof providerPaths !== 'undefined') {
+            apiPayload['providerPaths'] = providerPaths;
+        }
+        if (typeof buildSpecification !== 'undefined') {
+            apiPayload['buildSpecification'] = buildSpecification;
+        }
+        if (typeof runtimeSpecification !== 'undefined') {
+            apiPayload['runtimeSpecification'] = runtimeSpecification;
+        }
+        if (typeof deploymentRetention !== 'undefined') {
+            apiPayload['deploymentRetention'] = deploymentRetention;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a function by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     */
+    get(params: { functionId: string }): Promise<Models.Function>;
+    /**
+     * Get a function by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    get(functionId: string): Promise<Models.Function>;
+    get(
+        paramsOrFirst: { functionId: string } | string,
+    ): Promise<Models.Function> {
+        let params: { functionId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as { functionId: string };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Update function by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.name - Function name. Max length: 128 chars.
+     * @param {Runtime} params.runtime - Execution runtime.
+     * @param {string[]} params.execute - An array of role strings with execution permissions. By default no user is granted with any execute permissions. [learn more about roles](https://appwrite.io/docs/permissions#permission-roles). Maximum of 100 roles are allowed, each 64 characters long.
+     * @param {string[]} params.events - Events list. Maximum of 100 events are allowed.
+     * @param {string} params.schedule - Schedule CRON syntax.
+     * @param {number} params.timeout - Maximum execution time in seconds.
+     * @param {boolean} params.enabled - Is function enabled? When set to 'disabled', users cannot access the function but Server SDKs with and API key can still access the function. No data is lost when this is toggled.
+     * @param {boolean} params.logging - When disabled, executions will exclude logs and errors, and will be slightly faster.
+     * @param {string} params.entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
+     * @param {string} params.commands - Build Commands.
+     * @param {ProjectKeyScopes[]} params.scopes - List of scopes allowed for API Key auto-generated for every execution. Maximum of 200 scopes are allowed.
+     * @param {string} params.installationId - Appwrite Installation ID for VCS (Version Controle System) deployment.
+     * @param {string} params.providerRepositoryId - Repository ID of the repo linked to the function
+     * @param {string} params.providerBranch - Production branch for the repo linked to the function
+     * @param {boolean} params.providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
+     * @param {string} params.providerRootDirectory - Path to function code in the linked repo.
+     * @param {string[]} params.providerBranches - List of branch name patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all branches.
+     * @param {string[]} params.providerPaths - List of file path patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all file changes.
+     * @param {string} params.buildSpecification - Build specification for the function deployments.
+     * @param {string} params.runtimeSpecification - Runtime specification for the function executions.
+     * @param {number} params.deploymentRetention - Days to keep non-active deployments before deletion. Value 0 means all deployments will be kept.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     */
+    update(params: {
+        functionId: string;
+        name: string;
+        runtime?: Runtime;
+        execute?: string[];
+        events?: string[];
+        schedule?: string;
+        timeout?: number;
+        enabled?: boolean;
+        logging?: boolean;
+        entrypoint?: string;
+        commands?: string;
+        scopes?: ProjectKeyScopes[];
+        installationId?: string;
+        providerRepositoryId?: string;
+        providerBranch?: string;
+        providerSilentMode?: boolean;
+        providerRootDirectory?: string;
+        providerBranches?: string[];
+        providerPaths?: string[];
+        buildSpecification?: string;
+        runtimeSpecification?: string;
+        deploymentRetention?: number;
+    }): Promise<Models.Function>;
+    /**
+     * Update function by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} name - Function name. Max length: 128 chars.
+     * @param {Runtime} runtime - Execution runtime.
+     * @param {string[]} execute - An array of role strings with execution permissions. By default no user is granted with any execute permissions. [learn more about roles](https://appwrite.io/docs/permissions#permission-roles). Maximum of 100 roles are allowed, each 64 characters long.
+     * @param {string[]} events - Events list. Maximum of 100 events are allowed.
+     * @param {string} schedule - Schedule CRON syntax.
+     * @param {number} timeout - Maximum execution time in seconds.
+     * @param {boolean} enabled - Is function enabled? When set to 'disabled', users cannot access the function but Server SDKs with and API key can still access the function. No data is lost when this is toggled.
+     * @param {boolean} logging - When disabled, executions will exclude logs and errors, and will be slightly faster.
+     * @param {string} entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
+     * @param {string} commands - Build Commands.
+     * @param {ProjectKeyScopes[]} scopes - List of scopes allowed for API Key auto-generated for every execution. Maximum of 200 scopes are allowed.
+     * @param {string} installationId - Appwrite Installation ID for VCS (Version Controle System) deployment.
+     * @param {string} providerRepositoryId - Repository ID of the repo linked to the function
+     * @param {string} providerBranch - Production branch for the repo linked to the function
+     * @param {boolean} providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
+     * @param {string} providerRootDirectory - Path to function code in the linked repo.
+     * @param {string[]} providerBranches - List of branch name patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all branches.
+     * @param {string[]} providerPaths - List of file path patterns to trigger automatic deployments. Supports wildcards. Leave empty to deploy on all file changes.
+     * @param {string} buildSpecification - Build specification for the function deployments.
+     * @param {string} runtimeSpecification - Runtime specification for the function executions.
+     * @param {number} deploymentRetention - Days to keep non-active deployments before deletion. Value 0 means all deployments will be kept.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    update(
+        functionId: string,
+        name: string,
+        runtime?: Runtime,
+        execute?: string[],
+        events?: string[],
+        schedule?: string,
+        timeout?: number,
+        enabled?: boolean,
+        logging?: boolean,
+        entrypoint?: string,
+        commands?: string,
+        scopes?: ProjectKeyScopes[],
+        installationId?: string,
+        providerRepositoryId?: string,
+        providerBranch?: string,
+        providerSilentMode?: boolean,
+        providerRootDirectory?: string,
+        providerBranches?: string[],
+        providerPaths?: string[],
+        buildSpecification?: string,
+        runtimeSpecification?: string,
+        deploymentRetention?: number,
+    ): Promise<Models.Function>;
+    update(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  name: string;
+                  runtime?: Runtime;
+                  execute?: string[];
+                  events?: string[];
+                  schedule?: string;
+                  timeout?: number;
+                  enabled?: boolean;
+                  logging?: boolean;
+                  entrypoint?: string;
+                  commands?: string;
+                  scopes?: ProjectKeyScopes[];
+                  installationId?: string;
+                  providerRepositoryId?: string;
+                  providerBranch?: string;
+                  providerSilentMode?: boolean;
+                  providerRootDirectory?: string;
+                  providerBranches?: string[];
+                  providerPaths?: string[];
+                  buildSpecification?: string;
+                  runtimeSpecification?: string;
+                  deploymentRetention?: number;
+              }
+            | string,
+        ...rest: [
+            string?,
+            Runtime?,
+            string[]?,
+            string[]?,
+            string?,
+            number?,
+            boolean?,
+            boolean?,
+            string?,
+            string?,
+            ProjectKeyScopes[]?,
+            string?,
+            string?,
+            string?,
+            boolean?,
+            string?,
+            string[]?,
+            string[]?,
+            string?,
+            string?,
+            number?,
+        ]
+    ): Promise<Models.Function> {
+        let params: {
+            functionId: string;
+            name: string;
+            runtime?: Runtime;
+            execute?: string[];
+            events?: string[];
+            schedule?: string;
+            timeout?: number;
+            enabled?: boolean;
+            logging?: boolean;
+            entrypoint?: string;
+            commands?: string;
+            scopes?: ProjectKeyScopes[];
+            installationId?: string;
+            providerRepositoryId?: string;
+            providerBranch?: string;
+            providerSilentMode?: boolean;
+            providerRootDirectory?: string;
+            providerBranches?: string[];
+            providerPaths?: string[];
+            buildSpecification?: string;
+            runtimeSpecification?: string;
+            deploymentRetention?: number;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                name: string;
+                runtime?: Runtime;
+                execute?: string[];
+                events?: string[];
+                schedule?: string;
+                timeout?: number;
+                enabled?: boolean;
+                logging?: boolean;
+                entrypoint?: string;
+                commands?: string;
+                scopes?: ProjectKeyScopes[];
+                installationId?: string;
+                providerRepositoryId?: string;
+                providerBranch?: string;
+                providerSilentMode?: boolean;
+                providerRootDirectory?: string;
+                providerBranches?: string[];
+                providerPaths?: string[];
+                buildSpecification?: string;
+                runtimeSpecification?: string;
+                deploymentRetention?: number;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                name: rest[0] as string,
+                runtime: rest[1] as Runtime,
+                execute: rest[2] as string[],
+                events: rest[3] as string[],
+                schedule: rest[4] as string,
+                timeout: rest[5] as number,
+                enabled: rest[6] as boolean,
+                logging: rest[7] as boolean,
+                entrypoint: rest[8] as string,
+                commands: rest[9] as string,
+                scopes: rest[10] as ProjectKeyScopes[],
+                installationId: rest[11] as string,
+                providerRepositoryId: rest[12] as string,
+                providerBranch: rest[13] as string,
+                providerSilentMode: rest[14] as boolean,
+                providerRootDirectory: rest[15] as string,
+                providerBranches: rest[16] as string[],
+                providerPaths: rest[17] as string[],
+                buildSpecification: rest[18] as string,
+                runtimeSpecification: rest[19] as string,
+                deploymentRetention: rest[20] as number,
+            };
+        }
+
+        const functionId = params.functionId;
+        const name = params.name;
+        const runtime = params.runtime;
+        const execute = params.execute;
+        const events = params.events;
+        const schedule = params.schedule;
+        const timeout = params.timeout;
+        const enabled = params.enabled;
+        const logging = params.logging;
+        const entrypoint = params.entrypoint;
+        const commands = params.commands;
+        const scopes = params.scopes;
+        const installationId = params.installationId;
+        const providerRepositoryId = params.providerRepositoryId;
+        const providerBranch = params.providerBranch;
+        const providerSilentMode = params.providerSilentMode;
+        const providerRootDirectory = params.providerRootDirectory;
+        const providerBranches = params.providerBranches;
+        const providerPaths = params.providerPaths;
+        const buildSpecification = params.buildSpecification;
+        const runtimeSpecification = params.runtimeSpecification;
+        const deploymentRetention = params.deploymentRetention;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof name === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "name"');
+        }
+        const apiPath = '/functions/{functionId}'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof name !== 'undefined') {
+            apiPayload['name'] = name;
+        }
+        if (typeof runtime !== 'undefined') {
+            apiPayload['runtime'] = runtime;
+        }
+        if (typeof execute !== 'undefined') {
+            apiPayload['execute'] = execute;
+        }
+        if (typeof events !== 'undefined') {
+            apiPayload['events'] = events;
+        }
+        if (typeof schedule !== 'undefined') {
+            apiPayload['schedule'] = schedule;
+        }
+        if (typeof timeout !== 'undefined') {
+            apiPayload['timeout'] = timeout;
+        }
+        if (typeof enabled !== 'undefined') {
+            apiPayload['enabled'] = enabled;
+        }
+        if (typeof logging !== 'undefined') {
+            apiPayload['logging'] = logging;
+        }
+        if (typeof entrypoint !== 'undefined') {
+            apiPayload['entrypoint'] = entrypoint;
+        }
+        if (typeof commands !== 'undefined') {
+            apiPayload['commands'] = commands;
+        }
+        if (typeof scopes !== 'undefined') {
+            apiPayload['scopes'] = scopes;
+        }
+        if (typeof installationId !== 'undefined') {
+            apiPayload['installationId'] = installationId;
+        }
+        if (typeof providerRepositoryId !== 'undefined') {
+            apiPayload['providerRepositoryId'] = providerRepositoryId;
+        }
+        if (typeof providerBranch !== 'undefined') {
+            apiPayload['providerBranch'] = providerBranch;
+        }
+        if (typeof providerSilentMode !== 'undefined') {
+            apiPayload['providerSilentMode'] = providerSilentMode;
+        }
+        if (typeof providerRootDirectory !== 'undefined') {
+            apiPayload['providerRootDirectory'] = providerRootDirectory;
+        }
+        if (typeof providerBranches !== 'undefined') {
+            apiPayload['providerBranches'] = providerBranches;
+        }
+        if (typeof providerPaths !== 'undefined') {
+            apiPayload['providerPaths'] = providerPaths;
+        }
+        if (typeof buildSpecification !== 'undefined') {
+            apiPayload['buildSpecification'] = buildSpecification;
+        }
+        if (typeof runtimeSpecification !== 'undefined') {
+            apiPayload['runtimeSpecification'] = runtimeSpecification;
+        }
+        if (typeof deploymentRetention !== 'undefined') {
+            apiPayload['deploymentRetention'] = deploymentRetention;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('put', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a function by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    delete(params: { functionId: string }): Promise<{}>;
+    /**
+     * Delete a function by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    delete(functionId: string): Promise<{}>;
+    delete(paramsOrFirst: { functionId: string } | string): Promise<{}> {
+        let params: { functionId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as { functionId: string };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Update the function active deployment. Use this endpoint to switch the code deployment that should be used when visitor opens your function.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     */
+    updateFunctionDeployment(params: {
+        functionId: string;
+        deploymentId: string;
+    }): Promise<Models.Function>;
+    /**
+     * Update the function active deployment. Use this endpoint to switch the code deployment that should be used when visitor opens your function.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Function>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    updateFunctionDeployment(
+        functionId: string,
+        deploymentId: string,
+    ): Promise<Models.Function>;
+    updateFunctionDeployment(
+        paramsOrFirst: { functionId: string; deploymentId: string } | string,
+        ...rest: [string?]
+    ): Promise<Models.Function> {
+        let params: { functionId: string; deploymentId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                deploymentId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                deploymentId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const deploymentId = params.deploymentId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof deploymentId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "deploymentId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/deployment'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof deploymentId !== 'undefined') {
+            apiPayload['deploymentId'] = deploymentId;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('patch', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a list of all the function's code deployments. You can use the query params to filter your results.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: buildSize, sourceSize, totalSize, buildDuration, status, activate, type
+     * @param {string} params.search - Search term to filter your list results. Max length: 256 chars.
+     * @param {boolean} params.total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.DeploymentList>}
+     */
+    listDeployments(params: {
+        functionId: string;
+        queries?: string[];
+        search?: string;
+        total?: boolean;
+    }): Promise<Models.DeploymentList>;
+    /**
+     * Get a list of all the function's code deployments. You can use the query params to filter your results.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: buildSize, sourceSize, totalSize, buildDuration, status, activate, type
+     * @param {string} search - Search term to filter your list results. Max length: 256 chars.
+     * @param {boolean} total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.DeploymentList>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    listDeployments(
+        functionId: string,
+        queries?: string[],
+        search?: string,
+        total?: boolean,
+    ): Promise<Models.DeploymentList>;
+    listDeployments(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  queries?: string[];
+                  search?: string;
+                  total?: boolean;
+              }
+            | string,
+        ...rest: [string[]?, string?, boolean?]
+    ): Promise<Models.DeploymentList> {
+        let params: {
+            functionId: string;
+            queries?: string[];
+            search?: string;
+            total?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                queries?: string[];
+                search?: string;
+                total?: boolean;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                queries: rest[0] as string[],
+                search: rest[1] as string,
+                total: rest[2] as boolean,
+            };
+        }
+
+        const functionId = params.functionId;
+        const queries = params.queries;
+        const search = params.search;
+        const total = params.total;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/deployments'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof queries !== 'undefined') {
+            apiPayload['queries'] = queries;
+        }
+        if (typeof search !== 'undefined') {
+            apiPayload['search'] = search;
+        }
+        if (typeof total !== 'undefined') {
+            apiPayload['total'] = total;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Create a new function code deployment. Use this endpoint to upload a new version of your code function. To execute your newly uploaded code, you'll need to update the function's deployment to use your new deployment UID.
+     *
+     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Appwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
+     *
+     * Use the "command" param to set the entrypoint used to execute your code.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {File | InputFile} params.code - Gzip file with your code package. When used with the Appwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
+     * @param {boolean} params.activate - Automatically activate the deployment when it is finished building.
+     * @param {string} params.entrypoint - Entrypoint File.
+     * @param {string} params.commands - Build Commands.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     */
+    createDeployment(params: {
+        functionId: string;
+        code: File | InputFile;
+        activate: boolean;
+        entrypoint?: string;
+        commands?: string;
+        onProgress?: (progress: UploadProgress) => void;
+    }): Promise<Models.Deployment>;
+    /**
+     * Create a new function code deployment. Use this endpoint to upload a new version of your code function. To execute your newly uploaded code, you'll need to update the function's deployment to use your new deployment UID.
+     *
+     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Appwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
+     *
+     * Use the "command" param to set the entrypoint used to execute your code.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {File | InputFile} code - Gzip file with your code package. When used with the Appwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
+     * @param {boolean} activate - Automatically activate the deployment when it is finished building.
+     * @param {string} entrypoint - Entrypoint File.
+     * @param {string} commands - Build Commands.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createDeployment(
+        functionId: string,
+        code: File | InputFile,
+        activate: boolean,
+        entrypoint?: string,
+        commands?: string,
+        onProgress?: (progress: UploadProgress) => void,
+    ): Promise<Models.Deployment>;
+    createDeployment(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  code: File | InputFile;
+                  activate: boolean;
+                  entrypoint?: string;
+                  commands?: string;
+                  onProgress?: (progress: UploadProgress) => void;
+              }
+            | string,
+        ...rest: [
+            (File | InputFile)?,
+            boolean?,
+            string?,
+            string?,
+            ((progress: UploadProgress) => void)?,
+        ]
+    ): Promise<Models.Deployment> {
+        let params: {
+            functionId: string;
+            code: File | InputFile;
+            activate: boolean;
+            entrypoint?: string;
+            commands?: string;
+        };
+        let onProgress: (progress: UploadProgress) => void;
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                code: File | InputFile;
+                activate: boolean;
+                entrypoint?: string;
+                commands?: string;
+            };
+            onProgress = paramsOrFirst?.onProgress as (
+                progress: UploadProgress,
+            ) => void;
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                code: rest[0] as File | InputFile,
+                activate: rest[1] as boolean,
+                entrypoint: rest[2] as string,
+                commands: rest[3] as string,
+            };
+            onProgress = rest[4] as (progress: UploadProgress) => void;
+        }
+
+        const functionId = params.functionId;
+        const code = params.code;
+        const activate = params.activate;
+        const entrypoint = params.entrypoint;
+        const commands = params.commands;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof code === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "code"');
+        }
+        if (typeof activate === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "activate"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/deployments'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof entrypoint !== 'undefined') {
+            apiPayload['entrypoint'] = entrypoint;
+        }
+        if (typeof commands !== 'undefined') {
+            apiPayload['commands'] = commands;
+        }
+        if (typeof code !== 'undefined') {
+            apiPayload['code'] = code;
+        }
+        if (typeof activate !== 'undefined') {
+            apiPayload['activate'] = activate;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'multipart/form-data',
+            accept: 'application/json',
+        };
+
+        return this.client.chunkedUpload(
+            'post',
+            uri,
+            apiHeaders,
+            apiPayload,
+            onProgress,
+        );
+    }
+
+    /**
+     * Get a function deployment by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     */
+    getDeployment(params: {
+        functionId: string;
+        deploymentId: string;
+    }): Promise<Models.Deployment>;
+    /**
+     * Get a function deployment by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getDeployment(
+        functionId: string,
+        deploymentId: string,
+    ): Promise<Models.Deployment>;
+    getDeployment(
+        paramsOrFirst: { functionId: string; deploymentId: string } | string,
+        ...rest: [string?]
+    ): Promise<Models.Deployment> {
+        let params: { functionId: string; deploymentId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                deploymentId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                deploymentId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const deploymentId = params.deploymentId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof deploymentId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "deploymentId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/deployments/{deploymentId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace(
+                '{deploymentId}',
+                encodeURIComponent(String(deploymentId)),
+            );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a code deployment by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    deleteDeployment(params: {
+        functionId: string;
+        deploymentId: string;
+    }): Promise<{}>;
+    /**
+     * Delete a code deployment by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} deploymentId - Deployment ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    deleteDeployment(functionId: string, deploymentId: string): Promise<{}>;
+    deleteDeployment(
+        paramsOrFirst: { functionId: string; deploymentId: string } | string,
+        ...rest: [string?]
+    ): Promise<{}> {
+        let params: { functionId: string; deploymentId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                deploymentId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                deploymentId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const deploymentId = params.deploymentId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof deploymentId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "deploymentId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/deployments/{deploymentId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace(
+                '{deploymentId}',
+                encodeURIComponent(String(deploymentId)),
+            );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a function deployment content by its unique ID. The endpoint response return with a 'Content-Disposition: attachment' header that tells the browser to start downloading the file to user downloads directory.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.deploymentId - Deployment ID.
+     * @param {DeploymentDownloadType} params.type - Deployment file to download. Can be: "source", "output".
+     * @param {string} params.token - Presigned source-download token for accessing this deployment without a session (jobs-service).
+     * @throws {BunwriteException}
+     * @returns {Promise<ArrayBuffer>}
+     */
+    getDeploymentDownload(params: {
+        functionId: string;
+        deploymentId: string;
+        type?: DeploymentDownloadType;
+        token?: string;
+    }): Promise<ArrayBuffer>;
+    /**
+     * Get a function deployment content by its unique ID. The endpoint response return with a 'Content-Disposition: attachment' header that tells the browser to start downloading the file to user downloads directory.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} deploymentId - Deployment ID.
+     * @param {DeploymentDownloadType} type - Deployment file to download. Can be: "source", "output".
+     * @param {string} token - Presigned source-download token for accessing this deployment without a session (jobs-service).
+     * @throws {BunwriteException}
+     * @returns {Promise<ArrayBuffer>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getDeploymentDownload(
+        functionId: string,
+        deploymentId: string,
+        type?: DeploymentDownloadType,
+        token?: string,
+    ): Promise<ArrayBuffer>;
+    getDeploymentDownload(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  deploymentId: string;
+                  type?: DeploymentDownloadType;
+                  token?: string;
+              }
+            | string,
+        ...rest: [string?, DeploymentDownloadType?, string?]
+    ): Promise<ArrayBuffer> {
+        let params: {
+            functionId: string;
+            deploymentId: string;
+            type?: DeploymentDownloadType;
+            token?: string;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                deploymentId: string;
+                type?: DeploymentDownloadType;
+                token?: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                deploymentId: rest[0] as string,
+                type: rest[1] as DeploymentDownloadType,
+                token: rest[2] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const deploymentId = params.deploymentId;
+        const type = params.type;
+        const token = params.token;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof deploymentId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "deploymentId"',
+            );
+        }
+        const apiPath =
+            '/functions/{functionId}/deployments/{deploymentId}/download'
+                .replace('{functionId}', encodeURIComponent(String(functionId)))
+                .replace(
+                    '{deploymentId}',
+                    encodeURIComponent(String(deploymentId)),
+                );
+        const apiPayload: Payload = {};
+        if (typeof type !== 'undefined') {
+            apiPayload['type'] = type;
+        }
+        if (typeof token !== 'undefined') {
+            apiPayload['token'] = token;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: '*/*',
+        };
+
+        return this.client.call(
+            'get',
+            uri,
+            apiHeaders,
+            apiPayload,
+            'arrayBuffer',
+        );
+    }
+
+    /**
+     * Get a list of all the current user function execution logs. You can use the query params to filter your results.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: trigger, status, responseStatusCode, duration, requestMethod, requestPath, deploymentId
+     * @param {boolean} params.total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.ExecutionList>}
+     */
+    listExecutions(params: {
+        functionId: string;
+        queries?: string[];
+        total?: boolean;
+    }): Promise<Models.ExecutionList>;
+    /**
+     * Get a list of all the current user function execution logs. You can use the query params to filter your results.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: trigger, status, responseStatusCode, duration, requestMethod, requestPath, deploymentId
+     * @param {boolean} total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.ExecutionList>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    listExecutions(
+        functionId: string,
+        queries?: string[],
+        total?: boolean,
+    ): Promise<Models.ExecutionList>;
+    listExecutions(
+        paramsOrFirst:
+            | { functionId: string; queries?: string[]; total?: boolean }
+            | string,
+        ...rest: [string[]?, boolean?]
+    ): Promise<Models.ExecutionList> {
+        let params: { functionId: string; queries?: string[]; total?: boolean };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                queries?: string[];
+                total?: boolean;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                queries: rest[0] as string[],
+                total: rest[1] as boolean,
+            };
+        }
+
+        const functionId = params.functionId;
+        const queries = params.queries;
+        const total = params.total;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/executions'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof queries !== 'undefined') {
+            apiPayload['queries'] = queries;
+        }
+        if (typeof total !== 'undefined') {
+            apiPayload['total'] = total;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Trigger a function execution. The returned object will return you the current execution status. You can ping the `Get Execution` endpoint to get updates on the current execution status. Once this endpoint is called, your function execution process will start asynchronously.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.body - HTTP body of execution. Default value is empty string.
+     * @param {boolean} params.async - Execute code in the background. Default value is false.
+     * @param {string} params.xpath - HTTP path of execution. Path can include query params. Default value is /
+     * @param {ExecutionMethod} params.method - HTTP method of execution. Default value is POST.
+     * @param {object} params.headers - HTTP headers of execution. Defaults to empty.
+     * @param {string} params.scheduledAt - Scheduled execution time in [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html) format. DateTime value must be in future with precision in minutes.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Execution>}
+     */
+    createExecution(params: {
+        functionId: string;
+        body?: string;
+        async?: boolean;
+        xpath?: string;
+        method?: ExecutionMethod;
+        headers?: object;
+        scheduledAt?: string;
+    }): Promise<Models.Execution>;
+    /**
+     * Trigger a function execution. The returned object will return you the current execution status. You can ping the `Get Execution` endpoint to get updates on the current execution status. Once this endpoint is called, your function execution process will start asynchronously.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} body - HTTP body of execution. Default value is empty string.
+     * @param {boolean} async - Execute code in the background. Default value is false.
+     * @param {string} xpath - HTTP path of execution. Path can include query params. Default value is /
+     * @param {ExecutionMethod} method - HTTP method of execution. Default value is POST.
+     * @param {object} headers - HTTP headers of execution. Defaults to empty.
+     * @param {string} scheduledAt - Scheduled execution time in [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html) format. DateTime value must be in future with precision in minutes.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Execution>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createExecution(
+        functionId: string,
+        body?: string,
+        async?: boolean,
+        xpath?: string,
+        method?: ExecutionMethod,
+        headers?: object,
+        scheduledAt?: string,
+    ): Promise<Models.Execution>;
+    createExecution(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  body?: string;
+                  async?: boolean;
+                  xpath?: string;
+                  method?: ExecutionMethod;
+                  headers?: object;
+                  scheduledAt?: string;
+              }
+            | string,
+        ...rest: [
+            string?,
+            boolean?,
+            string?,
+            ExecutionMethod?,
+            object?,
+            string?,
+        ]
+    ): Promise<Models.Execution> {
+        let params: {
+            functionId: string;
+            body?: string;
+            async?: boolean;
+            xpath?: string;
+            method?: ExecutionMethod;
+            headers?: object;
+            scheduledAt?: string;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                body?: string;
+                async?: boolean;
+                xpath?: string;
+                method?: ExecutionMethod;
+                headers?: object;
+                scheduledAt?: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                body: rest[0] as string,
+                async: rest[1] as boolean,
+                xpath: rest[2] as string,
+                method: rest[3] as ExecutionMethod,
+                headers: rest[4] as object,
+                scheduledAt: rest[5] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const body = params.body;
+        const async = params.async;
+        const xpath = params.xpath;
+        const method = params.method;
+        const headers = params.headers;
+        const scheduledAt = params.scheduledAt;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/executions'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof body !== 'undefined') {
+            apiPayload['body'] = body;
+        }
+        if (typeof async !== 'undefined') {
+            apiPayload['async'] = async;
+        }
+        if (typeof xpath !== 'undefined') {
+            apiPayload['path'] = xpath;
+        }
+        if (typeof method !== 'undefined') {
+            apiPayload['method'] = method;
+        }
+        if (typeof headers !== 'undefined') {
+            apiPayload['headers'] = headers;
+        }
+        if (typeof scheduledAt !== 'undefined') {
+            apiPayload['scheduledAt'] = scheduledAt;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a function execution log by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.executionId - Execution ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Execution>}
+     */
+    getExecution(params: {
+        functionId: string;
+        executionId: string;
+    }): Promise<Models.Execution>;
+    /**
+     * Get a function execution log by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} executionId - Execution ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Execution>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getExecution(
+        functionId: string,
+        executionId: string,
+    ): Promise<Models.Execution>;
+    getExecution(
+        paramsOrFirst: { functionId: string; executionId: string } | string,
+        ...rest: [string?]
+    ): Promise<Models.Execution> {
+        let params: { functionId: string; executionId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                executionId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                executionId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const executionId = params.executionId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof executionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "executionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/executions/{executionId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace('{executionId}', encodeURIComponent(String(executionId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a function execution by its unique ID.
+     *
+     * @param {string} params.functionId - Function ID.
+     * @param {string} params.executionId - Execution ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    deleteExecution(params: {
+        functionId: string;
+        executionId: string;
+    }): Promise<{}>;
+    /**
+     * Delete a function execution by its unique ID.
+     *
+     * @param {string} functionId - Function ID.
+     * @param {string} executionId - Execution ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    deleteExecution(functionId: string, executionId: string): Promise<{}>;
+    deleteExecution(
+        paramsOrFirst: { functionId: string; executionId: string } | string,
+        ...rest: [string?]
+    ): Promise<{}> {
+        let params: { functionId: string; executionId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                executionId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                executionId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const executionId = params.executionId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof executionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "executionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/executions/{executionId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace('{executionId}', encodeURIComponent(String(executionId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a list of all variables of a specific function.
+     *
+     * @param {string} params.functionId - Function unique ID.
+     * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: key, resourceType, resourceId, secret
+     * @param {boolean} params.total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.VariableList>}
+     */
+    listVariables(params: {
+        functionId: string;
+        queries?: string[];
+        total?: boolean;
+    }): Promise<Models.VariableList>;
+    /**
+     * Get a list of all variables of a specific function.
+     *
+     * @param {string} functionId - Function unique ID.
+     * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: key, resourceType, resourceId, secret
+     * @param {boolean} total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.VariableList>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    listVariables(
+        functionId: string,
+        queries?: string[],
+        total?: boolean,
+    ): Promise<Models.VariableList>;
+    listVariables(
+        paramsOrFirst:
+            | { functionId: string; queries?: string[]; total?: boolean }
+            | string,
+        ...rest: [string[]?, boolean?]
+    ): Promise<Models.VariableList> {
+        let params: { functionId: string; queries?: string[]; total?: boolean };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                queries?: string[];
+                total?: boolean;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                queries: rest[0] as string[],
+                total: rest[1] as boolean,
+            };
+        }
+
+        const functionId = params.functionId;
+        const queries = params.queries;
+        const total = params.total;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/variables'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof queries !== 'undefined') {
+            apiPayload['queries'] = queries;
+        }
+        if (typeof total !== 'undefined') {
+            apiPayload['total'] = total;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Create a new function environment variable. These variables can be accessed in the function at runtime as environment variables.
+     *
+     * @param {string} params.functionId - Function unique ID.
+     * @param {string} params.variableId - Variable ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only functions can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    createVariable(params: {
+        functionId: string;
+        variableId: string;
+        key: string;
+        value: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Create a new function environment variable. These variables can be accessed in the function at runtime as environment variables.
+     *
+     * @param {string} functionId - Function unique ID.
+     * @param {string} variableId - Variable ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only functions can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createVariable(
+        functionId: string,
+        variableId: string,
+        key: string,
+        value: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    createVariable(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  variableId: string;
+                  key: string;
+                  value: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            functionId: string;
+            variableId: string;
+            key: string;
+            value: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                variableId: string;
+                key: string;
+                value: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+                key: rest[1] as string,
+                value: rest[2] as string,
+                secret: rest[3] as boolean,
+            };
+        }
+
+        const functionId = params.functionId;
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        if (typeof key === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "key"');
+        }
+        if (typeof value === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "value"');
+        }
+        const apiPath = '/functions/{functionId}/variables'.replace(
+            '{functionId}',
+            encodeURIComponent(String(functionId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof variableId !== 'undefined') {
+            apiPayload['variableId'] = variableId;
+        }
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} params.functionId - Function unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    getVariable(params: {
+        functionId: string;
+        variableId: string;
+    }): Promise<Models.Variable>;
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} functionId - Function unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getVariable(
+        functionId: string,
+        variableId: string,
+    ): Promise<Models.Variable>;
+    getVariable(
+        paramsOrFirst: { functionId: string; variableId: string } | string,
+        ...rest: [string?]
+    ): Promise<Models.Variable> {
+        let params: { functionId: string; variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                variableId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const variableId = params.variableId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/variables/{variableId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} params.functionId - Function unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only functions can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    updateVariable(params: {
+        functionId: string;
+        variableId: string;
+        key?: string;
+        value?: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} functionId - Function unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only functions can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    updateVariable(
+        functionId: string,
+        variableId: string,
+        key?: string,
+        value?: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    updateVariable(
+        paramsOrFirst:
+            | {
+                  functionId: string;
+                  variableId: string;
+                  key?: string;
+                  value?: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            functionId: string;
+            variableId: string;
+            key?: string;
+            value?: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                variableId: string;
+                key?: string;
+                value?: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+                key: rest[1] as string,
+                value: rest[2] as string,
+                secret: rest[3] as boolean,
+            };
+        }
+
+        const functionId = params.functionId;
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/variables/{variableId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('put', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} params.functionId - Function unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    deleteVariable(params: {
+        functionId: string;
+        variableId: string;
+    }): Promise<{}>;
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} functionId - Function unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    deleteVariable(functionId: string, variableId: string): Promise<{}>;
+    deleteVariable(
+        paramsOrFirst: { functionId: string; variableId: string } | string,
+        ...rest: [string?]
+    ): Promise<{}> {
+        let params: { functionId: string; variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                functionId: string;
+                variableId: string;
+            };
+        } else {
+            params = {
+                functionId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+            };
+        }
+
+        const functionId = params.functionId;
+        const variableId = params.variableId;
+        if (typeof functionId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "functionId"',
+            );
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/functions/{functionId}/variables/{variableId}'
+            .replace('{functionId}', encodeURIComponent(String(functionId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Appwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
+}

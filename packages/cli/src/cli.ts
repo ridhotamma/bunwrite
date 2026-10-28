@@ -1,0 +1,100 @@
+/**
+ * Bunwrite CLI. Commands follow the Appwrite CLI: `client`, `login`, `whoami`,
+ * `logout`, `init project`, `pull`/`push` of the project config, and one
+ * command per SDK service.
+ */
+import { SDK_VERSION } from '@bunwrite/sdk'
+
+import { bool, parseArgs } from './args'
+import { describe } from './clients'
+import { client, initProject, login, logout, whoami } from './commands/account'
+import { runService, SERVICES } from './commands/services'
+import { sync } from './commands/sync'
+import { bold, CliError, dim, fail, log } from './ui'
+
+export const VERSION = '0.1.0'
+
+const HELP = `${bold('bunwrite')} <command> [options]
+
+${bold('Connect')}
+  client --endpoint <url> --project-id <id> --key <api-key>   Use an API key
+  client                                                       Show the settings
+  client --reset                                               Forget them
+  login --endpoint <url> --email <email> --password <pass>    Sign in as a console admin
+  whoami                                                       Who is signed in
+  logout                                                       Sign out, here and on the server
+
+${bold('Project config')} (bunwrite.config.json, or an existing appwrite.config.json)
+  init project --project-id <id> [--organization-id <id>] [--create --project-name <name>]
+  pull <what>     Write the server's state into the config
+  push <what>     Apply the config to the server
+
+  <what> is settings, tables, collections, functions, buckets, teams,
+  webhooks, topics or all.
+
+  --function-id <id>   pull/push only these functions (repeat, or comma-separate)
+  --table-id <id>      push only these tables (--collection-id for collections)
+  --no-code            pull/push functions without their code
+  --activate false     push functions without activating the new code
+  --prune              push: delete what is on the server but not in the config
+  --force              push: delete without asking
+
+${bold('Services')}
+  ${Object.keys(SERVICES).join(', ')}
+
+  bunwrite <service> --help             List its commands
+  bunwrite <service> <command> --flags  Call the SDK, e.g.
+  bunwrite databases list-documents --database-id main --collection-id products
+  bunwrite storage create-file --bucket-id photos --file-id unique() --file ./cat.png
+
+  --json     Print compact JSON
+  --output   Save a download to this file
+
+${dim(`SDK ${SDK_VERSION}`)}`
+
+export async function main(argv = process.argv.slice(2)): Promise<number> {
+  const args = parseArgs(argv)
+  const [command, sub] = args.positional
+  try {
+    if (bool(args, 'version')) {
+      log(VERSION)
+      return 0
+    }
+    if (!command || command === 'help' || (bool(args, 'help') && !SERVICES[command])) {
+      log(HELP)
+      return 0
+    }
+    switch (command) {
+      case 'client':
+        await client(args)
+        break
+      case 'login':
+        await login(args)
+        break
+      case 'whoami':
+        await whoami()
+        break
+      case 'logout':
+        await logout()
+        break
+      case 'init':
+        if (sub !== 'project') throw new CliError('Usage: bunwrite init project --project-id <id>')
+        await initProject(args)
+        break
+      case 'pull':
+      case 'push':
+        await sync(command, args)
+        break
+      default:
+        await runService(args)
+    }
+    return 0
+  } catch (error) {
+    fail(error instanceof CliError ? error.message : describe(error))
+    if (process.env.BUNWRITE_DEBUG && error instanceof Error && error.stack) console.error(dim(error.stack))
+    return 1
+  }
+}
+
+const code = await main()
+process.exit(code)
