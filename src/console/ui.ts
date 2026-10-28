@@ -138,6 +138,9 @@ export function pageFooter(cancel: string | null, submit: string): Html {
 export const formatBytes = (n: number) =>
   n < 1024 ? `${n} B` : n < 1024 ** 2 ? `${(n / 1024).toFixed(1)} KB` : n < 1024 ** 3 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024 ** 3).toFixed(2)} GB`
 
+/** `1 event`, `4 events`, with the number grouped as en-US writes it. */
+export const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
+
 export const when = (iso: string | null | undefined) => (iso ? iso.slice(0, 16).replace('T', ' ') : '—')
 
 export function stat(label: string, value: string | number, href?: string): Html {

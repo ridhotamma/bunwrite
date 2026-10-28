@@ -379,6 +379,7 @@ export class FunctionService {
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, id))
   }
 
+  /** Every variable scope is a `function_id`: `*` holds the global ones. */
   variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
     return this.sql
       .query<{ key: string; value: string; secret: number; function_id: string }, [string]>('SELECT key, value, secret, function_id FROM _function_vars WHERE function_id = ? ORDER BY key')
@@ -387,14 +388,6 @@ export class FunctionService {
 
   globalVariables() {
     return this.variables('*')
-  }
-
-  setGlobalVariable(key: string, value: string, secret: boolean): void {
-    this.setVariable('*', key, value, secret)
-  }
-
-  deleteGlobalVariable(key: string): void {
-    this.deleteVariable('*', key)
   }
 
   setVariable(functionId: string, key: string, value: string, secret: boolean): void {
@@ -415,21 +408,13 @@ export class FunctionService {
     })()
   }
 
-  setGlobalVariables(entries: EnvVariable[], secret: boolean): void {
-    this.setVariables('*', entries, secret)
-  }
-
   deleteVariable(functionId: string, key: string): void {
     this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ?').run(functionId, key)
   }
 
+  /** Forget every variable in a scope; returns how many were removed. */
   clearVariables(functionId: string): number {
-    const result = this.sql.query('DELETE FROM _function_vars WHERE function_id = ?').run(functionId)
-    return Number(result.changes ?? 0)
-  }
-
-  clearGlobalVariables(): number {
-    return this.clearVariables('*')
+    return Number(this.sql.query('DELETE FROM _function_vars WHERE function_id = ?').run(functionId).changes ?? 0)
   }
 
   execution(functionId: string, executionId: string): ExecutionRow {

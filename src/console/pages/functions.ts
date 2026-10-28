@@ -3,14 +3,15 @@ import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/depl
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { envBulkDialog, importEnvVariables } from '~/console/env-vars'
+import { envBulkDialog } from '~/console/env-vars'
 import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
+import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { createFunctionDialog, deployDialog, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
 import { err } from '~/lib/errors'
 import { requestEndpoint } from '~/lib/origins'
+import { registerVariableRoutes } from './variables'
 
 const FN = '/console/functions'
 const FUNCTION_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/
@@ -20,7 +21,6 @@ const MAX_EDIT_BYTES = 256 * 1024
 const functionUrl = (id: string) => `${FN}/${encodeURIComponent(id)}`
 const functionHttpUrl = (ctx: ConsoleContext, f: FunctionRow) =>
   `${requestEndpoint(ctx.request, ctx.services.config.publicEndpoint)}/functions/${encodeURIComponent(f.id)}/http`
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 
 const deploymentsOf = (ctx: ConsoleContext) => new Deployments(ctx.services.db, ctx.services.config, ctx.services.functions)
 
@@ -245,10 +245,9 @@ export function functionPages(router: ConsoleRouter): void {
           'Available only to this function. A variable here wins over a global variable with the same name.',
           html`${vars.length
             ? variableList(vars, {
-                action: `${functionUrl(f.id)}/variables/delete`,
                 save: `${functionUrl(f.id)}/variables`,
-                removeConfirm: (key) => `Remove ${key}?`,
-                clear: { action: `${functionUrl(f.id)}/variables/clear`, label: 'Delete all', confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
+                remove: `${functionUrl(f.id)}/variables/delete`,
+                clear: { action: `${functionUrl(f.id)}/variables/clear`, confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
               })
             : html`<p class="hint" style="margin:0 0 12px">None set here. Values from the functions env file still apply.</p>`}
           <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>
@@ -326,31 +325,11 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.go(`${functionUrl(f.id)}/executions/${execution.id}`, { tone: 'success', text: 'Started' })
   })
 
-  router.post(`${FN}/:id/variables`, ({ ctx, path }) => {
-    ctx.services.functions.fn(path.id!)
-    const key = value(ctx.form, 'key')
-    const existing = ctx.services.functions.variables(path.id!).find((v) => v.key === key)
-    // An edit that leaves a secret's value blank keeps its stored value and flag.
-    const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
-    const val = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
-    ctx.services.functions.setVariable(path.id!, key, val, keep || checked(ctx.form.secret))
-    return ctx.go(`${functionUrl(path.id!)}/variables`, { tone: 'success', text: 'Variable saved' })
-  })
-
-  router.post(`${FN}/:id/variables/delete`, ({ ctx, path }) => {
-    ctx.services.functions.deleteVariable(path.id!, value(ctx.form, 'key'))
-    return ctx.go(`${functionUrl(path.id!)}/variables`, { tone: 'success', text: 'Variable removed' })
-  })
-
-  router.post(`${FN}/:id/variables/clear`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    const count = ctx.services.functions.clearVariables(f.id)
-    return ctx.go(`${functionUrl(f.id)}/variables`, { tone: 'success', text: count ? `Removed ${count} variable${count === 1 ? '' : 's'}` : 'No variables to remove' })
-  })
-
-  router.post(`${FN}/:id/variables/bulk`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    return importEnvVariables(ctx, (vars, secret) => ctx.services.functions.setVariables(f.id, vars, secret), `${functionUrl(f.id)}/variables`)
+  registerVariableRoutes(router, {
+    base: `${FN}/:id/variables`,
+    // Looking the function up here also answers 404 for an ID that is not there.
+    scope: ({ ctx, path }) => ctx.services.functions.fn(path.id!).id,
+    then: (_route, scope) => `${functionUrl(scope)}/variables`,
   })
 
   router.post(`${FN}/:id/delete`, ({ ctx, path }) => {

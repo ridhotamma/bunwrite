@@ -348,6 +348,41 @@ describe('webhooks through the console', () => {
     expect(() => server.services.webhooks.get('order-events')).toThrow()
     expect(await (await get('/console/webhooks')).text()).toContain('No webhooks yet')
   })
+
+  test('the test button sends one signed delivery and never counts a failure', async () => {
+    const hits: { headers: Headers; body: string }[] = []
+    let status = 200
+    const receiver = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        hits.push({ headers: request.headers, body: await request.text() })
+        return new Response('ok', { status })
+      },
+    })
+    try {
+      const url = `http://localhost:${receiver.port}/hook`
+      await form('/console/webhooks', { name: 'Tester', id: 'tester', url, enabled: 'on', tls: 'on', events: ['databases.*.collections.*.documents.*.create'], secret: 'test-secret' })
+      const page = await (await get('/console/webhooks/tester')).text()
+      expect(page).toContain('Send test event')
+
+      const ok = await form('/console/webhooks/tester/test', {})
+      expect(flash(ok).get('ok')).toBe('The endpoint accepted the test delivery.')
+      expect(hits).toHaveLength(1)
+      expect(hits[0]!.headers.get('x-appwrite-webhook-id')).toBe('tester')
+      expect(hits[0]!.headers.get('x-appwrite-webhook-events')).toBe('test')
+      expect(JSON.parse(hits[0]!.body)).toMatchObject({ $id: 'test', test: true, webhookId: 'tester' })
+
+      status = 500
+      const failed = await form('/console/webhooks/tester/test', {})
+      expect(flash(failed).get('err')).toContain('500')
+      expect(hits).toHaveLength(2)
+      // A test never adds to the failure count or turns the webhook off.
+      expect(server.services.webhooks.get('tester')).toMatchObject({ attempts: 0, enabled: 1 })
+    } finally {
+      receiver.stop(true)
+      await form('/console/webhooks/tester/delete', {})
+    }
+  })
 })
 
 describe('settings through the console', () => {
@@ -440,10 +475,10 @@ describe('settings through the console', () => {
     await form('/console/settings/functions/variables', { key: 'WIPE_B', value: 'two' })
     expect(server.services.functions.globalVariables()).toHaveLength(2)
     const cleared = await form('/console/settings/functions/variables/clear', {})
-    expect(flash(cleared).get('ok')).toBe('Removed 2 global variables')
+    expect(flash(cleared).get('ok')).toBe('Removed 2 variables')
     expect(server.services.functions.globalVariables()).toEqual([])
     const empty = await form('/console/settings/functions/variables/clear', {})
-    expect(flash(empty).get('ok')).toBe('No global variables to remove')
+    expect(flash(empty).get('ok')).toBe('No variables to remove')
   })
 
   test('S3 storage settings validate required fields and endpoints', async () => {
@@ -524,8 +559,8 @@ describe('settings through the console', () => {
     expect(inline.status).toBe(200)
     expect(await inline.text()).toContain('Line 1')
 
-    server.services.functions.deleteGlobalVariable('BULK_A')
-    server.services.functions.deleteGlobalVariable('BULK_B')
+    server.services.functions.deleteVariable('*', 'BULK_A')
+    server.services.functions.deleteVariable('*', 'BULK_B')
   })
 
   test('Google sign-in can be set up from the console', async () => {

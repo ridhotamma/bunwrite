@@ -266,8 +266,8 @@ describe('functions', () => {
   })
 
   test('global variables apply to every function; per-function values win', async () => {
-    server.services.functions.setGlobalVariable('BUNWRITE_GLOBAL_TEST', 'global', false)
-    server.services.functions.setGlobalVariable('BUNWRITE_SHARED_TEST', 'global', false)
+    server.services.functions.setVariable('*', 'BUNWRITE_GLOBAL_TEST', 'global', false)
+    server.services.functions.setVariable('*', 'BUNWRITE_SHARED_TEST', 'global', false)
     server.services.functions.setVariable('env', 'BUNWRITE_LOCAL_TEST', 'local', false)
     server.services.functions.setVariable('env', 'BUNWRITE_SHARED_TEST', 'local', false)
     try {
@@ -275,8 +275,8 @@ describe('functions', () => {
       expect(e.status).toBe('completed')
       expect(JSON.parse(e.responseBody)).toEqual({ global: 'global', local: 'local', shared: 'local' })
     } finally {
-      server.services.functions.deleteGlobalVariable('BUNWRITE_GLOBAL_TEST')
-      server.services.functions.deleteGlobalVariable('BUNWRITE_SHARED_TEST')
+      server.services.functions.deleteVariable('*', 'BUNWRITE_GLOBAL_TEST')
+      server.services.functions.deleteVariable('*', 'BUNWRITE_SHARED_TEST')
       server.services.functions.deleteVariable('env', 'BUNWRITE_LOCAL_TEST')
       server.services.functions.deleteVariable('env', 'BUNWRITE_SHARED_TEST')
     }

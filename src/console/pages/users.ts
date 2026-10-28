@@ -5,13 +5,12 @@ import type { ConsoleRouter } from '~/console/context'
 import { checked, lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { avatar, badge, copyableId, destroy, emptyState, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import { avatar, badge, copyableId, destroy, emptyState, header, icon, listCard, pageFooter, pager, plural, searchForm, settingsSection, tabs, when } from '~/console/ui'
 
 const USERS = '/console/auth/users'
 const TEAMS = '/console/auth/teams'
 
 const userUrl = (id: string) => `${USERS}/${encodeURIComponent(id)}`
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 
 function userStatus(u: UserRowFull) {
   return [u.status ? badge('Active', 'success') : badge('Blocked', 'critical'), u.email && !u.email_verification ? badge('Unverified', 'attention') : '']

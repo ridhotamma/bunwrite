@@ -5,7 +5,6 @@ import { SETTING_KEYS, type SettingKey } from '~/settings/service'
 import type { ImageOutput } from '~/render/service'
 import { err } from '~/lib/errors'
 import { SmtpMailer } from '~/mail/mailer'
-import { importEnvVariables } from '~/console/env-vars'
 import type { ConsoleRouter } from '~/console/context'
 import { arrayOf, checked, lines, value } from '~/console/forms'
 import { html, page } from '~/console/html'
@@ -15,6 +14,7 @@ import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-met
 import { templatePath, templatePreview } from '~/console/views/templates'
 import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { BunwriteError } from '~/lib/errors'
+import { registerVariableRoutes } from './variables'
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
 function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
@@ -178,29 +178,11 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('functions'), { tone: 'success', text: 'Schedules saved' })
   })
 
-  router.post(`${SETTINGS}/functions/variables`, ({ ctx }) => {
-    const key = value(ctx.form, 'key')
-    const existing = ctx.services.functions.globalVariables().find((v) => v.key === key)
-    // An edit that leaves a secret's value blank keeps its stored value and flag.
-    const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
-    const val = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
-    ctx.services.functions.setGlobalVariable(key, val, keep || checked(ctx.form.secret))
-    return ctx.go(tabPath('functions'), { tone: 'success', text: 'Global variable saved' })
+  registerVariableRoutes(router, {
+    base: `${SETTINGS}/functions/variables`,
+    scope: () => '*',
+    then: () => tabPath('functions'),
   })
-
-  router.post(`${SETTINGS}/functions/variables/delete`, ({ ctx }) => {
-    ctx.services.functions.deleteGlobalVariable(String(ctx.form.key ?? ''))
-    return ctx.go(tabPath('functions'), { tone: 'success', text: 'Global variable removed' })
-  })
-
-  router.post(`${SETTINGS}/functions/variables/clear`, ({ ctx }) => {
-    const count = ctx.services.functions.clearGlobalVariables()
-    return ctx.go(tabPath('functions'), { tone: 'success', text: count ? `Removed ${count} global variable${count === 1 ? '' : 's'}` : 'No global variables to remove' })
-  })
-
-  router.post(`${SETTINGS}/functions/variables/bulk`, ({ ctx }) =>
-    importEnvVariables(ctx, (vars, secret) => ctx.services.functions.setGlobalVariables(vars, secret), tabPath('functions')),
-  )
 
   router.post(`${SETTINGS}/logs`, ({ ctx }) => {
     const days = Number(ctx.form.retentionDays)

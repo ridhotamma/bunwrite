@@ -44,7 +44,8 @@ export interface WebhookInput {
   secret?: unknown
 }
 
-const MAX_ATTEMPTS = 10
+/** Consecutive failures that turn a webhook off, as Appwrite does. */
+export const MAX_ATTEMPTS = 10
 const TIMEOUT_MS = 15_000
 const USER_AGENT = 'Bunwrite-Server. Please report abuse to the server administrator.'
 
@@ -209,6 +210,22 @@ export class WebhookService {
   }
 
   private async deliver(hook: WebhookRow, events: string[], payload: unknown, userId: string): Promise<void> {
+    const failure = await this.post(hook, events, payload, userId)
+    const stamp = now()
+    if (!failure) {
+      this.sql.query("UPDATE _webhooks SET attempts = 0, logs = '' WHERE id = ?").run(hook.id)
+      return
+    }
+    this.sql
+      .query(
+        `UPDATE _webhooks SET attempts = attempts + 1, logs = ?, updated_at = ?,
+         enabled = CASE WHEN attempts + 1 >= ? THEN 0 ELSE enabled END WHERE id = ?`,
+      )
+      .run(`${stamp} ${events[0] ?? ''}: ${failure}`.slice(0, 2000), stamp, MAX_ATTEMPTS, hook.id)
+  }
+
+  /** POST one delivery and return what went wrong, or '' when the receiver accepted it. */
+  private async post(hook: WebhookRow, events: string[], payload: unknown, userId: string): Promise<string> {
     const body = JSON.stringify(payload)
     const prefix = webhookHeaderPrefix({ apiCompat: this.compat() })
     const headers: Record<string, string> = {
@@ -222,7 +239,6 @@ export class WebhookService {
       [`${prefix}signature`]: webhookSignature(hook.url, body, hook.secret),
     }
     if (hook.auth_username) headers.authorization = `Basic ${Buffer.from(`${hook.auth_username}:${hook.auth_password}`).toString('base64')}`
-    let failure = ''
     try {
       const response = await fetch(hook.url, {
         method: 'POST',
@@ -233,20 +249,22 @@ export class WebhookService {
         tls: { rejectUnauthorized: Boolean(hook.tls) },
       } as RequestInit)
       await response.arrayBuffer().catch(() => undefined)
-      if (response.status >= 400) failure = `${response.status} ${response.statusText}`.trim()
+      return response.status >= 400 ? `${response.status} ${response.statusText}`.trim() : ''
     } catch (error) {
-      failure = error instanceof Error ? error.message : String(error)
+      return error instanceof Error ? error.message : String(error)
     }
+  }
+
+  /**
+   * Send one sample delivery now so the endpoint can be checked by hand. The
+   * failure count is left alone: a test never turns the webhook off.
+   */
+  async sendTest(id: string): Promise<{ ok: boolean; message: string }> {
+    const hook = this.get(id)
     const stamp = now()
-    if (!failure) {
-      this.sql.query("UPDATE _webhooks SET attempts = 0, logs = '' WHERE id = ?").run(hook.id)
-      return
-    }
-    this.sql
-      .query(
-        `UPDATE _webhooks SET attempts = attempts + 1, logs = ?, updated_at = ?,
-         enabled = CASE WHEN attempts + 1 >= ? THEN 0 ELSE enabled END WHERE id = ?`,
-      )
-      .run(`${stamp} ${events[0] ?? ''}: ${failure}`.slice(0, 2000), stamp, MAX_ATTEMPTS, hook.id)
+    const failure = await this.post(hook, ['test'], { $id: 'test', $createdAt: stamp, $updatedAt: stamp, test: true, webhookId: hook.id }, '')
+    return failure
+      ? { ok: false, message: `The endpoint answered with an error: ${failure}` }
+      : { ok: true, message: 'The endpoint accepted the test delivery.' }
   }
 }

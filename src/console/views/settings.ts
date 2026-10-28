@@ -141,10 +141,9 @@ function functionCards(ctx: ConsoleContext): Html {
     ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', html`
       ${globals.length
         ? variableList(globals, {
-            action: `${SETTINGS}/functions/variables/delete`,
             save: `${SETTINGS}/functions/variables`,
-            removeConfirm: (key) => `Remove global variable ${key}?`,
-            clear: { action: `${SETTINGS}/functions/variables/clear`, label: 'Delete all', confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
+            remove: `${SETTINGS}/functions/variables/delete`,
+            clear: { action: `${SETTINGS}/functions/variables/clear`, confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
           })
         : html`<p class="hint" style="margin:0 0 12px">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`}
       <form method="post" action="${SETTINGS}/functions/variables" style="margin-top:12px">

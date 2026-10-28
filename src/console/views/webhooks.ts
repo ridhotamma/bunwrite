@@ -1,13 +1,13 @@
 /**
  * Webhooks page markup. The page loads data and validates writes; this module
- * renders it.
+ * renders it, so every function here takes plain values.
  */
-import type { ConsoleContext } from '~/console/context'
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { alert, badge, destroy, emptyState, header, icon, pageFooter, settingsSection, tabs, when } from '~/console/ui'
-import { webhookHeaderPrefix } from '~/lib/compat'
 import type { WebhookRow } from '~/webhooks/service'
+import { MAX_ATTEMPTS } from '~/webhooks/service'
+import { eventPicker, type EventGroup } from './webhook-events'
 
 export const WEBHOOKS = '/console/webhooks'
 export const webhookUrl = (id: string) => `${WEBHOOKS}/${encodeURIComponent(id)}`
@@ -25,7 +25,14 @@ export interface WebhookDraft {
   authUsername: string
 }
 
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
+/** The parts the page computes once for every view: the header name in use and the events it can raise. */
+export interface WebhookEnv {
+  /** `X-Bunwrite-Webhook` or `X-Appwrite-Webhook`, as deliveries carry them. */
+  headerName: string
+  /** True when API_COMPAT=appwrite, so the page can explain which names go out. */
+  appwrite: boolean
+  groups: EventGroup[]
+}
 
 export function draftOf(w: WebhookRow): WebhookDraft {
   return {
@@ -40,79 +47,8 @@ export function draftOf(w: WebhookRow): WebhookDraft {
 }
 
 function statusOf(w: WebhookRow): Html {
-  if (!w.enabled) return w.attempts >= 10 ? badge('Off after failures', 'critical') : badge('Disabled')
+  if (!w.enabled) return w.attempts >= MAX_ATTEMPTS ? badge('Off after failures', 'critical') : badge('Disabled')
   return w.attempts > 0 ? badge('Failing', 'attention') : badge('Enabled', 'success')
-}
-
-interface EventChoice {
-  value: string
-  label: string
-  short: string
-}
-
-interface EventGroup {
-  label: Html
-  choices: EventChoice[]
-  open?: boolean
-}
-
-const ACTIONS = ['create', 'update', 'delete'] as const
-
-/** Any change plus one checkbox per document action, for a `databases.<db>.collections.<id>.documents` base. */
-function choicesFor(base: string): EventChoice[] {
-  return [
-    { value: `${base}.*`, label: 'Any change', short: 'documents.*' },
-    ...ACTIONS.map((action) => ({
-      value: `${base}.*.${action}`,
-      label: action === 'create' ? 'Created' : action === 'update' ? 'Updated' : 'Deleted',
-      short: `documents.*.${action}`,
-    })),
-  ]
-}
-
-/**
- * The events this schema can raise, as checkboxes: everything, each database and
- * each collection. `*` matches any part, just as it does in Appwrite.
- */
-function eventGroups(ctx: ConsoleContext): EventGroup[] {
-  const groups: EventGroup[] = [
-    {
-      label: html`All databases and collections`,
-      choices: choicesFor('databases.*.collections.*.documents'),
-      open: true,
-    },
-  ]
-  const collections = ctx.schema.collectionDefinitions()
-  for (const database of ctx.services.registry.databases.values()) {
-    groups.push({
-      label: html`Database <span class="mono">${database.id}</span> <span class="subdued">${database.name}</span>`,
-      choices: choicesFor(`databases.${database.id}.collections.*.documents`),
-    })
-    for (const collection of collections.filter((c) => c.databaseId === database.id)) {
-      groups.push({
-        label: html`<span class="mono">${database.id}/${collection.$id}</span> <span class="subdued">${collection.name}</span>`,
-        choices: choicesFor(`databases.${database.id}.collections.${collection.$id}.documents`),
-      })
-    }
-  }
-  return groups
-}
-
-/** Checkboxes for the known events, plus a textarea for patterns the list cannot express. */
-function eventPicker(ctx: ConsoleContext, selected: Set<string>): Html {
-  const groups = eventGroups(ctx)
-  const known = new Set(groups.flatMap((group) => group.choices.map((choice) => choice.value)))
-  const custom = [...selected].filter((event) => !known.has(event))
-  return html`<p class="hint">Pick the document changes to receive. Appwrite sends one POST per change per matching event.</p>
-    ${groups.map(
-      (group) => html`<details class="disclosure" ${group.open ? html`open` : ''}>
-        <summary>${group.label} <span class="subdued">${plural(group.choices.length, 'event')}</span></summary>
-        <div class="event-grid">${group.choices.map(
-          (choice) => html`<label class="check" title="${choice.value}"><input type="checkbox" name="events" value="${choice.value}" ${selected.has(choice.value) ? 'checked' : ''}>${choice.label}<small class="mono">${choice.short}</small></label>`,
-        )}</div>
-      </details>`,
-    )}
-    <label style="margin-top:16px">Other events<textarea name="customEvents" class="mono" rows="3" spellcheck="false" placeholder="databases.main.collections.notes.documents.*.update">${custom.join('\n')}</textarea><small>One per line, for patterns the list above does not cover. Comma-separated works too.</small></label>`
 }
 
 function generalFields(draft: WebhookDraft, hasPassword: boolean, idField?: Html): Html {
@@ -125,8 +61,7 @@ function generalFields(draft: WebhookDraft, hasPassword: boolean, idField?: Html
     <p class="help">Basic auth is sent as an <span class="mono">Authorization</span> header. Leave both empty for none.</p>`
 }
 
-export function webhooksView(ctx: ConsoleContext): Html {
-  const hooks = ctx.services.webhooks.list()
+export function webhooksView(hooks: WebhookRow[]): Html {
   const create = html`<a class="btn primary" href="${WEBHOOKS}/new">${icon('plus')}<span>Create webhook</span></a>`
   return html`${header('Webhooks', { actions: hooks.length ? create : undefined })}
     <div class="card flush">
@@ -146,7 +81,7 @@ export function webhooksView(ctx: ConsoleContext): Html {
     </div>`
 }
 
-export function webhookCreateView(ctx: ConsoleContext, options: { draft?: WebhookDraft; error?: string } = {}): Html {
+export function webhookCreateView(env: WebhookEnv, options: { draft?: WebhookDraft; error?: string } = {}): Html {
   const draft = options.draft ?? { name: '', url: '', events: [], enabled: true, tls: true, authUsername: '' }
   return html`${header('Create webhook', { back: WEBHOOKS })}
     ${options.error ? alert('critical', html`${options.error}`) : ''}
@@ -160,11 +95,7 @@ export function webhookCreateView(ctx: ConsoleContext, options: { draft?: Webhoo
           html`<label>ID<input name="id" value="${draft.id ?? ''}" class="mono" data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="Generated if empty"><small>At most 36 characters. Filled in from the name; it cannot change later.</small></label>`,
         )}`,
       )}
-      ${settingsSection(
-        'Events',
-        'Choose the document changes to receive. Webhooks fire for document events only.',
-        eventPicker(ctx, new Set(draft.events)),
-      )}
+      ${settingsSection('Events', 'Choose the document changes to receive. Webhooks fire for document events only.', eventPicker(env.groups, new Set(draft.events)))}
       ${settingsSection(
         'Security',
         'The secret receivers use to verify each delivery.',
@@ -174,21 +105,25 @@ export function webhookCreateView(ctx: ConsoleContext, options: { draft?: Webhoo
     </form>`
 }
 
-function deliveriesView(w: WebhookRow, h: string): Html {
+function deliveriesView(w: WebhookRow, env: WebhookEnv): Html {
   const events = JSON.parse(w.events) as string[]
-  const stopped = !w.enabled && w.attempts >= 10
+  const stopped = !w.enabled && w.attempts >= MAX_ATTEMPTS
   return html`
-    ${stopped ? alert('critical', html`Deliveries stopped after 10 failures in a row. Turn the webhook back on in <a href="${webhookUrl(w.id)}/settings">Settings</a>; saving resets the count.`) : ''}
+    ${stopped ? alert('critical', html`Deliveries stopped after ${MAX_ATTEMPTS} failures in a row. Turn the webhook back on in <a href="${webhookUrl(w.id)}/settings">Settings</a>; saving resets the count.`) : ''}
     ${!w.enabled && !stopped ? alert('info', html`This webhook is off, so nothing is sent. Turn it on in <a href="${webhookUrl(w.id)}/settings">Settings</a>.`) : ''}
     ${settingsSection(
       'Status',
       'Deliveries run in the background and never hold up the API request that changed a document.',
       html`<ul class="list">
         <li><span class="subdued">Delivery</span><span>${statusOf(w)}</span></li>
-        <li><span class="subdued">Failures in a row</span><span>${w.attempts} of 10</span></li>
+        <li><span class="subdued">Failures in a row</span><span>${w.attempts} of ${MAX_ATTEMPTS}</span></li>
         <li><span class="subdued">Last updated</span><span>${when(w.updated_at)}</span></li>
         <li><span class="subdued">Created</span><span>${when(w.created_at)}</span></li>
-      </ul>`,
+      </ul>
+      <form method="post" action="${webhookUrl(w.id)}/test" class="foot" style="justify-content:flex-start;align-items:center;margin-top:12px">
+        <button ${w.enabled ? '' : 'disabled'}>Send test event</button>
+        <span class="subdued" style="text-align:left">Sends one sample POST now. A failed test is not counted against the webhook.</span>
+      </form>`,
     )}
     ${settingsSection(
       'Last failed delivery',
@@ -204,24 +139,24 @@ function deliveriesView(w: WebhookRow, h: string): Html {
     )}
     ${settingsSection(
       'The request',
-      h === 'X-Appwrite-Webhook'
+      env.appwrite
         ? 'Appwrite-compatible headers (API_COMPAT=appwrite), so a receiver written for Appwrite works unchanged.'
         : 'Bunwrite headers. Set API_COMPAT=appwrite in the server environment to send Appwrite\'s instead.',
       html`<ul class="list">
         <li><span class="subdued">Method and body</span><span><span class="mono">POST</span> with the document as JSON</span></li>
-        <li><span class="subdued">Signature</span><span class="mono">${h}-Signature</span></li>
-        <li><span class="subdued">Webhook</span><span class="mono">${h}-Id</span>, <span class="mono">-Name</span></span></li>
-        <li><span class="subdued">Events</span><span class="mono">${h}-Events</span></li>
-        <li><span class="subdued">Project and user</span><span class="mono">${h}-Project-Id</span>, <span class="mono">-User-Id</span></span></li>
+        <li><span class="subdued">Signature</span><span class="mono">${env.headerName}-Signature</span></li>
+        <li><span class="subdued">Webhook</span><span class="mono">${env.headerName}-Id</span>, <span class="mono">-Name</span></span></li>
+        <li><span class="subdued">Events</span><span class="mono">${env.headerName}-Events</span></li>
+        <li><span class="subdued">Project and user</span><span class="mono">${env.headerName}-Project-Id</span>, <span class="mono">-User-Id</span></span></li>
       </ul>
       <p class="help">The signature is the base64 HMAC-SHA1 of the URL followed by the raw body, keyed by the signing secret.</p>`,
     )}`
 }
 
-function secretSection(w: WebhookRow, h: string): Html {
+function secretSection(w: WebhookRow, env: WebhookEnv): Html {
   return settingsSection(
     'Signing secret',
-    `Receivers check ${h}-Signature with this secret. Rotate it if it may have leaked; deliveries fail verification until the receiver is updated.`,
+    `Receivers check ${env.headerName}-Signature with this secret. Rotate it if it may have leaked; deliveries fail verification until the receiver is updated.`,
     html`<label>Secret<div class="copy-row"><input id="webhook-secret" type="password" class="mono" readonly value="${w.secret}" autocomplete="off"><button type="button" data-copy-target="#webhook-secret">${icon('copy')}<span data-copy-label>Copy</span></button></div><small>Stored with this project. Copy it into the receiver's configuration.</small></label>
       <form method="post" action="${webhookUrl(w.id)}/secret" class="foot" data-confirm="Replace the signing secret? Deliveries fail verification until the receiver is updated." data-confirm-label="Rotate secret">
         <button>Rotate secret</button>
@@ -230,18 +165,16 @@ function secretSection(w: WebhookRow, h: string): Html {
 }
 
 export function webhookView(
-  ctx: ConsoleContext,
+  env: WebhookEnv,
   w: WebhookRow,
   tab: WebhookTab,
   options: { draft?: WebhookDraft; error?: string; secret?: string } = {},
 ): Html {
   const draft = options.draft ?? draftOf(w)
   const base = webhookUrl(w.id)
-  // `X-Bunwrite-Webhook` or `X-Appwrite-Webhook`, as deliveries carry them.
-  const h = webhookHeaderPrefix(ctx.services.config).slice(0, -1).replace(/(^|-)([a-z])/g, (_, d: string, c: string) => d + c.toUpperCase())
   const body =
     tab === 'deliveries'
-      ? deliveriesView(w, h)
+      ? deliveriesView(w, env)
       : html`
         ${settingsSection(
           'General',
@@ -251,9 +184,9 @@ export function webhookView(
         ${settingsSection(
           'Events',
           'Document changes that trigger a delivery. Pick from the schema or enter a pattern by hand.',
-          html`<form method="post" action="${base}/events">${eventPicker(ctx, new Set(draft.events))}<div class="foot"><button class="primary">Save events</button></div></form>`,
+          html`<form method="post" action="${base}/events">${eventPicker(env.groups, new Set(draft.events))}<div class="foot"><button class="primary">Save events</button></div></form>`,
         )}
-        ${secretSection(w, h)}
+        ${secretSection(w, env)}
         ${settingsSection(
           'Delete webhook',
           'Stops deliveries and removes the webhook. This cannot be undone.',

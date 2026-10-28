@@ -81,6 +81,11 @@ export function webhookHeaderPrefix(config: Pick<Config, 'apiCompat'>): string {
   return `x-${compatOf(config)}-webhook-`
 }
 
+/** Those headers as they are written in prose and the console: `X-Bunwrite-Webhook`, `X-Appwrite-Webhook`. */
+export function webhookHeaderName(config: Pick<Config, 'apiCompat'>): string {
+  return compatOf(config) === 'appwrite' ? 'X-Appwrite-Webhook' : 'X-Bunwrite-Webhook'
+}
+
 /**
  * Variables for a function, given without prefix (`FUNCTION_ID`, `API_KEY`, ...):
  * `BUNWRITE_*`, plus `APPWRITE_*` in Appwrite mode.

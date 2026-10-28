@@ -10,12 +10,11 @@ import { checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, DOCUMENT_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { badge, destroy, emptyState, formatBytes, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import { badge, destroy, emptyState, formatBytes, header, icon, listCard, pageFooter, pager, plural, searchForm, settingsSection, tabs, when } from '~/console/ui'
 
 const STORAGE = '/console/storage'
 const bucketUrl = (id: string) => `${STORAGE}/${encodeURIComponent(id)}`
 
-const plural = (n: number, word: string) => `${n.toLocaleString('en-US')} ${word}${n === 1 ? '' : 's'}`
 const extensionsOf = (b: BucketRow): string[] => JSON.parse(b.allowed_file_extensions)
 const megabytes = (b: BucketRow | null) => (b ? b.maximum_file_size / 1_000_000 : 10)
 
