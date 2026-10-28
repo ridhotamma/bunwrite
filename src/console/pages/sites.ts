@@ -196,7 +196,7 @@ export function sitePages(router: ConsoleRouter): void {
       `Deploy to ${site.name}`,
       'sites',
       html`${header('Deploy', { back: siteUrl(site.id) })}
-      <div class="card narrow">${deploySiteForm(site, 'deploy-site-page-form')}
+      <div class="card">${deploySiteForm(site, 'deploy-site-page-form')}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${siteUrl(site.id)}">Cancel</a><button type="submit" form="deploy-site-page-form" class="primary">Deploy</button></div>
       </div>`,
     )
