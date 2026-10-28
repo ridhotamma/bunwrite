@@ -74,15 +74,24 @@ export class ConsoleAuth {
 
   admin(request: Request): Admin | null {
     const secret = parseCookies(request.headers.get('cookie') ?? '')[CONSOLE_COOKIE]
-    if (!secret) return null
-    return (
-      this.db.sqlite
-        .query<Admin, [string, string]>(
-          `SELECT a.seq, a.email FROM _console_sessions s JOIN _console_admins a ON a.seq = s.admin_id
-           WHERE s.secret_hash = ? AND s.expire > ?`,
-        )
-        .get(sha256(secret), now()) ?? null
-    )
+    return secret ? (this.session(secret)?.admin ?? null) : null
+  }
+
+  /** The live session behind a secret (the console cookie, or the API's `a_session_console`). */
+  session(secret: string): { seq: number; expire: string; createdAt: string; admin: Admin & { created_at: string } } | null {
+    const row = this.db.sqlite
+      .query<{ session_seq: number; expire: string; session_created: string; seq: number; email: string; created_at: string }, [string, string]>(
+        `SELECT s.seq AS session_seq, s.expire, s.created_at AS session_created, a.seq, a.email, a.created_at
+         FROM _console_sessions s JOIN _console_admins a ON a.seq = s.admin_id
+         WHERE s.secret_hash = ? AND s.expire > ?`,
+      )
+      .get(sha256(secret), now())
+    if (!row) return null
+    return { seq: row.session_seq, expire: row.expire, createdAt: row.session_created, admin: { seq: row.seq, email: row.email, created_at: row.created_at } }
+  }
+
+  endSession(secret: string): void {
+    this.db.sqlite.query('DELETE FROM _console_sessions WHERE secret_hash = ?').run(sha256(secret))
   }
 
   logout(request: Request): void {

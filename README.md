@@ -81,16 +81,51 @@ Import the example schema first if you want sample collections:
 bun run schema:push examples/appwrite.config.json
 ```
 
-The Appwrite CLI works too. Point it at Bunwrite with an API key, then push:
+## Appwrite CLI
+
+The [Appwrite CLI](https://appwrite.io/docs/tooling/command-line/installation)
+(tested with 22.0.0) works against Bunwrite. Either point it at a project with an
+API key:
 
 ```bash
 appwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
-appwrite push tables --all --force
-appwrite push functions --function-id <id> --force --activate true
 ```
 
-Push functions one at a time: CLI 22 can mix up archives when it packs several
-functions in the same millisecond.
+or sign in with a console admin (`bun run console:admin you@example.com`) and
+link the folder to a project. Settings need the sign-in; everything else works
+with either:
+
+```bash
+appwrite login --endpoint http://localhost:8080/v1 --email you@example.com --password '...'
+appwrite init project --organization-id <org-id> --project-id <project-id> --project-name <name>
+```
+
+The organization ID is on the console's Organization page.
+
+| Command | Pull | Push |
+| --- | --- | --- |
+| `settings` | project name, services, protocols, sign-in methods, security policies, mock phone numbers | same |
+| `tables` / `collections` | databases, tables, columns, indexes | create and alter |
+| `functions` | settings and the source code of the latest deployment | settings, then deploy and activate the code |
+| `buckets` | bucket settings | create and update |
+| `teams` | teams | create and rename |
+| `webhooks` | webhooks | create and update |
+| `topics` | messaging topics | create and update |
+| `all` | all of the above | all of the above |
+
+`whoami` and `logout` work too. For scripts, add `--all --force` to push without
+questions, and answer the "pull the code?" question with `--no-code` or `y` on
+stdin.
+
+Notes for CLI 22:
+
+- Push functions one at a time (`--function-id <id>`): the CLI can mix up
+  archives when it packs several functions in the same millisecond.
+- `pull teams` saves whole team objects, which the CLI's own config check then
+  refuses on push. Keep only `$id` and `name` for each team in
+  `appwrite.config.json`. Appwrite behaves the same.
+- `init project` tries to clone Appwrite's agent skills from GitHub; without
+  network access it prints an error and links the project anyway.
 
 ## Connect an app
 
@@ -155,9 +190,12 @@ so they can be shared directly.
 | Account | email + password, email OTP, token sessions, Google OAuth2 token flow, recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
-| Storage | uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
+| Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` |
+| Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download |
+| Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
+| Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
+| Messaging | topics (create, list, update, delete) |
 | Realtime | WebSocket at `/v1/realtime`: document events to subscribers who may read them |
 | Email | SMTP via nodemailer, Appwrite's English templates |
 
@@ -173,7 +211,15 @@ cancel the real one.
 - On the raw wire, some documents list `$id` before their attributes where live
   lists it after; the SDKs parse both to the same object.
 - Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
-  login; magic URLs; messaging; scheduled executions.
+  login; magic URLs; sending messages (topics are stored only); Sites;
+  scheduled executions.
+- Switched-off services, protocols and sign-in methods stop clients; API keys
+  and console admins are exempt, as on Appwrite. The password dictionary and
+  history, session alert and invalidation, membership privacy and email-domain
+  policies, and mock phone numbers are stored and read back but not applied.
+- Bucket `encryption`, `antivirus` and `compression` are stored as set; files
+  are kept as uploaded.
+- Webhooks fire for document events only.
 - Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
 - `studio-render` (Chromium) does not fit in 1 GB of memory.
 

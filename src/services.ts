@@ -16,6 +16,9 @@ import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
 import { TeamService } from './teams/service'
 import { TransactionService } from './transactions/service'
+import { AccessService } from './settings/access'
+import { TopicService } from './messaging/topics'
+import { WebhookService } from './webhooks/service'
 
 export interface Services {
   config: Config
@@ -31,6 +34,10 @@ export interface Services {
   storage: StorageService
   functions: FunctionService
   settings: SettingsService
+  /** Services, protocols, sign-in methods and policies (`appwrite push settings`). */
+  access: AccessService
+  webhooks: WebhookService
+  topics: TopicService
   requestLogs: RequestLogService
   backups: BackupService
   render: RenderService
@@ -53,7 +60,10 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const requestLogs = new RequestLogService(db, config)
   const backups = new BackupService(db, config)
   const render = new RenderService(config)
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render } as Services
+  const webhooks = new WebhookService(db, () => config.projectId)
+  const topics = new TopicService(db)
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render, webhooks, topics } as Services
+  services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {
     if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()

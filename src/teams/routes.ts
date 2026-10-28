@@ -58,6 +58,7 @@ export function teamRoutes(router: Router<AppContext>): void {
 
   router.post('/teams/:teamId/memberships', async ({ ctx, path, params }) => {
     // Invitations from a user need a link to send; API-key memberships are confirmed at once.
+    if (!ctx.caller.privileged) ctx.access.assertAuthMethod('invites')
     const url = ctx.caller.privileged ? str(params.url) : assertRedirect(params.url, ctx.config.allowedOrigins, 'url')
     if (!ctx.caller.privileged && !ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP Disabled')
     const { membership, secret } = await ctx.teams.createMembership(ctx.caller, path.teamId!, {

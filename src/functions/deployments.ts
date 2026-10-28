@@ -32,6 +32,8 @@ const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 const MAX_LOG = 1_000_000
 /** Ready deployments kept on disk besides the active one. */
 const KEEP_PREVIOUS = 2
+/** macOS tar would add `._name` metadata files to archives; other tars ignore this. */
+const TAR_ENV = { ...process.env, COPYFILE_DISABLE: '1' }
 
 export interface DeploymentRow {
   seq: number
@@ -193,6 +195,35 @@ export class Deployments {
     return join(deploymentDir(this.config, functionId), `${id}.upload`)
   }
 
+  /** The deployment's code as uploaded, before its build command ran (`appwrite pull functions`). */
+  private sourcePath(functionId: string, id: string) {
+    return join(deploymentDir(this.config, functionId), `${id}.source.tar.gz`)
+  }
+
+  /**
+   * A .tar.gz of the deployment: its source as uploaded, or with `output` the
+   * folder after the build. Deployments made before sources were kept fall
+   * back to the built folder.
+   */
+  async download(functionId: string, id: string, type: 'source' | 'output' = 'source'): Promise<Blob> {
+    this.get(functionId, id)
+    const source = this.sourcePath(functionId, id)
+    if (type === 'source' && existsSync(source)) return Bun.file(source)
+    const dir = deploymentDir(this.config, functionId, id)
+    if (!existsSync(dir)) throw err('deployment_not_found', 'The code of this deployment is no longer kept on this server.')
+    const pack = Bun.spawn(['tar', '-czf', '-', '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+    const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
+    if (code !== 0) throw new Error(`Could not pack deployment ${id}: ${errText.trim()}`)
+    return new Blob([bytes], { type: 'application/gzip' })
+  }
+
+  /** Keep a copy of the code as uploaded, before the build changes the folder. */
+  private async keepSource(functionId: string, id: string, dir: string): Promise<void> {
+    const pack = Bun.spawn(['tar', '-czf', this.sourcePath(functionId, id), '-C', dir, '.'], { stdout: 'ignore', stderr: 'pipe', env: TAR_ENV })
+    const [errText, code] = await Promise.all([new Response(pack.stderr).text(), pack.exited])
+    if (code !== 0) throw new Error(`Could not keep the deployment source: ${errText.trim() || `tar exited with ${code}`}`)
+  }
+
   /**
    * Deploy files given as text: a starter template or code pasted in the
    * console. The build (if any) runs in the background, as for uploads.
@@ -291,6 +322,7 @@ export class Deployments {
       if (!existsSync(join(dir, d.entrypoint))) {
         throw new Error(`Entrypoint "${d.entrypoint}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`)
       }
+      await this.keepSource(functionId, id, dir)
 
       if (d.commands.trim() && !this.config.functionsBuildCommands) {
         logs.push(`Skipped the build command (FUNCTIONS_BUILD_COMMANDS=false): ${d.commands}`)
@@ -339,6 +371,7 @@ export class Deployments {
     this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
     rmSync(deploymentDir(this.config, functionId, id), { recursive: true, force: true })
     rmSync(this.archivePath(functionId, id), { force: true })
+    rmSync(this.sourcePath(functionId, id), { force: true })
   }
 
   /** Keep disk use flat: drop the code of all but the active and the last few ready deployments. */
@@ -350,6 +383,10 @@ export class Deployments {
     for (const { id } of ready.slice(KEEP_PREVIOUS)) {
       this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
       rmSync(deploymentDir(this.config, functionId, id), { recursive: true, force: true })
+      rmSync(this.sourcePath(functionId, id), { force: true })
     }
+    // Failed builds keep their source so it can be pulled and fixed; only the latest few.
+    const failed = this.sql.query<{ id: string }, [string]>("SELECT id FROM _deployments WHERE function_id = ? AND status = 'failed' ORDER BY seq DESC").all(functionId)
+    for (const { id } of failed.slice(KEEP_PREVIOUS)) rmSync(this.sourcePath(functionId, id), { force: true })
   }
 }

@@ -4,6 +4,7 @@ import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
+import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { deploymentModel, Deployments } from './deployments'
 import { ENV_KEY_RE } from './env'
@@ -104,10 +105,16 @@ const functionRule = (ctx: AppContext, f: FunctionRow) => {
 }
 
 export function functionRoutes(router: Router<AppContext>): void {
-  router.get('/functions', ({ ctx }) => {
+  router.get('/functions', ({ ctx, params }) => {
     requireKey(ctx, 'functions.read')
-    const functions = ctx.functions.list().map((f) => model(ctx, f))
-    return json({ total: functions.length, functions })
+    const { total, items } = page(ctx.functions.list().map((f) => model(ctx, f)), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'runtime'] })
+    return json({ total, functions: items })
+  })
+
+  /** This server hosts no Sites; an empty list lets `appwrite pull all` and `push all` carry on. */
+  router.get('/sites', ({ ctx }) => {
+    requireKey(ctx, 'sites.read')
+    return json({ total: 0, sites: [] })
   })
 
   router.post('/functions', ({ ctx, params }) => {
@@ -156,11 +163,25 @@ export function functionRoutes(router: Router<AppContext>): void {
 
   // ---- Deployments ----
 
-  router.get('/functions/:functionId/deployments', ({ ctx, path }) => {
+  router.get('/functions/:functionId/deployments', ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.read')
     ctx.functions.fn(path.functionId!)
-    const deployments = deploymentsOf(ctx).list(path.functionId!).map(deploymentModel)
-    return json({ total: deployments.length, deployments })
+    const { total, items } = page(deploymentsOf(ctx).list(path.functionId!).map(deploymentModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'status'] })
+    return json({ total, deployments: items })
+  })
+
+  router.get('/functions/:functionId/deployments/:deploymentId/download', async ({ ctx, path, params }) => {
+    requireKey(ctx, 'functions.read')
+    ctx.functions.fn(path.functionId!)
+    const type = str(params.type) === 'output' ? 'output' : 'source'
+    const archive = await deploymentsOf(ctx).download(path.functionId!, path.deploymentId!, type)
+    return new Response(archive, {
+      headers: {
+        'content-type': 'application/gzip',
+        'content-length': String(archive.size),
+        'content-disposition': `attachment; filename="${path.deploymentId}.tar.gz"`,
+      },
+    })
   })
 
   router.post('/functions/:functionId/deployments', async ({ ctx, path, params, request }) => {

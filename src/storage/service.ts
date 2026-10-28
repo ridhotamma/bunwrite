@@ -181,20 +181,58 @@ export class StorageService {
     return b
   }
 
-  saveBucket(input: { id: string; name: string; enabled: boolean; fileSecurity: boolean; permissions: string[]; maximumFileSize: number; allowedFileExtensions: string[]; transformations: boolean }, create: boolean): BucketRow {
+  /**
+   * Create or update a bucket. `compression`, `encryption` and `antivirus` are
+   * kept as set (so the CLI sees no drift) but files are stored as uploaded.
+   * Left out on an update, they keep their current value.
+   */
+  saveBucket(
+    input: {
+      id: string
+      name: string
+      enabled: boolean
+      fileSecurity: boolean
+      permissions: string[]
+      maximumFileSize: number
+      allowedFileExtensions: string[]
+      transformations: boolean
+      compression?: string
+      encryption?: boolean
+      antivirus?: boolean
+    },
+    create: boolean,
+  ): BucketRow {
     if (create && !isValidId(input.id)) throw err('general_argument_invalid', 'Bucket ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
     if (!Number.isInteger(input.maximumFileSize) || input.maximumFileSize < 1) throw err('general_argument_invalid', 'Maximum file size must be a positive number of bytes.')
+    if (input.compression !== undefined && !['none', 'gzip', 'zstd'].includes(input.compression)) {
+      throw err('general_argument_invalid', 'Invalid `compression` param: Value must be one of (none, gzip, zstd)')
+    }
     const stamp = now()
-    const values = [input.name || input.id, input.enabled ? 1 : 0, input.fileSecurity ? 1 : 0, JSON.stringify(input.permissions), input.maximumFileSize, JSON.stringify(input.allowedFileExtensions.map((e) => e.replace(/^\./, '').toLowerCase())), input.transformations ? 1 : 0]
+    const current = create ? null : this.bucket(input.id, true)
+    const values = [
+      input.name || input.id,
+      input.enabled ? 1 : 0,
+      input.fileSecurity ? 1 : 0,
+      JSON.stringify(input.permissions),
+      input.maximumFileSize,
+      JSON.stringify(input.allowedFileExtensions.map((e) => e.replace(/^\./, '').toLowerCase())),
+      input.transformations ? 1 : 0,
+      input.compression ?? current?.compression ?? 'none',
+      (input.encryption ?? Boolean(current?.encryption)) ? 1 : 0,
+      (input.antivirus ?? Boolean(current?.antivirus)) ? 1 : 0,
+    ]
     if (create) {
       if (this.sql.query('SELECT 1 FROM _buckets WHERE id = ?').get(input.id)) throw err('storage_bucket_already_exists')
       this.sql
-        .query('INSERT INTO _buckets (name, enabled, file_security, permissions, maximum_file_size, allowed_file_extensions, transformations, created_at, updated_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .query(
+          'INSERT INTO _buckets (name, enabled, file_security, permissions, maximum_file_size, allowed_file_extensions, transformations, compression, encryption, antivirus, created_at, updated_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        )
         .run(...(values as any[]), stamp, stamp, input.id)
     } else {
-      this.bucket(input.id, true)
       this.sql
-        .query('UPDATE _buckets SET name = ?, enabled = ?, file_security = ?, permissions = ?, maximum_file_size = ?, allowed_file_extensions = ?, transformations = ?, updated_at = ? WHERE id = ?')
+        .query(
+          'UPDATE _buckets SET name = ?, enabled = ?, file_security = ?, permissions = ?, maximum_file_size = ?, allowed_file_extensions = ?, transformations = ?, compression = ?, encryption = ?, antivirus = ?, updated_at = ? WHERE id = ?',
+        )
         .run(...(values as any[]), stamp, input.id)
     }
     return this.bucket(input.id, true)

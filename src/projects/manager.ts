@@ -189,6 +189,8 @@ export class ProjectManager implements ProjectResolver {
 
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string } {
     const id = resolveId(input.id, 'Project ID')
+    // `console` is how the Appwrite CLI addresses the console API.
+    if (id.toLowerCase() === 'console') throw err('general_argument_invalid', 'The project ID "console" is reserved.')
     const name = typeof input.name === 'string' ? input.name.trim() : ''
     if (!name || name.length > 128) throw err('general_argument_invalid', 'A project needs a name of 128 characters or less.')
     if (this.runtimes.has(id) || this.db.sqlite.query<{ id: string }, [string]>('SELECT id FROM _projects WHERE id = ?').get(id)) {

@@ -406,3 +406,33 @@ export const requestLogs = sqliteTable(
   },
   (t) => [index('_request_logs_created').on(t.createdAt), index('_request_logs_status').on(t.status)],
 )
+
+/** Outgoing webhooks (Appwrite's project webhooks), as `appwrite push webhooks` makes them. */
+export const webhooks = sqliteTable('_webhooks', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  events: json<string[]>('events').notNull().default(sql`'[]'`),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  /** Verify the receiver's TLS certificate. */
+  tls: integer('tls', { mode: 'boolean' }).notNull().default(true),
+  authUsername: text('auth_username').notNull().default(''),
+  authPassword: text('auth_password').notNull().default(''),
+  /** Signs each delivery (X-Appwrite-Webhook-Signature). */
+  secret: text('secret').notNull(),
+  /** The last delivery error, empty after a success. */
+  logs: text('logs').notNull().default(''),
+  /** Failed deliveries in a row; the webhook turns itself off at 10. */
+  attempts: integer('attempts').notNull().default(0),
+  ...timestamps,
+})
+
+/** Messaging topics. Only their names and subscribe roles are kept; this server sends no messages. */
+export const topics = sqliteTable('_topics', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  name: text('name').notNull(),
+  subscribe: json<string[]>('subscribe').notNull().default(sql`'[]'`),
+  ...timestamps,
+})

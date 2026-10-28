@@ -10,6 +10,7 @@ import { accountModel, membershipModel, sessionModel, tokenModel, userModel, typ
 import { verifyPassword } from './passwords'
 import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from './service'
 import { FailedAttempts, RateLimiter } from '~/lib/limits'
+import type { AuthMethodId } from '~/settings/access'
 
 const limiter = new RateLimiter()
 const failures = new FailedAttempts()
@@ -31,6 +32,11 @@ const pick = (items: string[]) => items[crypto.getRandomValues(new Uint8Array(1)
 function missingScope(ctx: AppContext, scope: string): never {
   const role = ctx.caller.user ? 'users' : ctx.caller.privileged ? 'applications' : 'guests'
   throw err('general_unauthorized_scope', `User (role: ${role}) missing scopes (["${scope}"])`)
+}
+
+/** A sign-in method switched off in the project settings refuses clients; API keys may still use it. */
+function method(ctx: AppContext, id: AuthMethodId): void {
+  if (!ctx.caller.privileged) ctx.access.assertAuthMethod(id)
 }
 
 /** Account routes need a signed-in user (session or JWT). */
@@ -107,7 +113,10 @@ export function accountRoutes(router: Router<AppContext>): void {
   router.post('/account', async (route) => {
     const { ctx, params } = route
     assertNoSession(ctx)
+    method(ctx, 'email-password')
     limit(route, 'account-create', '')
+    ctx.access.assertUserLimit()
+    ctx.access.assertPasswordPersonalData(params.password, { id: params.userId, name: params.name, email: params.email })
     const user = await ctx.auth.createUser({ id: params.userId, email: params.email, password: params.password ?? '', name: params.name })
     return json(accountModel(user), 201)
   })
@@ -122,6 +131,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     if (user.password && !(await verifyPassword(String(params.oldPassword ?? ''), user.password, user.hash, JSON.parse(user.hash_options)))) {
       throw err('user_invalid_credentials')
     }
+    ctx.access.assertPasswordPersonalData(params.password, user)
     return json(accountModel(await ctx.auth.setPassword(user.id, params.password)))
   })
 
@@ -186,6 +196,7 @@ export function accountRoutes(router: Router<AppContext>): void {
   router.post('/account/sessions/email', async (route) => {
     const { ctx, params } = route
     assertNoSession(ctx)
+    method(ctx, 'email-password')
     limit(route, 'sessions-email', params.email)
     const email = typeof params.email === 'string' ? params.email.toLowerCase() : ''
     const user = email ? ctx.auth.userByEmail(email) : null
@@ -222,6 +233,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/tokens/email', async (route) => {
     const { ctx, params } = route
+    method(ctx, 'email-otp')
     limit(route, 'tokens-email', params.email)
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP disabled')
     const email = validEmail(params.email)
@@ -246,6 +258,7 @@ export function accountRoutes(router: Router<AppContext>): void {
   })
 
   router.post('/account/jwts', async ({ ctx, params }) => {
+    method(ctx, 'jwt')
     const user = me(ctx)
     return json(await jwtFor(ctx, user.id, ctx.caller.sessionId ?? '', num(params.duration, 900)!), 201)
   })
@@ -271,6 +284,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     const user = ctx.auth.findUser(str(params.userId) ?? '')
     if (!user) throw err('user_not_found')
     const token = ctx.auth.verifyToken(user.id, params.secret, ['recovery'])
+    ctx.access.assertPasswordPersonalData(params.password, user)
     await ctx.auth.setPassword(user.id, params.password)
     ctx.auth.updateUser(user.id, { email_verification: 1 })
     ctx.auth.deleteToken(token.id)
@@ -346,6 +360,7 @@ export function userRoutes(router: Router<AppContext>): void {
 
   router.post('/users', async ({ ctx, params }) => {
     requireKey(ctx, 'users.write')
+    ctx.access.assertPasswordPersonalData(params.password, { id: params.userId, name: params.name, email: params.email, phone: params.phone })
     const created = await ctx.auth.createUser({ id: params.userId, email: params.email, phone: params.phone, password: params.password, name: params.name })
     return json(userModel(created), 201)
   })
@@ -379,7 +394,8 @@ export function userRoutes(router: Router<AppContext>): void {
   })
 
   router.patch('/users/:userId/password', async ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    const target = user(ctx, path.userId!)
+    if (params.password !== '') ctx.access.assertPasswordPersonalData(params.password, target)
     if (params.password === '') ctx.auth.updateUser(path.userId!, { password: null, password_update: now() })
     else await ctx.auth.setPassword(path.userId!, params.password)
     return done(ctx, path.userId!)

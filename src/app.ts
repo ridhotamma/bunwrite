@@ -1,6 +1,6 @@
 import type { Server } from 'bun'
 
-import { resolveCaller, type Caller } from './auth/caller'
+import { keyCaller, resolveCaller, type Caller } from './auth/caller'
 import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
@@ -20,6 +20,10 @@ import { singleProjectResolver, type ProjectResolver, type ProjectRuntime } from
 import { renderRoutes } from './render/routes'
 import { storageRoutes } from './storage/routes'
 import { teamRoutes } from './teams/routes'
+import { topicRoutes } from './messaging/topics'
+import { CONSOLE_PROJECT, createConsoleApi } from './platform/console'
+import { projectRoutes } from './platform/project'
+import { webhookRoutes } from './webhooks/routes'
 
 export { createServices, type Services } from './services'
 
@@ -64,6 +68,9 @@ export function createApp(source: Services | ProjectResolver) {
   storageRoutes(router)
   functionRoutes(router)
   renderRoutes(router)
+  projectRoutes(router)
+  webhookRoutes(router)
+  topicRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
   const cors = (request: Request, allowedOrigins: string[]): Record<string, string> => {
@@ -81,6 +88,21 @@ export function createApp(source: Services | ProjectResolver) {
   }
 
   const consoleApp = createConsole(projects)
+  const consoleApi = createConsoleApi(projects)
+
+  /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
+  async function callerOf(services: Services, request: Request, meta: RequestMeta): Promise<Caller> {
+    if (!request.headers.get('x-appwrite-key')) {
+      const admin = consoleApi.adminOf(request)
+      if (admin) {
+        meta.auth = `console:${admin.email}`
+        return keyCaller()
+      }
+    }
+    const caller = await resolveCaller(services.db, services.config, request)
+    meta.auth = authLabel(caller)
+    return caller
+  }
 
   const projectOf = (request: Request, url: URL) => request.headers.get('x-appwrite-project') ?? url.searchParams.get('project')
 
@@ -140,8 +162,8 @@ export function createApp(source: Services | ProjectResolver) {
     meta.project = runtime.info.id
 
     if (pathname === '/realtime') {
-      const caller = await resolveCaller(services.db, services.config, request)
-      meta.auth = authLabel(caller)
+      const caller = await callerOf(services, request, meta)
+      if (!caller.privileged) services.access.assertProtocol('websocket')
       if (server?.upgrade(request, { data: { caller, subscriptions: new Map(), projectId: runtime.info.id } })) return undefined
       throw err('general_argument_invalid', 'Realtime needs a WebSocket upgrade.')
     }
@@ -151,11 +173,18 @@ export function createApp(source: Services | ProjectResolver) {
     if (!match) throw err('general_route_not_found')
 
     const params = match.raw ? {} : await readParams(request, url)
-    const caller = await resolveCaller(services.db, services.config, request)
-    meta.auth = authLabel(caller)
+    const caller = await callerOf(services, request, meta)
+    // Like Appwrite, switched-off services and protocols stop clients but not API keys or console admins.
+    // A function's own HTTP endpoint stands in for its public domain, so it is not part of the Functions API.
+    if (!caller.privileged && !/^\/functions\/[^/]+\/http(?:\/|$)/.test(pathname)) {
+      services.access.assertProtocol('rest')
+      services.access.assertService(pathname)
+    }
     services.store.drainEvents()
     const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller } })
-    services.realtime.publish(services.store.drainEvents())
+    const events = services.store.drainEvents()
+    services.realtime.publish(events)
+    services.webhooks.dispatch(events, caller)
     return response
   }
 
@@ -176,8 +205,13 @@ export function createApp(source: Services | ProjectResolver) {
     let runtime = projects.defaultProject()
     let response: Response | undefined
     try {
-      runtime = runtimeFor(request, url)
-      response = await handle(request, server, meta, runtime)
+      // The Appwrite CLI's console calls (login, organizations, projects).
+      if (projectOf(request, url) === CONSOLE_PROJECT && request.method !== 'OPTIONS') {
+        response = await consoleApi.handle(request, pathname.replace(/^\/v1(?=\/|$)/, '') || '/')
+        if (response) meta.auth ??= 'console'
+      }
+      if (!response) runtime = runtimeFor(request, url)
+      response ??= await handle(request, server, meta, runtime)
       if (!response) return undefined
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)

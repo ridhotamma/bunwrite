@@ -31,15 +31,16 @@ plus their own storage, backups and function folder.
 
 | Path | Holds |
 | --- | --- |
-| `src/app.ts` | Builds the services, routes `/v1`, resolves the caller, CORS, publishes realtime events after a request succeeds |
+| `src/app.ts` | Builds the services, routes `/v1`, resolves the caller (API key, console admin in admin mode, session or JWT), applies switched-off services and protocols, CORS, publishes realtime events and webhooks after a request succeeds |
 | `src/db/` | SQLite connection (WAL, foreign keys) and the Drizzle schema of built-in tables; migrations in `drizzle/` |
 | `src/schema/` | Registry of databases/collections, `push.ts` (config → tables, used by CLI, import and console), `admin.ts` (console edits, export) |
 | `src/documents/` | Query parser/compiler, codec (validation, encoding), `store.ts` (reads, writes, permissions), routes |
 | `src/transactions/` | Staged operations and commit with conflict detection |
 | `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, Google OAuth, JWT, account and users routes |
-| `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/` | One service and its routes each |
+| `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/`, `src/webhooks/`, `src/messaging/` | One service and its routes each |
+| `src/platform/` | What the Appwrite CLI needs beyond the client APIs: the console-project API (`appwrite login`, organizations, projects) and the Project API (`pull/push settings`) |
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
-| `src/settings/` | Console-edited project settings and API keys |
+| `src/settings/` | Console-edited project settings and API keys; `access.ts` holds services, protocols, sign-in methods, policies and mock phones |
 | `src/instance/` | First-run organization/project IDs, signing secret, initial API key and one-time env seed |
 | `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
