@@ -5,8 +5,9 @@
  * - `data-show-for`: show a block only for some values of a `data-show-by` select
  * - `data-disable-when`: disable an input while a checkbox is ticked
  * - `data-follow`: a field takes its value from another field's choice until edited by hand
- * - `data-busy-label`: once a form submits, its submit buttons are disabled and show this label,
- *   so a second click cannot send it again
+ * - submit once: every POST form disables its submit buttons (with a spinner) from the first
+ *   submit until the response, so a second click cannot send it again. `data-busy-label`
+ *   also swaps the button text; `data-busy="off"` opts a form out
  */
 export const FORM_SCRIPT = `
 (() => {
@@ -156,41 +157,83 @@ export const FORM_SCRIPT = `
   }, true)
 
   // ---- Submit once ----
-  const submitButtons = (form) => [
-    ...form.querySelectorAll("button:not([type]),button[type=submit]"),
-    ...(form.id ? document.querySelectorAll('button[type=submit][form="' + CSS.escape(form.id) + '"]') : []),
-  ]
+  // Every POST form: from the first submit until the response, its submit buttons are
+  // disabled and show a spinner (and data-busy-label, when set), and further submits
+  // are dropped. data-busy="off" opts a form out. GET forms (filters, search) are live
+  // and left alone.
+  const guarded = (form) =>
+    form instanceof HTMLFormElement && (form.getAttribute("method") || "").toLowerCase() === "post" && form.dataset.busy !== "off"
+  const submitButtons = (form) => {
+    // getAttribute, not form.id: a field named "id" shadows the property.
+    const id = form.getAttribute("id")
+    return [
+      ...form.querySelectorAll("button:not([type]),button[type=submit],input[type=submit]"),
+      // Buttons outside the form (a dialog footer) that point at it with form="…".
+      ...(id ? document.querySelectorAll(['button:not([type])', 'button[type=submit]', 'input[type=submit]'].map((s) => s + '[form="' + CSS.escape(id) + '"]').join(",")) : []),
+    ]
+  }
   function setBusy(form, busy) {
     form.__busy = busy
+    clearTimeout(form.__busyTimer)
     for (const button of submitButtons(form)) {
-      if (busy) {
+      const label = form.dataset.busyLabel
+      if (busy && label && button.tagName === "BUTTON") {
         if (button.__label == null) button.__label = button.textContent
-        button.textContent = form.dataset.busyLabel || button.textContent
-      } else if (button.__label != null) {
+        button.textContent = label
+      } else if (!busy && button.__label != null) {
         button.textContent = button.__label
         button.__label = null
       }
       button.disabled = busy
-      button.toggleAttribute("aria-busy", busy)
+      if (busy) button.setAttribute("aria-busy", "true")
+      else button.removeAttribute("aria-busy")
     }
   }
-  document.addEventListener("submit", (e) => {
-    const form = e.target instanceof HTMLFormElement && e.target.matches("[data-busy-label]") ? e.target : null
-    if (!form) return
+  // The form a request is for: the form itself, or the submit button that sent it.
+  const formOf = (el) => (el instanceof HTMLFormElement ? el : el instanceof Element && el.matches("[type=submit]") ? el.form : null)
+  // Keep the buttons disabled while the next page loads; give them back if it never does.
+  function holdBusy(form, ms) {
+    setBusy(form, true)
+    form.__busyTimer = setTimeout(() => setBusy(form, false), ms)
+  }
+  const redirects = (xhr) => xhr.status < 400 && Boolean(xhr.getResponseHeader("HX-Location") || xhr.getResponseHeader("HX-Redirect") || xhr.getResponseHeader("HX-Refresh"))
+
+  // Forms htmx sends (boosted or hx-post): busy while the request is out.
+  document.addEventListener("htmx:beforeRequest", (e) => {
+    const form = formOf(e.detail && e.detail.elt)
+    if (!guarded(form)) return
     if (form.__busy) { e.preventDefault(); return }
-    // Another handler (a confirm step) may have stopped this submit.
+    // htmx has already read the form's values, so disabling now keeps the submitter's value.
+    setBusy(form, true)
+    if (e.detail.xhr) e.detail.xhr.__busyForm = form
+  })
+  const release = (e) => {
+    const xhr = e.detail && e.detail.xhr
+    const form = xhr && xhr.__busyForm
+    if (!form) return
+    xhr.__busyForm = null
+    // Saved, and the console is moving on to the next page: stay disabled until it arrives.
+    if (e.type === "htmx:afterRequest" && redirects(xhr)) holdBusy(form, 30000)
+    else setBusy(form, false)
+  }
+  for (const name of ["htmx:afterRequest", "htmx:abort", "htmx:sendError", "htmx:timeout"]) document.addEventListener(name, release)
+
+  // Forms the browser sends itself (hx-boost="false", pages without htmx): busy until the next page loads.
+  document.addEventListener("submit", (e) => {
+    const form = e.target
+    if (!guarded(form)) return
+    if (form.__busy) { e.preventDefault(); return }
+    // htmx or another handler took this submit; htmx:beforeRequest covers it.
     if (e.defaultPrevented) return
     form.__busy = true
+    // A form that opens another tab, or a response that is a download, leaves this page here.
+    const target = (e.submitter && e.submitter.getAttribute("formtarget")) || form.getAttribute("target")
     // Disable after the browser has collected the form data, so the submitter's value is still sent.
-    setTimeout(() => { if (form.__busy) setBusy(form, true) }, 0)
+    setTimeout(() => { if (form.__busy) holdBusy(form, target && target !== "_self" ? 1500 : 30000) }, 0)
   })
   // Leaving with the back button can restore the page from cache with the buttons still disabled.
   window.addEventListener("pageshow", (e) => {
-    if (e.persisted) for (const form of document.querySelectorAll("form[data-busy-label]")) setBusy(form, false)
-  })
-  document.addEventListener("htmx:afterRequest", (e) => {
-    const form = e.target instanceof Element ? e.target.closest("form[data-busy-label]") : null
-    if (form) setBusy(form, false)
+    if (e.persisted) for (const form of document.querySelectorAll("form")) if (form.__busy) setBusy(form, false)
   })
 
   function setup() { showFor(document); disableWhen(document) }

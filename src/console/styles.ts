@@ -1,3 +1,5 @@
+import { PROGRESS_CSS } from './progress'
+
 /** Console stylesheet, kept as a string so the console has no build step. */
 export const CONSOLE_CSS = `
 :root{--bg:#f1f1f1;--surface:#fff;--nav:#ebebeb;--nav-hover:#e3e3e3;--nav-on:#fafafa;--text:#303030;--subdued:#616161;--disabled:#b5b5b5;--border:#e3e3e3;--border-strong:#8a8a8a;--primary:#303030;--primary-hover:#1a1a1a;--critical:#8e1f0b;--critical-bg:#fedad9;--success:#2a6a45;--success-bg:#e6f3eb;--attention:#7a3a00;--attention-bg:#ffe7d1;--info:#00527c;--info-bg:#e0f0ff;--focus:#005bd3;--ring:#b5b5b5;--shadow:0 1px 0 rgba(26,26,26,.07),inset 0 -1px 0 rgba(0,0,0,.08),inset 0 0 0 1px rgba(0,0,0,.06)}
@@ -322,4 +324,4 @@ dialog:has(.perm){max-width:min(640px,calc(100vw - 32px))}
   .code-source .choice{grid-template-columns:1fr}
   .invite-row{grid-template-columns:minmax(0,1fr) 112px 28px}
 }
-`
+${PROGRESS_CSS}`

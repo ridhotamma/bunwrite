@@ -8,6 +8,7 @@ import { FORM_SCRIPT } from './form-script'
 import { PERMISSIONS_SCRIPT } from './permissions'
 import { html, raw, type Html } from './html'
 import { MENU_SCRIPT } from './menu'
+import { PROGRESS_SCRIPT } from './progress'
 import { CONSOLE_CSS } from './styles'
 import { alert, avatar, icon, menu, tile, type IconName } from './ui'
 
@@ -90,6 +91,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <style>${raw(CONSOLE_CSS)}</style>
 <script>try{if(localStorage.getItem("bunwrite-nav")==="collapsed")document.documentElement.classList.add("nav-collapsed")}catch(e){}</script>
 <script src="/console/assets/htmx.min.js"></script>
+<script>${raw(PROGRESS_SCRIPT)}</script>
 </head>
 <body hx-boost="true">
 <input type="checkbox" id="nav-toggle" aria-hidden="true">
@@ -143,6 +145,7 @@ export function projectShell(title: string, nav: { admin: string }, body: Html, 
 <title>${title} · Bunwrite</title>
 <style>${raw(CONSOLE_CSS)}</style>
 <script src="/console/assets/htmx.min.js"></script>
+<script>${raw(PROGRESS_SCRIPT)}</script>
 </head>
 <body hx-boost="true">
 <header class="select-topbar">
@@ -166,5 +169,5 @@ ${confirmDialog()}
 export function bare(title: string, body: Html, projectName = 'Bunwrite'): Html {
   return html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any">
-<title>${title} · ${projectName}</title><style>${raw(CONSOLE_CSS)}</style></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script></body></html>`
+<title>${title} · ${projectName}</title><style>${raw(CONSOLE_CSS)}</style><script>${raw(PROGRESS_SCRIPT)}</script></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script><script>${raw(FORM_SCRIPT)}</script></body></html>`
 }
