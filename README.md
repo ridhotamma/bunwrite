@@ -21,7 +21,9 @@ the Appwrite API most apps use. Existing apps keep using the official
 - **Admin console included.** Manage databases, users, teams, files, functions,
   schema, storage, backups and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
-  processes with Appwrite's `context` API.
+  processes with Appwrite's `context` API. In the Docker image each function
+  builds and runs as its own Linux user, so it cannot read the database,
+  uploads or other functions.
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
 - **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
@@ -225,6 +227,13 @@ cancel the real one.
   and `npx` are available, through Bun. Libraries that compile native code
   while installing need a compiler, which the Docker image does not have;
   packages with prebuilt binaries work.
+- Functions share the container's CPU, memory and network; Appwrite gives each
+  its own container. In the Docker image each function runs as its own user
+  and can only read and write its own folder (`FUNCTIONS_SANDBOX`: `auto` by
+  default, `on` to refuse to start without isolation, `off`). Outside Docker,
+  or with `no-new-privileges` set, functions run as the server's user, so run
+  only code you trust there. Functions that run from the code folder
+  (`FUNCTIONS_DIR`) need it readable by other users.
 - Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
 - `studio-render` (Chromium) does not fit in 1 GB of memory.
 

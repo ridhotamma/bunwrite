@@ -4,7 +4,7 @@
  * python-*), with the same env vars Appwrite injects, so a crash or a leak
  * dies with the process. Schedules run from an in-process cron.
  */
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import type { Caller } from '~/auth/caller'
@@ -18,7 +18,8 @@ import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
-import { deploymentDir } from './deployments'
+import { deploymentDir, functionHome } from './deployments'
+import { removeTree } from './sandbox'
 import { pythonRunner } from './runtime'
 
 const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
@@ -329,6 +330,25 @@ export class FunctionService {
     ] as const
   }
 
+  /**
+   * The entry file's text for the console editor, or undefined when it is
+   * missing or larger than `maxBytes`. Read as the function's user when
+   * functions are isolated, since the server cannot read their folders.
+   */
+  readEntry(f: FunctionRow, maxBytes: number): string | undefined {
+    const { dir, entrypoint } = this.codeDir(f)
+    if (!dir) return undefined
+    const sandbox = this.config.functionsSandbox
+    if (!sandbox) {
+      const path = join(dir, entrypoint)
+      if (!existsSync(path) || statSync(path).size > maxBytes) return undefined
+      return readFileSync(path, 'utf8')
+    }
+    const read = Bun.spawnSync(sandbox.wrap(sandbox.uidFor(this.config.projectId, f.id), dir, ['head', '-c', String(maxBytes + 1), '--', entrypoint]), { stdout: 'pipe', stderr: 'ignore' })
+    if (read.exitCode !== 0 || read.stdout.length > maxBytes) return undefined
+    return read.stdout.toString('utf8')
+  }
+
   /** Delete a function with its variables, executions and deployments. */
   remove(id: string): void {
     this.fn(id)
@@ -336,7 +356,7 @@ export class FunctionService {
       for (const table of ['_function_vars', '_executions', '_deployments']) this.sql.query(`DELETE FROM ${table} WHERE function_id = ?`).run(id)
       this.sql.query('DELETE FROM _functions WHERE id = ?').run(id)
     })()
-    rmSync(deploymentDir(this.config, id), { recursive: true, force: true })
+    removeTree(this.config.functionsSandbox, deploymentDir(this.config, id))
   }
 
   variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
@@ -507,7 +527,9 @@ export class FunctionService {
         .query<{ entrypoint: string }, [string, string]>("SELECT entrypoint FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'")
         .get(f.deployment_id, f.id)
       const dir = deploymentDir(this.config, f.id, f.deployment_id)
-      if (deployment && existsSync(join(dir, deployment.entrypoint))) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint }
+      // An isolated deployment folder is closed to the server; the build already checked the entrypoint.
+      const present = existsSync(join(dir, deployment?.entrypoint ?? '')) || (Boolean(this.config.functionsSandbox) && existsSync(dir))
+      if (deployment && present) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint }
     }
     const base = this.config.functionsDir
     const tried = [...new Set([isAbsolute(f.path) ? f.path : resolve(base, f.path), join(base, 'functions', f.id)])]
@@ -541,9 +563,21 @@ export class FunctionService {
             'Set the code folder (the folder with appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
         )
       }
-      const proc = Bun.spawn(this.command(f, dir, entrypoint), {
-        cwd: dir,
-        env: this.env(f, request.trigger),
+      const sandbox = this.config.functionsSandbox
+      let command = this.command(f, dir, entrypoint)
+      const env = this.env(f, request.trigger)
+      if (sandbox) {
+        const uid = sandbox.uidFor(this.config.projectId, f.id)
+        const home = functionHome(this.config, f.id)
+        // Deployments built before isolation was on (or code from the code folder) get their user now.
+        if (dir.startsWith(deploymentDir(this.config, f.id)) && !sandbox.owns(dir, uid)) sandbox.adopt(dir, home, uid)
+        else if (!sandbox.owns(home, uid)) sandbox.adopt(null, home, uid)
+        command = sandbox.wrap(uid, dir, command)
+        env.HOME = env.TMPDIR = home
+      }
+      const proc = Bun.spawn(command, {
+        cwd: sandbox ? undefined : dir,
+        env,
         stdin: 'pipe',
         stdout: 'pipe',
         stderr: 'pipe',

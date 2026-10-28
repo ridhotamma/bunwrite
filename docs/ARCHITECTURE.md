@@ -179,7 +179,18 @@ as the Docker image; a real npm or bun earlier on PATH wins. Python builds get
 requirements.txt` installs there, never into the system Python. The Python
 runner imports from the entrypoint's folder, then the function's folder, then
 `.python_packages`. The source is kept as uploaded (before the build) for
-`appwrite pull functions`. The
+`appwrite pull functions`.
+
+Isolation (`src/functions/sandbox.ts`): when the setpriv helper works (the
+Docker image installs it with the setuid/setgid capabilities, runnable only by
+the server's group), each function gets its own user ID (20000 and up, kept in
+`<data>/.runtimes/function-users.json`). After unpacking, the deployment
+folder and the function's home (`deployments/<function>/.home`, its HOME and
+TMPDIR) are handed to that user; builds and runs then go through the helper
+with no-new-privs and no capabilities. The server creates files with umask 077
+and tightens the data folder at start, so only the folders on the way to code
+allow passing through. Function users own their files, so the server deletes,
+downloads and reads code for the console through the helper too. The
 active deployment runs; older ready ones are kept two deep, then deleted.
 Without one, the code is read from the function's `path` under the code
 folder, as `schema:push` sets it.

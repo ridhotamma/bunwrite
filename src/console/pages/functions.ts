@@ -1,6 +1,3 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
-
 import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/deployments'
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
@@ -27,11 +24,7 @@ const deploymentsOf = (ctx: ConsoleContext) => new Deployments(ctx.services.db, 
 
 /** The entry file's text, when it is small enough to edit in the console. */
 function currentCode(ctx: ConsoleContext, f: FunctionRow): string | undefined {
-  const { dir, entrypoint } = ctx.services.functions.codeDir(f)
-  if (!dir) return undefined
-  const path = join(dir, entrypoint)
-  if (!existsSync(path) || statSync(path).size > MAX_EDIT_BYTES) return undefined
-  return readFileSync(path, 'utf8')
+  return ctx.services.functions.readEntry(f, MAX_EDIT_BYTES)
 }
 
 /** What the code form asks for, checked before anything is created. */

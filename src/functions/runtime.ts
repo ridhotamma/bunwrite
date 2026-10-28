@@ -2,12 +2,21 @@
  * Function runtime paths. In a compiled binary the Python runner is embedded
  * and copied to the data folder so the external python3 process can read it.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import type { Config } from '~/config'
 import pythonRunnerPath from './runner-python.py' with { type: 'file' }
+import { allowPassThrough } from './sandbox'
+
+/** Isolated functions run as other users: shared runtime files must be usable by them (the server's umask is 077). */
+function shareWithFunctions(config: Config, dir: string, files: [path: string, mode: number][]): void {
+  if (!config.functionsSandbox) return
+  for (const [path, mode] of files) chmodSync(path, mode)
+  chmodSync(dir, 0o711)
+  allowPassThrough(config.functionsSandbox.root, dirname(dir))
+}
 
 export function pythonRunner(config: Config): string {
   if (!Bun.isStandaloneExecutable) return pythonRunnerPath
@@ -16,6 +25,7 @@ export function pythonRunner(config: Config): string {
   const path = join(dir, 'runner-python.py')
   mkdirSync(dir, { recursive: true })
   writeFileSync(path, readFileSync(pythonRunnerPath))
+  shareWithFunctions(config, dir, [[path, 0o644]])
   return path
 }
 
@@ -73,5 +83,6 @@ esac`,
     } catch {}
     if (current !== text) writeFileSync(path, text, { mode: 0o755 })
   }
+  shareWithFunctions(config, dir, Object.keys(scripts).map((name) => [join(dir, name), 0o755]))
   return dir
 }

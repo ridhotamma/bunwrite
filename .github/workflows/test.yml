@@ -15,8 +15,22 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      # Function isolation tests need the helper the Docker image ships:
+      # setpriv with setuid/setgid capabilities, runnable by this user's group.
+      - name: Prepare function isolation helper
+        run: |
+          command -v setcap || sudo apt-get install -y libcap2-bin
+          sudo mkdir -p /usr/local/libexec
+          sudo install -o root -g "$(id -gn)" -m 0750 "$(command -v setpriv)" /usr/local/libexec/bunwrite-sandbox
+          sudo setcap cap_setuid,cap_setgid+ep /usr/local/libexec/bunwrite-sandbox
+          # Function users must be able to reach bun and the checkout.
+          for p in "$(dirname "$(readlink -f "$(command -v bun)")")" "$GITHUB_WORKSPACE"; do
+            while [ "$p" != / ]; do sudo chmod o+x "$p"; p=$(dirname "$p"); done
+          done
+          chmod -R o+rX "$GITHUB_WORKSPACE"
       - run: bun test
         env:
+          BUNWRITE_TEST_SANDBOX: '1'
           # GitHub's Ubuntu runners cannot start Chromium's sandbox (no unprivileged
           # user namespaces), so headless Chrome exits before the render starts.
           CHROME_NO_SANDBOX: 'true'

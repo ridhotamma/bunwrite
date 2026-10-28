@@ -1,5 +1,6 @@
 import { dirname, resolve } from 'node:path'
 
+import type { FunctionSandbox } from './functions/sandbox'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 
@@ -108,6 +109,8 @@ export interface Config {
   functionsDir: string
   /** Run a function's build command (`commands`) on each new deployment. */
   functionsBuildCommands: boolean
+  /** Each function builds and runs as its own user (functions/sandbox.ts); null when off. */
+  functionsSandbox?: FunctionSandbox | null
   /** Per-process key handed to function executions; never stored. */
   internalKey?: string
   /** Serve the admin console at /console. */

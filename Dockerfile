@@ -21,11 +21,19 @@ FROM debian:trixie-slim
 ARG WITH_PYTHON=false
 ARG WITH_CHROMIUM=false
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates libcap2-bin \
  && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3 python3-pip; fi \
  && if [ "$WITH_CHROMIUM" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
- && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --home-dir /home/bunwrite bunwrite \
+ # Function isolation (src/functions/sandbox.ts): each function builds and runs
+ # as its own user. setpriv may switch users, and only the server's group may
+ # run it. Functions get no-new-privs and no setuid programs to climb with.
+ && mkdir -p /usr/local/libexec \
+ && install -o root -g bunwrite -m 0750 /usr/bin/setpriv /usr/local/libexec/bunwrite-sandbox \
+ && setcap cap_setuid,cap_setgid+ep /usr/local/libexec/bunwrite-sandbox \
+ && find / -xdev -type f -perm /6000 -exec chmod a-s {} + \
+ && apt-get purge -y --auto-remove libcap2-bin \
+ && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /app/data/storage /app/data/backups /app/functions \
  && chown -R bunwrite:bunwrite /app
 

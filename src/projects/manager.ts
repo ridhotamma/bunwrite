@@ -13,6 +13,7 @@ import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { isValidId, randomSecret, resolveId, sha256 } from '~/lib/ids'
+import { removeTree } from '~/functions/sandbox'
 import { createServices, type Services } from '~/services'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
 
@@ -275,7 +276,8 @@ export class ProjectManager implements ProjectResolver {
     runtime.services.requestLogs.flush()
     this.db.sqlite.query('DELETE FROM _projects WHERE id = ?').run(id)
     runtime.services.db.sqlite.close()
-    rmSync(this.paths(id).dir, { recursive: true, force: true })
+    // Isolated functions own their folders, so the sandbox deletes them.
+    removeTree(this.config.functionsSandbox, this.paths(id).dir)
   }
 
   /** Start schedulers for every project. Idempotent. */
@@ -299,6 +301,9 @@ export class ProjectManager implements ProjectResolver {
 
   close(): void {
     for (const [id, runtime] of this.runtimes) {
+      // Schedulers would otherwise tick on into a closed database.
+      runtime.services.functions.stop()
+      runtime.services.backups.stop()
       runtime.services.requestLogs.flush()
       if (id !== this.config.projectId) runtime.services.db.sqlite.close()
     }

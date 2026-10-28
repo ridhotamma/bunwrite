@@ -24,6 +24,7 @@ import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import type { FunctionRow, FunctionService } from './service'
 import { buildToolsDir, PYTHON_PACKAGES_DIR } from './runtime'
+import { removeTree } from './sandbox'
 import { extractZip, isZip } from './zip'
 
 /** The SDKs upload in chunks of this size. */
@@ -58,6 +59,11 @@ export function deploymentDir(config: Config, functionId?: string, deploymentId?
   const memory = config.databasePath === ':memory:' || config.databasePath.startsWith('file::memory:')
   const base = memory ? join(tmpdir(), 'bunwrite', config.projectId, 'deployments') : join(dirname(resolve(config.databasePath)), 'deployments')
   return join(...[base, functionId, deploymentId].filter((p): p is string => Boolean(p)))
+}
+
+/** A function's own writable home (HOME, TMPDIR, package caches) when functions are isolated. */
+export function functionHome(config: Config, functionId: string): string {
+  return join(deploymentDir(config, functionId), '.home')
 }
 
 export function deploymentModel(d: DeploymentRow) {
@@ -212,7 +218,12 @@ export class Deployments {
     if (type === 'source' && existsSync(source)) return Bun.file(source)
     const dir = deploymentDir(this.config, functionId, id)
     if (!existsSync(dir)) throw err('deployment_not_found', 'The code of this deployment is no longer kept on this server.')
-    const pack = Bun.spawn(['tar', '-czf', '-', '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+    // An isolated function's folder is readable by its own user only, so pack it as that user.
+    const sandbox = this.config.functionsSandbox
+    const tar = ['tar', '-czf', '-', '.']
+    const pack = sandbox
+      ? Bun.spawn(sandbox.wrap(sandbox.uidFor(this.config.projectId, functionId), dir, tar), { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+      : Bun.spawn([...tar.slice(0, 3), '-C', dir, '.'], { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
     const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
     if (code !== 0) throw new Error(`Could not pack deployment ${id}: ${errText.trim()}`)
     return new Blob([bytes], { type: 'application/gzip' })
@@ -308,7 +319,7 @@ export class Deployments {
     try {
       set('building')
       if (!options.unpacked) {
-        rmSync(dir, { recursive: true, force: true })
+        removeTree(this.config.functionsSandbox, dir)
         mkdirSync(dir, { recursive: true })
         try {
           await this.unpack(archive, dir)
@@ -324,6 +335,10 @@ export class Deployments {
         throw new Error(`Entrypoint "${d.entrypoint}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`)
       }
       await this.keepSource(functionId, id, dir)
+      // From here on the folder belongs to the function's own user.
+      const sandbox = this.config.functionsSandbox
+      const uid = sandbox?.uidFor(this.config.projectId, functionId)
+      if (sandbox && uid !== undefined) sandbox.adopt(dir, functionHome(this.config, functionId), uid)
 
       if (d.commands.trim() && !this.config.functionsBuildCommands) {
         logs.push(`Skipped the build command (FUNCTIONS_BUILD_COMMANDS=false): ${d.commands}`)
@@ -331,7 +346,13 @@ export class Deployments {
         logs.push(`$ ${d.commands}`)
         set('building')
         const f = this.functions.fn(functionId)
-        const proc = Bun.spawn(['sh', '-c', d.commands], { cwd: dir, env: this.buildEnv(f, dir), stdout: 'pipe', stderr: 'pipe' })
+        const command = ['sh', '-c', d.commands]
+        const proc = Bun.spawn(sandbox && uid !== undefined ? sandbox.wrap(uid, dir, command) : command, {
+          cwd: sandbox ? undefined : dir,
+          env: this.buildEnv(f, dir),
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
         let timedOut = false
         const timer = setTimeout(() => {
           timedOut = true
@@ -351,7 +372,7 @@ export class Deployments {
       logs.push(error instanceof Error ? error.message : String(error))
       set('failed')
       rmSync(archive, { force: true })
-      rmSync(dir, { recursive: true, force: true })
+      removeTree(this.config.functionsSandbox, dir)
     }
     return this.get(functionId, id)
   }
@@ -366,6 +387,7 @@ export class Deployments {
   private buildEnv(f: FunctionRow, dir: string): Record<string, string> {
     const env = this.functions.env(f, 'build')
     env.PATH = [env.PATH, buildToolsDir(this.config)].filter(Boolean).join(':')
+    if (this.config.functionsSandbox) env.HOME = env.TMPDIR = functionHome(this.config, f.id)
     if (f.runtime.startsWith('python')) {
       env.PIP_TARGET ??= join(dir, PYTHON_PACKAGES_DIR)
       env.PIP_DISABLE_PIP_VERSION_CHECK ??= '1'
@@ -387,7 +409,7 @@ export class Deployments {
     this.get(functionId, id)
     if (this.functions.fn(functionId).deployment_id === id) throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
     this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
-    rmSync(deploymentDir(this.config, functionId, id), { recursive: true, force: true })
+    removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     rmSync(this.archivePath(functionId, id), { force: true })
     rmSync(this.sourcePath(functionId, id), { force: true })
   }
@@ -400,7 +422,7 @@ export class Deployments {
       .all(functionId, active)
     for (const { id } of ready.slice(KEEP_PREVIOUS)) {
       this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
-      rmSync(deploymentDir(this.config, functionId, id), { recursive: true, force: true })
+      removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
       rmSync(this.sourcePath(functionId, id), { force: true })
     }
     // Failed builds keep their source so it can be pulled and fixed; only the latest few.

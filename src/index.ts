@@ -6,12 +6,17 @@ import { createApp, createServices } from './app'
 import { configFromEnv } from './config'
 import { openDb } from './db/connection'
 import { bootstrapInstance, clearInstanceApiKey } from './instance/bootstrap'
+import { setupSandbox } from './functions/sandbox'
 import { createProjectManager } from './projects/manager'
 import { pushConfig } from './schema/push'
 import { applyAutotune, bodyLimitBytes } from './system/autotune'
 
 const tuning = applyAutotune()
 if (tuning) console.log(`[autotune] ${tuning.summary}`)
+
+// Before the database opens: with function isolation on, files are created private to the server.
+const sandbox = setupSandbox(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+if (sandbox) console.log('[functions] isolation on: each function builds and runs as its own user')
 
 const db = openDb(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite', tuning?.sqliteCacheMb)
 const instance = bootstrapInstance(db)
@@ -20,6 +25,7 @@ config.orgId = instance.orgId
 config.projectId = instance.projectId
 config.projectName = instance.projectName
 config.secret = instance.secret
+config.functionsSandbox = sandbox
 config.bootstrap = { orgId: instance.orgId, projectId: instance.projectId, apiKey: instance.apiKey, generated: instance.generated }
 if (instance.generated || instance.created || instance.apiKey) {
   console.log(`[bootstrap] instance credentials stored in the database${instance.generated ? ' (generated)' : ''}`)
