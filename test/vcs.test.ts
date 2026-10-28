@@ -446,6 +446,13 @@ describe('Git: deployments', () => {
     const git = await get('/console/settings/git')
     expect(git.text).toContain('GitHub installations')
     expect(git.text).toContain('acme')
+    // Add installation leaves the console for GitHub, also when htmx sends the request.
+    expect(git.text).toContain('href="/console/vcs/install" hx-boost="false"')
+    const install = await get('/console/vcs/install')
+    expect(install.status).toBe(303)
+    expect(install.location).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    const boosted = await fetch(`${base()}/console/vcs/install`, { headers: { cookie, 'hx-request': 'true' }, redirect: 'manual' })
+    expect(boosted.headers.get('hx-redirect')).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
 
     const settings = await get('/console/sites/web/settings')
     expect(settings.text).toContain('id="git-repository"')

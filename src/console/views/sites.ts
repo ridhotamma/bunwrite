@@ -162,7 +162,7 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
           return html`<tr>
             <td><a href="${href}">${when(d.created_at)}</a></td>
             <td>${siteDeploymentBadge(d, site.deployment_id)}</td>
-            <td class="hide-sm">${sourceCell(d)}</td>
+            <td class="clip hide-sm">${sourceCell(d)}</td>
             <td class="num subdued hide-sm">${d.file_count || '—'}</td>
             <td class="num subdued hide-sm">${formatBytes(d.total_size || d.source_size)}</td>
             <td class="num">${menu(

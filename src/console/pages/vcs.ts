@@ -53,7 +53,12 @@ export function vcsPages(router: ConsoleRouter): void {
 
   // ---- Installations ----
 
-  router.get('/console/vcs/install', ({ ctx }) => redirect(ctx.hub.installUrl(ctx.currentProject.id, '/console/settings/git')))
+  router.get('/console/vcs/install', ({ ctx, request }) => {
+    const url = ctx.hub.installUrl(ctx.currentProject.id, '/console/settings/git')
+    // An htmx request would fetch GitHub in the background and fail; tell htmx to leave the page instead.
+    if (request.headers.get('hx-request')) return new Response(null, { status: 200, headers: { 'hx-redirect': url } })
+    return redirect(url)
+  })
 
   router.post('/console/vcs/installations/:id/delete', ({ ctx, path }) => {
     const installation = ctx.services.vcs.get(path.id!)

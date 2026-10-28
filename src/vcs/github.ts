@@ -134,7 +134,13 @@ export class GithubClient {
     const payload = b64url(JSON.stringify({ iat: at - 60, exp: at + 540, iss: app.appId }))
     const signer = createSign('RSA-SHA256')
     signer.update(`${header}.${payload}`)
-    return `${header}.${payload}.${signer.sign(app.privateKey).toString('base64url')}`
+    let signature: string
+    try {
+      signature = signer.sign(app.privateKey).toString('base64url')
+    } catch {
+      throw new GithubError(0, "The GitHub App's private key could not be read. Check VCS_GITHUB_PRIVATE_KEY, or remove the app and create it again.")
+    }
+    return `${header}.${payload}.${signature}`
   }
 
   /** An installation access token, reused until about 10 minutes before it expires. */

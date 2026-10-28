@@ -105,7 +105,8 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 #create-function,#deploy-code{max-width:min(680px,calc(100vw - 32px))}
 .code-source{border:0;padding:0;margin:0;min-width:0}.code-source legend{padding:0;margin-bottom:6px;font-weight:450}
 .code-source .choice{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
-.code-source .choice.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.code-source .choice.two,.code-source .choice:has(>label:nth-child(4)){grid-template-columns:repeat(2,minmax(0,1fr))}
+.repo-select{display:block}.repo-select>select{display:block;width:100%;margin-top:4px}
 .code-source .choice label{align-items:flex-start}.code-source .choice div{min-width:0}.code-source .choice b{font-weight:600}.code-source .choice span{display:block;line-height:16px;margin-top:2px}
 textarea.code-editor{min-height:260px;max-height:50vh;tab-size:2;white-space:pre;overflow:auto;line-height:18px}
 input[type=file]{padding:5px 8px;background:var(--surface)}
@@ -329,7 +330,7 @@ dialog.dialog-wide{max-width:min(760px,calc(100vw - 32px))}
   .settings-section{grid-template-columns:minmax(0,1fr);gap:10px}
   th.role-col,td.role-col{width:auto}
   .member-cell .avatar{display:none}
-  .code-source .choice,.code-source .choice.two{grid-template-columns:1fr}
+  .code-source .choice,.code-source .choice.two,.code-source .choice:has(>label:nth-child(4)){grid-template-columns:1fr}
   .invite-row{grid-template-columns:minmax(0,1fr) 112px 28px}
 }
 ${PROGRESS_CSS}`

@@ -125,7 +125,7 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
           return html`<tr>
             <td><a href="${href}">${when(d.created_at)}</a></td>
             <td>${deploymentBadge(d, f.deployment_id)}</td>
-            <td class="hide-sm">${sourceCell(d)}</td>
+            <td class="clip hide-sm">${sourceCell(d)}</td>
             <td class="num subdued hide-sm">${formatBytes(d.source_size)}</td>
             <td class="num subdued hide-sm">${IN_PROGRESS.includes(d.status) ? '…' : `${d.build_duration.toFixed(1)}s`}</td>
             <td class="num">${menu(
