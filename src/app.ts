@@ -9,7 +9,8 @@ import { documentRoutes, transactionRoutes } from './documents/routes'
 import { addVary, compressResponse } from './lib/compress'
 import { AppwriteError, err } from './lib/errors'
 import { errorResponse, json, readParams } from './lib/http'
-import { clientIp, logRequest, requestId, truncate } from './lib/log'
+import { parseTrustedProxies, rememberClientIp } from './lib/client-ip'
+import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
 import type { Socket, SocketData } from './realtime/hub'
@@ -56,6 +57,7 @@ export { originAllowed }
 export function createApp(source: Services | ProjectResolver) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const control = projects.control
+  const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
@@ -236,6 +238,7 @@ export function createApp(source: Services | ProjectResolver) {
       const started = performance.now()
       const url = new URL(request.url)
       const id = requestId(request)
+      const ip = rememberClientIp(request, server?.requestIP(request)?.address, trustedProxies)
       const meta: RequestMeta = { auth: url.pathname.startsWith('/console') ? 'console' : undefined }
       const logsUi = url.pathname === '/console/logs' || url.pathname.startsWith('/console/logs/')
       let status = 500
@@ -265,7 +268,7 @@ export function createApp(source: Services | ProjectResolver) {
             durationMs: performance.now() - started,
             requestBytes: Number(request.headers.get('content-length') ?? 0) || 0,
             responseBytes,
-            ip: logConfig.logIp ? clientIp(request, server) : undefined,
+            ip: logConfig.logIp ? ip || undefined : undefined,
             project: truncate(meta.project ?? request.headers.get('x-appwrite-project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
             auth: truncate(meta.auth ?? '', 200) || undefined,
             referer: truncate(request.headers.get('referer') ?? '', 2000) || undefined,

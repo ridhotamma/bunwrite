@@ -12,7 +12,7 @@
     "headless"
   ],
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.4"
   },
   "type": "module",
   "scripts": {
@@ -33,14 +33,14 @@
     "stress:run": "bun scripts/stress/index.ts run"
   },
   "dependencies": {
-    "drizzle-orm": "^0.44.0",
-    "htmx.org": "2.0.4",
-    "nodemailer": "6.9.16",
-    "sharp": "0.33.5"
+    "drizzle-orm": "^0.45.4",
+    "htmx.org": "2.0.11",
+    "nodemailer": "10.2.1",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/nodemailer": "6.4.17",
+    "@types/nodemailer": "8.0.2",
     "appwrite": "27.0.0",
     "appwrite-cli": "22.0.0",
     "drizzle-kit": "^0.31.0",

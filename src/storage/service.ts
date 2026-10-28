@@ -40,6 +40,18 @@ function notModified(request: Request, headers: Record<string, string>): Respons
 }
 
 /** File contents never change after upload, so the checksum (or the ID) names the version. */
+/**
+ * Uploads are served from the API's own origin, next to the console, with the
+ * type the uploader chose. `sandbox` gives an HTML or SVG upload an opaque
+ * origin with scripts off, so it cannot act as whoever opens it. Images,
+ * audio and video still display. PDFs are left alone: browsers open them in
+ * their own viewer, which a sandboxed page would block.
+ */
+export function uploadCsp(mime: string): string | null {
+  if (mime.toLowerCase() === 'application/pdf') return null
+  return "sandbox; default-src 'none'; img-src * data: blob:; media-src * data: blob:; style-src 'unsafe-inline'; font-src * data:"
+}
+
 const fileEtag = (file: FileRow) => `"${file.signature || `${file.id}-${file.size_original}`}"`
 
 /** Previews rendered at once (PREVIEW_CONCURRENCY, default 4); more wait in line. */
@@ -463,6 +475,8 @@ export class StorageService {
       'accept-ranges': 'bytes',
       'x-content-type-options': 'nosniff',
     }
+    const csp = uploadCsp(file.mime_type)
+    if (csp) headers['content-security-policy'] = csp
     // A compressed 200 varies by Accept-Encoding; its 304 must carry the same Vary.
     if (this.config.compression && isCompressible(file.mime_type)) headers.vary = 'Accept-Encoding'
     const unchanged = notModified(request, headers)

@@ -7,6 +7,7 @@ import type { Server } from 'bun'
 
 import { parseCookies } from '~/auth/caller'
 import { clearInstanceApiKey } from '~/instance/bootstrap'
+import { clientIpOf } from '~/lib/client-ip'
 import { AppwriteError } from '~/lib/errors'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
@@ -67,7 +68,7 @@ export function createConsole(source: Services | ProjectResolver) {
         if (origin && new URL(origin).host !== url.host) return new Response('Cross-site request refused', { status: 403 })
       }
 
-      const ip = (server?.requestIP(request)?.address ?? '') + (request.headers.get('cf-connecting-ip') ?? '')
+      const ip = clientIpOf(request)
       const inviteMatch = /^\/console\/invite\/([^/]+)$/.exec(url.pathname)
       if (inviteMatch) {
         const token = decodeURIComponent(inviteMatch[1]!)

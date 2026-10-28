@@ -141,6 +141,8 @@ export interface Config {
   cache: CacheConfig
   /** Compress responses (Brotli or gzip). Server-wide; read from the main project's config. */
   compression: boolean
+  /** Proxies whose forwarding headers carry the client's IP (TRUSTED_PROXIES; see lib/client-ip). Server-wide. */
+  trustedProxies?: string
   /** Set by the first-run bootstrap; not part of the environment. */
   bootstrap?: BootstrapInfo
 }
@@ -230,5 +232,6 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
       previewRetentionDays: wholeNumber(env.PREVIEW_CACHE_DAYS, DEFAULT_CACHE.previewRetentionDays),
     },
     compression: env.COMPRESSION !== 'false',
+    trustedProxies: env.TRUSTED_PROXIES || undefined,
   }
 }

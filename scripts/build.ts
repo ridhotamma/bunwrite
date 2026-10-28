@@ -12,18 +12,8 @@ import { dirname, resolve } from 'node:path'
 
 process.chdir(resolve(import.meta.dir, '..'))
 
-const sharpAssets = [
-  'sharp',
-  '@img',
-  'color',
-  'color-convert',
-  'color-name',
-  'color-string',
-  'is-arrayish',
-  'simple-swizzle',
-  'detect-libc',
-  'semver',
-]
+// sharp and its runtime dependencies (@img holds @img/colour and the native addon).
+const sharpAssets = ['sharp', '@img', 'detect-libc', 'semver']
 
 const target = process.argv[2] as Bun.Build.CompileTarget | undefined
 const outfile = resolve(process.argv[3] ?? (target ? `dist/bunwrite-${target}` : 'dist/bunwrite'))

@@ -1,5 +1,4 @@
 /** One line per HTTP request on stdout, in text or JSON. */
-import type { Server } from 'bun'
 
 export type LogFormat = 'text' | 'json'
 
@@ -27,11 +26,6 @@ export const truncate = (value: string, max: number): string => (value.length > 
 export function requestId(request: Request): string {
   const supplied = request.headers.get('x-request-id') ?? request.headers.get('cf-ray')
   return supplied && /^[A-Za-z0-9._:-]{1,128}$/.test(supplied) ? supplied : crypto.randomUUID()
-}
-
-export function clientIp(request: Request, server?: Server<any>): string | undefined {
-  const forwarded = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return forwarded || server?.requestIP(request)?.address || undefined
 }
 
 const levelOf = (status: number) => (status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info')

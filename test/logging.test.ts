@@ -27,7 +27,7 @@ describe('request logs', () => {
     const res = await fetch(`${server.endpoint}/health`, {
       headers: {
         'x-request-id': 'req-test-1',
-        'cf-connecting-ip': '203.0.113.9',
+        'x-forwarded-for': '203.0.113.9',
         'x-appwrite-project': PROJECT,
         referer: 'https://example.com/app',
         'user-agent': 'LogTest/1.0',

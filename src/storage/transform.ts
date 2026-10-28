@@ -152,8 +152,37 @@ interface Raw {
   info: { width: number; height: number; channels: number }
 }
 
+/** Formats previews decode, as Appwrite's. */
+export type InputFormat = 'jpeg' | 'png' | 'gif' | 'webp' | 'avif' | 'heif'
+
+const ascii = (bytes: Uint8Array, start: number, end: number) => String.fromCharCode(...bytes.subarray(start, end))
+const HEIF_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'])
+
+/**
+ * The image format from the file's first bytes. The stored type is whatever
+ * the uploader sent, and libvips would otherwise pick any of its loaders
+ * (SVG, PDF, TIFF, …) by content.
+ */
+export function sniffImage(head: Uint8Array): InputFormat | null {
+  if (head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'jpeg'
+  if (head.length >= 8 && ascii(head, 0, 8) === '\x89PNG\r\n\x1a\n') return 'png'
+  if (head.length >= 6 && /^GIF8[79]a$/.test(ascii(head, 0, 6))) return 'gif'
+  if (head.length >= 12 && ascii(head, 0, 4) === 'RIFF' && ascii(head, 8, 12) === 'WEBP') return 'webp'
+  if (head.length >= 12 && ascii(head, 4, 8) === 'ftyp') {
+    const brand = ascii(head, 8, 12)
+    if (brand === 'avif' || brand === 'avis') return 'avif'
+    if (HEIF_BRANDS.has(brand)) return 'heif'
+  }
+  return null
+}
+
+async function headOf(source: string | Uint8Array): Promise<Uint8Array> {
+  return typeof source === 'string' ? await Bun.file(source).slice(0, 16).bytes() : source.subarray(0, 16)
+}
+
 /** Run the transformations with sharp and return the encoded image. */
 export async function renderPreview(sharp: any, source: string | Uint8Array, o: PreviewOptions): Promise<Buffer> {
+  if (!sniffImage(await headOf(source))) throw err('storage_file_type_unsupported', 'Previews support JPEG, PNG, GIF, WebP, AVIF and HEIC images.')
   if (o.format === 'avif') {
     const size = await previewSize(sharp, source, o)
     if (size.width * size.height > maxAvifPixels()) throw avifTooLarge()

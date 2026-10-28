@@ -129,6 +129,14 @@ the machine.
 Use Cloudflare Tunnel, Caddy, nginx or another reverse proxy for TLS. Keep the
 hostname stable because OAuth callbacks and file links use `PUBLIC_ENDPOINT`.
 
+Bunwrite reads the client's IP from `X-Forwarded-For` only when the connection
+comes from a trusted proxy (`TRUSTED_PROXIES`, default `private`: loopback and
+private networks). That covers a proxy or tunnel on the same host or Docker
+network. For a proxy on a public address, list it, for example
+`TRUSTED_PROXIES=private,203.0.113.5`. `CF-Connecting-IP` is used only with
+`TRUSTED_PROXIES=private,cloudflare`; set that only when Cloudflare is the sole
+way in, since anyone reaching the origin directly could send the header.
+
 Protect `/console` with Cloudflare Access or another access layer. Bunwrite has
 its own sign-in and rate limiting, but the admin UI should not be public. Set
 `CONSOLE_ENABLED=false` to disable it entirely; use an SSH tunnel to

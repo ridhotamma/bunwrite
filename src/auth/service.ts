@@ -5,6 +5,7 @@
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
+import { clientIpOf } from '~/lib/client-ip'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, resolveId, sha256, uniqueId } from '~/lib/ids'
@@ -43,9 +44,8 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const PHONE = /^\+[1-9]\d{6,14}$/
 
 export function requestInfo(request: Request): RequestInfo {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
   return {
-    ip: request.headers.get('cf-connecting-ip') ?? forwarded ?? request.headers.get('x-real-ip') ?? '',
+    ip: clientIpOf(request),
     userAgent: request.headers.get('x-forwarded-user-agent') ?? request.headers.get('user-agent') ?? '',
     country: request.headers.get('cf-ipcountry')?.toLowerCase() || undefined,
   }

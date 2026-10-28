@@ -3,7 +3,7 @@
  * a MemoryMailer. The emails a project sends to its users come from editable
  * templates (templates.ts); this file keeps the console's own invitation.
  */
-import nodemailer from 'nodemailer'
+import nodemailer, { type Transporter } from 'nodemailer'
 
 import type { SmtpConfig } from '~/config'
 import { err } from '~/lib/errors'
@@ -25,7 +25,7 @@ export interface Mailer {
 
 export class SmtpMailer implements Mailer {
   readonly enabled = true
-  private transport: nodemailer.Transporter
+  private transport: Transporter
 
   constructor(private config: SmtpConfig) {
     this.transport = nodemailer.createTransport({
