@@ -3,12 +3,18 @@
 `python3 runner-python.py <entrypoint>`: request JSON on stdin, result JSON on
 the last stdout line after RESULT_MARKER. Mirrors the open-runtimes `context`
 (req, res, log, error) the function was written against.
+
+The process runs in the function's folder. Imports look in the entrypoint's
+folder first, then the function's folder, then `.python_packages` (where
+`pip install` puts packages during the build; see PIP_TARGET in
+deployments.ts), and only then in Python's own paths.
 """
 import asyncio
 import importlib.util
 import inspect
 import io
 import json
+import os
 import sys
 import traceback
 import contextlib
@@ -81,8 +87,21 @@ class Context:
         self._errors.append(" ".join(a if isinstance(a, str) else repr(a) for a in args))
 
 
+PACKAGES_DIR = ".python_packages"
+
+
+def add_import_paths(entry):
+    root = os.getcwd()
+    # Inserted lowest priority first, so the function's own files win.
+    for path in (os.path.join(root, PACKAGES_DIR), root, os.path.dirname(os.path.abspath(entry))):
+        if path in sys.path:
+            sys.path.remove(path)
+        sys.path.insert(0, path)
+
+
 def main():
     entry = sys.argv[1]
+    add_import_paths(entry)
     data = json.loads(sys.stdin.read())
     logs, errors = [], []
     context = Context(data, logs, errors)

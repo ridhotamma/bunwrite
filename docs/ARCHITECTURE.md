@@ -170,7 +170,16 @@ with line numbers before anything is written.
 Code comes from one of two places. `appwrite push functions` uploads a
 deployment: a `.tar.gz` (in 5 MB chunks when larger) unpacked to
 `<data>/deployments/<function>/<deployment>/`, where the function's build
-command runs with `sh -c` (skipped with `FUNCTIONS_BUILD_COMMANDS=false`). The
+command runs with `sh -c` (skipped with `FUNCTIONS_BUILD_COMMANDS=false`).
+The build's PATH ends with `<data>/.runtimes/bin`, which has `bun`, `bunx`,
+`npm` and `npx` backed by the server binary (`BUN_BE_BUN=1`), so `npm install`,
+`npm ci`, `npm run` and `bun install` work where neither is installed, such
+as the Docker image; a real npm or bun earlier on PATH wins. Python builds get
+`PIP_TARGET=<deployment>/.python_packages`, so `pip install -r
+requirements.txt` installs there, never into the system Python. The Python
+runner imports from the entrypoint's folder, then the function's folder, then
+`.python_packages`. The source is kept as uploaded (before the build) for
+`appwrite pull functions`. The
 active deployment runs; older ready ones are kept two deep, then deleted.
 Without one, the code is read from the function's `path` under the code
 folder, as `schema:push` sets it.

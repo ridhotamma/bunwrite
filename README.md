@@ -192,7 +192,7 @@ so they can be shared directly.
 | Teams | teams, prefs, memberships, invites and accept-invite |
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download |
+| Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`) |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
 | Messaging | topics (create, list, update, delete) |
@@ -220,6 +220,11 @@ cancel the real one.
 - Bucket `encryption`, `antivirus` and `compression` are stored as set; files
   are kept as uploaded.
 - Webhooks fire for document events only.
+- Function builds run on the host, not in Appwrite's runtime images. Where npm
+  is missing (as in the Docker image), only `npm install`, `npm ci`, `npm run`
+  and `npx` are available, through Bun. Libraries that compile native code
+  while installing need a compiler, which the Docker image does not have;
+  packages with prebuilt binaries work.
 - Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
 - `studio-render` (Chromium) does not fit in 1 GB of memory.
 

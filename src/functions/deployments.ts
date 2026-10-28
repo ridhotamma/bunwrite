@@ -23,6 +23,7 @@ import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import type { FunctionRow, FunctionService } from './service'
+import { buildToolsDir, PYTHON_PACKAGES_DIR } from './runtime'
 import { extractZip, isZip } from './zip'
 
 /** The SDKs upload in chunks of this size. */
@@ -330,7 +331,7 @@ export class Deployments {
         logs.push(`$ ${d.commands}`)
         set('building')
         const f = this.functions.fn(functionId)
-        const proc = Bun.spawn(['sh', '-c', d.commands], { cwd: dir, env: this.functions.env(f, 'build'), stdout: 'pipe', stderr: 'pipe' })
+        const proc = Bun.spawn(['sh', '-c', d.commands], { cwd: dir, env: this.buildEnv(f, dir), stdout: 'pipe', stderr: 'pipe' })
         let timedOut = false
         const timer = setTimeout(() => {
           timedOut = true
@@ -353,6 +354,23 @@ export class Deployments {
       rmSync(dir, { recursive: true, force: true })
     }
     return this.get(functionId, id)
+  }
+
+  /**
+   * The build command's environment: the function's own, plus `bun`, `npm`
+   * and friends as a fallback at the end of PATH, and for Python a PIP_TARGET
+   * so `pip install -r requirements.txt` puts packages where the function
+   * imports them from (and never into the system Python). A PIP_TARGET set in
+   * the function's variables wins.
+   */
+  private buildEnv(f: FunctionRow, dir: string): Record<string, string> {
+    const env = this.functions.env(f, 'build')
+    env.PATH = [env.PATH, buildToolsDir(this.config)].filter(Boolean).join(':')
+    if (f.runtime.startsWith('python')) {
+      env.PIP_TARGET ??= join(dir, PYTHON_PACKAGES_DIR)
+      env.PIP_DISABLE_PIP_VERSION_CHECK ??= '1'
+    }
+    return env
   }
 
   /** Make a built deployment the code that runs (functions.updateFunctionDeployment). */

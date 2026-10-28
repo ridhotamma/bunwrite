@@ -16,13 +16,13 @@ RUN bun run build && ./dist/bunwrite --help >/dev/null
 # Same Debian release as the build stage.
 FROM debian:trixie-slim
 # Optional extras, off by default to keep the image small:
-#   WITH_PYTHON=true    python3 for python-* functions (~50 MB)
+#   WITH_PYTHON=true    python3 and pip for python-* functions (~70 MB)
 #   WITH_CHROMIUM=true  Chromium + fonts for HTML to PDF and images (~730 MB more on disk)
 ARG WITH_PYTHON=false
 ARG WITH_CHROMIUM=false
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
- && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3; fi \
+ && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3 python3-pip; fi \
  && if [ "$WITH_CHROMIUM" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --home-dir /home/bunwrite bunwrite \
