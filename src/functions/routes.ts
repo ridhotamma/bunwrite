@@ -1,6 +1,7 @@
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
-import { now } from '~/lib/datetime'
+import { apiHeader } from '~/lib/compat'
+import { normalizeDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
@@ -195,7 +196,7 @@ export function functionRoutes(router: Router<AppContext>): void {
       commands: str(params.commands) ?? f.commands,
       activate: bool(params.activate, false),
       contentRange: request.headers.get('content-range'),
-      uploadId: request.headers.get('x-appwrite-id'),
+      uploadId: apiHeader(request, 'id'),
     })
     return json(deploymentModel(deployment), 202)
   })
@@ -316,18 +317,33 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.post('/functions/:functionId/executions', async ({ ctx, path, params }) => {
     const f = ctx.functions.fn(path.functionId!)
     ctx.functions.assertCanExecute(ctx.caller, f)
-    if (params.scheduledAt) throw err('general_argument_invalid', 'Scheduled executions are not supported on this server.')
     const headers = params.headers && typeof params.headers === 'object' ? (params.headers as Record<string, string>) : {}
+    const request = {
+      trigger: 'http' as const,
+      method: str(params.method) ?? 'POST',
+      path: str(params.path) ?? '/',
+      headers,
+      body: typeof params.body === 'string' ? params.body : params.body === undefined ? '' : JSON.stringify(params.body),
+      userId: ctx.caller.user?.id ?? null,
+    }
+
+    // Deferred execution: the row is created now and run when its time comes,
+    // so the id returned here is the one that eventually runs.
+    const scheduledAt = str(params.scheduledAt)?.trim()
+    if (scheduledAt) {
+      if (!bool(params.async, false)) {
+        throw err('general_bad_request', 'Scheduled executions must run asynchronously. Set scheduledAt to a future date, or set async to true.')
+      }
+      const when = normalizeDate(scheduledAt)
+      if (!when || Date.parse(when) < Date.now() + 60_000) {
+        throw err('general_bad_request', 'Execution schedule must be a valid date, and at least 1 minute from now')
+      }
+      return json(executionModel(ctx.functions.schedule(f, request, when)), 202)
+    }
+
     const { execution } = await ctx.functions.execute(
       f,
-      {
-        trigger: 'http',
-        method: str(params.method) ?? 'POST',
-        path: str(params.path) ?? '/',
-        headers,
-        body: typeof params.body === 'string' ? params.body : params.body === undefined ? '' : JSON.stringify(params.body),
-        userId: ctx.caller.user?.id ?? null,
-      },
+      request,
       bool(params.async, false) ? 'async' : 'sync',
     )
     return json(executionModel(execution), 201)
@@ -356,7 +372,8 @@ export function functionRoutes(router: Router<AppContext>): void {
     async ({ ctx, path, request, url }) => {
       const f = ctx.functions.fn(path.functionId!)
       ctx.functions.assertCanExecute(ctx.caller, f)
-      const body = request.method === 'GET' || request.method === 'HEAD' ? '' : await request.text()
+      // Keep the bytes: an upload (multipart, images, PDFs) is not valid UTF-8.
+      const bytes = request.method === 'GET' || request.method === 'HEAD' ? null : new Uint8Array(await request.arrayBuffer())
       const { result } = await ctx.functions.execute(
         f,
         {
@@ -364,7 +381,8 @@ export function functionRoutes(router: Router<AppContext>): void {
           method: request.method,
           path: `/${path.rest ?? ''}${url.search}`,
           headers: Object.fromEntries(request.headers),
-          body,
+          body: bytes ? new TextDecoder().decode(bytes) : '',
+          ...(bytes && bytes.length > 0 ? { bodyBytes: bytes } : {}),
           userId: ctx.caller.user?.id ?? null,
         },
         'sync',

@@ -1,9 +1,9 @@
 /**
  * Project webhooks. Each committed document change is POSTed as JSON to every
- * enabled webhook subscribed to one of its event names, with Appwrite's
- * headers: X-Appwrite-Webhook-Id, -Name, -Events, -Project-Id, -User-Id and
- * -Signature (base64 HMAC-SHA1 of the URL followed by the body, keyed by the
- * webhook secret). Deliveries run in the background; ten failures in a row
+ * enabled webhook subscribed to one of its event names, with the headers
+ * X-Bunwrite-Webhook-Id, -Name, -Events, -Project-Id, -User-Id and -Signature
+ * (X-Appwrite-Webhook-* with API_COMPAT=appwrite). The signature is the base64
+ * HMAC-SHA1 of the URL followed by the body, keyed by the webhook secret. Deliveries run in the background; ten failures in a row
  * turn the webhook off, as on Appwrite.
  */
 import { createHmac } from 'node:crypto'
@@ -11,6 +11,7 @@ import { createHmac } from 'node:crypto'
 import type { Caller } from '~/auth/caller'
 import type { Db } from '~/db/connection'
 import type { DocEvent } from '~/documents/store'
+import { webhookHeaderPrefix, type ApiCompat } from '~/lib/compat'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, resolveId } from '~/lib/ids'
@@ -103,6 +104,8 @@ export class WebhookService {
   constructor(
     private db: Db,
     private projectId: () => string,
+    /** Header names to send: Bunwrite's or Appwrite's. */
+    private compat: () => ApiCompat = () => 'bunwrite',
   ) {}
 
   private get sql() {
@@ -207,15 +210,16 @@ export class WebhookService {
 
   private async deliver(hook: WebhookRow, events: string[], payload: unknown, userId: string): Promise<void> {
     const body = JSON.stringify(payload)
+    const prefix = webhookHeaderPrefix({ apiCompat: this.compat() })
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'user-agent': USER_AGENT,
-      'x-appwrite-webhook-id': hook.id,
-      'x-appwrite-webhook-name': hook.name,
-      'x-appwrite-webhook-events': events.join(','),
-      'x-appwrite-webhook-project-id': this.projectId(),
-      'x-appwrite-webhook-user-id': userId,
-      'x-appwrite-webhook-signature': webhookSignature(hook.url, body, hook.secret),
+      [`${prefix}id`]: hook.id,
+      [`${prefix}name`]: hook.name,
+      [`${prefix}events`]: events.join(','),
+      [`${prefix}project-id`]: this.projectId(),
+      [`${prefix}user-id`]: userId,
+      [`${prefix}signature`]: webhookSignature(hook.url, body, hook.secret),
     }
     if (hook.auth_username) headers.authorization = `Basic ${Buffer.from(`${hook.auth_username}:${hook.auth_password}`).toString('base64')}`
     let failure = ''

@@ -5,11 +5,12 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { SCHEMA } from '~/console/schema-meta'
 import { configurationView, exportView, importReviewView, importView, previewView } from '~/console/views/schema'
+import { configFileName } from '~/lib/compat'
 import { err } from '~/lib/errors'
 
 const destructive = (changes: string[]) => changes.some((change) => change.startsWith('-') || change.includes(': - '))
 
-/** The schema in appwrite.config.json shape, merged into the existing file so its other keys survive. */
+/** The schema in project config shape (bunwrite.config.json), merged into the existing file so its other keys survive. */
 async function exported(ctx: ConsoleContext): Promise<Record<string, unknown>> {
   const path = ctx.services.config.schemaPath
   const base = path && existsSync(path) ? ((await Bun.file(path).json()) as Record<string, unknown>) : {}
@@ -71,7 +72,7 @@ function parseCollections(raw: string): unknown[] {
 
 /** Schema handlers. Page markup lives in console/views/schema. */
 export function schemaPages(router: ConsoleRouter): void {
-  router.get(SCHEMA, ({ ctx }) => ctx.render('Schema', 'schema', configurationView({ schemaPath: ctx.services.config.schemaPath })))
+  router.get(SCHEMA, ({ ctx }) => ctx.render('Schema', 'schema', configurationView({ schemaPath: ctx.services.config.schemaPath, fileName: configFileName(ctx.services.config) })))
 
   // Export collections: checkbox changes re-render the list and JSON panel.
   router.get(`${SCHEMA}/export`, ({ ctx, url }) => {
@@ -127,7 +128,7 @@ export function schemaPages(router: ConsoleRouter): void {
     `${SCHEMA}/export.json`,
     async ({ ctx }) =>
       new Response(JSON.stringify(await exported(ctx), null, 4), {
-        headers: { 'content-type': 'application/json', 'content-disposition': 'attachment; filename="appwrite.config.json"', 'cache-control': 'no-store' },
+        headers: { 'content-type': 'application/json', 'content-disposition': `attachment; filename="${configFileName(ctx.services.config)}"`, 'cache-control': 'no-store' },
       }),
   )
 

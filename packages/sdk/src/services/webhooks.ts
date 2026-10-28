@@ -69,7 +69,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -77,7 +77,7 @@ export class Webhooks {
     }
 
     /**
-     * Create a new webhook. Use this endpoint to configure a URL that will receive events from Appwrite when specific events occur.
+     * Create a new webhook. Use this endpoint to configure a URL that will receive events from Bunwrite when specific events occur.
      *
      * @param {string} params.webhookId - Webhook ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
      * @param {string} params.url - Webhook URL.
@@ -103,7 +103,7 @@ export class Webhooks {
         secret?: string;
     }): Promise<Models.Webhook>;
     /**
-     * Create a new webhook. Use this endpoint to configure a URL that will receive events from Appwrite when specific events occur.
+     * Create a new webhook. Use this endpoint to configure a URL that will receive events from Bunwrite when specific events occur.
      *
      * @param {string} webhookId - Webhook ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
      * @param {string} url - Webhook URL.
@@ -251,7 +251,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -307,7 +307,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -476,7 +476,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -530,7 +530,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -599,7 +599,7 @@ export class Webhooks {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };

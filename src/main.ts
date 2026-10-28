@@ -16,7 +16,7 @@ Usage:
   bunwrite serve               Start the server
   bunwrite console:admin ...   Create, reset or remove a console admin
   bunwrite snapshot [dir]      Copy the database consistently
-  bunwrite schema:push ...     Apply appwrite.config.json
+  bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
   bunwrite autotune [--json]   Show the auto-tuned resource limits
   bunwrite autotune --shell    Print startup-only env (JSC heap, malloc arenas)

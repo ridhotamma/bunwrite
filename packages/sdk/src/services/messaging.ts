@@ -12,7 +12,7 @@ export class Messaging {
     }
 
     /**
-     * Get a list of all topics from the current Appwrite project.
+     * Get a list of all topics from the current Bunwrite project.
      *
      * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name, description, emailTotal, smsTotal, pushTotal
      * @param {string} params.search - Search term to filter your list results. Max length: 256 chars.
@@ -26,7 +26,7 @@ export class Messaging {
         total?: boolean;
     }): Promise<Models.TopicList>;
     /**
-     * Get a list of all topics from the current Appwrite project.
+     * Get a list of all topics from the current Bunwrite project.
      *
      * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name, description, emailTotal, smsTotal, pushTotal
      * @param {string} search - Search term to filter your list results. Max length: 256 chars.
@@ -83,7 +83,7 @@ export class Messaging {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -169,7 +169,7 @@ export class Messaging {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -227,7 +227,7 @@ export class Messaging {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -312,7 +312,7 @@ export class Messaging {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -366,7 +366,7 @@ export class Messaging {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 

@@ -1,4 +1,4 @@
-import { AppwriteError, err } from './errors'
+import { BunwriteError, err } from './errors'
 
 export type Params = Record<string, unknown>
 
@@ -75,7 +75,7 @@ export function noContent(): Response {
 }
 
 export function errorResponse(error: unknown): Response {
-  if (error instanceof AppwriteError) return json(error.toJSON(), error.code)
+  if (error instanceof BunwriteError) return json(error.toJSON(), error.code)
   console.error(error)
   return json(err('general_unknown', 'Server Error').toJSON(), 500)
 }

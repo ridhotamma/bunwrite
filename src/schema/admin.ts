@@ -2,7 +2,7 @@
  * Schema changes made in the console. Every change edits a collection's
  * definition and re-applies it with `pushCollection`, so the console and
  * `schema:push` alter tables the same way. Export/import use the
- * appwrite.config.json shape the project keeps in its repo.
+ * project config shape the project keeps in its repo.
  */
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
@@ -141,7 +141,7 @@ export class SchemaAdmin {
     return out
   }
 
-  /** All collections as appwrite.config.json table entries. */
+  /** All collections as project config table entries. */
   collectionDefinitions(): Record<string, any>[] {
     return [...this.registry.collections.values()]
       .sort((a, b) => a.seq - b.seq)
@@ -157,7 +157,7 @@ export class SchemaAdmin {
       }))
   }
 
-  /** Selected collections as appwrite.config.json table entries. */
+  /** Selected collections as project config table entries. */
   exportCollections(ids?: Iterable<string>): Record<string, any>[] {
     const definitions = this.collectionDefinitions()
     if (!ids) return definitions
@@ -213,7 +213,7 @@ export class SchemaAdmin {
     return this.importConfig({ tables: list }, { prune: options.prune, dryRun: options.dryRun })
   }
 
-  /** Current schema in appwrite.config.json shape (tablesDB/tables/buckets). */
+  /** Current schema in project config shape (tablesDB/tables/buckets). */
   export(): Record<string, unknown> {
     const sql = this.db.sqlite
     const buckets = sql.query<any, []>('SELECT * FROM _buckets ORDER BY seq').all()

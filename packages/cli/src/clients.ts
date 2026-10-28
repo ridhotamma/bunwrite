@@ -31,7 +31,7 @@ export function projectClient(config = readConfig(), session = currentSession())
     return { client, projectId, auth: 'key' }
   }
   if (session.cookie) {
-    client.setCookie(session.cookie).addHeader('X-Appwrite-Mode', 'admin')
+    client.setCookie(session.cookie).addHeader('X-Bunwrite-Mode', 'admin')
     if (config.organizationId) client.setOrganization(config.organizationId)
     return { client, projectId, auth: 'console' }
   }

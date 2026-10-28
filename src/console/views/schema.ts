@@ -33,23 +33,24 @@ function exportPanel(selected: Record<string, any>[], download: string): Html {
   </div>`
 }
 
-export function configurationView(options: { schemaPath?: string }): Html {
+export function configurationView(options: { schemaPath?: string; fileName: string }): Html {
   const path = options.schemaPath
+  const file = options.fileName
   return html`${header('Schema')}${schemaTabs('configuration')}
-  ${alert('info', html`Databases, collections, buckets and functions can be described in <code>appwrite.config.json</code>, the file your project keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
+  ${alert('info', html`Databases, collections, buckets and functions can be described in <code>${file}</code>, the file your project keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
   ${settingsSection(
     'Import from a file',
     'Creates and alters exactly what the file describes. Preview first; nothing changes until you apply.',
     html`<form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" hx-boost="false">
-      <label>File<input type="file" name="file" accept=".json,application/json"><small>${path ? html`Leave empty to use <code>${path}</code>.` : 'appwrite.config.json'}</small></label>
+      <label>File<input type="file" name="file" accept=".json,application/json"><small>${path ? html`Leave empty to use <code>${path}</code>.` : html`${file}, bunwrite.json or appwrite.config.json`}</small></label>
       <label class="check"><input type="checkbox" name="prune">Also delete collections missing from the file</label>
       <div class="foot"><button class="primary">Preview changes</button></div>
     </form>`,
   )}
   ${settingsSection(
     'Export the current schema',
-    `The current schema as appwrite.config.json${path ? ', with the rest of your file kept as is' : ''}.`,
-    html`<div class="foot" style="justify-content:flex-start"><a class="btn" href="${SCHEMA}/export.json" hx-boost="false" download="appwrite.config.json">Download</a>
+    `The current schema as ${file}${path ? ', with the rest of your file kept as is' : ''}.`,
+    html`<div class="foot" style="justify-content:flex-start"><a class="btn" href="${SCHEMA}/export.json" hx-boost="false" download="${file}">Download</a>
       ${path
         ? html`<form method="post" action="${SCHEMA}/save" class="inline" data-confirm="Overwrite ${path} with the current schema?" data-confirm-label="Overwrite" data-confirm-tone="critical"><button>Save to ${path.split('/').pop()}</button></form>`
         : ''}</div>`,

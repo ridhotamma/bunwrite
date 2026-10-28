@@ -187,7 +187,7 @@ export class SettingsService {
   }
 }
 
-/** Is this X-Appwrite-Key acceptable? Programmatic keys, the functions' internal key, or a live console key. */
+/** Is this API key (X-Bunwrite-Key or X-Appwrite-Key) acceptable? Programmatic keys, the functions' internal key, or a live console key. */
 export function apiKeyValid(db: Db, config: Config, key: string): boolean {
   if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) return true
   const row = db.sqlite

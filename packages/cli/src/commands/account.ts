@@ -7,7 +7,7 @@ import { ask, bold, CliError, dim, info, log, success, warn } from '../ui'
 
 const mask = (key: string) => (key.length > 12 ? `${key.slice(0, 8)}…${key.slice(-4)}` : '••••')
 
-/** Refuse an endpoint that is not a Bunwrite (or Appwrite) API. */
+/** Refuse an endpoint that is not a Bunwrite API. */
 async function checkEndpoint(endpoint: string, selfSigned: boolean): Promise<void> {
   try {
     const client = new Client().setEndpoint(endpoint)
@@ -66,7 +66,7 @@ export async function login(args: Args): Promise<void> {
   // The SDK returns the session, not its cookie; sign in with fetch to keep it.
   const response = await fetch(`${endpoint}/account/sessions/email`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-appwrite-project': CONSOLE_PROJECT },
+    headers: { 'content-type': 'application/json', 'x-bunwrite-project': CONSOLE_PROJECT },
     body: JSON.stringify({ email, password }),
   }).catch((error) => {
     throw new CliError(describe(error))
@@ -74,7 +74,7 @@ export async function login(args: Args): Promise<void> {
   const body = (await response.json().catch(() => ({}))) as { message?: string; type?: string }
   if (!response.ok) throw new BunwriteException(body.message ?? `Sign-in failed (${response.status})`, response.status, body.type ?? '')
   const raw = response.headers.getSetCookie?.() ?? [response.headers.get('set-cookie') ?? '']
-  const cookie = raw.map((c) => c.split(';')[0]!).find((c) => c.startsWith('a_session_console='))
+  const cookie = raw.map((c) => c.split(';')[0]!).find((c) => /^(bw|a)_session_console=/.test(c))
   if (!cookie) throw new CliError('The server did not return a console session. Is this a Bunwrite server?')
 
   updateSession((s) => {

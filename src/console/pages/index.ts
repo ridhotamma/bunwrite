@@ -11,6 +11,7 @@ import { settingsPages } from './settings'
 import { storagePages } from './storage'
 import { teamPages } from './teams'
 import { userPages } from './users'
+import { webhookPages } from './webhooks'
 
 /** Mount every console page group. Order matters only within a group. */
 export function registerConsolePages(router: ConsoleRouter): void {
@@ -25,5 +26,6 @@ export function registerConsolePages(router: ConsoleRouter): void {
   logPages(router)
   settingsPages(router)
   apiPages(router)
+  webhookPages(router)
   schemaPages(router)
 }

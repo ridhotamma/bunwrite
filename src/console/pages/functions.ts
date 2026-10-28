@@ -150,7 +150,7 @@ export function functionPages(router: ConsoleRouter): void {
       html`${header('Functions', {
         actions: html`<a class="btn" href="/console/settings/functions">Global variables</a>${fns.length ? create : ''}`,
       })}
-      ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with appwrite.config.json.`) : ''}
+      ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with the project config file (bunwrite.config.json or appwrite.config.json).`) : ''}
       ${listCard('functions', {
         body: fns.length
           ? html`<div class="scroll"><table><thead><tr><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
@@ -162,7 +162,7 @@ export function functionPages(router: ConsoleRouter): void {
                 <td>${run ? html`${statusBadge(run.status)} <span class="subdued hide-sm">${when(run.created_at)}</span>` : html`<span class="subdued">Never</span>`}</td></tr>`
             })}
             </tbody></table></div>`
-          : emptyState('No functions yet', 'Create one here, or import appwrite.config.json from Schema.', create),
+          : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
       })}
       ${createFunctionDialog(url.searchParams.get('create') === '1', ctx.services.config.functionsBuildCommands)}`,
     )

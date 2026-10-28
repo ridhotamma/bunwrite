@@ -6,8 +6,8 @@ Two endpoints turn HTML into files with headless Chromium:
 - `POST /v1/image`: png, jpg, webp, avif or gif. Useful for social cards,
   receipt images for chat apps, and thumbnails.
 
-These are Bunwrite extensions; Appwrite has no such endpoints, so call them
-with `fetch` instead of an SDK. Bunwrite drives Chromium through `Bun.WebView`
+These are Bunwrite extensions, not part of Appwrite's API: call them with
+`fetch`, or with `Render` in the Bunwrite SDK. Bunwrite drives Chromium through `Bun.WebView`
 and the DevTools protocol (`Page.printToPDF`, `Page.captureScreenshot`), the
 same thing Puppeteer and Playwright do, without either dependency.
 
@@ -25,15 +25,15 @@ same thing Puppeteer and Playwright do, without either dependency.
 
 One switch covers both endpoints. Turning it off stops Chromium right away.
 
-Both endpoints need an API key (`X-Appwrite-Key`), so call them from your server
+Both endpoints need an API key (`X-Bunwrite-Key`), so call them from your server
 or a function, not from a browser.
 
 ## PDF
 
 ```bash
 curl -X POST https://api.example.com/v1/pdf \
-  -H "X-Appwrite-Project: $PROJECT_ID" \
-  -H "X-Appwrite-Key: $API_KEY" \
+  -H "X-Bunwrite-Project: $PROJECT_ID" \
+  -H "X-Bunwrite-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"html": "<h1>Invoice INV-001</h1>", "fileName": "INV-001"}' \
   -o INV-001.pdf
@@ -57,8 +57,8 @@ CSS `@page { size: A4; margin: 16mm }` wins over `format` and `margin`.
 
 ```bash
 curl -X POST https://api.example.com/v1/image \
-  -H "X-Appwrite-Project: $PROJECT_ID" \
-  -H "X-Appwrite-Key: $API_KEY" \
+  -H "X-Bunwrite-Project: $PROJECT_ID" \
+  -H "X-Bunwrite-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"html": "<div id=card>...</div>", "selector": "#card", "output": "webp", "scale": 2}' \
   -o card.webp
@@ -107,12 +107,12 @@ response is the file object, status 201. The bucket must allow the extension
 export default async ({ req, res }) => {
   const html = renderInvoice(JSON.parse(req.body)) // your template
   const call = (path, body) =>
-    fetch(`${process.env.APPWRITE_FUNCTION_API_ENDPOINT}${path}`, {
+    fetch(`${process.env.BUNWRITE_FUNCTION_API_ENDPOINT}${path}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-appwrite-project': process.env.APPWRITE_FUNCTION_PROJECT_ID,
-        'x-appwrite-key': process.env.APPWRITE_API_KEY,
+        'x-bunwrite-project': process.env.BUNWRITE_FUNCTION_PROJECT_ID,
+        'x-bunwrite-key': process.env.BUNWRITE_API_KEY,
       },
       body: JSON.stringify(body),
     }).then((r) => r.json())

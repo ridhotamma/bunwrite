@@ -33,7 +33,7 @@ function projectCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   return card(ctx, 'project', 'Project', 'project', 'Name in emails, allowed web origins and how long sign-ins last.', html`
     <form method="post" action="${SETTINGS}/project">
-      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Generated on first start and stored in the database.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set when the project was created. Apps send this in X-Appwrite-Project.</small></label></div>
+      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Generated on first start and stored in the database.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set when the project was created. Apps send this in X-Bunwrite-Project (or X-Appwrite-Project).</small></label></div>
       <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
       <div class="foot"><button class="primary">Save</button></div>
@@ -132,7 +132,7 @@ function functionCards(ctx: ConsoleContext): Html {
   return html`
     ${card(ctx, 'schedules', 'Functions', 'functions', 'Where function code lives, and which schedules are paused.', html`
       <form method="post" action="${SETTINGS}/functions">
-        <label>Code folder<input name="functionsDir" class="mono" value="${c.functionsDir}"><small>The folder with appwrite.config.json; function paths are read from it. ${codeFound(ctx)}</small></label>
+        <label>Code folder<input name="functionsDir" class="mono" value="${c.functionsDir}"><small>The folder with the project config file (bunwrite.config.json or appwrite.config.json); function paths are read from it. ${codeFound(ctx)}</small></label>
         <div class="subdued" style="margin:4px 0 8px">Paused schedules do not fire. Running a function by hand still works.</div>
         ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''}>Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
         <div class="foot"><button>Save</button></div>

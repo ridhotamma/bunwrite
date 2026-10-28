@@ -6,13 +6,15 @@
  */
 import { format } from 'node:util'
 
-const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
+const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 
 interface Input {
   method: string
   path: string
   headers: Record<string, string>
   body: string
+  /** The raw request bytes, when they came over HTTP; `body` is their UTF-8 reading. */
+  bodyBase64?: string
   host: string
   scheme: string
   port: number
@@ -53,7 +55,7 @@ export async function runNodeFunction(entry: string): Promise<void> {
     bodyRaw: input.body,
     bodyText: input.body,
     get bodyBinary() {
-      return Buffer.from(input.body)
+      return input.bodyBase64 !== undefined ? Buffer.from(input.bodyBase64, 'base64') : Buffer.from(input.body)
     },
     get bodyJson() {
       return input.body ? JSON.parse(input.body) : {}

@@ -29,7 +29,7 @@ let root: string
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), 'bunwrite-own-cli-'))
-  server = startServer(undefined, { storagePath: join(root, 'storage') })
+  server = startServer(undefined, { storagePath: join(root, 'storage'), apiCompat: 'bunwrite' })
   await new ConsoleAuth(server.db).upsert(ADMIN.email, ADMIN.password)
 })
 
@@ -168,7 +168,7 @@ describe('login, whoami, logout', () => {
     const before = consoleSessions()
     expect(await ws.ok('login', '--endpoint', server.endpoint, '--email', ADMIN.email, '--password', ADMIN.password)).toContain(`Signed in as ${ADMIN.email}`)
     expect(consoleSessions()).toBe(before + 1)
-    expect(ws.prefs.sessions.default.cookie).toStartWith('a_session_console=')
+    expect(ws.prefs.sessions.default.cookie).toStartWith('bw_session_console=')
     expect(await ws.ok('whoami')).toContain(ADMIN.email)
     expect(await ws.ok('logout')).toContain('Logged out')
     expect(consoleSessions()).toBe(before)
@@ -197,6 +197,15 @@ describe('init project', () => {
     expect(result.code).toBe(1)
     expect(result.out).toContain(`belongs to organization "${ORG}"`)
     expect(existsSync(join(ws.dir, 'bunwrite.config.json'))).toBe(false)
+  })
+
+  test('bunwrite.json is read and written too', async () => {
+    const ws = new Workspace('init-bunwrite-json')
+    await ws.withKey()
+    writeFileSync(join(ws.dir, 'bunwrite.json'), JSON.stringify({ projectId: PROJECT }))
+    await ws.ok('pull', 'teams')
+    expect(existsSync(join(ws.dir, 'bunwrite.config.json'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(ws.dir, 'bunwrite.json'), 'utf8')).teams).toBeArray()
   })
 
   test('an existing appwrite.config.json is used and kept', async () => {

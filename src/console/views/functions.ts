@@ -54,7 +54,7 @@ function codeFields(options: CodeFieldsOptions): Html {
     </fieldset>
     <div data-show-for="upload" data-for-select="source" hidden>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
-        <small>The entry file must be inside, either at the top or in one folder. For very large folders use <code>appwrite push functions</code>.</small></label>
+        <small>The entry file must be inside, either at the top or in one folder. For very large folders use <code>bunwrite push functions</code>.</small></label>
     </div>
     <div data-show-for="paste" data-for-select="source" hidden>
       <label>Entry file code<textarea name="code_text" class="mono tall code-editor" spellcheck="false" required ${followCode}>${pasteDefault}</textarea></label>
@@ -130,7 +130,7 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
           </tr>`
         })}
       </tbody></table></div>`
-      : emptyState('No deployments', 'Deploy code from the console, or with appwrite push functions.', html`<button type="button" class="primary" data-dialog-open="#deploy-code">Deploy code</button>`)}
+      : emptyState('No deployments', 'Deploy code from the console, or with bunwrite push functions.', html`<button type="button" class="primary" data-dialog-open="#deploy-code">Deploy code</button>`)}
   </div>`
 }
 

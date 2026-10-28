@@ -14,7 +14,7 @@
 import type { Config, GoogleConfig } from '~/config'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import type { AuthService } from './service'
@@ -122,8 +122,8 @@ export class OAuthService {
       const { secret } = this.auth.createToken(userId, 'oauth2', { ttl: OAUTH2_TOKEN_TTL, provider })
       return withQuery(state.success, { userId, secret })
     } catch (error) {
-      const e = error instanceof AppwriteError ? error : err('general_unknown', 'Server Error')
-      if (!(error instanceof AppwriteError)) console.error('[oauth] callback failed:', error)
+      const e = error instanceof BunwriteError ? error : err('general_unknown', 'Server Error')
+      if (!(error instanceof BunwriteError)) console.error('[oauth] callback failed:', error)
       return withQuery(state.failure, { error: JSON.stringify(e.toJSON()) })
     }
   }

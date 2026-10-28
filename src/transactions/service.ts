@@ -14,7 +14,7 @@ import { keyCaller, type Caller } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
 import { addSeconds, now } from '~/lib/datetime'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { resolveId, uniqueId } from '~/lib/ids'
 import { encodeAttributes, type Doc } from '~/documents/codec'
 import { ConflictError, DocumentStore, type Guard } from '~/documents/store'
@@ -352,7 +352,7 @@ export class TransactionService {
     } catch (error) {
       this.setStatus(tx.seq, 'failed')
       if (error instanceof ConflictError) throw err('transaction_conflict')
-      if (error instanceof AppwriteError) throw error
+      if (error instanceof BunwriteError) throw error
       throw error
     }
     this.db.sqlite.query('DELETE FROM _transaction_logs WHERE transaction_seq = ?').run(tx.seq)

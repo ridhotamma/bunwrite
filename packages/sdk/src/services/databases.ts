@@ -14,7 +14,7 @@ export class Databases {
     }
 
     /**
-     * Get a list of all databases from the current Appwrite project. You can use the search parameter to filter your results.
+     * Get a list of all databases from the current Bunwrite project. You can use the search parameter to filter your results.
      *
      * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name
      * @param {string} params.search - Search term to filter your list results. Max length: 256 chars.
@@ -29,7 +29,7 @@ export class Databases {
         total?: boolean;
     }): Promise<Models.DatabaseList>;
     /**
-     * Get a list of all databases from the current Appwrite project. You can use the search parameter to filter your results.
+     * Get a list of all databases from the current Bunwrite project. You can use the search parameter to filter your results.
      *
      * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: name
      * @param {string} search - Search term to filter your list results. Max length: 256 chars.
@@ -86,7 +86,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -175,7 +175,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -230,7 +230,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -282,7 +282,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -341,7 +341,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -430,7 +430,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -487,7 +487,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -562,7 +562,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -619,7 +619,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -703,7 +703,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -758,7 +758,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -863,7 +863,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1032,7 +1032,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1110,7 +1110,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1255,7 +1255,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1330,7 +1330,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -1440,7 +1440,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1616,7 +1616,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1796,7 +1796,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1941,7 +1941,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2087,7 +2087,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2230,7 +2230,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2376,7 +2376,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2521,7 +2521,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2669,7 +2669,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2831,7 +2831,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2996,7 +2996,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -3173,7 +3173,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -3353,7 +3353,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -3530,7 +3530,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -3710,7 +3710,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -3855,7 +3855,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4003,7 +4003,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4160,7 +4160,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4308,7 +4308,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4465,7 +4465,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4613,7 +4613,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4793,7 +4793,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -4953,7 +4953,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5110,7 +5110,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5258,7 +5258,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5403,7 +5403,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5551,7 +5551,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5731,7 +5731,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -5891,7 +5891,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -6015,7 +6015,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -6105,7 +6105,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -6241,7 +6241,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -6410,7 +6410,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -6528,7 +6528,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -6648,7 +6648,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -6773,7 +6773,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -6886,7 +6886,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -7017,7 +7017,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -7186,7 +7186,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -7356,7 +7356,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -7473,7 +7473,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -7631,7 +7631,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -7790,7 +7790,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -7901,7 +7901,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -8067,7 +8067,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -8158,7 +8158,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -8248,7 +8248,7 @@ export class Databases {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 

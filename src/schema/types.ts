@@ -52,7 +52,7 @@ export const tableName = (databaseSeq: number, collectionId: string) => `d${data
 export const permsTableName = (table: string) => `${table}__perms`
 export const ftsTableName = (table: string, indexKey: string) => `${table}__fts_${indexKey}`
 
-/** Normalise an attribute definition from appwrite.config.json or the API. */
+/** Normalise an attribute definition from a project config file or the API. */
 export function normalizeAttribute(raw: any): Attribute {
   let type: AttributeType
   switch (raw.type) {
@@ -104,7 +104,7 @@ export function normalizeAttribute(raw: any): Attribute {
 }
 
 /**
- * An attribute as appwrite.config.json writes it, which is also what the API
+ * An attribute as the project config file writes it, which is also what the API
  * returns. `appwrite push` compares type, size, format and encrypt with the
  * config and drops and recreates the column when they differ, so this mirrors
  * the definition: email, url, ip, enum and text columns show a size (and

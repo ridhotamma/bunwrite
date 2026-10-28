@@ -3,10 +3,15 @@
 One SDK for [Bunwrite](../../README.md) that runs in browsers, Bun, Node.js 18+
 and edge runtimes. It has no dependencies.
 
-The API is Appwrite's: the services, method names and parameters are copied
-from Appwrite's Web SDK and SDK for Node.js, trimmed to the endpoints Bunwrite
-serves. Code written for `appwrite` or `node-appwrite` usually only needs its
-import changed.
+The services, method names and parameters are copied from Appwrite's Web SDK
+and SDK for Node.js, trimmed to the endpoints Bunwrite serves, and renamed to
+Bunwrite's names. Code written for `appwrite` or `node-appwrite` ports by
+changing the import, and `AppwriteException` to `BunwriteException`.
+
+It sends Bunwrite's headers (`X-Bunwrite-Project`, `X-Bunwrite-Key`, …), so it
+needs a Bunwrite server that reads them; version 0.2.0 and up needs one from
+the same release. The server's `API_COMPAT` setting does not matter: it reads
+both naming families.
 
 ```bash
 npm install @bunwrite/sdk
@@ -46,7 +51,7 @@ await new Storage(client).createFile({ bucketId: 'invoices', fileId: ID.unique()
 Without a bundler, load `dist/bunwrite.iife.js` and use `window.Bunwrite`:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.1.0/dist/bunwrite.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.2.0/dist/bunwrite.iife.js"></script>
 <script>
   const client = new Bunwrite.Client().setEndpoint('https://api.example.com/v1').setProject('your-project-id')
 </script>
@@ -93,13 +98,15 @@ Helpers: `Query`, `ID`, `Permission`, `Role`, `Operator`, `Channel`,
 - **Only what Bunwrite serves.** Methods for endpoints Bunwrite does not have
   (Avatars, Locale, Sites, MFA, phone login, sending messages, …) are left out
   rather than failing at runtime.
-- **Errors** are `BunwriteException` with the same `code`, `type`, `message`
-  and `response`. `AppwriteException` is exported as the same class.
+- **Errors** are `BunwriteException`, with the same `code`, `type`, `message`
+  and `response` as Appwrite's `AppwriteException`.
 - **Large integers.** Numbers beyond 2^53 come back as `BigInt` where the
   runtime lets JSON.parse see the source text (Node 21+, current browsers);
   elsewhere they are numbers, as with plain JSON.
 - `setSelfSigned(true)` works on Bun only.
-- Headers stay `X-Appwrite-*`, since that is what the server reads.
+- **Bunwrite's names on the wire:** `X-Bunwrite-*` headers, and the
+  `bw_session_<project>` session cookie (an `a_session_<project>` cookie from
+  older sign-ins is found too).
 
 ## Updating from Appwrite
 

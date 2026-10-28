@@ -29,7 +29,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -136,7 +136,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -219,7 +219,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -279,7 +279,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -358,7 +358,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -380,7 +380,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -442,7 +442,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -510,7 +510,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -604,7 +604,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -624,7 +624,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -643,7 +643,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -722,7 +722,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -793,7 +793,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -849,7 +849,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -904,7 +904,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -958,7 +958,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -979,7 +979,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1070,7 +1070,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1079,7 +1079,7 @@ export class Account {
     }
 
     /**
-     * Allow the user to login to their account using the OAuth2 provider of their choice. Each OAuth2 provider should be enabled from the Appwrite console first. Use the success and failure arguments to provide a redirect URL's back to your app when login is completed.
+     * Allow the user to login to their account using the OAuth2 provider of their choice. Each OAuth2 provider should be enabled from the Bunwrite console first. Use the success and failure arguments to provide a redirect URL's back to your app when login is completed.
      *
      * If authentication succeeds, `userId` and `secret` of a token will be appended to the success URL as query parameters. These can be used to create a new session using the [Create session](https://appwrite.io/docs/references/cloud/client-web/account#createSession) endpoint.
      *
@@ -1099,7 +1099,7 @@ export class Account {
         scopes?: string[];
     }): void | string;
     /**
-     * Allow the user to login to their account using the OAuth2 provider of their choice. Each OAuth2 provider should be enabled from the Appwrite console first. Use the success and failure arguments to provide a redirect URL's back to your app when login is completed.
+     * Allow the user to login to their account using the OAuth2 provider of their choice. Each OAuth2 provider should be enabled from the Bunwrite console first. Use the success and failure arguments to provide a redirect URL's back to your app when login is completed.
      *
      * If authentication succeeds, `userId` and `secret` of a token will be appended to the success URL as query parameters. These can be used to create a new session using the [Create session](https://appwrite.io/docs/references/cloud/client-web/account#createSession) endpoint.
      *
@@ -1253,7 +1253,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1314,7 +1314,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1388,7 +1388,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1460,7 +1460,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1470,7 +1470,7 @@ export class Account {
 
 
     /**
-     * Use this endpoint to create a JSON Web Token. You can use the resulting JWT to authenticate on behalf of the current user when working with the Appwrite server-side API and SDKs. The JWT secret is valid for 15 minutes from its creation and will be invalid if the user will logout in that time frame.
+     * Use this endpoint to create a JSON Web Token. You can use the resulting JWT to authenticate on behalf of the current user when working with the Bunwrite server-side API and SDKs. The JWT secret is valid for 15 minutes from its creation and will be invalid if the user will logout in that time frame.
      *
      * @param {number} params.duration - Time in seconds before JWT expires. Default duration is 900 seconds, and maximum is 3600 seconds.
      * @throws {BunwriteException}
@@ -1478,7 +1478,7 @@ export class Account {
      */
     createJWT(params?: { duration?: number }): Promise<Models.Jwt>;
     /**
-     * Use this endpoint to create a JSON Web Token. You can use the resulting JWT to authenticate on behalf of the current user when working with the Appwrite server-side API and SDKs. The JWT secret is valid for 15 minutes from its creation and will be invalid if the user will logout in that time frame.
+     * Use this endpoint to create a JSON Web Token. You can use the resulting JWT to authenticate on behalf of the current user when working with the Bunwrite server-side API and SDKs. The JWT secret is valid for 15 minutes from its creation and will be invalid if the user will logout in that time frame.
      *
      * @param {number} duration - Time in seconds before JWT expires. Default duration is 900 seconds, and maximum is 3600 seconds.
      * @throws {BunwriteException}
@@ -1514,7 +1514,7 @@ export class Account {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };

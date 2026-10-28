@@ -85,7 +85,7 @@ export class Render {
         return this.client.call(
             'post',
             new URL(this.client.config.endpoint + path),
-            { 'X-Appwrite-Project': this.client.config.project, 'content-type': 'application/json' },
+            { 'X-Bunwrite-Project': this.client.config.project, 'content-type': 'application/json' },
             payload,
             'arrayBuffer',
         );

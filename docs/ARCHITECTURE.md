@@ -47,6 +47,7 @@ plus their own storage, backups and function folder.
 | `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
+| `src/lib/compat.ts` | Both naming families: reads `X-Bunwrite-*` and `X-Appwrite-*` headers and both session cookies; `API_COMPAT` picks the webhook headers, function variables and default cookie the server sends |
 | `packages/sdk/` | `@bunwrite/sdk`, its own package. `src/services`, the helpers, models and enums are generated from Appwrite's SDKs by `scripts/sdk-sync.ts`, which keeps the methods whose HTTP method and path the server routes; the client is written by hand |
 | `packages/cli/` | `@bunwrite/cli`, its own package on top of the SDK (bundled into its build): sign-in, `pull`/`push` of the project config, function deploys with its own tar.gz writer, and generic service commands |
 
@@ -93,7 +94,7 @@ The console keeps the same boundaries as the API:
   the console account when accepted unless the account already exists (then the
   member signs in first). Owners are protected from demoting or removing
   themselves and from leaving the organization without an owner.
-- Function HTTP endpoints may omit `X-Appwrite-Project`; the server finds the
+- Function HTTP endpoints may omit the project header; the server finds the
   owning project by function ID. Send the header when the same function ID
   exists in more than one project.
 
@@ -121,10 +122,12 @@ The console keeps the same boundaries as the API:
 
 ## Request path
 
-1. Strip `/v1`, match the route, and check `X-Appwrite-Project` (or `?project=`).
+1. Strip `/v1`, match the route, and check the project header (`X-Bunwrite-Project` or
+   `X-Appwrite-Project`, or `?project=`). `src/lib/compat.ts` holds both naming families:
+   requests may use either; `API_COMPAT` picks the names the server sends.
 2. Resolve the caller:
    - an API key (env, console key, or the functions' internal key) bypasses permissions;
-   - a session (header, `a_session_<project>` cookie or fallback cookie) or a JWT is a user with roles
+   - a session (header, `bw_session_<project>` or `a_session_<project>` cookie, or fallback cookie) or a JWT is a user with roles
      `any`, `users`, `user:ID`, verified variants, `team:ID`, `team:ID/role`, `member:ID` and `label:X`;
    - otherwise the caller is a guest.
 3. The handler runs synchronously against SQLite (bun:sqlite is synchronous), so
@@ -155,11 +158,12 @@ transactional flows on this.
 
 Each execution is a child process: `bun src/functions/runner-node.ts <entry>` or
 `python3 src/functions/runner-python.py <entry>`. The runner builds Appwrite's
-`context` (`req`, `res`, `log`, `error`) and gets the same `APPWRITE_FUNCTION_*`
-env that Appwrite gives.
+`context` (`req`, `res`, `log`, `error`) and gets `BUNWRITE_FUNCTION_*`
+variables; with `API_COMPAT=appwrite` also the `APPWRITE_FUNCTION_*` ones that
+Appwrite gives.
 
-`APPWRITE_API_KEY` is a per-process internal key, so functions need no key in
-env. Variables come from three places; a later one wins:
+`BUNWRITE_API_KEY` (and `APPWRITE_API_KEY`) is a per-process internal key, so
+functions need no key in env. Variables come from three places; a later one wins:
 1. the server env, minus its private keys;
 2. `FUNCTIONS_ENV_FILE`;
 3. the console's function variables.
@@ -199,7 +203,9 @@ folder, as `schema:push` sets it.
 
 A 15-second loop fires cron schedules (UTC). It never starts a function while
 that function's previous run is still going, and it skips functions on the
-pause list.
+pause list. The same loop starts one-off executions deferred with
+`scheduledAt` once their time has arrived; those keep the id they were
+created with, so the execution returned to the caller is the one that runs.
 
 ## Files and backups
 
@@ -218,7 +224,7 @@ pause list.
   settings are imported once into `_settings` when an instance is first seeded
   and are ignored afterwards; console edits take effect immediately.
 - **Schema:** the database is the source of truth.
-  - `appwrite.config.json` is an import/export format: `schema:push`, the console's Schema page, `SCHEMA_SYNC_ON_START=true`, or `appwrite push tables` (through `/v1/tablesdb` and `/v1/databases`).
+  - The project config file (`bunwrite.config.json`, `bunwrite.json` or Appwrite's `appwrite.config.json`) is an import/export format: `schema:push`, the console's Schema page, `SCHEMA_SYNC_ON_START=true`, or `bunwrite push tables` / `appwrite push tables` (through `/v1/tablesdb` and `/v1/databases`).
   - Columns read back in the shape they were defined (an email column shows a size only if it was given one), because `appwrite push` drops and recreates a column whose type, size, format or encrypt reads back differently.
   - The Schema page can export selected collections and import a pasted/uploaded
     collection array with a dry-run review and an optional delete-missing pass.

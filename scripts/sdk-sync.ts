@@ -200,6 +200,10 @@ function rebrand(text: string): string {
       const fixed = names.replace(/(^|[\s,])(UploadProgress|ActionableChannel|ResolvedChannel)\b/g, '$1type $2')
       return `import {${fixed}} from '${from}';`
     })
+    // Bunwrite's header names; the server accepts Appwrite's too.
+    .replace(/'X-Appwrite-/g, "'X-Bunwrite-")
+    // Prose in doc comments. Links to Appwrite's docs (appwrite.io) stay.
+    .replace(/\bAppwrite\b/g, 'Bunwrite')
     // Bunwrite has no impersonation.
     .replace(/^\s*payload\['impersonateuserid'\] = this\.client\.config\.impersonateuserid;\n/gm, '')
 }
@@ -306,6 +310,11 @@ for (const spec of SERVICES) {
     .replace(/window\?\.setInterval/g, 'globalThis.setInterval')
     .replace(/window\?\.clearInterval/g, 'globalThis.clearInterval')
     .replace(/private heartbeatTimer\?: number;/, 'private heartbeatTimer?: ReturnType<typeof setInterval>;')
+    // The session cookie is bw_session_<project>, or a_session_<project> from an Appwrite-mode server.
+    .replace(
+      'session = cookie?.[`a_session_${this.client.config.project}`];',
+      'session = cookie?.[`bw_session_${this.client.config.project}`] ?? cookie?.[`a_session_${this.client.config.project}`];',
+    )
     .replace(
       /window\.localStorage\.getItem\('cookieFallback'\)/g,
       "(typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('cookieFallback') : null)",
@@ -327,6 +336,7 @@ for (const file of ['id.ts', 'query.ts', 'permission.ts', 'role.ts', 'operator.t
     .replace(/^import \{ (\w+) \} from '\.\/enums\/([\w-]+)\.js';$/gm, "import type { $1 } from './enums/$2';")
     .replace('declare namespace Models', 'export declare namespace Models')
     .replace(/\nexport \{ Models \};\s*$/, '\n')
+    .replace(/\bAppwrite\b/g, 'Bunwrite')
   noteEnums(text)
   write('models.ts', header(`node-appwrite ${NODE_VERSION}`) + text)
 }

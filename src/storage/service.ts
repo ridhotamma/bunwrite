@@ -1,7 +1,7 @@
 /**
  * Appwrite Storage on local disk: `<storagePath>/<bucketId>/<fileId>`, with
  * metadata in `_files`. Supports the SDK's chunked uploads (Content-Range +
- * x-appwrite-id), Range reads for video, and resized previews through sharp.
+ * the upload ID header), Range reads for video, and resized previews through sharp.
  */
 import { createHash } from 'node:crypto'
 import { mkdirSync, openSync, writeSync, closeSync, renameSync, rmSync, statSync, existsSync, readdirSync } from 'node:fs'
@@ -14,7 +14,7 @@ import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
 import { isCompressible } from '~/lib/compress'
 import { now } from '~/lib/datetime'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
@@ -375,7 +375,7 @@ export class StorageService {
     const allowed = JSON.parse(bucket.allowed_file_extensions) as string[]
     if (allowed.length && !allowed.includes(ext)) throw err('storage_file_type_unsupported')
 
-    // Chunked uploads: `Content-Range: bytes start-end/total`, later chunks carry x-appwrite-id.
+    // Chunked uploads: `Content-Range: bytes start-end/total`, later chunks carry the upload ID header (X-Bunwrite-ID or X-Appwrite-ID).
     let start = 0
     let total = file.size
     if (input.contentRange) {
@@ -573,7 +573,7 @@ export class StorageService {
       try {
         await job
       } catch (error) {
-        if (error instanceof AppwriteError) throw error
+        if (error instanceof BunwriteError) throw error
         const code = (error as Error).message ?? ''
         if (/pixel limit/i.test(code)) throw err('general_argument_invalid', 'The image is too large to transform.')
         throw err('storage_file_type_unsupported', 'This image could not be transformed.')

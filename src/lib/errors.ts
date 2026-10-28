@@ -1,15 +1,16 @@
 import { ERRORS } from './error-codes'
 
-/** The Appwrite version this server reports in error bodies. */
-export const APPWRITE_VERSION = '2.6.2'
+/** The API version reported in error bodies (Appwrite's, which the Appwrite SDKs expect). */
+export const ERROR_VERSION = '2.6.2'
 
 /**
- * An error with Appwrite's wire shape: `{ message, code, type, version }`.
+ * An API error: `{ message, code, type, version }`, the shape the Appwrite SDKs
+ * also read.
  *
- * `type` is one of Appwrite's error names (see error-codes.ts), which fixes the
- * HTTP status. `params` fill the `%s` placeholders in the default message.
+ * `type` is one of the error names in error-codes.ts (Appwrite's), which fixes
+ * the HTTP status. `params` fill the `%s` placeholders in the default message.
  */
-export class AppwriteError extends Error {
+export class BunwriteError extends Error {
   readonly type: string
   readonly code: number
 
@@ -23,15 +24,15 @@ export class AppwriteError extends Error {
   }
 
   toJSON() {
-    return { message: this.message, code: this.code, type: this.type, version: APPWRITE_VERSION }
+    return { message: this.message, code: this.code, type: this.type, version: ERROR_VERSION }
   }
 }
 
 export const err = (type: string, message?: string, params: unknown[] = []) =>
-  new AppwriteError(type, message, params)
+  new BunwriteError(type, message, params)
 
 export const invalidQuery = (detail: string) =>
-  new AppwriteError('general_query_invalid', `Invalid query: ${detail}`)
+  new BunwriteError('general_query_invalid', `Invalid query: ${detail}`)
 
 export const invalidStructure = (detail: string) =>
-  new AppwriteError('document_invalid_structure', `Invalid document structure: ${detail}`)
+  new BunwriteError('document_invalid_structure', `Invalid document structure: ${detail}`)

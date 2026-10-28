@@ -10,7 +10,6 @@ import { join } from 'node:path'
 import {
   Account,
   BunwriteException,
-  AppwriteException,
   Client,
   Databases,
   Functions,
@@ -38,7 +37,7 @@ const guest = () => new Client().setEndpoint(server.endpoint).setProject(PROJECT
 
 beforeAll(() => {
   storage = mkdtempSync(join(tmpdir(), 'bunwrite-sdk-'))
-  server = startServer(undefined, { storagePath: storage })
+  server = startServer(undefined, { storagePath: storage, apiCompat: 'bunwrite' })
 })
 
 afterAll(() => {
@@ -64,11 +63,10 @@ describe('client', () => {
     expect((await health.getVersion()).version).toBeString()
   })
 
-  test('errors carry Appwrite’s code and type; AppwriteException is the same class', async () => {
+  test('errors carry a code and type', async () => {
     const result = await failure(new Databases(guest()).getDocument({ databaseId: DB, collectionId: 'products', documentId: 'nope' }))
     expect(result.code).toBe(404)
     expect(result.type).toBeString()
-    expect(AppwriteException).toBe(BunwriteException)
   })
 
   test('a bad endpoint is refused before any request', () => {

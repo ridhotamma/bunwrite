@@ -1,6 +1,7 @@
 /**
  * `bunwrite pull <what>` and `bunwrite push <what>`: the project config file
- * against the server. The config format is Appwrite's appwrite.config.json.
+ * against the server. The format is the same as Appwrite's appwrite.config.json,
+ * so either file works.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'

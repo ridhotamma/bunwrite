@@ -1,6 +1,7 @@
 import type { AppContext } from '~/app'
 import { keyCaller } from '~/auth/caller'
 import { requireKey } from '~/auth/routes'
+import { apiHeader } from '~/lib/compat'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import type { Router } from '~/lib/router'
 import { uniqueId } from '~/lib/ids'
@@ -74,7 +75,7 @@ export function storageRoutes(router: Router<AppContext>): void {
         file: params.file,
         permissions: params.permissions ?? null,
         contentRange: request.headers.get('content-range'),
-        uploadId: request.headers.get('x-appwrite-id'),
+        uploadId: apiHeader(request, 'id'),
       }),
       201,
     ),

@@ -258,9 +258,10 @@ Notes:
   `/v1` prefix (no path rewriting), or the API routes stop matching.
 - To use Cloudflare in front, set SSL/TLS mode to **Full (strict)** after Caddy
   has a certificate, or keep the record DNS-only.
-- Functions: mount the folder holding `appwrite.config.json` at
+- Functions: mount the folder holding `bunwrite.config.json` (or
+  `appwrite.config.json`) at
   `/app/functions` (see the commented volume) and set
-  `SCHEMA_PATH=/app/functions/appwrite.config.json`. Function variables are
+  `SCHEMA_PATH=/app/functions/bunwrite.config.json`. Function variables are
   read from `/app/functions/functions.env`.
 - Python functions need the image built with `WITH_PYTHON=true`: set
   `BUNWRITE_WITH_PYTHON=true` in `.env`, then `docker compose up -d --build`.

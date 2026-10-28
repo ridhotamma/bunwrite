@@ -4,8 +4,8 @@ Command-line tool for [Bunwrite](../../README.md): sign in, keep a project's
 schema, functions, buckets, teams, webhooks, topics and settings in a config
 file, deploy functions, and call any API.
 
-It follows the Appwrite CLI's commands and reads the same
-`appwrite.config.json` format. It is built on the [Bunwrite SDK](../sdk) and
+Its commands and config format match the Appwrite CLI's, so a folder set up
+for the Appwrite CLI works as is. It is built on the [Bunwrite SDK](../sdk) and
 has no dependencies: the SDK is bundled into `dist/cli.js`.
 
 ```bash
@@ -42,9 +42,9 @@ you. When both are set, the API key is used for project commands.
 
 ## Pull and push
 
-The project config is `bunwrite.config.json` in the current folder. An
-existing `appwrite.config.json` is used instead when there is one, so a folder
-set up for the Appwrite CLI keeps working.
+The project config is `bunwrite.config.json` or `bunwrite.json` in the
+current folder. An existing `appwrite.config.json` is used when neither is
+there; the format is the same. A new file is `bunwrite.config.json`.
 
 ```bash
 bunwrite pull all          # settings, tables, functions (with code), buckets, teams, webhooks, topics

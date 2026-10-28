@@ -205,6 +205,151 @@ describe('auth through the console', () => {
   })
 })
 
+describe('webhooks through the console', () => {
+  test('the list, create page and menu entry render', async () => {
+    const list = await (await get('/console/webhooks')).text()
+    expect(list).toContain('Webhooks')
+    expect(list).toContain('No webhooks yet')
+    expect(list).toContain('href="/console/webhooks/new"')
+
+    const form = await (await get('/console/webhooks/new')).text()
+    expect(form).toContain('Create webhook')
+    expect(form).toContain('All databases and collections')
+    // Events come from the schema, so the common ones are checkboxes.
+    expect(form).toContain('databases.main.collections.products.documents.*.create')
+    expect(form).toContain('name="customEvents"')
+    // The name and ID fields appear once each, and the ID follows the name.
+    expect(form.match(/name="name"/g)).toHaveLength(1)
+    expect(form.match(/name="id"/g)).toHaveLength(1)
+    expect(form).toContain('data-slug-from="name"')
+
+    expect(await (await get('/console/overview')).text()).toContain('href="/console/webhooks"')
+  })
+
+  test('create, edit, rotate the secret and delete', async () => {
+    const created = await form('/console/webhooks', {
+      name: 'Order events',
+      id: 'order-events',
+      url: 'https://example.com/hooks/orders',
+      enabled: 'on',
+      tls: 'on',
+      events: ['databases.main.collections.products.documents.*.create', 'databases.main.collections.products.documents.*.update'],
+      customEvents: 'databases.main.collections.products.documents.n1.update',
+      authUsername: 'bob',
+      authPassword: 'letmein',
+      secret: 'first-secret',
+    })
+    expect(created.status).toBe(303)
+    expect(created.headers.get('location')).toBe('/console/webhooks/order-events?ok=Webhook+created')
+    let hook = server.services.webhooks.get('order-events')
+    expect(JSON.parse(hook.events)).toEqual([
+      'databases.main.collections.products.documents.*.create',
+      'databases.main.collections.products.documents.*.update',
+      'databases.main.collections.products.documents.n1.update',
+    ])
+    expect([hook.name, hook.url, hook.enabled, hook.tls, hook.auth_username, hook.auth_password, hook.secret]).toEqual([
+      'Order events',
+      'https://example.com/hooks/orders',
+      1,
+      1,
+      'bob',
+      'letmein',
+      'first-secret',
+    ])
+
+    const detail = await (await get('/console/webhooks/order-events')).text()
+    expect(detail).toContain('https://example.com/hooks/orders')
+    expect(detail).toContain('databases.main.collections.products.documents.n1.update')
+    expect(detail).toContain('>Settings</a>')
+    expect(detail).toContain('X-Appwrite-Webhook-Signature')
+
+    const settings = await (await get('/console/webhooks/order-events/settings')).text()
+    expect(settings).toContain('id="webhook-secret"')
+    expect(settings).toContain('data-confirm=')
+    expect(settings).toContain('databases.main.collections.products.documents.*.create" checked')
+    // A pattern that is not a schema preset stays in the textarea.
+    expect(settings).toContain('databases.main.collections.products.documents.n1.update</textarea>')
+
+    // Saving the general card leaves events and the secret alone; a blank password keeps it.
+    await form('/console/webhooks/order-events/settings', {
+      name: 'Order events v2',
+      url: 'https://example.com/hooks/v2',
+      tls: '',
+      authUsername: 'alice',
+      authPassword: '',
+    })
+    hook = server.services.webhooks.get('order-events')
+    expect([hook.name, hook.url, hook.enabled, hook.tls, hook.auth_username, hook.auth_password]).toEqual([
+      'Order events v2',
+      'https://example.com/hooks/v2',
+      0,
+      0,
+      'alice',
+      'letmein',
+    ])
+    expect(JSON.parse(hook.events)).toHaveLength(3)
+
+    const events = await form('/console/webhooks/order-events/events', {
+      events: ['databases.*.collections.*.documents.*'],
+      customEvents: 'databases.main.collections.products.documents.n1.update',
+    })
+    expect(flash(events).get('ok')).toBe('Events saved')
+    expect(JSON.parse(server.services.webhooks.get('order-events').events)).toEqual([
+      'databases.*.collections.*.documents.*',
+      'databases.main.collections.products.documents.n1.update',
+    ])
+
+    // Bad input comes back on the form with the typed values kept.
+    const bad = await form('/console/webhooks', { name: 'Bad', url: 'ftp://example.com', events: ['databases.*'] })
+    expect(bad.status).toBe(200)
+    expect(await bad.text()).toContain('valid http or https URL')
+    const empty = await form('/console/webhooks', { name: 'Empty', url: 'https://example.com/empty' })
+    expect(empty.status).toBe(200)
+    expect(await empty.text()).toContain('Choose at least one event.')
+
+    // A rotated secret is shown once in a dialog and never stored in the URL.
+    const rotated = await form('/console/webhooks/order-events/secret', {})
+    expect(rotated.status).toBe(200)
+    const rotatedHtml = await rotated.text()
+    expect(rotatedHtml).toContain('id="webhook-secret-dialog"')
+    hook = server.services.webhooks.get('order-events')
+    expect(hook.secret).not.toBe('first-secret')
+    expect(rotatedHtml).toContain(hook.secret)
+
+    // Failures show up on the detail page; the list says the webhook is off.
+    server.db.sqlite
+      .query('UPDATE _webhooks SET attempts = 3, logs = ? WHERE id = ?')
+      .run('2026-10-27 10:00 n1.create: 500 Internal Server Error', 'order-events')
+    const failing = await (await get('/console/webhooks/order-events')).text()
+    expect(failing).toContain('3 of 10')
+    expect(failing).toContain('500 Internal Server Error')
+    expect(await (await get('/console/webhooks')).text()).toContain('Disabled')
+
+    // Turning it back on resets the failure count.
+    await form('/console/webhooks/order-events/settings', {
+      name: 'Order events v2',
+      url: 'https://example.com/hooks/v2',
+      enabled: 'on',
+      tls: 'on',
+      authUsername: 'alice',
+    })
+    hook = server.services.webhooks.get('order-events')
+    expect([hook.enabled, hook.attempts, hook.tls]).toEqual([1, 0, 1])
+
+    // While enabled, recent failures show as failing; ten turn it off for good.
+    server.db.sqlite.query('UPDATE _webhooks SET attempts = 2 WHERE id = ?').run('order-events')
+    expect(await (await get('/console/webhooks')).text()).toContain('Failing')
+    expect(await (await get('/console/webhooks/order-events')).text()).toContain('2 of 10')
+    server.db.sqlite.query('UPDATE _webhooks SET attempts = 10, enabled = 0 WHERE id = ?').run('order-events')
+    expect(await (await get('/console/webhooks')).text()).toContain('Off after failures')
+    expect(await (await get('/console/webhooks/order-events')).text()).toContain('Deliveries stopped after 10 failures')
+
+    await form('/console/webhooks/order-events/delete', {})
+    expect(() => server.services.webhooks.get('order-events')).toThrow()
+    expect(await (await get('/console/webhooks')).text()).toContain('No webhooks yet')
+  })
+})
+
 describe('settings through the console', () => {
   test('settings are grouped into tabs, with the old URL redirecting', async () => {
     const root = await get('/console/settings')

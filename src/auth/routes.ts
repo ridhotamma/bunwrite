@@ -1,4 +1,5 @@
 import type { AppContext } from '~/app'
+import { sessionCookieName } from '~/lib/compat'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str } from '~/lib/http'
@@ -48,21 +49,22 @@ export function requireKey(ctx: AppContext, scope: string): void {
   if (!ctx.caller.privileged) missingScope(ctx, scope)
 }
 
-const cookieName = (ctx: AppContext) => `a_session_${ctx.config.projectId.toLowerCase()}`
+const cookieName = (ctx: AppContext, request: Request) => sessionCookieName(ctx.config, request, ctx.config.projectId)
 
 /**
  * A new session. API keys get its secret in the body (the app stores it in its
- * own cookie); browsers get it as the `a_session_<project>` cookie instead.
+ * own cookie); browsers get it as the session cookie instead: `bw_session_<project>`,
+ * or `a_session_<project>` for a request made with Appwrite's headers.
  */
 function sessionResponse(route: RouteContext<AppContext>, session: SessionRow, secret: string): Response {
   const { ctx } = route
   const country = requestInfo(route.request).country
   if (ctx.caller.privileged) return json(sessionModel(session, { secret, country }), 201)
   const secure = ctx.config.publicEndpoint.startsWith('https') ? '; Secure; SameSite=None' : '; SameSite=Lax'
-  const cookie = `${cookieName(ctx)}=${encodeURIComponent(secret)}; Expires=${new Date(session.expire).toUTCString()}; Path=/; HttpOnly${secure}`
+  const cookie = `${cookieName(ctx, route.request)}=${encodeURIComponent(secret)}; Expires=${new Date(session.expire).toUTCString()}; Path=/; HttpOnly${secure}`
   return json(sessionModel(session, { current: true, country }), 201, {
     'set-cookie': cookie,
-    'x-fallback-cookies': JSON.stringify({ [cookieName(ctx)]: secret }),
+    'x-fallback-cookies': JSON.stringify({ [cookieName(ctx, route.request)]: secret }),
   })
 }
 
@@ -184,11 +186,11 @@ export function accountRoutes(router: Router<AppContext>): void {
     return json(sessionModel(session, { current: id === ctx.caller.sessionId }))
   })
 
-  router.delete('/account/sessions/:sessionId', ({ ctx, path }) => {
+  router.delete('/account/sessions/:sessionId', ({ ctx, path, request }) => {
     const user = me(ctx)
     const id = sessionIdOf(ctx, path.sessionId!)
     ctx.auth.deleteSession(user.id, id)
-    const headers = id === ctx.caller.sessionId ? { 'set-cookie': `${cookieName(ctx)}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly` } : {}
+    const headers = id === ctx.caller.sessionId ? { 'set-cookie': `${cookieName(ctx, request)}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly` } : {}
     return new Response(null, { status: 204, headers })
   })
 

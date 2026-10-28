@@ -6,8 +6,9 @@ import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
+import { apiHeader, corsHeaderNames } from './lib/compat'
 import { addVary, compressResponse } from './lib/compress'
-import { AppwriteError, err } from './lib/errors'
+import { BunwriteError, err } from './lib/errors'
 import { errorResponse, json, readParams } from './lib/http'
 import { parseTrustedProxies, rememberClientIp } from './lib/client-ip'
 import { logRequest, requestId, truncate } from './lib/log'
@@ -48,9 +49,12 @@ const HTMX_REQUEST_HEADERS =
 const HTMX_RESPONSE_HEADERS =
   'HX-Location, HX-Push-Url, HX-Redirect, HX-Refresh, HX-Replace-Url, HX-Reswap, HX-Retarget, HX-Reselect, HX-Trigger, HX-Trigger-After-Swap, HX-Trigger-After-Settle'
 
-const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, X-Appwrite-Project, X-Appwrite-Key, X-Appwrite-Locale, X-Appwrite-Mode, X-Appwrite-JWT, X-Appwrite-Response-Format, X-Appwrite-Timeout, X-Appwrite-ID, X-Appwrite-Timestamp, X-Appwrite-Session, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
+/** Bunwrite's and Appwrite's request headers, by short name (see lib/compat). */
+const API_HEADERS = corsHeaderNames(['Project', 'Key', 'Locale', 'Mode', 'JWT', 'Response-Format', 'Timeout', 'ID', 'Timestamp', 'Session', 'Organization'])
 
-const EXPOSE_HEADERS = `X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, ${HTMX_RESPONSE_HEADERS}`
+const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
+
+const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, ${HTMX_RESPONSE_HEADERS}`
 
 export { originAllowed }
 
@@ -94,7 +98,7 @@ export function createApp(source: Services | ProjectResolver) {
 
   /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
   async function callerOf(services: Services, request: Request, meta: RequestMeta): Promise<Caller> {
-    if (!request.headers.get('x-appwrite-key')) {
+    if (!apiHeader(request, 'key')) {
       const admin = consoleApi.adminOf(request)
       if (admin) {
         meta.auth = `console:${admin.email}`
@@ -106,7 +110,7 @@ export function createApp(source: Services | ProjectResolver) {
     return caller
   }
 
-  const projectOf = (request: Request, url: URL) => request.headers.get('x-appwrite-project') ?? url.searchParams.get('project')
+  const projectOf = (request: Request, url: URL) => apiHeader(request, 'project') ?? url.searchParams.get('project')
 
   /** Which project's services handle this request. */
   function runtimeFor(request: Request, url: URL): ProjectRuntime {
@@ -218,12 +222,12 @@ export function createApp(source: Services | ProjectResolver) {
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
       // A browser typing a wrong address gets a page; SDKs and /v1 keep Appwrite's JSON error.
-      if (error instanceof AppwriteError && error.type === 'general_route_not_found' && wantsHtml(request, pathname)) {
+      if (error instanceof BunwriteError && error.type === 'general_route_not_found' && wantsHtml(request, pathname)) {
         return notFoundPage(runtime.services.config.consoleEnabled, runtime.services.config.projectName)
       }
       runtime.services.store.drainEvents()
       response = errorResponse(error)
-      if (!(error instanceof AppwriteError)) console.error(error)
+      if (!(error instanceof BunwriteError)) console.error(error)
     }
     for (const [k, v] of Object.entries(cors(request, runtime.services.config.allowedOrigins))) {
       // Keep a handler's Vary (for example Accept-Encoding) and add Origin beside it.
@@ -269,7 +273,7 @@ export function createApp(source: Services | ProjectResolver) {
             requestBytes: Number(request.headers.get('content-length') ?? 0) || 0,
             responseBytes,
             ip: logConfig.logIp ? ip || undefined : undefined,
-            project: truncate(meta.project ?? request.headers.get('x-appwrite-project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
+            project: truncate(meta.project ?? apiHeader(request, 'project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
             auth: truncate(meta.auth ?? '', 200) || undefined,
             referer: truncate(request.headers.get('referer') ?? '', 2000) || undefined,
             userAgent: truncate(request.headers.get('user-agent') ?? '', 2000) || undefined,

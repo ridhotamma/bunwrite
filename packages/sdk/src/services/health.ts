@@ -13,7 +13,7 @@ export class Health {
         return this.client.call('get', new URL(this.client.config.endpoint + '/health'), { accept: 'application/json' });
     }
 
-    /** The Appwrite API version the server is compatible with. */
+    /** The API version the server reports. */
     getVersion(): Promise<{ version: string }> {
         return this.client.call('get', new URL(this.client.config.endpoint + '/health/version'), { accept: 'application/json' });
     }

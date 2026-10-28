@@ -21,7 +21,7 @@ the Appwrite API most apps use. Existing apps keep using the official
 - **Multiple projects.** Each project has its own database, users, teams,
   storage, functions and API keys; switch projects in the console.
 - **Admin console included.** Manage databases, users, teams, files, functions,
-  schema, storage, backups and logs without a separate dashboard.
+  webhooks, schema, storage, backups and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
   processes with Appwrite's `context` API. In the Docker image each function
   builds and runs as its own Linux user, so it cannot read the database,
@@ -145,7 +145,9 @@ const databases = new Databases(client)
 ```
 
 The same endpoint works with the browser `appwrite` SDK. `X-Appwrite-*`
-headers, sessions, cookies and error shapes follow Appwrite.
+headers, sessions, cookies and error shapes follow Appwrite. See
+[Bunwrite or Appwrite naming](#bunwrite-or-appwrite-naming) for the webhook
+headers and function variables.
 
 ## Bunwrite SDK and CLI
 
@@ -158,9 +160,12 @@ with no dependencies and no code shared with the server:
   switching is usually a change of import. Adds `Render` for the HTML-to-PDF
   and image endpoints.
 - [`@bunwrite/cli`](packages/cli/README.md): `bunwrite client`, `login`,
-  `init project`, `pull`/`push` of the same `appwrite.config.json` format
-  (or `bunwrite.config.json`), function deploys, and one command per SDK
-  method.
+  `init project`, `pull`/`push` of `bunwrite.config.json` (or `bunwrite.json`;
+  Appwrite's `appwrite.config.json` works too, same format), function deploys,
+  and one command per SDK method.
+
+Both use Bunwrite's names (`X-Bunwrite-*` headers, `bw_session_*` cookies), so
+they need a server from this version on.
 
 ```ts
 import { Client, Databases } from '@bunwrite/sdk'
@@ -170,6 +175,29 @@ import { Client, Databases } from '@bunwrite/sdk'
 bunwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
 bunwrite pull all
 ```
+
+## Bunwrite or Appwrite naming
+
+The server reads both naming families, so the Bunwrite SDK and CLI and the
+Appwrite SDKs and CLI all work whatever the setting: `X-Bunwrite-*` and
+`X-Appwrite-*` headers, `bw_session_<project>` and `a_session_<project>`
+cookies, and `bunwrite.config.json`, `bunwrite.json` or `appwrite.config.json`.
+
+A session cookie follows the request: a sign-in made with `X-Appwrite-Project`
+(the Appwrite SDKs and CLI) gets `a_session_<project>`, one made with
+`X-Bunwrite-Project` gets `bw_session_<project>`. For what has no request to
+follow, `API_COMPAT` in `.env` decides:
+
+| | `API_COMPAT=bunwrite` (default) | `API_COMPAT=appwrite` |
+| --- | --- | --- |
+| Webhook headers | `X-Bunwrite-Webhook-Id`, `-Signature`, … | `X-Appwrite-Webhook-Id`, `-Signature`, … |
+| Function variables | `BUNWRITE_FUNCTION_ID`, `BUNWRITE_API_KEY`, `BUNWRITE_ENDPOINT`, … | the same plus `APPWRITE_FUNCTION_ID`, `APPWRITE_API_KEY`, … |
+| Session cookie without a project header (`?project=`) | `bw_session_<project>` | `a_session_<project>` |
+| Config file the console exports | `bunwrite.config.json` | `appwrite.config.json` |
+
+Moving from Appwrite, set `API_COMPAT=appwrite` so webhook receivers and
+functions written for Appwrite keep working unchanged. Error bodies, paths,
+`$id`-style fields and the function `context` API are the same in both modes.
 
 ## Console
 
@@ -202,7 +230,7 @@ the database; later environment changes are ignored.
 The console index is the organization page: it lists your projects, with tabs
 for the organization members and its settings. Open a project to enter its
 dashboard. The project switcher in the sidebar changes which project every page
-edits. Apps select a project with the `X-Appwrite-Project` header. The first
+edits. Apps select a project with the `X-Bunwrite-Project` (or `X-Appwrite-Project`) header. The first
 project is the existing database; additional projects live under
 `data/projects/<project-id>/`. Users, databases, storage, functions, request
 logs, backups, settings and API keys are scoped to the selected project.
@@ -220,9 +248,9 @@ so they can be shared directly.
 | Account | email + password, email OTP, token sessions, Google OAuth2 token flow, recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
-| Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `x-appwrite-id`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
+| Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`) |
+| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`) |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
 | Messaging | topics (create, list, update, delete) |
@@ -241,8 +269,7 @@ cancel the real one.
 - On the raw wire, some documents list `$id` before their attributes where live
   lists it after; the SDKs parse both to the same object.
 - Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
-  login; magic URLs; sending messages (topics are stored only); Sites;
-  scheduled executions.
+  login; magic URLs; sending messages (topics are stored only); Sites.
 - Switched-off services, protocols and sign-in methods stop clients; API keys
   and console admins are exempt, as on Appwrite. The password dictionary and
   history, session alert and invalidation, membership privacy and email-domain
@@ -273,7 +300,7 @@ cancel the real one.
 | `bun run build` | Build the standalone `dist/bunwrite` executable |
 | `bun run demo` | Self-contained demo with sample data |
 | `bun run console:admin <email> [--remove]` | Create, reset or remove a console admin |
-| `bun run schema:push <appwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
+| `bun run schema:push <bunwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
 | `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
 | `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs |
 | `bun run autotune` | Show the resource limits detected from the host/cgroup |

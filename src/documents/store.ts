@@ -9,7 +9,7 @@ import type { Caller } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
 import { q, type Db } from '~/db/connection'
 import { normalizeDate, now } from '~/lib/datetime'
-import { AppwriteError, err, invalidStructure } from '~/lib/errors'
+import { BunwriteError, err, invalidStructure } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
 import type { Collection } from '~/schema/types'
 import { decodeRow, encodeAttributes, type Doc, type SqlValue } from './codec'
@@ -476,4 +476,4 @@ export class DocumentStore {
   }
 }
 
-export const isAppwriteError = (e: unknown): e is AppwriteError => e instanceof AppwriteError
+export const isBunwriteError = (e: unknown): e is BunwriteError => e instanceof BunwriteError

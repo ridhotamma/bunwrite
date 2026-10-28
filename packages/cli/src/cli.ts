@@ -1,7 +1,6 @@
 /**
- * Bunwrite CLI. Commands follow the Appwrite CLI: `client`, `login`, `whoami`,
- * `logout`, `init project`, `pull`/`push` of the project config, and one
- * command per SDK service.
+ * Bunwrite CLI: `client`, `login`, `whoami`, `logout`, `init project`,
+ * `pull`/`push` of the project config, and one command per SDK service.
  */
 import { SDK_VERSION } from '@bunwrite/sdk'
 
@@ -26,7 +25,7 @@ ${bold('Connect')}
   whoami                                                       Who is signed in
   logout                                                       Sign out, here and on the server
 
-${bold('Project config')} (bunwrite.config.json, or an existing appwrite.config.json)
+${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing appwrite.config.json works too)
   init project --project-id <id> [--organization-id <id>] [--create --project-name <name>]
   pull <what>     Write the server's state into the config
   push <what>     Apply the config to the server

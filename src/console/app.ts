@@ -8,7 +8,7 @@ import type { Server } from 'bun'
 import { parseCookies } from '~/auth/caller'
 import { clearInstanceApiKey } from '~/instance/bootstrap'
 import { clientIpOf } from '~/lib/client-ip'
-import { AppwriteError } from '~/lib/errors'
+import { BunwriteError } from '~/lib/errors'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
 import { OrganizationService } from '~/organizations/service'
@@ -248,7 +248,7 @@ export function createConsole(source: Services | ProjectResolver) {
         return await match.handler({ request, url, params: {}, path: match.path, ctx })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (!(error instanceof AppwriteError)) console.error('[console]', error)
+        if (!(error instanceof BunwriteError)) console.error('[console]', error)
         if (request.method === 'POST') return back(request, { tone: 'critical', text: message })
         return ctx.render('Error', '', html`${header('Something went wrong')}${alert('critical', html`${message}`)}`)
       }

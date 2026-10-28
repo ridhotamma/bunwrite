@@ -10,7 +10,7 @@
 import { existsSync } from 'node:fs'
 
 import type { Config } from '~/config'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { loadSharp } from '~/storage/sharp'
 import { avifTooLarge, maxAvifPixels } from '~/storage/transform'
 
@@ -252,7 +252,7 @@ export class RenderService {
         // Chromium can be briefly unlaunchable: it may be auto-updating, or the
         // browser from a killed render may not have exited yet. One fresh
         // attempt recovers without turning a transient failure into a 500.
-        if (error instanceof AppwriteError) throw error
+        if (error instanceof BunwriteError) throw error
         console.warn(`[render] Chromium failed, retrying once: ${error instanceof Error ? error.message : String(error)}`)
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
         return attempt()

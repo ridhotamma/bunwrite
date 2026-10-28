@@ -5,7 +5,7 @@
  */
 import { keyCaller } from '~/auth/caller'
 import type { DocumentStore } from '~/documents/store'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { normalizeAttribute, type Attribute, type Collection } from '~/schema/types'
 
 type Spec = [key: string, type: Attribute['type'], array?: boolean]
@@ -84,7 +84,7 @@ export function listSeqs(store: DocumentStore, collection: Collection, queries: 
     const result = store.listDocuments(keyCaller(), collection, all, options.includeTotal ?? true)
     return { total: result.total, seqs: result.documents.map((d) => Number(d.$sequence)) }
   } catch (error) {
-    if (error instanceof AppwriteError && error.type === 'general_query_invalid') {
+    if (error instanceof BunwriteError && error.type === 'general_query_invalid') {
       throw err('general_argument_invalid', `Invalid \`queries\` param: ${error.message}`)
     }
     throw error

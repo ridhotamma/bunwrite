@@ -7,6 +7,7 @@
  * - Nothing: a guest, with `any` and `guests`.
  */
 import type { Db } from '~/db/connection'
+import { apiHeader, sessionFromCookies } from '~/lib/compat'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { sha256 } from '~/lib/ids'
@@ -65,23 +66,11 @@ export function userCaller(db: Db, user: UserRow, sessionId: string | null): Cal
   return { kind: 'user', privileged: false, user, sessionId, roles: rolesForUser(db, user) }
 }
 
-/** Read the session secret from the header, the `a_session_<project>` cookie, or X-Fallback-Cookies. */
+/** Read the session secret from the session header, the project's session cookie, or X-Fallback-Cookies (either naming). */
 export function sessionSecret(request: Request, projectId: string): string | null {
-  const header = request.headers.get('x-appwrite-session')
+  const header = apiHeader(request, 'session')
   if (header) return header
-  const name = `a_session_${projectId.toLowerCase()}`
-  const cookies = parseCookies(request.headers.get('cookie') ?? '')
-  if (cookies[name]) return cookies[name]!
-  const fallback = request.headers.get('x-fallback-cookies')
-  if (fallback) {
-    try {
-      const parsed = JSON.parse(fallback) as Record<string, string>
-      if (parsed[name]) return parsed[name]!
-    } catch {
-      /* ignore malformed fallback cookies */
-    }
-  }
-  return null
+  return sessionFromCookies(parseCookies(request.headers.get('cookie') ?? ''), request.headers.get('x-fallback-cookies'), projectId)
 }
 
 export function parseCookies(header: string): Record<string, string> {
@@ -133,7 +122,7 @@ export async function jwtCaller(db: Db, config: Config, jwt: string): Promise<Ca
 }
 
 export async function resolveCaller(db: Db, config: Config, request: Request): Promise<Caller> {
-  const key = request.headers.get('x-appwrite-key')
+  const key = apiHeader(request, 'key')
   if (key) {
     if (!apiKeyValid(db, config, key)) throw err('general_unauthorized_scope', 'Invalid API key.')
     return keyCaller()
@@ -141,7 +130,7 @@ export async function resolveCaller(db: Db, config: Config, request: Request): P
 
   // A JWT in the query string is accepted for the realtime socket only, as on Appwrite.
   const url = new URL(request.url)
-  const jwt = request.headers.get('x-appwrite-jwt') ?? (url.pathname.endsWith('/realtime') ? url.searchParams.get('jwt') : null)
+  const jwt = apiHeader(request, 'jwt') ?? (url.pathname.endsWith('/realtime') ? url.searchParams.get('jwt') : null)
   if (jwt) {
     const caller = await jwtCaller(db, config, jwt)
     if (!caller) throw err('user_jwt_invalid')

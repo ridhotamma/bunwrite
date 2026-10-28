@@ -168,7 +168,7 @@ class Client {
         'x-sdk-platform': inBrowser() ? 'client' : 'server',
         'x-sdk-language': inBrowser() ? 'web' : 'nodejs',
         'x-sdk-version': SDK_VERSION,
-        'X-Appwrite-Response-Format': '2.0.0',
+        'X-Bunwrite-Response-Format': '2.0.0',
         // Browsers set their own user agent and refuse this header.
         ...(inBrowser() ? {} : { 'user-agent': userAgent() }),
     };
@@ -238,42 +238,42 @@ class Client {
 
     /** Set Project: your project ID. */
     setProject(value: string): this {
-        this.headers['X-Appwrite-Project'] = value;
+        this.headers['X-Bunwrite-Project'] = value;
         this.config.project = value;
         return this;
     }
 
     /** Set Key: your secret API key. Server side only. */
     setKey(value: string): this {
-        this.headers['X-Appwrite-Key'] = value;
+        this.headers['X-Bunwrite-Key'] = value;
         this.config.key = value;
         return this;
     }
 
     /** Set Organization: your organization ID. */
     setOrganization(value: string): this {
-        this.headers['X-Appwrite-Organization'] = value;
+        this.headers['X-Bunwrite-Organization'] = value;
         this.config.organization = value;
         return this;
     }
 
     /** Set JWT: a user's JSON Web Token. */
     setJWT(value: string): this {
-        this.headers['X-Appwrite-JWT'] = value;
+        this.headers['X-Bunwrite-JWT'] = value;
         this.config.jwt = value;
         return this;
     }
 
     /** Set Locale. */
     setLocale(value: string): this {
-        this.headers['X-Appwrite-Locale'] = value;
+        this.headers['X-Bunwrite-Locale'] = value;
         this.config.locale = value;
         return this;
     }
 
     /** Set Session: the session secret of a user, to act as them. */
     setSession(value: string): this {
-        this.headers['X-Appwrite-Session'] = value;
+        this.headers['X-Bunwrite-Session'] = value;
         this.config.session = value;
         return this;
     }
@@ -398,7 +398,8 @@ class Client {
                         let session = this.config.session;
                         if (!session) {
                             const cookie = JSONbig.parse(storage()?.getItem('cookieFallback') ?? '{}');
-                            session = cookie?.[`a_session_${this.config.project}`];
+                            // bw_session_<project>, or a_session_<project> from an Appwrite-mode server.
+                            session = cookie?.[`bw_session_${this.config.project}`] ?? cookie?.[`a_session_${this.config.project}`];
                         }
                         if (session && !messageData?.user) {
                             this.realtime.socket?.send(
@@ -551,7 +552,7 @@ class Client {
     }
 
     /**
-     * Upload a file in 5 MB chunks (`Content-Range`, `x-appwrite-id`), up to 8 at a time.
+     * Upload a file in 5 MB chunks (`Content-Range`, `X-Bunwrite-ID`), up to 8 at a time.
      * Accepts a `File` or an `InputFile`.
      */
     async chunkedUpload(
@@ -616,7 +617,7 @@ class Client {
 
         const uploadChunk = async (chunk: { start: number; end: number }) => {
             const chunkHeaders: Headers = { ...headers, 'content-range': `bytes ${chunk.start}-${chunk.end - 1}/${size}` };
-            if (uploadId) chunkHeaders['x-appwrite-id'] = uploadId;
+            if (uploadId) chunkHeaders['x-bunwrite-id'] = uploadId;
             const chunkPayload = { ...originalPayload };
             chunkPayload[fileParam] = new File([(await slice(chunk.start, chunk.end)) as any], name);
 
@@ -691,7 +692,7 @@ class Client {
             );
         }
 
-        const warnings = response.headers.get('x-appwrite-warning');
+        const warnings = response.headers.get('x-bunwrite-warning') ?? response.headers.get('x-appwrite-warning');
         if (warnings) warnings.split(';').forEach((warning) => console.warn('Warning: ' + warning));
 
         const isJson = response.headers.get('content-type')?.includes('application/json');
@@ -742,7 +743,7 @@ class Client {
     }
 }
 
-export { Client, BunwriteException, BunwriteException as AppwriteException, JSONbig };
+export { Client, BunwriteException, JSONbig };
 export { Query } from './query';
 export type { Models, Payload, UploadProgress };
 export type { QueryTypes, QueryTypesList } from './query';

@@ -11,7 +11,8 @@ import type { Caller } from '~/auth/caller'
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
-import { now } from '~/lib/datetime'
+import { CREDENTIAL_HEADERS, functionVariables } from '~/lib/compat'
+import { formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import { normalizeAttribute, type Collection } from '~/schema/types'
@@ -22,7 +23,9 @@ import { deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
 import { pythonRunner } from './runtime'
 
-const RESULT_MARKER = '__APPWRITE_EXECUTION_RESULT__'
+const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
+/** Request headers a function never sees: credentials. */
+const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
 const SYNC_TIMEOUT = 30
 const RUNNER_NODE = join(import.meta.dir, 'runner-node.ts')
 const NODE_RUNNER_MODE = '__bunwrite-runner-node'
@@ -96,6 +99,7 @@ export interface ExecutionRow {
   errors: string
   duration: number
   scheduled_at: string | null
+  user_id: string | null
   created_at: string
   updated_at: string
 }
@@ -121,6 +125,12 @@ export interface ExecutionRequest {
   path?: string
   headers?: Record<string, string>
   body?: string
+  /**
+   * The request body exactly as it arrived, when it came over HTTP. `body` is
+   * its UTF-8 reading, which mangles binary uploads; runners build
+   * `req.bodyBinary` from these bytes instead, as Appwrite does.
+   */
+  bodyBytes?: Uint8Array
   userId?: string | null
 }
 
@@ -458,14 +468,19 @@ export class FunctionService {
     }
   }
 
+  /** Request headers as stored on a row: the ones a function may see, in wire order. */
+  private headerList(headers: Record<string, string> | undefined): { name: string; value: string }[] {
+    return Object.entries(headers ?? {})
+      .filter(([k]) => !HIDDEN_HEADERS.has(k.toLowerCase()))
+      .map(([name, value]) => ({ name, value }))
+  }
+
   /** Create an execution. Async ones return at once with status `waiting`. */
   async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async'): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
     if (!f.enabled) throw err('function_not_found')
     const id = uniqueId()
     const stamp = now()
-    const headers = Object.entries(request.headers ?? {})
-      .filter(([k]) => !/^(authorization|cookie|x-appwrite-key|x-appwrite-session|x-appwrite-jwt|x-fallback-cookies)$/i.test(k))
-      .map(([name, value]) => ({ name, value }))
+    const headers = this.headerList(request.headers)
     this.sql
       .query(
         `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, created_at, updated_at)
@@ -481,7 +496,31 @@ export class FunctionService {
     return { execution: this.execution(f.id, id), result }
   }
 
-  /** Environment for a run or a build: server env without secrets, function variables, and Appwrite's APPWRITE_FUNCTION_* values. */
+  /**
+   * Store a one-off execution to run at `scheduledAt` instead of running it now.
+   *
+   * Appwrite's deferred execution: the row is written immediately with status
+   * `scheduled`, and `tickScheduled` runs it when its time comes. The id the
+   * caller gets back is the execution that eventually runs — it is never
+   * replaced by a second row.
+   */
+  schedule(f: FunctionRow, request: ExecutionRequest, scheduledAt: string): ExecutionRow {
+    if (!f.enabled) throw err('function_not_found')
+    const id = uniqueId()
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, scheduled_at, user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, f.id, 'schedule', 'scheduled', request.method ?? 'POST', request.path ?? '/', JSON.stringify(this.headerList(request.headers)), request.body ?? '', scheduledAt, request.userId ?? null, stamp, stamp)
+    return this.execution(f.id, id)
+  }
+
+  /**
+   * Environment for a run or a build: server env without secrets, function variables, and
+   * BUNWRITE_FUNCTION_* values (plus APPWRITE_FUNCTION_* in Appwrite mode).
+   */
   env(f: FunctionRow, trigger: string): Record<string, string> {
     const base: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
@@ -494,24 +533,28 @@ export class FunctionService {
       vars[v.key] = v.value
     }
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
+    const own = { ...this.options.functionEnv, ...vars }
+    const fromVars = (name: string) => own[`BUNWRITE_${name}`] ?? own[`APPWRITE_${name}`]
     return {
       ...base,
       ...this.options.functionEnv,
       ...vars,
-      APPWRITE_FUNCTION_API_ENDPOINT: endpoint,
-      APPWRITE_FUNCTION_ID: f.id,
-      APPWRITE_FUNCTION_NAME: f.name,
-      APPWRITE_FUNCTION_DEPLOYMENT: f.deployment_id || f.id,
-      APPWRITE_FUNCTION_PROJECT_ID: this.config.projectId,
-      APPWRITE_FUNCTION_RUNTIME_NAME: runtimeName ?? '',
-      APPWRITE_FUNCTION_RUNTIME_VERSION: runtimeVersion ?? '',
-      APPWRITE_FUNCTION_TRIGGER: trigger,
-      APPWRITE_FUNCTION_CPUS: '1',
-      APPWRITE_FUNCTION_MEMORY: '512',
-      // Appwrite hands functions a key; this server hands them its own.
-      APPWRITE_API_KEY: vars.APPWRITE_API_KEY ?? this.options.functionEnv?.APPWRITE_API_KEY ?? key,
-      APPWRITE_ENDPOINT: vars.APPWRITE_ENDPOINT ?? this.options.functionEnv?.APPWRITE_ENDPOINT ?? endpoint,
-      APPWRITE_PROJECT_ID: this.config.projectId,
+      ...functionVariables(this.config, {
+        FUNCTION_API_ENDPOINT: endpoint,
+        FUNCTION_ID: f.id,
+        FUNCTION_NAME: f.name,
+        FUNCTION_DEPLOYMENT: f.deployment_id || f.id,
+        FUNCTION_PROJECT_ID: this.config.projectId,
+        FUNCTION_RUNTIME_NAME: runtimeName ?? '',
+        FUNCTION_RUNTIME_VERSION: runtimeVersion ?? '',
+        FUNCTION_TRIGGER: trigger,
+        FUNCTION_CPUS: '1',
+        FUNCTION_MEMORY: '512',
+        // Functions get a key from this server; a variable of their own wins.
+        API_KEY: fromVars('API_KEY') ?? key,
+        ENDPOINT: fromVars('ENDPOINT') ?? endpoint,
+        PROJECT_ID: this.config.projectId,
+      }),
     }
   }
 
@@ -560,7 +603,7 @@ export class FunctionService {
       if (!dir) {
         throw new Error(
           `Function code not found. Looked for ${tried.join(' and ')}. ` +
-            'Set the code folder (the folder with appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
+            'Set the code folder (the folder with bunwrite.config.json or appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
         )
       }
       const sandbox = this.config.functionsSandbox
@@ -589,6 +632,7 @@ export class FunctionService {
           path: request.path ?? '/',
           headers: Object.fromEntries(Object.entries(request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])),
           body: request.body ?? '',
+          ...(request.bodyBytes ? { bodyBase64: Buffer.from(request.bodyBytes).toString('base64') } : {}),
           host: url.hostname,
           scheme: url.protocol.replace(':', ''),
           port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
@@ -632,10 +676,14 @@ export class FunctionService {
     return { statusCode, headers, body }
   }
 
-  /** Run due schedules once a minute. */
+  /** Run due cron schedules (once a minute) and due deferred executions (every tick). */
   start(): void {
     if (this.timer) return
-    this.timer = setInterval(() => this.tick(new Date()), 15_000)
+    this.timer = setInterval(() => {
+      const date = new Date()
+      this.tick(date)
+      this.tickScheduled(date)
+    }, 15_000)
     this.timer.unref?.()
   }
 
@@ -662,6 +710,48 @@ export class FunctionService {
       if (!due) continue
       fired.push(f.id)
       this.execute(f, { trigger: 'schedule', method: 'POST', path: '/' }, 'async').catch((e) => console.error(`[functions] ${f.id}`, e))
+    }
+    return fired
+  }
+
+  /**
+   * Run the one-off executions `scheduledAt` deferred whose time has come.
+   *
+   * Rows are claimed by `run()`, which flips `scheduled` to `processing` before
+   * its first await, so a slow run can never be picked up twice. A run that is
+   * still going leaves the rest of that function's queue for the next tick
+   * rather than overlapping it, matching the cron path.
+   */
+  tickScheduled(date: Date): string[] {
+    const due = this.sql
+      .query<ExecutionRow, [string, number]>(
+        "SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?",
+      )
+      .all(formatDate(date), 50)
+    const fired: string[] = []
+    for (const row of due) {
+      let f: FunctionRow
+      try {
+        f = this.fn(row.function_id)
+      } catch {
+        this.sql
+          .query("UPDATE _executions SET status = 'failed', errors = ?, updated_at = ? WHERE id = ?")
+          .run('The function was deleted before this execution ran.', now(), row.id)
+        continue
+      }
+      if ((this.running.get(f.id) ?? 0) > 0) continue
+      fired.push(row.id)
+      const request: ExecutionRequest = {
+        trigger: 'schedule',
+        method: row.request_method,
+        path: row.request_path,
+        headers: Object.fromEntries(
+          parse<{ name: string; value: string }[]>(row.request_headers, []).map((h) => [h.name, h.value]),
+        ),
+        body: row.request_body,
+        userId: row.user_id,
+      }
+      this.run(row.id, f, request, f.timeout).catch((e) => console.error(`[functions] ${f.id}`, e))
     }
     return fired
   }

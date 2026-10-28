@@ -1,11 +1,11 @@
 /**
  * Bunwrite SDK: one client for browsers, Bun, Node.js and edge runtimes.
  *
- * The API follows Appwrite's SDKs, so code written for `appwrite` or
- * `node-appwrite` works after changing the import, for the endpoints Bunwrite
- * serves.
+ * Its services and methods have the same shape as Appwrite's SDKs, so code
+ * written for them ports by changing the import (and AppwriteException to
+ * BunwriteException).
  */
-export { Client, BunwriteException, AppwriteException, JSONbig, SDK_VERSION } from './client';
+export { Client, BunwriteException, JSONbig, SDK_VERSION } from './client';
 export type { Payload, UploadProgress, RealtimeResponseEvent } from './client';
 export type { Models } from './models';
 

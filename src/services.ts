@@ -63,7 +63,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const requestLogs = new RequestLogService(db, config)
   const backups = new BackupService(db, config)
   const render = new RenderService(config)
-  const webhooks = new WebhookService(db, () => config.projectId)
+  const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
   const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render, webhooks, topics, templates } as Services

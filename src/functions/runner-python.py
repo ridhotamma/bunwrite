@@ -10,6 +10,7 @@ folder first, then the function's folder, then `.python_packages` (where
 deployments.ts), and only then in Python's own paths.
 """
 import asyncio
+import base64
 import importlib.util
 import inspect
 import io
@@ -20,7 +21,7 @@ import traceback
 import contextlib
 from urllib.parse import parse_qsl
 
-RESULT_MARKER = "__APPWRITE_EXECUTION_RESULT__"
+RESULT_MARKER = "__BUNWRITE_EXECUTION_RESULT__"
 
 
 class Request:
@@ -37,7 +38,9 @@ class Request:
         self.url = f"{self.scheme}://{self.host}{data['path']}"
         self.body_raw = data["body"]
         self.body_text = data["body"]
-        self.body_binary = data["body"].encode("utf-8")
+        # The raw bytes when the request came over HTTP; `body` is their UTF-8 reading.
+        raw = data.get("bodyBase64")
+        self.body_binary = base64.b64decode(raw) if raw is not None else data["body"].encode("utf-8")
 
     @property
     def body_json(self):
@@ -107,7 +110,7 @@ def main():
     context = Context(data, logs, errors)
     captured = io.StringIO()
     try:
-        spec = importlib.util.spec_from_file_location("appwrite_function", entry)
+        spec = importlib.util.spec_from_file_location("bunwrite_function", entry)
         module = importlib.util.module_from_spec(spec)
         with contextlib.redirect_stdout(captured):
             spec.loader.exec_module(module)

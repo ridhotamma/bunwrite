@@ -419,7 +419,7 @@ export const webhooks = sqliteTable('_webhooks', {
   tls: integer('tls', { mode: 'boolean' }).notNull().default(true),
   authUsername: text('auth_username').notNull().default(''),
   authPassword: text('auth_password').notNull().default(''),
-  /** Signs each delivery (X-Appwrite-Webhook-Signature). */
+  /** Signs each delivery (the X-Bunwrite-Webhook-Signature header, or X-Appwrite-Webhook-Signature). */
   secret: text('secret').notNull(),
   /** The last delivery error, empty after a success. */
   logs: text('logs').notNull().default(''),

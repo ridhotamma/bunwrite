@@ -21,7 +21,7 @@ import type { MessageStatus } from './enums/message-status';
 import type { BillingPlanGroup } from './enums/billing-plan-group';
 
 /**
- * Appwrite Models
+ * Bunwrite Models
  */
 export declare namespace Models {
     const __default: unique symbol;
@@ -3880,7 +3880,7 @@ export declare namespace Models {
          */
         adapter: string;
         /**
-         * Name of fallback file to use instead of 404 page. If null, Appwrite 404 page will be displayed.
+         * Name of fallback file to use instead of 404 page. If null, Bunwrite 404 page will be displayed.
          */
         fallbackFile: string;
     };
@@ -4100,7 +4100,7 @@ export declare namespace Models {
          */
         outputDirectory: string;
         /**
-         * Name of fallback file to use instead of 404 page. If null, Appwrite 404 page will be displayed.
+         * Name of fallback file to use instead of 404 page. If null, Bunwrite 404 page will be displayed.
          */
         fallbackFile?: string;
     };
@@ -5437,11 +5437,11 @@ export declare namespace Models {
          */
         enabled: boolean;
         /**
-         * Appwrite OAuth2 client ID.
+         * Bunwrite OAuth2 client ID.
          */
         clientId: string;
         /**
-         * Appwrite OAuth2 client secret.
+         * Bunwrite OAuth2 client secret.
          */
         clientSecret: string;
     };
@@ -7365,7 +7365,7 @@ export declare namespace Models {
          */
         customSmtp: boolean;
         /**
-         * Appwrite branding in email
+         * Bunwrite branding in email
          */
         emailBranding: boolean;
         /**
@@ -9209,7 +9209,7 @@ export declare namespace Models {
          */
         scopes: string[];
         /**
-         * Authorization details granted to the application. Rich authorization request (RFC 9396) style entries; the Appwrite Console stores authorized project IDs here.
+         * Authorization details granted to the application. Rich authorization request (RFC 9396) style entries; the Bunwrite Console stores authorized project IDs here.
          */
         authorizationDetails: Record<string, any>[];
         /**

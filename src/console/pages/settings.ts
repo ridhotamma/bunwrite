@@ -14,7 +14,7 @@ import { inlineStatus, settingsView } from '~/console/views/settings'
 import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-meta'
 import { templatePath, templatePreview } from '~/console/views/templates'
 import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
-import { AppwriteError } from '~/lib/errors'
+import { BunwriteError } from '~/lib/errors'
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
 function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
@@ -83,7 +83,7 @@ export function settingsPages(router: ConsoleRouter): void {
       ctx.services.templates.update(id, fields)
     } catch (error) {
       // Keep what was typed on the page instead of losing it on a redirect.
-      if (!(error instanceof AppwriteError)) throw error
+      if (!(error instanceof BunwriteError)) throw error
       return ctx.render('Email templates', 'settings', html`${alert('critical', html`${error.message}`)}${await settingsView(ctx, 'templates', { template: id, fields })}`)
     }
     return ctx.go(templatePath(id), { tone: 'success', text: 'Template updated' })

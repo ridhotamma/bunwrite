@@ -1,7 +1,7 @@
 /**
  * `bunwrite <service> <method> --param value ...`: any SDK call from the
- * command line, like the Appwrite CLI's service commands. Method and flag
- * names are the SDK's in kebab-case: `databases list-documents --database-id main`.
+ * command line. Method and flag names are the SDK's in kebab-case:
+ * `databases list-documents --database-id main`.
  */
 import { existsSync, writeFileSync } from 'node:fs'
 

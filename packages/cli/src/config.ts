@@ -3,8 +3,9 @@
  *
  * - Global preferences, `~/.bunwrite/prefs.json` (or `$BUNWRITE_HOME/prefs.json`):
  *   the endpoint, and an API key and/or a console sign-in.
- * - The project config in the current folder: `bunwrite.config.json`, or an
- *   existing `appwrite.config.json`, which has the same format.
+ * - The project config in the current folder: `bunwrite.config.json` or
+ *   `bunwrite.json`. An existing `appwrite.config.json` (Appwrite's CLI) is read
+ *   and written too; its format is the same.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -17,7 +18,7 @@ export interface Session {
   projectId?: string
   key?: string
   email?: string
-  /** The `a_session_console=...` cookie of a console sign-in. */
+  /** The console session cookie (`bw_session_console=...`, or `a_session_console=...` from an Appwrite-mode server). */
   cookie?: string
   selfSigned?: boolean
 }
@@ -78,7 +79,8 @@ export interface ProjectConfig {
   [key: string]: unknown
 }
 
-export const CONFIG_FILES = ['bunwrite.config.json', 'appwrite.config.json']
+/** Looked for in this order; a new file is bunwrite.config.json. */
+export const CONFIG_FILES = ['bunwrite.config.json', 'bunwrite.json', 'appwrite.config.json']
 
 export function configPath(dir = process.cwd()): string {
   for (const name of CONFIG_FILES) if (existsSync(join(dir, name))) return join(dir, name)

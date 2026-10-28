@@ -449,7 +449,7 @@ export class Realtime {
         // completes — but the server only accepts `subscribe` frames after
         // it has emitted its own application-level `connected` event (which
         // flips `appConnected` to true in handleResponseConnected). Sending
-        // before then triggers a policy-violation close on real Appwrite,
+        // before then triggers a policy-violation close on real Bunwrite,
         // which reconnects, which sends early again — i.e. a duplicate-
         // socket loop. handleResponseConnected re-enqueues every active
         // subscription and calls this method again once it's safe, so the
@@ -787,7 +787,7 @@ export class Realtime {
                 const cookie = JSONbig.parse(
                     (typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('cookieFallback') : null) ?? '{}',
                 );
-                session = cookie?.[`a_session_${this.client.config.project}`];
+                session = cookie?.[`bw_session_${this.client.config.project}`] ?? cookie?.[`a_session_${this.client.config.project}`];
             } catch (error) {
                 console.error('Failed to parse cookie fallback:', error);
             }

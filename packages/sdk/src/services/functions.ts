@@ -88,7 +88,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -110,7 +110,7 @@ export class Functions {
      * @param {string} params.entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
      * @param {string} params.commands - Build Commands.
      * @param {ProjectKeyScopes[]} params.scopes - List of scopes allowed for API key auto-generated for every execution. Maximum of 200 scopes are allowed.
-     * @param {string} params.installationId - Appwrite Installation ID for VCS (Version Control System) deployment.
+     * @param {string} params.installationId - Bunwrite Installation ID for VCS (Version Control System) deployment.
      * @param {string} params.providerRepositoryId - Repository ID of the repo linked to the function.
      * @param {string} params.providerBranch - Production branch for the repo linked to the function.
      * @param {boolean} params.providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
@@ -162,7 +162,7 @@ export class Functions {
      * @param {string} entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
      * @param {string} commands - Build Commands.
      * @param {ProjectKeyScopes[]} scopes - List of scopes allowed for API key auto-generated for every execution. Maximum of 200 scopes are allowed.
-     * @param {string} installationId - Appwrite Installation ID for VCS (Version Control System) deployment.
+     * @param {string} installationId - Bunwrite Installation ID for VCS (Version Control System) deployment.
      * @param {string} providerRepositoryId - Repository ID of the repo linked to the function.
      * @param {string} providerBranch - Production branch for the repo linked to the function.
      * @param {boolean} providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
@@ -438,7 +438,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -494,7 +494,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -516,7 +516,7 @@ export class Functions {
      * @param {string} params.entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
      * @param {string} params.commands - Build Commands.
      * @param {ProjectKeyScopes[]} params.scopes - List of scopes allowed for API Key auto-generated for every execution. Maximum of 200 scopes are allowed.
-     * @param {string} params.installationId - Appwrite Installation ID for VCS (Version Controle System) deployment.
+     * @param {string} params.installationId - Bunwrite Installation ID for VCS (Version Controle System) deployment.
      * @param {string} params.providerRepositoryId - Repository ID of the repo linked to the function
      * @param {string} params.providerBranch - Production branch for the repo linked to the function
      * @param {boolean} params.providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
@@ -568,7 +568,7 @@ export class Functions {
      * @param {string} entrypoint - Entrypoint File. This path is relative to the "providerRootDirectory".
      * @param {string} commands - Build Commands.
      * @param {ProjectKeyScopes[]} scopes - List of scopes allowed for API Key auto-generated for every execution. Maximum of 200 scopes are allowed.
-     * @param {string} installationId - Appwrite Installation ID for VCS (Version Controle System) deployment.
+     * @param {string} installationId - Bunwrite Installation ID for VCS (Version Controle System) deployment.
      * @param {string} providerRepositoryId - Repository ID of the repo linked to the function
      * @param {string} providerBranch - Production branch for the repo linked to the function
      * @param {boolean} providerSilentMode - Is the VCS (Version Control System) connection in silent mode for the repo linked to the function? In silent mode, comments will not be made on commits and pull requests.
@@ -839,7 +839,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -893,7 +893,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -970,7 +970,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1075,7 +1075,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1085,12 +1085,12 @@ export class Functions {
     /**
      * Create a new function code deployment. Use this endpoint to upload a new version of your code function. To execute your newly uploaded code, you'll need to update the function's deployment to use your new deployment UID.
      *
-     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Appwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
+     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Bunwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
      *
      * Use the "command" param to set the entrypoint used to execute your code.
      *
      * @param {string} params.functionId - Function ID.
-     * @param {File | InputFile} params.code - Gzip file with your code package. When used with the Appwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
+     * @param {File | InputFile} params.code - Gzip file with your code package. When used with the Bunwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
      * @param {boolean} params.activate - Automatically activate the deployment when it is finished building.
      * @param {string} params.entrypoint - Entrypoint File.
      * @param {string} params.commands - Build Commands.
@@ -1108,12 +1108,12 @@ export class Functions {
     /**
      * Create a new function code deployment. Use this endpoint to upload a new version of your code function. To execute your newly uploaded code, you'll need to update the function's deployment to use your new deployment UID.
      *
-     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Appwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
+     * This endpoint accepts a tar.gz file compressed with your code. Make sure to include any dependencies your code has within the compressed file. You can learn more about code packaging in the [Bunwrite Cloud Functions tutorial](https://appwrite.io/docs/functions).
      *
      * Use the "command" param to set the entrypoint used to execute your code.
      *
      * @param {string} functionId - Function ID.
-     * @param {File | InputFile} code - Gzip file with your code package. When used with the Appwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
+     * @param {File | InputFile} code - Gzip file with your code package. When used with the Bunwrite CLI, pass the path to your code directory, and the CLI will automatically package your code. Use a path that is within the current directory.
      * @param {boolean} activate - Automatically activate the deployment when it is finished building.
      * @param {string} entrypoint - Entrypoint File.
      * @param {string} commands - Build Commands.
@@ -1221,7 +1221,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'multipart/form-data',
             accept: 'application/json',
         };
@@ -1304,7 +1304,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1377,7 +1377,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -1486,7 +1486,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: '*/*',
         };
 
@@ -1576,7 +1576,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1723,7 +1723,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -1797,7 +1797,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -1867,7 +1867,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 
@@ -1951,7 +1951,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -2078,7 +2078,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2152,7 +2152,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             accept: 'application/json',
         };
 
@@ -2269,7 +2269,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
             accept: 'application/json',
         };
@@ -2340,7 +2340,7 @@ export class Functions {
         const uri = new URL(this.client.config.endpoint + apiPath);
 
         const apiHeaders: { [header: string]: string } = {
-            'X-Appwrite-Project': this.client.config.project,
+            'X-Bunwrite-Project': this.client.config.project,
             'content-type': 'application/json',
         };
 

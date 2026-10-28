@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path'
 
 import type { FunctionSandbox } from './functions/sandbox'
+import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 
@@ -73,6 +74,11 @@ export interface BootstrapInfo {
 
 export interface Config {
   port: number
+  /**
+   * Names the server sends: `bunwrite` (X-Bunwrite-* webhook headers, bw_session cookies,
+   * BUNWRITE_* function variables) or `appwrite`. Both families are always accepted.
+   */
+  apiCompat: ApiCompat
   /** Interface to bind (defaults to all interfaces). */
   hostname: string
   /** SQLite file path. */
@@ -89,7 +95,7 @@ export interface Config {
   secret: string
   /** Browser origins allowed by CORS and as redirect targets. `*.example.com` matches subdomains. */
   allowedOrigins: string[]
-  /** Optional appwrite.config.json applied at startup. */
+  /** Optional project config file (bunwrite.config.json or appwrite.config.json) applied at startup. */
   schemaPath?: string
   /** Public URL of this API including /v1, used for OAuth callbacks and file links. */
   publicEndpoint: string
@@ -105,7 +111,7 @@ export interface Config {
   functionsEnvFile?: string
   /** Functions whose schedule is ignored. */
   skipSchedules: string[]
-  /** Folder that relative function paths resolve against: where appwrite.config.json lives. */
+  /** Folder that relative function paths resolve against: where the project config file lives. */
   functionsDir: string
   /** Run a function's build command (`commands`) on each new deployment. */
   functionsBuildCommands: boolean
@@ -193,6 +199,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
+    apiCompat: parseApiCompat(env.API_COMPAT),
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
     orgId: '',

@@ -333,4 +333,50 @@ describe('functions', () => {
     const runs = await admin.functions.listExecutions({ functionId: 'cron' })
     expect(runs.executions.map((e: any) => [e.trigger, e.status])).toEqual([['schedule', 'completed']])
   })
+
+  test('scheduledAt needs async, a real date, and a minute of lead time', async () => {
+    const soon = new Date(Date.now() + 30_000).toISOString()
+
+    expect(await failure(admin.functions.createExecution({ functionId: 'cron', scheduledAt: soon }))).toMatchObject({
+      code: 400,
+      message: 'Scheduled executions must run asynchronously. Set scheduledAt to a future date, or set async to true.',
+    })
+    expect(await failure(admin.functions.createExecution({ functionId: 'cron', async: true, scheduledAt: 'not-a-date' }))).toMatchObject({
+      code: 400,
+      message: 'Execution schedule must be a valid date, and at least 1 minute from now',
+    })
+    expect(await failure(admin.functions.createExecution({ functionId: 'cron', async: true, scheduledAt: soon }))).toMatchObject({
+      code: 400,
+      message: 'Execution schedule must be a valid date, and at least 1 minute from now',
+    })
+  })
+
+  test('a deferred execution keeps its id and runs when its time comes', async () => {
+    const at = new Date(Date.now() + 5 * 60_000)
+    at.setUTCSeconds(0, 0)
+
+    const created = await admin.functions.createExecution({
+      functionId: 'cron',
+      async: true,
+      scheduledAt: at.toISOString(),
+      body: '{"hello":"world"}',
+    })
+    expect(created.$id).toBeTruthy()
+    expect([created.status, created.trigger, created.scheduledAt]).toEqual(['scheduled', 'schedule', at.toISOString().replace('Z', '+00:00')])
+
+    // Not due yet: nothing fires and the row stays put.
+    expect(server.services.functions.tickScheduled(new Date(at.getTime() - 60_000))).toEqual([])
+    expect((await admin.functions.getExecution({ functionId: 'cron', executionId: created.$id })).status).toBe('scheduled')
+
+    // Due: the same row runs, keeping the id the caller was given.
+    expect(server.services.functions.tickScheduled(new Date(at.getTime() + 1_000))).toEqual([created.$id])
+    await Bun.sleep(800)
+    const done = await admin.functions.getExecution({ functionId: 'cron', executionId: created.$id })
+    expect(done.status).toBe('completed')
+    expect(done.trigger).toBe('schedule')
+    expect(JSON.parse(done.responseBody)).toEqual({ ran: true })
+
+    // And it is never picked up a second time.
+    expect(server.services.functions.tickScheduled(new Date(at.getTime() + 5_000))).toEqual([])
+  })
 })

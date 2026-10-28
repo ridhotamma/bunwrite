@@ -1,5 +1,6 @@
 /**
- * Apply an appwrite.config.json (the file `appwrite push` reads) to SQLite:
+ * Apply a project config file (bunwrite.config.json, or Appwrite's
+ * appwrite.config.json, which has the same format) to SQLite:
  * create databases, collection tables, columns and indexes, and change them
  * when the file changes. Removed collections are kept unless `prune` is set.
  */

@@ -1,23 +1,27 @@
 /**
- * The slice of Appwrite's console API the Appwrite CLI uses, served for
- * requests with `X-Appwrite-Project: console`:
+ * The console API the Bunwrite CLI and the Appwrite CLI use, served for
+ * requests whose project header (X-Bunwrite-Project or X-Appwrite-Project) is
+ * `console`:
  *
- * - `appwrite login`: POST /account/sessions/email signs a console admin in and
- *   sets the `a_session_console` cookie; GET /account and DELETE
- *   /account/sessions/:id back `whoami` and `logout`.
- * - `appwrite init project`, `pull/push settings`: the organizations an admin
- *   belongs to (GET /teams) and their projects (/organization/projects,
+ * - `login`: POST /account/sessions/email signs a console admin in and sets the
+ *   console session cookie (`bw_session_console`, or `a_session_console` for a
+ *   request made with Appwrite's headers); GET /account and DELETE /account/sessions/:id back
+ *   `whoami` and `logout`.
+ * - `init project`, `pull/push settings`: the organizations an admin belongs
+ *   to (GET /teams) and their projects (/organization/projects,
  *   GET /projects/:id).
  *
- * With that cookie and `X-Appwrite-Mode: admin`, a project request is made as
- * the admin and acts with an API key's rights (see `adminOf`). Admins are the
- * console's own accounts (`bun run console:admin`), not project users.
+ * With that cookie and the mode header (X-Bunwrite-Mode or X-Appwrite-Mode)
+ * set to `admin`, a project request is made as the admin and acts with an API
+ * key's rights (see `adminOf`). Admins are the console's own accounts
+ * (`bun run console:admin`), not project users.
  */
 import { parseCookies } from '~/auth/caller'
 import { requestInfo } from '~/auth/service'
 import { ConsoleAuth, type Admin } from '~/console/auth'
+import { apiHeader, cliName, configFileName, sessionCookieName, sessionFromCookies } from '~/lib/compat'
 import { addSeconds } from '~/lib/datetime'
-import { AppwriteError, err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
 import { json, list, noContent, readParams, str, type Params } from '~/lib/http'
 import { RateLimiter } from '~/lib/limits'
 import { page } from '~/lib/paging'
@@ -27,7 +31,6 @@ import type { ProjectResolver, ProjectRuntime } from '~/projects/types'
 import { projectModel } from './project'
 
 export const CONSOLE_PROJECT = 'console'
-export const CONSOLE_SESSION_COOKIE = 'a_session_console'
 /** Same lifetime as a console sign-in in the browser. */
 const SESSION_TTL = 7 * 24 * 3600
 
@@ -45,18 +48,7 @@ interface ConsoleApiContext {
 const limiter = new RateLimiter()
 
 function sessionSecret(request: Request): string | null {
-  const cookies = parseCookies(request.headers.get('cookie') ?? '')
-  if (cookies[CONSOLE_SESSION_COOKIE]) return cookies[CONSOLE_SESSION_COOKIE]!
-  const fallback = request.headers.get('x-fallback-cookies')
-  if (fallback) {
-    try {
-      const parsed = JSON.parse(fallback) as Record<string, string>
-      if (parsed[CONSOLE_SESSION_COOKIE]) return parsed[CONSOLE_SESSION_COOKIE]!
-    } catch {
-      /* ignore malformed fallback cookies */
-    }
-  }
-  return null
+  return sessionFromCookies(parseCookies(request.headers.get('cookie') ?? ''), request.headers.get('x-fallback-cookies'), CONSOLE_PROJECT)
 }
 
 function signedIn(ctx: ConsoleApiContext): NonNullable<ConsoleApiContext['session']> {
@@ -122,10 +114,10 @@ function sessionOf(session: NonNullable<ConsoleApiContext['session']>, request: 
   }
 }
 
-/** The organization a request names (X-Appwrite-Organization), else the instance's own. */
+/** The organization a request names (X-Bunwrite-Organization or X-Appwrite-Organization), else the instance's own. */
 function orgOf(ctx: ConsoleApiContext): string {
   const own = ctx.projects.control.config.orgId
-  const named = ctx.request.headers.get('x-appwrite-organization')
+  const named = apiHeader(ctx.request, 'organization')
   if (named && named !== own) throw err('general_argument_invalid', `Organization "${named}" does not exist on this server. Use "${own}".`)
   return own
 }
@@ -143,12 +135,13 @@ function project(ctx: ConsoleApiContext, id: string): ProjectRuntime {
  */
 function orgProject(ctx: ConsoleApiContext, id: string): ProjectRuntime {
   const found = project(ctx, id)
-  const named = ctx.request.headers.get('x-appwrite-organization')
+  const c = ctx.projects.control.config
+  const named = apiHeader(ctx.request, 'organization')
   if (named && named !== found.info.orgId) {
     throw err(
       'general_argument_invalid',
       `Project "${found.info.id}" belongs to organization "${found.info.orgId}", not "${named}". ` +
-        `Set "organizationId" in appwrite.config.json to "${found.info.orgId}", or run: appwrite init project --organization-id ${found.info.orgId} --project-id ${found.info.id}`,
+        `Set "organizationId" in ${configFileName(c)} to "${found.info.orgId}", or run: ${cliName(c)} init project --organization-id ${found.info.orgId} --project-id ${found.info.id}`,
     )
   }
   return found
@@ -169,7 +162,7 @@ function routes(): Router<ConsoleApiContext> {
     const secure = ctx.projects.control.config.publicEndpoint.startsWith('https') ? '; Secure' : ''
     const expires = new Date(addSeconds(SESSION_TTL)).toUTCString()
     return json(sessionOf(session, ctx.request), 201, {
-      'set-cookie': `${CONSOLE_SESSION_COOKIE}=${secret}; Expires=${expires}; Path=/; HttpOnly; SameSite=Strict${secure}`,
+      'set-cookie': `${sessionCookieName(ctx.projects.control.config, ctx.request, CONSOLE_PROJECT)}=${secret}; Expires=${expires}; Path=/; HttpOnly; SameSite=Strict${secure}`,
     })
   })
 
@@ -190,7 +183,7 @@ function routes(): Router<ConsoleApiContext> {
   router.delete('/account/sessions/:sessionId', ({ ctx }) => {
     signedIn(ctx)
     ctx.auth.endSession(ctx.secret!)
-    return new Response(null, { status: 204, headers: { 'set-cookie': `${CONSOLE_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` } })
+    return new Response(null, { status: 204, headers: { 'set-cookie': `${sessionCookieName(ctx.projects.control.config, ctx.request, CONSOLE_PROJECT)}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` } })
   })
 
   // Organizations are Appwrite "teams" in the console project.
@@ -221,7 +214,7 @@ function routes(): Router<ConsoleApiContext> {
       const created = ctx.projects.create({ id: ctx.params.projectId, name: ctx.params.name, orgId })
       return json(modelOf(created.project), 201)
     } catch (error) {
-      if (error instanceof AppwriteError) throw error
+      if (error instanceof BunwriteError) throw error
       throw err('general_not_implemented', error instanceof Error ? error.message : String(error))
     }
   })
@@ -273,9 +266,9 @@ export function createConsoleApi(projects: ProjectResolver) {
       return match.handler({ request, url, params, path: match.path, ctx: { request, params, path: match.path, projects, auth, organizations, session, secret } })
     },
 
-    /** A console admin acting on a project: their session cookie plus `X-Appwrite-Mode: admin`. */
+    /** A console admin acting on a project: their session cookie plus `X-Bunwrite-Mode: admin` (or X-Appwrite-Mode). */
     adminOf(request: Request): Admin | null {
-      if (request.headers.get('x-appwrite-mode') !== 'admin') return null
+      if (apiHeader(request, 'mode') !== 'admin') return null
       const secret = sessionSecret(request)
       return secret ? (auth.session(secret)?.admin ?? null) : null
     },

@@ -127,7 +127,7 @@ function createProjectDialog(open: boolean): Html {
       <p class="dialog-message">Each project has its own users, databases, files, functions and API keys.</p>
       <div class="stack-fields">
         <label>Name<input name="name" required data-slug-source placeholder="My app" autofocus></label>
-        <label>Project ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="my-app"><small>Apps send this in <code>X-Appwrite-Project</code>. It cannot change later.</small></label>
+        <label>Project ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}" placeholder="my-app"><small>Apps send this in <code>X-Bunwrite-Project</code> (or <code>X-Appwrite-Project</code>). It cannot change later.</small></label>
       </div>
     </form>`,
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="create-project-form" class="primary">Create project</button>`,

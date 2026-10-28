@@ -77,6 +77,8 @@ export interface TestServer {
 export function testConfig(over: Partial<Config> = {}): Config {
   return {
     port: 0,
+    // The suite checks Appwrite compatibility through Appwrite's SDKs; test/compat.test.ts covers Bunwrite's names.
+    apiCompat: 'appwrite',
     hostname: '127.0.0.1',
     databasePath: ':memory:',
     orgId: 'org_test',

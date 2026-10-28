@@ -33,7 +33,7 @@ export class ID {
     }
 
     /**
-     * Have Appwrite generate a unique ID for you.
+     * Have Bunwrite generate a unique ID for you.
      *
      * @param {number} padding. Default is 7.
      * @returns {string}
