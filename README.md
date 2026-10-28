@@ -10,6 +10,8 @@ the Appwrite API most apps use. Existing apps keep using the official
 > Bunwrite is an independent open-source project. It is not affiliated with,
 > endorsed by, or sponsored by Appwrite.
 
+![Bunwrite Console](assets/screenshots/screenshot-2.png)
+
 ## Why Bunwrite?
 
 - **One process, one file.** Bun serves the API, realtime, functions and console;
@@ -149,6 +151,8 @@ headers, sessions, cookies and error shapes follow Appwrite.
 
 Server-rendered pages with htmx, styled after Shopify Polaris, and usable on a
 phone.
+
+![Bunwrite Projects Overview](assets/screenshots/screenshot-1.png)
 
 | Area | What you can do |
 | --- | --- |
