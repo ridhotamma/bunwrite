@@ -91,9 +91,13 @@ cd bunwrite
 bun install
 cp .env.example .env
 
-# edit .env: PUBLIC_ENDPOINT, DOMAIN, paths and resource limits
+# set DOMAIN for a public server; leave it empty for localhost
 bun run dev
 ```
+
+The example only shows the settings most deployments change. Every option,
+default and tuning knob is in
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
 The API is at `http://localhost:8080/v1` and the console is at
 `http://localhost:8080/console`.

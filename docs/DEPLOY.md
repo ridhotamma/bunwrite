@@ -7,6 +7,8 @@ The `bunwrite` executable is self-contained: the API, console assets, database
 migrations and Node/Python function runners are embedded. Python functions also
 need `python3` on the host.
 
+Server settings are documented in [CONFIGURATION.md](CONFIGURATION.md).
+
 ## Option A: Manual install
 
 Build on the target OS and architecture so native dependencies such as `sharp`
