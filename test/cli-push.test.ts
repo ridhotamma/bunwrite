@@ -239,7 +239,8 @@ describe('push functions', () => {
 
     // What the CLI calls right after creating a function.
     const consoleVars = (await (await fetch(`${server.endpoint}/console/variables`, { headers: { 'x-appwrite-project': 'console' } })).json()) as any
-    expect(consoleVars._APP_DOMAIN_FUNCTIONS).toBe(new URL(server.endpoint).host)
+    expect(consoleVars._APP_DOMAIN_FUNCTIONS).toBe('functions.localhost')
+    expect(consoleVars._APP_DOMAIN_SITES).toBe('sites.localhost')
     const rule = (await (
       await fetch(`${server.endpoint}/proxy/rules/function`, {
         method: 'POST',
@@ -247,7 +248,7 @@ describe('push functions', () => {
         body: JSON.stringify({ domain: 'abc.functions.localhost', functionId: 'hello' }),
       })
     ).json()) as any
-    expect(rule.domain).toBe(`${new URL(server.endpoint).host}/v1/functions/hello/http`)
+    expect(rule.domain).toBe('abc.functions.localhost')
 
     await functions.createVariable({ functionId: 'hello', variableId: ID.unique(), key: 'GREETING', value: 'hi', secret: false })
     const deployment = await functions.createDeployment({ functionId: 'hello', code: pack('hello', { 'src/main.js': MAIN, 'package.json': '{}' }), activate: true, entrypoint: 'src/main.js', commands: 'echo built > built.txt' })

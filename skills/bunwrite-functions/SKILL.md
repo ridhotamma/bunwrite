@@ -191,6 +191,13 @@ The Node/Bun labels select the same Bun runtime in Bunwrite; the version is kept
 for Appwrite compatibility. Python needs the Python runtime enabled on the
 server.
 
+## Function domains
+
+A function answers on `<function-id>.<FUNCTIONS_DOMAIN>` (for example
+`hello.functions.example.com`) and on any number of custom domains added in the
+console or through `POST /v1/proxy/rules/function`. The default address keeps
+working when custom domains change.
+
 ## Executions
 
 - Synchronous: `functions.createExecution({ functionId, body, method, headers })`.

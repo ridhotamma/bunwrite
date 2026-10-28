@@ -355,6 +355,25 @@ export const siteDeployments = sqliteTable(
   (t) => [index('_site_deployments_site').on(t.siteId, t.seq)],
 )
 
+/**
+ * Appwrite-compatible proxy rules: one row per custom domain, pointing at a
+ * site or a function. A resource can have any number of them. The default
+ * `<id>.<sitesDomain>` / `<id>.<functionsDomain>` hosts are computed, not rows.
+ */
+export const proxyRules = sqliteTable(
+  '_proxy_rules',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    /** site | function */
+    resourceType: text('resource_type').notNull(),
+    resourceId: text('resource_id').notNull(),
+    domain: text('domain').notNull().unique(),
+    ...timestamps,
+  },
+  (t) => [index('_proxy_rules_resource').on(t.resourceType, t.resourceId, t.seq)],
+)
+
 export const executions = sqliteTable(
   '_executions',
   {

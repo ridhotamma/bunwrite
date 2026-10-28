@@ -121,7 +121,8 @@ Push only sends differences. A freshly pulled config pushes back with
       "execute": ["users"],
       "timeout": 30,
       "enabled": true,
-      "logging": true
+      "logging": true,
+      "domains": ["api.example.com"]
     }
   ]
 }
@@ -149,7 +150,8 @@ active deployment in place.
       "path": "web",
       "outputDirectory": "dist",
       "fallbackFile": "index.html",
-      "apiFunctionId": "api"
+      "apiFunctionId": "api",
+      "domains": ["www.example.com", "shop.example.com"]
     }
   ]
 }

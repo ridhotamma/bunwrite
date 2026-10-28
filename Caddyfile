@@ -7,10 +7,11 @@
 # Without DOMAIN it serves https://localhost with Caddy's own local CA, which is
 # handy for a quick local look but not useful on a VPS.
 {
-	# Sites: certificates for <site>.<SITES_DOMAIN> and custom domains are
-	# fetched on their first visit, but only for hosts Bunwrite says are sites.
+	# Sites and functions: certificates for <id>.<SITES_DOMAIN>/<id>.<FUNCTIONS_DOMAIN>
+	# and custom domains are fetched on their first visit, but only for hosts
+	# Bunwrite says it serves.
 	on_demand_tls {
-		ask http://bunwrite:8080/.well-known/bunwrite/site-domain
+		ask http://bunwrite:8080/.well-known/bunwrite/host
 	}
 }
 
@@ -21,8 +22,8 @@
 	reverse_proxy bunwrite:8080
 }
 
-# Every other host: Bunwrite's sites. Point a wildcard DNS record
-# (*.sites.example.com) and any custom domains at this server.
+# Every other host: Bunwrite's sites and functions. Point wildcard DNS records
+# (*.sites.example.com and *.functions.example.com) and custom domains here.
 https:// {
 	tls {
 		on_demand

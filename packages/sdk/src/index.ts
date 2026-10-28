@@ -16,6 +16,7 @@ export { Health } from './services/health';
 export { Messaging } from './services/messaging';
 export { Organization } from './services/organization';
 export { Project } from './services/project';
+export { Proxy } from './services/proxy';
 export { Realtime, RealtimeCode } from './services/realtime';
 export type {
     RealtimeSubscription,

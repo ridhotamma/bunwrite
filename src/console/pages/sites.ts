@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { checked, value } from '~/console/forms'
+import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, copyableId, destroy, emptyState, header, icon, listCard, menu, settingsSection, tabs, when } from '~/console/ui'
 import {
@@ -19,7 +19,8 @@ import {
   siteUrl,
 } from '~/console/views/sites'
 import { err } from '~/lib/errors'
-import { sitesDomainOf, type SiteDeploymentRow, type SiteFile, type SiteRow, type SiteSettings } from '~/sites/service'
+import { sitesDomainOf } from '~/lib/hosts'
+import type { SiteDeploymentRow, SiteFile, SiteRow, SiteSettings } from '~/sites/service'
 
 /** What the deploy form asks for, checked before anything is created. */
 type FilesSource = { kind: 'starter' } | { kind: 'upload'; file: File } | { kind: 'paste'; text: string }
@@ -120,7 +121,7 @@ function settingsFromForm(ctx: ConsoleContext, base: SiteSettings): SiteSettings
     framework: value(ctx.form, 'framework') || base.framework,
     outputDirectory: value(ctx.form, 'output_directory'),
     fallbackFile: value(ctx.form, 'fallback_file'),
-    domain: value(ctx.form, 'domain'),
+    domains: lines(ctx.form.domains),
     apiFunctionId,
   }
 }
@@ -151,8 +152,9 @@ export function sitePages(router: ConsoleRouter): void {
             ${sites.map((s) => {
               const latest = ctx.services.sites.latest(s.id)
               const address = ctx.services.sites.url(s)
+              const domain = ctx.services.proxy.domainsFor('site', s.id)[0]
               return html`<tr class="row-link" onclick="location='${siteUrl(s.id)}'"><td><a href="${siteUrl(s.id)}">${s.name}</a><div class="mono subdued cell-sub">${s.id}</div></td>
-                <td class="mono clip"><a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${s.domain || new URL(address).host}</a></td>
+                <td class="mono clip"><a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${domain || new URL(address).host}</a></td>
                 <td>${siteStatus(s, latest)}</td>
                 <td class="subdued hide-sm">${when(latest?.created_at ?? s.updated_at)}</td></tr>`
             })}
@@ -172,7 +174,7 @@ export function sitePages(router: ConsoleRouter): void {
       framework: value(ctx.form, 'framework') || 'other',
       outputDirectory: value(ctx.form, 'output_directory'),
       fallbackFile: value(ctx.form, 'fallback_file'),
-      domain: '',
+      domains: [],
       apiFunctionId: '',
       installCommand: '',
       buildCommand: '',
@@ -263,9 +265,9 @@ export function sitePages(router: ConsoleRouter): void {
           { id: 'site-api' },
         )}
         ${settingsSection(
-          'Custom domain',
-          html`Point a CNAME record for the domain at <code>${site.id}.${sitesDomain}</code> (or an A record at this server). Caddy gets its certificate on the first visit.`,
-          html`<label>Domain<input name="domain" class="mono" value="${site.domain}" placeholder="www.example.com"><small>Leave empty for none. Not <code>${apiHost}</code>, which is the API.</small></label>`,
+          'Custom domains',
+          html`Point a CNAME record for each domain at <code>${site.id}.${sitesDomain}</code> (or an A record at this server). Caddy gets certificates on the first visit. The default site URL above always keeps working.`,
+          html`<label>Domains<textarea name="domains" class="mono" rows="3" placeholder="www.example.com&#10;shop.example.com">${ctx.services.sites.settingsOf(site).domains.join('\n')}</textarea><small>One per line. Empty for none. Not <code>${apiHost}</code>, which is the API.</small></label>`,
           { id: 'site-domain' },
         )}
         <div class="page-foot"><button class="primary">Save</button></div>

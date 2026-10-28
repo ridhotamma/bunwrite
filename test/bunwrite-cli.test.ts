@@ -492,9 +492,9 @@ describe('sites', () => {
     }
     const out = await ws.ok('push', 'sites')
     expect(out).toContain('Deployed 1 site')
-    expect(out).toContain(`http://landing.localhost:${server.config.port}`)
+    expect(out).toContain(`http://landing.sites.localhost:${server.config.port}`)
 
-    const page = (path: string) => fetch(`http://127.0.0.1:${server.config.port}${path}`, { headers: { host: `landing.localhost:${server.config.port}` } })
+    const page = (path: string) => fetch(`http://127.0.0.1:${server.config.port}${path}`, { headers: { host: `landing.sites.localhost:${server.config.port}` } })
     expect(await (await page('/')).text()).toContain('Landing from the CLI')
     expect((await page('/assets/app.js')).status).toBe(200)
     expect((await page('/package.json')).status).toBe(404)
@@ -514,6 +514,23 @@ describe('sites', () => {
     const result = await ws.run(['push', 'sites'])
     expect(result.code).not.toBe(0)
     expect(result.out).toContain('Run the build first')
+  })
+
+  test('push and pull keep every custom domain', async () => {
+    const ws = new Workspace('sites-domains')
+    await ws.withKey()
+    ws.config = {
+      projectId: PROJECT,
+      sites: [{ $id: 'domains-site', name: 'Domains', framework: 'other', path: 'sites/domains-site', domains: ['one.example.org', 'two.example.org'] }],
+    }
+    await ws.ok('push', 'sites', '--no-code')
+    const site = (await new Sites(admin()).get({ siteId: 'domains-site' })) as any
+    expect(site.domains).toEqual(['one.example.org', 'two.example.org'])
+
+    const fresh = new Workspace('sites-domains-pull')
+    await fresh.withKey()
+    await fresh.ok('pull', 'sites', '--no-code')
+    expect(fresh.config.sites.find((s: any) => s.$id === 'domains-site').domains).toEqual(['one.example.org', 'two.example.org'])
   })
 
   test('the SDK sets the API function and domain on create', async () => {

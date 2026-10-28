@@ -145,6 +145,8 @@ export class Sites {
         apiFunctionId?: string;
         /** Bunwrite: custom domain, such as www.example.com. */
         domain?: string;
+        /** Bunwrite: all custom domains for the site. */
+        domains?: string[];
         providerRepositoryId?: string;
         providerBranch?: string;
         providerSilentMode?: boolean;
@@ -234,6 +236,8 @@ export class Sites {
                   apiFunctionId?: string;
                   /** Bunwrite: custom domain, such as www.example.com. */
                   domain?: string;
+                  /** Bunwrite: all custom domains for the site. */
+                  domains?: string[];
                   providerRepositoryId?: string;
                   providerBranch?: string;
                   providerSilentMode?: boolean;
@@ -291,6 +295,8 @@ export class Sites {
             apiFunctionId?: string;
             /** Bunwrite: custom domain, such as www.example.com. */
             domain?: string;
+            /** Bunwrite: all custom domains for the site. */
+            domains?: string[];
             providerRepositoryId?: string;
             providerBranch?: string;
             providerSilentMode?: boolean;
@@ -327,6 +333,8 @@ export class Sites {
                 apiFunctionId?: string;
                 /** Bunwrite: custom domain, such as www.example.com. */
                 domain?: string;
+                /** Bunwrite: all custom domains for the site. */
+                domains?: string[];
                 providerRepositoryId?: string;
                 providerBranch?: string;
                 providerSilentMode?: boolean;
@@ -381,7 +389,7 @@ export class Sites {
         const adapter = params.adapter;
         const installationId = params.installationId;
         const fallbackFile = params.fallbackFile;
-        const { apiFunctionId, domain } = params as { apiFunctionId?: string; domain?: string };
+        const { apiFunctionId, domain, domains } = params as { apiFunctionId?: string; domain?: string; domains?: string[] };
         const providerRepositoryId = params.providerRepositoryId;
         const providerBranch = params.providerBranch;
         const providerSilentMode = params.providerSilentMode;
@@ -457,6 +465,9 @@ export class Sites {
         }
         if (typeof domain !== 'undefined') {
             apiPayload['domain'] = domain;
+        }
+        if (typeof domains !== 'undefined') {
+            apiPayload['domains'] = domains;
         }
         if (typeof providerRepositoryId !== 'undefined') {
             apiPayload['providerRepositoryId'] = providerRepositoryId;
@@ -670,6 +681,8 @@ export class Sites {
         apiFunctionId?: string;
         /** Bunwrite: custom domain, such as www.example.com. */
         domain?: string;
+        /** Bunwrite: all custom domains for the site. */
+        domains?: string[];
         installationId?: string;
         providerRepositoryId?: string;
         providerBranch?: string;
@@ -759,6 +772,8 @@ export class Sites {
                   apiFunctionId?: string;
                   /** Bunwrite: custom domain, such as www.example.com. */
                   domain?: string;
+                  /** Bunwrite: all custom domains for the site. */
+                  domains?: string[];
                   installationId?: string;
                   providerRepositoryId?: string;
                   providerBranch?: string;
@@ -816,6 +831,8 @@ export class Sites {
             apiFunctionId?: string;
             /** Bunwrite: custom domain, such as www.example.com. */
             domain?: string;
+            /** Bunwrite: all custom domains for the site. */
+            domains?: string[];
             installationId?: string;
             providerRepositoryId?: string;
             providerBranch?: string;
@@ -852,6 +869,8 @@ export class Sites {
                 apiFunctionId?: string;
                 /** Bunwrite: custom domain, such as www.example.com. */
                 domain?: string;
+                /** Bunwrite: all custom domains for the site. */
+                domains?: string[];
                 installationId?: string;
                 providerRepositoryId?: string;
                 providerBranch?: string;
@@ -906,7 +925,7 @@ export class Sites {
         const buildRuntime = params.buildRuntime;
         const adapter = params.adapter;
         const fallbackFile = params.fallbackFile;
-        const { apiFunctionId, domain } = params as { apiFunctionId?: string; domain?: string };
+        const { apiFunctionId, domain, domains } = params as { apiFunctionId?: string; domain?: string; domains?: string[] };
         const installationId = params.installationId;
         const providerRepositoryId = params.providerRepositoryId;
         const providerBranch = params.providerBranch;
@@ -975,6 +994,9 @@ export class Sites {
         }
         if (typeof domain !== 'undefined') {
             apiPayload['domain'] = domain;
+        }
+        if (typeof domains !== 'undefined') {
+            apiPayload['domains'] = domains;
         }
         if (typeof installationId !== 'undefined') {
             apiPayload['installationId'] = installationId;

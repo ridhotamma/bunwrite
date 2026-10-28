@@ -1,4 +1,5 @@
 import type { Services } from '~/services'
+import type { FunctionRow } from '~/functions/service'
 import type { SiteRow } from '~/sites/service'
 
 export interface ProjectInfo {
@@ -29,6 +30,8 @@ export interface ProjectResolver {
   list(): ProjectRuntime[]
   /** Function HTTP endpoints have no project header, so find the owner by function ID. */
   findFunction(functionId: string): ProjectRuntime | null
+  /** The project and function a request's Host header points at, if any. */
+  findFunctionByHost(host: string): { project: ProjectRuntime; fn: FunctionRow } | null
   /** The project and site a request's Host header points at, if any. */
   findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
@@ -53,6 +56,10 @@ export function singleProjectResolver(services: Services): ProjectResolver {
     get: (id) => (id === info.id ? runtime : null),
     list: () => [runtime],
     findFunction: (functionId) => (services.functions.list().some((f) => f.id === functionId) ? runtime : null),
+    findFunctionByHost: (host) => {
+      const fn = services.functions.byHost(host)
+      return fn ? { project: runtime, fn } : null
+    },
     findSite: (host) => {
       const site = services.sites.byHost(host)
       return site ? { project: runtime, site } : null

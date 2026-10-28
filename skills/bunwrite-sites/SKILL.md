@@ -18,18 +18,20 @@ A site answers on `<site-id>.<SITES_DOMAIN>`:
 
 | Setup | URL |
 | --- | --- |
-| Local, no `DOMAIN` | `http://<site-id>.localhost:8080` |
+| Local, no `DOMAIN` | `http://<site-id>.sites.localhost:8080` |
 | `DOMAIN=api.example.com` | `https://<site-id>.sites.api.example.com` |
 | `SITES_DOMAIN=sites.example.com` | `https://<site-id>.sites.example.com` |
 
 Site IDs are lowercase letters, digits and hyphens, up to 36 characters, and
-unique across the server. A site can also have one custom domain. Point a CNAME
-at `<site-id>.<SITES_DOMAIN>` (or an A record at the server), then set the domain
-in the console, the API (`domain`), or an Appwrite proxy rule.
+unique across the server. A site can have any number of custom domains, such as
+`www.example.com` and `shop.example.com`. Point a CNAME at
+`<site-id>.<SITES_DOMAIN>` (or an A record at the server), then add them in the
+console, with the API (`domains` array), or as Appwrite proxy rules. The default
+site address keeps working.
 
 Behind the bundled Caddy, on-demand TLS asks Bunwrite
-(`/.well-known/bunwrite/site-domain`) whether a host is a site before requesting
-a certificate.
+(`/.well-known/bunwrite/host`) whether a host belongs to a site or function
+before requesting a certificate.
 
 ## Deploy
 
@@ -86,7 +88,7 @@ await sites.create({
 await sites.createDeployment({ siteId: 'landing', code: InputFile.fromPath('site.tar.gz'), activate: true })
 ```
 
-`apiFunctionId` and `domain` are Bunwrite extensions. With `node-appwrite`, set
+`apiFunctionId` and `domains` are Bunwrite extensions. With `node-appwrite`, set
 them in the console or with a plain `PUT /v1/sites/<id>`.
 
 ## Routing

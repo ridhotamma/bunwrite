@@ -59,12 +59,14 @@ you can back up, Bunwrite is for you.
 - **Admin console included.** Manage databases, users, teams, files, functions,
   webhooks, schema, storage, backups and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
-  processes with Appwrite's `context` API. In the Docker image each function
-  builds and runs as its own Linux user, so it cannot read the database,
-  uploads or other functions.
+  processes with Appwrite's `context` API. Each gets
+  `<function-id>.<FUNCTIONS_DOMAIN>` plus any number of custom domains. In the
+  Docker image each function builds and runs as its own Linux user, so it cannot
+  read the database, uploads or other functions.
 - **Static sites, no build step.** Host plain HTML, htmx pages or a built
-  single-page app on `<site>.<your domain>` or a custom domain. `/api/*` on the
-  site can run a function on the same origin. See [docs/SITES.md](docs/SITES.md).
+  single-page app on `<site-id>.<SITES_DOMAIN>` plus any number of custom
+  domains. `/api/*` on the site can run a function on the same origin. See
+  [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
 - **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
@@ -226,6 +228,53 @@ See [Connect an app](#connect-an-app).
   the environment for backups.
 - **Python functions:** set `BUNWRITE_WITH_PYTHON=true` in the Docker image, or
   install `python3` on the host.
+
+## Site and function domains
+
+Sites and functions have a default address plus any number of custom domains:
+
+- A site answers on `<site-id>.<SITES_DOMAIN>`.
+- A function answers on `<function-id>.<FUNCTIONS_DOMAIN>`.
+
+With `DOMAIN=example.com` the defaults are `sites.example.com` and
+`functions.example.com`, so `landing` is at
+`landing.sites.example.com` and `hello` is at
+`hello.functions.example.com`. The prefixes are configurable:
+
+```bash
+SITES_PREFIX=sites          # landing.sites.example.com
+FUNCTIONS_PREFIX=functions  # hello.functions.example.com
+
+# Or override the whole base domain:
+SITES_DOMAIN=web.example.com
+FUNCTIONS_DOMAIN=api.example.com
+```
+
+Without `DOMAIN`, development uses `sites.localhost` and
+`functions.localhost`.
+
+To attach custom domains, use **Console → Sites / Functions → Settings**, send
+a `domains` array when creating or updating a site/function, or use Appwrite's
+proxy API:
+
+```bash
+curl -X POST https://api.example.com/v1/proxy/rules/site \
+  -H "X-Bunwrite-Project: $PROJECT_ID" \
+  -H "X-Bunwrite-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"www.example.com","siteId":"landing"}'
+
+curl -X POST https://api.example.com/v1/proxy/rules/function \
+  -H "X-Bunwrite-Project: $PROJECT_ID" \
+  -H "X-Bunwrite-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"api.example.com","functionId":"hello"}'
+```
+
+Each resource keeps its default address, so removing a custom domain never
+takes the site or function offline. Point wildcard DNS records
+(`*.sites.example.com` and `*.functions.example.com`) and every custom domain
+at the server; the bundled Caddy obtains certificates on demand.
 
 ## Appwrite CLI
 
@@ -404,8 +453,8 @@ phone.
 | Users | Search; edit profile, labels, verification and prefs; block; set a password; end sessions; delete |
 | Teams | Create teams; add members by email or ID; edit roles; prefs |
 | Storage | Buckets and their rules; upload, open and delete files; local or S3-compatible storage |
-| Functions | Schedule, timeout, who may run it, variables; run now; run history with logs |
-| Sites | Create from an htmx starter, an upload or pasted HTML; deploy, make an older deployment live (rollback), download; output folder, single-page fallback, API function, custom domain |
+| Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs |
+| Sites | Create from an htmx starter, an upload or pasted HTML; deploy, make an older deployment live (rollback), download; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
@@ -564,8 +613,9 @@ assets, saving to S3 and the HTTP examples.
 | Teams | teams, prefs, memberships, invites and accept-invite |
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`) |
-| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; custom domains as proxy rules. Static files only, see [docs/SITES.md](docs/SITES.md) |
+| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http`; deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
+| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files only, see [docs/SITES.md](docs/SITES.md) |
+| Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
 | Messaging | topics (create, list, update, delete) |

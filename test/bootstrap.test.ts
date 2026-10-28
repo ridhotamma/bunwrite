@@ -55,6 +55,23 @@ describe('instance bootstrap', () => {
     expect(configFromEnv({ PORT: '9090' }).publicEndpoint).toBe('http://localhost:9090/v1')
   })
 
+  test('site and function hosts use the configured prefixes', () => {
+    const defaults = configFromEnv({ DOMAIN: 'example.com' })
+    expect(defaults.sitesDomain).toBe('sites.example.com')
+    expect(defaults.functionsDomain).toBe('functions.example.com')
+
+    const custom = configFromEnv({ DOMAIN: 'example.com', SITES_PREFIX: 'web', FUNCTIONS_PREFIX: 'api' })
+    expect(custom.sitesDomain).toBe('web.example.com')
+    expect(custom.functionsDomain).toBe('api.example.com')
+
+    expect(configFromEnv({ SITES_DOMAIN: 'sites.test', FUNCTIONS_DOMAIN: 'functions.test' }).sitesDomain).toBe('sites.test')
+    expect(configFromEnv({ SITES_DOMAIN: 'sites.test', FUNCTIONS_DOMAIN: 'functions.test' }).functionsDomain).toBe('functions.test')
+
+    const local = configFromEnv({})
+    expect(local.sitesDomain).toBe('sites.localhost')
+    expect(local.functionsDomain).toBe('functions.localhost')
+  })
+
   test('generates and persists credentials on first start', () => {
     const db = openDb(':memory:')
     try {

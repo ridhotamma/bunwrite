@@ -17,7 +17,9 @@ import { Router } from './lib/router'
 import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
+import { functionHttpResponse } from './functions/http'
 import { functionRoutes } from './functions/routes'
+import { proxyRoutes } from './proxy/routes'
 import { singleProjectResolver, type ProjectResolver, type ProjectRuntime } from './projects/types'
 import { renderRoutes } from './render/routes'
 import { serveSite } from './sites/serve'
@@ -76,6 +78,7 @@ export function createApp(source: Services | ProjectResolver) {
   storageRoutes(router)
   functionRoutes(router)
   siteRoutes(router)
+  proxyRoutes(router)
   renderRoutes(router)
   projectRoutes(router)
   webhookRoutes(router)
@@ -99,17 +102,25 @@ export function createApp(source: Services | ProjectResolver) {
 
   const siteOfOrigin = (origin: string) => {
     try {
-      return projects.findSite(new URL(origin).host)
+      const host = new URL(origin).host
+      return projects.findSite(host) ?? projects.findFunctionByHost(host)
     } catch {
       return null
     }
   }
 
-  /** A site's own domain: `<siteId>.<SITES_DOMAIN>` or its custom domain. */
+  /** A site's own domain: `<siteId>.<SITES_DOMAIN>` or one of its custom domains. */
   function siteFor(request: Request) {
     const host = request.headers.get('host')
     const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
     return (host ? projects.findSite(host) : null) ?? (forwarded ? projects.findSite(forwarded) : null)
+  }
+
+  /** A function's own domain: `<functionId>.<FUNCTIONS_DOMAIN>` or one of its custom domains. */
+  function functionFor(request: Request) {
+    const host = request.headers.get('host')
+    const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
+    return (host ? projects.findFunctionByHost(host) : null) ?? (forwarded ? projects.findFunctionByHost(forwarded) : null)
   }
 
   const consoleApp = createConsole(projects)
@@ -221,10 +232,22 @@ export function createApp(source: Services | ProjectResolver) {
       meta.auth = `site:${hosted.site.id}`
       return serveSite(hosted.project.services, hosted.site, request)
     }
+    const hostedFunction = functionFor(request)
+    if (hostedFunction) {
+      meta.project = hostedFunction.project.info.id
+      meta.auth = `function:${hostedFunction.fn.id}`
+      try {
+        const caller = await resolveCaller(hostedFunction.project.services.db, hostedFunction.project.services.config, request)
+        return await functionHttpResponse(hostedFunction.project.services, hostedFunction.fn, caller, request, `${url.pathname}${url.search}`)
+      } catch (error) {
+        meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
+        return errorResponse(error)
+      }
+    }
     // Caddy's on-demand TLS asks here before getting a certificate for a host.
-    if (url.pathname === '/.well-known/bunwrite/site-domain' && request.method === 'GET') {
+    if ((url.pathname === '/.well-known/bunwrite/site-domain' || url.pathname === '/.well-known/bunwrite/host') && request.method === 'GET') {
       const domain = url.searchParams.get('domain') ?? ''
-      return new Response(null, { status: domain && projects.findSite(domain) ? 200 : 404 })
+      return new Response(null, { status: domain && (projects.findSite(domain) || projects.findFunctionByHost(domain)) ? 200 : 404 })
     }
     const brand = BRAND_FILES[url.pathname]
     if (brand && (request.method === 'GET' || request.method === 'HEAD')) {

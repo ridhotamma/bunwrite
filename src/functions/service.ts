@@ -14,7 +14,9 @@ import type { DocumentStore } from '~/documents/store'
 import { CREDENTIAL_HEADERS, functionVariables } from '~/lib/compat'
 import { formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
+import { functionHost, functionsDomainOf, hostOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
+import type { ProxyService } from '~/proxy/service'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
@@ -70,6 +72,8 @@ export interface FunctionSettings {
   buildSpecification: string
   runtimeSpecification: string
   deploymentRetention: number
+  /** Custom domains, in addition to `<id>.<functionsDomain>`. */
+  domains?: string[]
 }
 
 /** Runtimes this server can run: node-* and bun-* under Bun, python-* under python3. */
@@ -167,7 +171,7 @@ const parse = <T>(text: string, fallback: T): T => {
   }
 }
 
-export function functionModel(f: FunctionRow, latest?: LatestDeployment | null, codeAtPath = true) {
+export function functionModel(f: FunctionRow, latest?: LatestDeployment | null, codeAtPath = true, domains: string[] = [], url = '') {
   // Code found at `path` (schema:push) counts as a ready deployment named after the function.
   const stand = codeAtPath ? f.id : ''
   const active = f.deployment_id || stand
@@ -203,6 +207,10 @@ export function functionModel(f: FunctionRow, latest?: LatestDeployment | null, 
     providerSilentMode: false,
     buildSpecification: f.build_specification,
     runtimeSpecification: f.runtime_specification,
+    // Bunwrite extensions.
+    url,
+    domains,
+    domain: domains[0] ?? '',
   }
 }
 
@@ -253,6 +261,8 @@ function withCallerHeaders(headers: Record<string, string> | undefined, userId: 
 }
 
 export class FunctionService {
+  /** Other projects, so default function hosts do not collide on this server. */
+  peers: () => FunctionService[] = () => []
   private running = new Map<string, number>()
   private timer: ReturnType<typeof setInterval> | null = null
   private lastTick = -1
@@ -261,6 +271,7 @@ export class FunctionService {
     private db: Db,
     private config: Config,
     private store: DocumentStore,
+    private proxy: ProxyService,
     private options: { functionEnv?: Record<string, string>; internalEndpoint?: string } = {},
   ) {}
 
@@ -276,6 +287,37 @@ export class FunctionService {
 
   list(): FunctionRow[] {
     return this.sql.query<FunctionRow, []>('SELECT * FROM _functions ORDER BY seq').all()
+  }
+
+  has(id: string): boolean {
+    return Boolean(this.sql.query('SELECT 1 FROM _functions WHERE id = ?').get(id))
+  }
+
+  /** The function a request's Host header points at, if it is one of this project's. */
+  byHost(host: string): FunctionRow | null {
+    const name = hostOf(host)
+    const custom = this.proxy.byDomain(name)
+    if (custom?.resource_type === 'function') return this.fn(custom.resource_id)
+    const suffix = `.${functionsDomainOf(this.config)}`
+    if (!name.endsWith(suffix)) return null
+    const sub = name.slice(0, -suffix.length)
+    if (sub.includes('.')) return null
+    const row = this.sql.query<FunctionRow, [string]>('SELECT * FROM _functions WHERE lower(id) = ?').get(sub)
+    return row ?? null
+  }
+
+  /** `https://<id>.<FUNCTIONS_DOMAIN>`, with the API's port when it has one (local development). */
+  url(f: FunctionRow): string {
+    return urlForHost(this.config, functionHost(this.config, f.id))
+  }
+
+  /** Every address the function answers on. */
+  urls(f: FunctionRow): string[] {
+    return [this.url(f), ...this.proxy.domainsFor('function', f.id).map((domain) => urlForHost(this.config, domain))]
+  }
+
+  domains(f: FunctionRow): string[] {
+    return this.proxy.domainsFor('function', f.id)
   }
 
   update(id: string, fields: { enabled: boolean; schedule: string; timeout: number; execute: string[] }): FunctionRow {
@@ -306,28 +348,37 @@ export class FunctionService {
   /** A new function (functions.create). Its code arrives later as a deployment. */
   create(id: string, fields: FunctionSettings): FunctionRow {
     this.check(fields)
-    if (this.sql.query('SELECT 1 FROM _functions WHERE id = ?').get(id)) throw err('function_already_exists')
+    if ([this, ...this.peers().filter((peer) => peer !== this)].some((peer) => peer.has(id))) throw err('function_already_exists')
+    const domains = this.proxy.normalizeAll(fields.domains ?? [])
+    this.proxy.assertDefaultHost('function', id)
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _functions (id, path, name, runtime, entrypoint, execute, events, schedule, timeout, enabled, scopes, commands, logging,
-         build_specification, runtime_specification, deployment_retention, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp)
+    this.sql.transaction(() => {
+      this.sql
+        .query(
+          `INSERT INTO _functions (id, path, name, runtime, entrypoint, execute, events, schedule, timeout, enabled, scopes, commands, logging,
+           build_specification, runtime_specification, deployment_retention, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp)
+      this.proxy.set('function', id, domains)
+    })()
     return this.fn(id)
   }
 
   /** Replace a function's settings (functions.update). */
   save(id: string, fields: FunctionSettings): FunctionRow {
-    this.fn(id)
+    const current = this.fn(id)
     this.check(fields)
-    this.sql
-      .query(
-        `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, execute = ?, events = ?, schedule = ?, timeout = ?, enabled = ?, scopes = ?,
-         commands = ?, logging = ?, build_specification = ?, runtime_specification = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(...this.settingValues(fields), now(), id)
+    const domains = this.proxy.normalizeAll(fields.domains ?? this.domains(current), { type: 'function', id })
+    this.sql.transaction(() => {
+      this.sql
+        .query(
+          `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, execute = ?, events = ?, schedule = ?, timeout = ?, enabled = ?, scopes = ?,
+           commands = ?, logging = ?, build_specification = ?, runtime_specification = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(...this.settingValues(fields), now(), id)
+      this.proxy.set('function', id, domains)
+    })()
     return this.fn(id)
   }
 
@@ -373,6 +424,7 @@ export class FunctionService {
   remove(id: string): void {
     this.fn(id)
     this.sql.transaction(() => {
+      this.proxy.removeFor('function', id)
       for (const table of ['_function_vars', '_executions', '_deployments']) this.sql.query(`DELETE FROM ${table} WHERE function_id = ?`).run(id)
       this.sql.query('DELETE FROM _functions WHERE id = ?').run(id)
     })()

@@ -164,12 +164,12 @@ interface ServiceSpec {
 }
 
 /**
- * Sites: `apiFunctionId` and `domain` are Bunwrite settings with no Appwrite
- * equivalent. Add them to the object form of create() and update().
+ * Sites: `apiFunctionId`, `domain` and `domains` are Bunwrite settings with no
+ * Appwrite equivalent. Add them to the object form of create() and update().
  */
 function extendSites(text: string): string {
   const fields = (indent: string) =>
-    `${indent}/** Bunwrite: function that answers /api/* on the site's domain. */\n${indent}apiFunctionId?: string;\n${indent}/** Bunwrite: custom domain, such as www.example.com. */\n${indent}domain?: string;`
+    `${indent}/** Bunwrite: function that answers /api/* on the site's domain. */\n${indent}apiFunctionId?: string;\n${indent}/** Bunwrite: custom domain, such as www.example.com. */\n${indent}domain?: string;\n${indent}/** Bunwrite: all custom domains for the site. */\n${indent}domains?: string[];`
   const before = text
   text = text
     // Object type members end in ';'; positional parameters end in ','.
@@ -177,12 +177,12 @@ function extendSites(text: string): string {
     .replace(
       /^(\s+)const fallbackFile = params\.fallbackFile;$/gm,
       (line, indent: string) =>
-        `${line}\n${indent}const { apiFunctionId, domain } = params as { apiFunctionId?: string; domain?: string };`,
+        `${line}\n${indent}const { apiFunctionId, domain, domains } = params as { apiFunctionId?: string; domain?: string; domains?: string[] };`,
     )
     .replace(
       /^(\s+)if \(typeof fallbackFile !== 'undefined'\) \{\n\s+apiPayload\['fallbackFile'\] = fallbackFile;\n\s+\}$/gm,
       (block, indent: string) =>
-        `${block}\n${['apiFunctionId', 'domain'].map((k) => `${indent}if (typeof ${k} !== 'undefined') {\n${indent}    apiPayload['${k}'] = ${k};\n${indent}}`).join('\n')}`,
+        `${block}\n${['apiFunctionId', 'domain', 'domains'].map((k) => `${indent}if (typeof ${k} !== 'undefined') {\n${indent}    apiPayload['${k}'] = ${k};\n${indent}}`).join('\n')}`,
     )
   if (text === before) throw new Error('sites: could not add Bunwrite settings to create/update')
   return text
@@ -201,6 +201,7 @@ const SERVICES: ServiceSpec[] = [
   },
   { file: 'functions' },
   { file: 'sites', extend: extendSites },
+  { file: 'proxy' },
   { file: 'teams' },
   { file: 'users' },
   { file: 'messaging' },
@@ -366,6 +367,8 @@ for (const file of ['id.ts', 'query.ts', 'permission.ts', 'role.ts', 'operator.t
     .replace('declare namespace Models', 'export declare namespace Models')
     .replace(/\nexport \{ Models \};\s*$/, '\n')
     .replace(/\bAppwrite\b/g, 'Bunwrite')
+    .replace(/(\n        fallbackFile: string;\n)(    };\n    \/\*\*\n     \* Function)/, '$1        /** Bunwrite: the site default URL. */\n        url?: string;\n        /** Bunwrite: first custom domain. */\n        domain?: string;\n        /** Bunwrite: all custom domains. */\n        domains?: string[];\n$2')
+    .replace(/(\n        runtimeSpecification: string;\n)(    };\n    \/\*\*\n     \* Runtime)/, '$1        /** Bunwrite: the function default URL. */\n        url?: string;\n        /** Bunwrite: first custom domain. */\n        domain?: string;\n        /** Bunwrite: all custom domains. */\n        domains?: string[];\n$2')
   noteEnums(text)
   write('models.ts', header(`node-appwrite ${NODE_VERSION}`) + text)
 }

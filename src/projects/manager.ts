@@ -12,8 +12,10 @@ import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
+import { functionHost, siteHost } from '~/lib/hosts'
 import { isValidId, randomSecret, resolveId, sha256 } from '~/lib/ids'
 import { removeTree } from '~/functions/sandbox'
+import type { FunctionRow } from '~/functions/service'
 import { createServices, type Services } from '~/services'
 import type { SiteRow } from '~/sites/service'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
@@ -69,7 +71,7 @@ export class ProjectManager implements ProjectResolver {
     this.dataDir = options.dataDir ?? dataDirOf(options.config)
     this.ensureDefault()
     this.load()
-    for (const runtime of this.runtimes.values()) this.linkSites(runtime.services)
+    for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
   }
 
   private ensureDefault(): void {
@@ -190,6 +192,14 @@ export class ProjectManager implements ProjectResolver {
     return null
   }
 
+  findFunctionByHost(host: string): { project: ProjectRuntime; fn: FunctionRow } | null {
+    for (const runtime of this.runtimes.values()) {
+      const fn = runtime.services.functions.byHost(host)
+      if (fn) return { project: runtime, fn }
+    }
+    return null
+  }
+
   findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null {
     for (const runtime of this.runtimes.values()) {
       const site = runtime.services.sites.byHost(host)
@@ -198,9 +208,16 @@ export class ProjectManager implements ProjectResolver {
     return null
   }
 
-  /** Site IDs and domains are subdomains and hosts, so they must be unique across projects. */
-  private linkSites(services: Services): void {
+  /** Site IDs and custom domains are hosts, so they must be unique across projects. */
+  private linkServices(services: Services): void {
     services.sites.peers = () => [...this.runtimes.values()].map((r) => r.services.sites)
+    services.functions.peers = () => [...this.runtimes.values()].map((r) => r.services.functions)
+    services.proxy.peers = () => [...this.runtimes.values()].map((r) => r.services.proxy)
+    services.proxy.reservedHosts = () =>
+      [...this.runtimes.values()].flatMap((r) => [
+        ...r.services.sites.list().map((site) => siteHost(r.services.config, site.id)),
+        ...r.services.functions.list().map((fn) => functionHost(r.services.config, fn.id)),
+      ])
   }
 
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string } {
@@ -239,7 +256,7 @@ export class ProjectManager implements ProjectResolver {
       if (config.bootstrap) config.bootstrap.apiKey = undefined
       const runtime: ProjectRuntime = { info, services }
       this.runtimes.set(id, runtime)
-      this.linkSites(services)
+      this.linkServices(services)
       services.functions.start()
       services.backups.start()
       return { project: runtime, apiKey }

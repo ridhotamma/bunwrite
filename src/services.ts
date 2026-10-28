@@ -6,9 +6,11 @@ import type { Config } from './config'
 import type { Db } from './db/connection'
 import { DocumentStore } from './documents/store'
 import { FunctionService, readEnvFile } from './functions/service'
+import { functionHost, siteHost } from './lib/hosts'
 import { randomSecret } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
+import { ProxyService } from './proxy/service'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
 import { SettingsService } from './settings/service'
@@ -37,6 +39,8 @@ export interface Services {
   functions: FunctionService
   /** Static sites served by Host header. */
   sites: SiteService
+  /** Custom domains for sites and functions (Appwrite proxy rules). */
+  proxy: ProxyService
   settings: SettingsService
   /** Services, protocols, sign-in methods and policies (`appwrite push settings`). */
   access: AccessService
@@ -56,12 +60,13 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const transactions = new TransactionService(db, registry, store)
   const auth = new AuthService(db, config, store)
   const teams = new TeamService(db, store, auth)
-  const sites = new SiteService(db, config)
+  const proxy = new ProxyService(db, config)
+  const sites = new SiteService(db, config, proxy)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db)
   const storage = new StorageService(db, config, store)
-  const functions = new FunctionService(db, config, store, {
+  const functions = new FunctionService(db, config, store, proxy, {
     functionEnv: readEnvFile(config.functionsEnvFile),
   })
   const requestLogs = new RequestLogService(db, config)
@@ -70,7 +75,8 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, requestLogs, backups, render, webhooks, topics, templates } as Services
+  proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, proxy, requestLogs, backups, render, webhooks, topics, templates } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {

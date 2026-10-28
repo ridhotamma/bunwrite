@@ -266,7 +266,9 @@ troubleshooting.
 
 Sites host plain HTML, htmx pages or a pre-built SPA at
 `<site-id>.<SITES_DOMAIN>`. Bunwrite never runs a build; upload the output folder
-or deploy it:
+or deploy it. Functions answer on `<function-id>.<FUNCTIONS_DOMAIN>`; both kinds
+of resource can also have multiple custom domains through the console or the
+Proxy API (`/v1/proxy/rules/site` and `/v1/proxy/rules/function`):
 
 ```json
 {

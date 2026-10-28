@@ -64,6 +64,9 @@ them in the database. `.env` is for server and deployment settings:
   `PUBLIC_ENDPOINT` defaults to `https://<DOMAIN>/v1`; the Docker Compose setup
   also gives Caddy the hostname to obtain a certificate for.
 - `PUBLIC_ENDPOINT` — the public URL including `/v1`, if TLS ends somewhere else.
+- `SITES_PREFIX` / `FUNCTIONS_PREFIX` — default `sites` and `functions`; site
+  and function hosts become `<id>.<prefix>.<DOMAIN>`. `SITES_DOMAIN` and
+  `FUNCTIONS_DOMAIN` override the whole base domain.
 - `HOST` — bind address; defaults to `0.0.0.0`. Set `127.0.0.1` when a
   reverse proxy or tunnel on the same host is the only entry point.
 - `CONSOLE_ADMIN_EMAIL` and `CONSOLE_ADMIN_PASSWORD` — optional first admin; the
@@ -180,6 +183,10 @@ Requirements when Caddy is enabled:
 - `appwrite.example.com` has an **A record** (and AAAA if you use IPv6) pointing
   at this server. Bunwrite and Caddy cannot create that record — add it at your
   DNS provider first.
+- Search for `sites.example.com` as well as `functions.example.com` unless you set
+  `SITES_DOMAIN` / `FUNCTIONS_DOMAIN`: a wildcard A record
+  `*.sites.example.com` and `*.functions.example.com` lets Caddy serve every
+  site and function on demand. Custom domains need their own CNAME/A records.
 - Ports **80 and 443** are open in `ufw`/`iptables` *and* the provider's firewall.
   Caddy needs 80 for the ACME HTTP challenge.
 - No other service on the host is using 80/443.

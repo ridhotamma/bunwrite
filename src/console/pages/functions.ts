@@ -194,6 +194,7 @@ export function functionPages(router: ConsoleRouter): void {
       buildSpecification: 's-1vcpu-512mb',
       runtimeSpecification: 's-1vcpu-512mb',
       deploymentRetention: 0,
+      domains: [],
     })
     try {
       await deploy(ctx, f, source, entrypoint, source.kind === 'template' ? '' : commands, true)
@@ -296,9 +297,18 @@ export function functionPages(router: ConsoleRouter): void {
             <li><span class="subdued">Source</span><span>${fromDeployment ? 'Live deployment' : code.dir ? 'Code folder' : html`<span style="color:var(--critical)">None</span>`}</span></li>
             ${code.dir && !fromDeployment ? html`<li><span class="subdued">Folder</span><span class="mono clip">${code.dir}</span></li>` : ''}
             <li><span class="subdued">Entry file</span><span class="mono">${code.entrypoint}</span></li>
+            <li><span class="subdued">Function URL</span>${copyableId(ctx.services.functions.url(f), 'function-domain-url', 'Copy function URL')}</li>
+            ${ctx.services.functions.urls(f).slice(1).map((url, i) => html`<li><span class="subdued">Custom domain</span>${copyableId(url, `function-domain-${i}`, 'Copy domain URL')}</li>`)}
             <li><span class="subdued">HTTP endpoint</span>${copyableId(functionHttpUrl(ctx, f), 'function-http-url', 'Copy function URL')}</li>
           </ul>
           <p class="help">${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'} <a href="${functionUrl(f.id)}/deployments">View deployments</a></p>`,
+        )}
+        ${settingsSection(
+          'Custom domains',
+          html`Point a CNAME record for each domain at <code>${new URL(ctx.services.functions.url(f)).host}</code> (or an A record at this server). The default function URL above always keeps working.`,
+          html`<form method="post" action="${functionUrl(f.id)}/domains"><label>Domains<textarea name="domains" class="mono" rows="3" placeholder="api.example.com&#10;hooks.example.com">${ctx.services.functions.domains(f).join('\n')}</textarea><small>One per line. Empty for none.</small></label>
+          <div class="foot"><button class="primary">Save domains</button></div></form>`,
+          { id: 'function-domains' },
         )}
         ${settingsSection(
           'Delete function',
@@ -317,6 +327,12 @@ export function functionPages(router: ConsoleRouter): void {
       execute: lines(ctx.form.execute),
     })
     return ctx.go(`${functionUrl(path.id!)}/settings`, { tone: 'success', text: 'Saved' })
+  })
+
+  router.post(`${FN}/:id/domains`, ({ ctx, path }) => {
+    const f = ctx.services.functions.fn(path.id!)
+    ctx.services.proxy.set('function', f.id, lines(ctx.form.domains))
+    return ctx.go(`${functionUrl(f.id)}/settings`, { tone: 'success', text: 'Domains saved' })
   })
 
   router.post(`${FN}/:id/run`, async ({ ctx, path }) => {

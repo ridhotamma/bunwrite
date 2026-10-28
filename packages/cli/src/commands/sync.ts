@@ -65,6 +65,13 @@ async function listAll<T>(page: (queries: string[]) => Promise<T[]>): Promise<T[
 const api = (ctx: Ctx, method: string, path: string, body: Item = {}) =>
   ctx.client.call(method, new URL(ctx.client.config.endpoint + path), { 'content-type': 'application/json' }, body)
 
+/** Site and function `domains` are Bunwrite extensions the generated SDK methods do not send. */
+const syncDomains = async (ctx: Ctx, type: 'site' | 'function', id: string, domains: unknown) => {
+  if (!Array.isArray(domains)) return
+  const path = type === 'site' ? 'sites' : 'functions'
+  await api(ctx, 'put', `/${path}/${encodeURIComponent(id)}`, { domains })
+}
+
 const pick = (item: Item, keys: string[]): Item => {
   const out: Item = {}
   for (const k of keys) if (item[k] !== undefined) out[k] = item[k]
@@ -405,7 +412,7 @@ async function pushSchema(ctx: Ctx, f: Flavor): Promise<string> {
 
 // ---- Functions ----
 
-const FUNCTION_FIELDS = ['name', 'runtime', 'execute', 'events', 'schedule', 'timeout', 'enabled', 'logging', 'entrypoint', 'commands', 'scopes']
+const FUNCTION_FIELDS = ['name', 'runtime', 'execute', 'events', 'schedule', 'timeout', 'enabled', 'logging', 'entrypoint', 'commands', 'scopes', 'domains']
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'function'
 
@@ -505,10 +512,12 @@ async function pushFunctions(ctx: Ctx): Promise<string> {
     const remote = await orNull(functions.get({ functionId: fn.$id }))
     if (!remote) {
       await functions.create({ functionId: fn.$id, ...functionParams(fn) } as any)
+      await syncDomains(ctx, 'function', fn.$id, fn.domains)
       success(`Created ${fn.name} ( ${fn.$id} )`)
       updated++
     } else if (changedKeys(fn, remote, FUNCTION_FIELDS).length) {
       await functions.update({ functionId: fn.$id, ...functionParams({ ...pick(remote, FUNCTION_FIELDS), ...fn }) } as any)
+      await syncDomains(ctx, 'function', fn.$id, fn.domains)
       success(`Updated the settings of ${fn.name} ( ${fn.$id} )`)
       updated++
     }
@@ -528,7 +537,7 @@ async function pushFunctions(ctx: Ctx): Promise<string> {
  * server. Only the output folder is packed (`outputDirectory` inside `path`),
  * and .gitignore is not applied there, since build output is usually ignored.
  */
-const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain']
+const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbackFile', 'installCommand', 'buildCommand', 'buildRuntime', 'adapter', 'apiFunctionId', 'domain', 'domains']
 
 const siteParams = (site: Item) => ({ ...pick(site, SITE_FIELDS), framework: site.framework ?? 'other', buildRuntime: site.buildRuntime ?? 'static-1' })
 
@@ -589,10 +598,12 @@ async function pushSites(ctx: Ctx): Promise<string> {
     const remote = await orNull(sites.get({ siteId: site.$id }))
     if (!remote) {
       await sites.create({ siteId: site.$id, ...siteParams(site) } as any)
+      await syncDomains(ctx, 'site', site.$id, site.domains)
       success(`Created ${site.name} ( ${site.$id} )`)
       updated++
     } else if (changedKeys(site, remote, SITE_FIELDS).length) {
       await sites.update({ siteId: site.$id, ...siteParams({ ...pick(remote, SITE_FIELDS), ...site }) } as any)
+      await syncDomains(ctx, 'site', site.$id, site.domains)
       success(`Updated the settings of ${site.name} ( ${site.$id} )`)
       updated++
     }

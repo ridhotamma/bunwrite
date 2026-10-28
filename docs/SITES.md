@@ -15,32 +15,39 @@ Each site answers on `<site-id>.<SITES_DOMAIN>`:
 
 | Setting | Site URL |
 | --- | --- |
-| Local, no `DOMAIN` | `http://<site-id>.localhost:8080` (browsers resolve `*.localhost` to this machine) |
+| Local, no `DOMAIN` | `http://<site-id>.sites.localhost:8080` (browsers resolve `*.localhost` to this machine) |
 | `DOMAIN=api.example.com` | `https://<site-id>.sites.api.example.com` |
+| `SITES_PREFIX=web` | `https://<site-id>.web.api.example.com` |
 | `SITES_DOMAIN=sites.example.com` | `https://<site-id>.sites.example.com` |
 
 Site IDs are subdomains: lowercase letters, digits and hyphens, up to 36
 characters. They are unique across all projects on the server.
 
-A site can also have one **custom domain**, such as `www.example.com`. Point a
-CNAME at `<site-id>.<SITES_DOMAIN>` (or an A record at the server) and set the
-domain in **Console → Sites → Settings**, with the API (`domain`), or as an
-Appwrite proxy rule (`proxy.createSiteRule`).
+A site can also have any number of **custom domains**, such as
+`www.example.com` and `shop.example.com`. Point a CNAME at
+`<site-id>.<SITES_DOMAIN>` (or an A record at the server) and add the domains in
+**Console → Sites → Settings**, with the API (`domains` array), or as Appwrite
+proxy rules (`proxy.createSiteRule`). The default site address always keeps
+working when a custom domain is added or removed.
+
+Functions use the same model: `<function-id>.<FUNCTIONS_DOMAIN>` by default
+(`<function-id>.functions.example.com`), plus any number of custom domains.
 
 ### HTTPS with the bundled Caddy
 
 The [Caddyfile](../Caddyfile) has a catch-all block with on-demand TLS: the first
-visit to a site host gets its Let's Encrypt certificate. Caddy first asks
-Bunwrite (`/.well-known/bunwrite/site-domain`) whether the host is a site, so
-no one can make it request certificates for other names. You only need DNS:
+visit to a site or function host gets its Let's Encrypt certificate. Caddy asks
+Bunwrite (`/.well-known/bunwrite/host`) whether the host belongs here, so no one
+can make it request certificates for other names. You only need DNS:
 
 ```
-*.sites.example.com   A   203.0.113.10
-www.example.com       CNAME   landing.sites.example.com
+*.sites.example.com       A    203.0.113.10
+*.functions.example.com   A    203.0.113.10
+www.example.com           CNAME   landing.sites.example.com
 ```
 
-Behind your own proxy, forward site hosts to Bunwrite with their `Host` header
-(or `X-Forwarded-Host`).
+Behind your own proxy, forward site and function hosts to Bunwrite with their
+`Host` header (or `X-Forwarded-Host`).
 
 ## Deploy
 
@@ -72,7 +79,8 @@ In `bunwrite.config.json` (or `appwrite.config.json`):
       "path": "web",
       "outputDirectory": "dist",
       "fallbackFile": "index.html",
-      "apiFunctionId": "api"
+      "apiFunctionId": "api",
+      "domains": ["www.example.com", "shop.example.com"]
     }
   ]
 }
@@ -99,7 +107,7 @@ await sites.create({ siteId: 'landing', name: 'Landing', framework: Framework.Ot
 await sites.createDeployment({ siteId: 'landing', code: InputFile.fromPath('site.tar.gz'), activate: true })
 ```
 
-`apiFunctionId` and `domain` are Bunwrite extensions; with `node-appwrite`,
+`apiFunctionId` and `domains` are Bunwrite extensions; with `node-appwrite`,
 set them in the console or with a plain `PUT /v1/sites/<id>` call.
 
 ## Serving rules

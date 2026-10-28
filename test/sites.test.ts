@@ -28,6 +28,9 @@ function archive(name: string, files: Record<string, string | Uint8Array>, folde
   return new Uint8Array(readFileSync(out))
 }
 
+const rulesFor = async (id: string, resourceType = 'site') =>
+  (await proxy.listRules()).rules.filter((r) => r.deploymentResourceId === id && r.deploymentResourceType === resourceType).map((r) => r.domain)
+
 const visit = (path: string, init: RequestInit & { host?: string } = {}) => {
   const { host = siteHost, ...rest } = init
   return fetch(`http://127.0.0.1:${server.config.port}${path}`, { ...rest, headers: { ...(rest.headers as Record<string, string>), host }, redirect: 'manual' })
@@ -56,7 +59,7 @@ beforeAll(() => {
   const client = new Client().setEndpoint(server.endpoint).setProject(PROJECT).setKey(KEY)
   sites = new Sites(client)
   proxy = new Proxy(client)
-  siteHost = `blog.localhost:${server.config.port}`
+  siteHost = `blog.sites.localhost:${server.config.port}`
 })
 
 afterAll(() => {
@@ -70,7 +73,7 @@ describe('sites API', () => {
     const site: any = await sites.create({ siteId: 'blog', name: 'Blog', framework: 'other' as any, buildRuntime: 'static-1' as any })
     expect(site.$id).toBe('blog')
     expect(site.live).toBe(false)
-    expect(site.url).toBe(`http://blog.localhost:${server.config.port}`)
+    expect(site.url).toBe(`http://blog.sites.localhost:${server.config.port}`)
     expect((await sites.list()).total).toBe(1)
     const frameworks = await sites.listFrameworks()
     expect(frameworks.frameworks.some((f) => f.key === 'vite')).toBe(true)
@@ -251,7 +254,7 @@ describe('sites with functions', () => {
   })
 
   test('the browser SDK on a site may call the API (CORS)', async () => {
-    const origin = `http://blog.localhost:${server.config.port}`
+    const origin = `http://blog.sites.localhost:${server.config.port}`
     const res = await fetch(`${server.endpoint}/health`, { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'GET' } })
     expect(res.headers.get('access-control-allow-origin')).toBe(origin)
     const other = await fetch(`${server.endpoint}/health`, { method: 'OPTIONS', headers: { origin: 'http://evil.test', 'access-control-request-method': 'GET' } })
@@ -259,28 +262,82 @@ describe('sites with functions', () => {
   })
 
   test('a site is a valid redirect target for account emails', async () => {
-    expect(server.services.sites.allowedOrigins()).toContain(`http://blog.localhost:${server.config.port}`)
+    expect(server.services.sites.allowedOrigins()).toContain(`http://blog.sites.localhost:${server.config.port}`)
   })
 })
 
 describe('custom domains', () => {
+  test('the API accepts multiple domains on create and update', async () => {
+    const headers = { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY, 'content-type': 'application/json' }
+    const created = (await (
+      await fetch(`${server.endpoint}/sites`, { method: 'POST', headers, body: JSON.stringify({ siteId: 'multi', name: 'Multi', framework: 'other', domains: ['one.example.org', 'two.example.org'] }) })
+    ).json()) as any
+    expect(created.domains).toEqual(['one.example.org', 'two.example.org'])
+    expect(created.domain).toBe('one.example.org')
+
+    const updated = (await (
+      await fetch(`${server.endpoint}/sites/multi`, { method: 'PUT', headers, body: JSON.stringify({ domains: ['three.example.org'] }) })
+    ).json()) as any
+    expect(updated.domains).toEqual(['three.example.org'])
+    expect((await fetch(`${server.endpoint}/sites/multi`, { headers })).status).toBe(200)
+
+    const fn = (await (
+      await fetch(`${server.endpoint}/functions`, { method: 'POST', headers, body: JSON.stringify({ functionId: 'multi-fn', name: 'Multi function', runtime: 'node-22', domains: ['fn.example.org'] }) })
+    ).json()) as any
+    expect(fn.domains).toEqual(['fn.example.org'])
+    expect(fn.url).toBe(`http://multi-fn.functions.localhost:${server.config.port}`)
+  })
+
   test('a proxy rule gives the site its own domain', async () => {
     const rule = await proxy.createSiteRule({ domain: 'www.example.org', siteId: 'blog' })
     expect(rule.domain).toBe('www.example.org')
     const res = await visit('/', { host: 'www.example.org' })
     expect(await res.text()).toContain('Built')
     const rules = await proxy.listRules()
-    expect(rules.rules.map((r) => r.domain)).toEqual(expect.arrayContaining(['www.example.org', `blog.localhost:${server.config.port}`]))
+    expect(rules.rules.map((r) => r.domain)).toEqual(expect.arrayContaining(['www.example.org']))
+  })
+
+  test('a site can have several custom domains, and removing one keeps the rest', async () => {
+    const second = await proxy.createSiteRule({ domain: 'shop.example.org', siteId: 'blog' })
+    await proxy.createSiteRule({ domain: 'cdn.example.org', siteId: 'blog' })
+    expect(await rulesFor('blog')).toEqual(expect.arrayContaining(['www.example.org', 'shop.example.org', 'cdn.example.org']))
+    expect(await (await visit('/', { host: 'shop.example.org' })).text()).toContain('Built')
+    expect(await (await visit('/', { host: 'cdn.example.org' })).text()).toContain('Built')
+
+    await proxy.deleteRule({ ruleId: second.$id })
+    expect(await (await visit('/', { host: 'www.example.org' })).text()).toContain('Built')
+    expect((await visit('/', { host: 'shop.example.org' })).status).not.toBe(200)
+    expect(await (await visit('/', { host: 'cdn.example.org' })).text()).toContain('Built')
+  })
+
+  test('a function answers on its default host and any number of custom domains', async () => {
+    const host = (name: string) => `http://127.0.0.1:${server.config.port}${name}`
+    const call = (name: string, domain: string) => fetch(host(name), { headers: { host: `${domain}:${server.config.port}` } })
+
+    const byDefault = await call('/hello?from=default', `api.functions.localhost`)
+    expect(await byDefault.json()).toMatchObject({ path: '/hello', query: { from: 'default' } })
+
+    const first = await proxy.createFunctionRule({ domain: 'api.example.org', functionId: 'api' })
+    await proxy.createFunctionRule({ domain: 'hooks.example.org', functionId: 'api' })
+    expect(await rulesFor('api', 'function')).toEqual(expect.arrayContaining(['api.example.org', 'hooks.example.org']))
+    expect(await (await call('/hello', 'api.example.org')).json()).toMatchObject({ path: '/hello' })
+    expect(await (await call('/hello', 'hooks.example.org')).json()).toMatchObject({ path: '/hello' })
+
+    await proxy.deleteRule({ ruleId: first.$id })
+    expect(await (await call('/hello', 'hooks.example.org')).json()).toMatchObject({ path: '/hello' })
+    expect((await call('/hello', 'api.example.org')).status).not.toBe(200)
   })
 
   test('a domain belongs to one site', async () => {
     await sites.create({ siteId: 'shop', name: 'Shop', framework: 'other' as any, buildRuntime: 'static-1' as any })
-    expect((await failure(proxy.createSiteRule({ domain: 'www.example.org', siteId: 'shop' }))).code).toBe(400)
+    expect((await failure(proxy.createSiteRule({ domain: 'www.example.org', siteId: 'shop' }))).code).toBe(409)
+    // A resource's default host cannot be taken by another site's custom domain.
+    expect((await failure(proxy.createSiteRule({ domain: 'blog.sites.localhost', siteId: 'shop' }))).code).toBe(400)
   })
 
   test('deleting a site frees its address', async () => {
     await sites.delete({ siteId: 'shop' })
-    const res = await visit('/', { host: `shop.localhost:${server.config.port}` })
+    const res = await visit('/', { host: `shop.sites.localhost:${server.config.port}` })
     expect(res.status).not.toBe(200)
   })
 

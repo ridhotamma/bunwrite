@@ -3883,6 +3883,12 @@ export declare namespace Models {
          * Name of fallback file to use instead of 404 page. If null, Bunwrite 404 page will be displayed.
          */
         fallbackFile: string;
+        /** Bunwrite: the site default URL. */
+        url?: string;
+        /** Bunwrite: first custom domain. */
+        domain?: string;
+        /** Bunwrite: all custom domains. */
+        domains?: string[];
     };
     /**
      * Function
@@ -4016,6 +4022,12 @@ export declare namespace Models {
          * Machine specification for executions.
          */
         runtimeSpecification: string;
+        /** Bunwrite: the function default URL. */
+        url?: string;
+        /** Bunwrite: first custom domain. */
+        domain?: string;
+        /** Bunwrite: all custom domains. */
+        domains?: string[];
     };
     /**
      * Runtime

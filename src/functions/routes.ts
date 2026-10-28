@@ -9,7 +9,6 @@ import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { deploymentModel, Deployments } from './deployments'
 import { functionHttpResponse } from './http'
-import { siteRules } from '~/sites/routes'
 import { ENV_KEY_RE } from './env'
 import { executionModel, functionModel, type FunctionRow, type FunctionSettings } from './service'
 
@@ -17,7 +16,8 @@ const strings = (value: unknown, fallback: string[]): string[] => (value === und
 
 const deploymentsOf = (ctx: AppContext) => new Deployments(ctx.db, ctx.config, ctx.functions)
 
-const model = (ctx: AppContext, f: FunctionRow) => functionModel(f, deploymentsOf(ctx).latest(f.id), Boolean(ctx.functions.codeDir(f).dir))
+const model = (ctx: AppContext, f: FunctionRow) =>
+  functionModel(f, deploymentsOf(ctx).latest(f.id), Boolean(ctx.functions.codeDir(f).dir), ctx.functions.domains(f), ctx.functions.url(f))
 
 /** Settings from a create or update call; anything left out keeps `base`. */
 function settingsFrom(p: Params, base: FunctionSettings): FunctionSettings {
@@ -36,10 +36,11 @@ function settingsFrom(p: Params, base: FunctionSettings): FunctionSettings {
     buildSpecification: str(p.buildSpecification) || base.buildSpecification,
     runtimeSpecification: str(p.runtimeSpecification) || base.runtimeSpecification,
     deploymentRetention: num(p.deploymentRetention, base.deploymentRetention)!,
+    domains: p.domains !== undefined ? list(p.domains).map(String) : p.domain !== undefined ? (str(p.domain) ? [str(p.domain)!] : []) : base.domains,
   }
 }
 
-const settingsOf = (f: FunctionRow): FunctionSettings => ({
+const settingsOf = (ctx: AppContext, f: FunctionRow): FunctionSettings => ({
   name: f.name,
   runtime: f.runtime,
   execute: JSON.parse(f.execute),
@@ -54,6 +55,7 @@ const settingsOf = (f: FunctionRow): FunctionSettings => ({
   buildSpecification: f.build_specification,
   runtimeSpecification: f.runtime_specification,
   deploymentRetention: f.deployment_retention,
+  domains: ctx.functions.domains(f),
 })
 
 interface VariableRow {
@@ -81,28 +83,6 @@ function variableOf(ctx: AppContext, functionId: string, key: string): VariableR
   const row = ctx.db.sqlite.query<VariableRow, [string, string]>('SELECT * FROM _function_vars WHERE function_id = ? AND key = ?').get(functionId, key)
   if (!row) throw err('variable_not_found')
   return row
-}
-
-/** The URL a function answers on here, standing in for an Appwrite function domain. */
-const functionRule = (ctx: AppContext, f: FunctionRow) => {
-  const url = new URL(`${ctx.config.publicEndpoint}/functions/${f.id}/http`)
-  return {
-    $id: `fn-${f.id}`,
-    $createdAt: f.created_at,
-    $updatedAt: f.updated_at,
-    domain: `${url.host}${url.pathname}`,
-    type: 'deployment',
-    trigger: 'manual',
-    redirectUrl: '',
-    redirectStatusCode: 301,
-    deploymentId: f.deployment_id,
-    deploymentResourceType: 'function',
-    deploymentResourceId: f.id,
-    deploymentVcsProviderBranch: '',
-    status: 'verified',
-    logs: '',
-    renewAt: '',
-  }
 }
 
 export function functionRoutes(router: Router<AppContext>): void {
@@ -135,6 +115,7 @@ export function functionRoutes(router: Router<AppContext>): void {
       buildSpecification: 's-1vcpu-512mb',
       runtimeSpecification: 's-1vcpu-512mb',
       deploymentRetention: 0,
+      domains: [],
     })
     return json(model(ctx, ctx.functions.create(id, settings)), 201)
   })
@@ -147,7 +128,7 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.put('/functions/:functionId', ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
     const f = ctx.functions.fn(path.functionId!)
-    return json(model(ctx, ctx.functions.save(f.id, settingsFrom(params, settingsOf(f)))))
+    return json(model(ctx, ctx.functions.save(f.id, settingsFrom(params, settingsOf(ctx, f)))))
   })
 
   router.delete('/functions/:functionId', ({ ctx, path }) => {
@@ -267,40 +248,20 @@ export function functionRoutes(router: Router<AppContext>): void {
 
   // ---- Calls `appwrite push functions` makes around a new function ----
 
-  /** Read by the CLI (as the "console" project) to name a new function's domain. */
+  /** Read by the CLI (as the "console" project) to name a new function or site domain. */
   router.get('/console/variables', ({ ctx }) => {
     const host = new URL(ctx.config.publicEndpoint).host
     return json({
       _APP_DOMAIN_TARGET: host,
-      _APP_DOMAIN_FUNCTIONS: host,
-      _APP_DOMAIN_SITES: host,
+      _APP_DOMAIN_FUNCTIONS: ctx.config.functionsDomain,
+      _APP_DOMAIN_SITES: ctx.config.sitesDomain,
       _APP_STORAGE_LIMIT: 512 * 1024 * 1024,
       _APP_COMPUTE_SIZE_LIMIT: 512 * 1024 * 1024,
       _APP_USAGE_STATS: 'disabled',
       _APP_VCS_ENABLED: false,
-      _APP_DOMAIN_ENABLED: false,
+      _APP_DOMAIN_ENABLED: true,
       _APP_ASSISTANT_ENABLED: false,
     })
-  })
-
-  /** Functions answer on <endpoint>/functions/<id>/http, so a function rule is accepted and nothing is stored. */
-  router.post('/proxy/rules/function', ({ ctx, params }) => {
-    requireKey(ctx, 'rules.write')
-    return json(functionRule(ctx, ctx.functions.fn(str(params.functionId) ?? '')), 201)
-  })
-
-  router.get('/proxy/rules', ({ ctx, params }) => {
-    requireKey(ctx, 'rules.read')
-    let rules = [...ctx.functions.list().map((f) => functionRule(ctx, f)), ...ctx.sites.list().flatMap((s) => siteRules(ctx, s))]
-    let limit = 25
-    for (const raw of list(params.queries)) {
-      const query = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { method?: string; attribute?: string; values?: unknown[] }
-      if (query?.method === 'limit') limit = Number(query.values?.[0] ?? 25)
-      if (query?.method === 'equal' && query.attribute) {
-        rules = rules.filter((r) => (query.values ?? []).includes((r as Record<string, unknown>)[query.attribute!]))
-      }
-    }
-    return json({ total: rules.length, rules: rules.slice(0, limit) })
   })
 
   router.get('/functions/:functionId/executions', ({ ctx, path, params }) => {

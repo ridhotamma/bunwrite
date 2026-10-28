@@ -121,9 +121,18 @@ export interface Config {
   internalKey?: string
   /**
    * Sites answer on `<siteId>.<sitesDomain>` (SITES_DOMAIN). Defaults to
-   * `sites.<DOMAIN>`, or `localhost` so `<id>.localhost:<port>` works locally.
+   * `<SITES_PREFIX>.<DOMAIN>`, or `<SITES_PREFIX>.localhost` while developing.
    */
   sitesDomain?: string
+  /**
+   * Functions answer on `<functionId>.<functionsDomain>` (FUNCTIONS_DOMAIN).
+   * Defaults to `<FUNCTIONS_PREFIX>.<DOMAIN>`, or `<FUNCTIONS_PREFIX>.localhost`.
+   */
+  functionsDomain?: string
+  /** Prefix of the default site host under DOMAIN; `sites` unless SITES_PREFIX says otherwise. */
+  sitesPrefix: string
+  /** Prefix of the default function host under DOMAIN; `functions` unless FUNCTIONS_PREFIX says otherwise. */
+  functionsPrefix: string
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -164,6 +173,24 @@ export const list = (value: string | undefined) =>
     .map((s) => s.trim())
     .filter(Boolean)
 
+/** A DNS label used as the site/function namespace under DOMAIN. */
+const dnsLabel = (value: string | undefined, fallback: string) =>
+  (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '') || fallback
+
+/** A host from the environment: lowercase, no scheme, wildcard, path or port. */
+const dnsName = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^\*\./, '')
+    .replace(/[/:].*$/, '')
+    .replace(/\.$/, '')
+
 /** SMTP settings from the environment. Used once to seed a new instance. */
 export function smtpFromEnv(env: Record<string, string | undefined>): SmtpConfig | null {
   if (!env.SMTP_HOST) return null
@@ -201,6 +228,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   // to be reachable at https://<domain>, and the container cannot know that on
   // its own. Strip a pasted scheme and path so https://x.example/ also works.
   const domain = (env.DOMAIN ?? '').trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '')
+  const sitesPrefix = dnsLabel(env.SITES_PREFIX, 'sites')
+  const functionsPrefix = dnsLabel(env.FUNCTIONS_PREFIX, 'functions')
+  const sitesDomain = dnsName(env.SITES_DOMAIN || (domain ? `${sitesPrefix}.${domain}` : `${sitesPrefix}.localhost`))
+  const functionsDomain = dnsName(env.FUNCTIONS_DOMAIN || (domain ? `${functionsPrefix}.${domain}` : `${functionsPrefix}.localhost`))
   const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   return {
     port,
@@ -226,12 +257,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     skipSchedules: [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
-    sitesDomain: (env.SITES_DOMAIN || (domain ? `sites.${domain}` : 'localhost'))
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, '')
-      .replace(/^\*\./, '')
-      .replace(/[/:].*$/, ''),
+    sitesDomain,
+    functionsDomain,
+    sitesPrefix,
+    functionsPrefix,
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

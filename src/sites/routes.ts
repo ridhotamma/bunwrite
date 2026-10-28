@@ -67,6 +67,7 @@ export function siteDeploymentModel(d: SiteDeploymentRow) {
 export function siteModel(ctx: AppContext, s: SiteRow) {
   const latest = ctx.sites.latest(s.id)
   const live = s.deployment_id ? ctx.sites.deployment(s.id, s.deployment_id) : null
+  const domains = ctx.proxy.domainsFor('site', s.id)
   return {
     $id: s.id,
     $createdAt: s.created_at,
@@ -105,48 +106,23 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     fallbackFile: s.fallback_file,
     // Bunwrite extensions.
     url: ctx.sites.url(s),
-    domain: s.domain,
+    domains,
+    domain: domains[0] ?? '',
     apiFunctionId: s.api_function_id,
   }
 }
 
-/** A site's custom domain as an Appwrite proxy rule; `domain` overrides it for the built-in subdomain. */
-export function siteRule(ctx: AppContext, s: SiteRow, domain = s.domain) {
-  return {
-    $id: domain === s.domain ? `site-${s.id}` : `default-${s.id}`,
-    $createdAt: s.created_at,
-    $updatedAt: s.updated_at,
-    domain,
-    type: 'deployment',
-    trigger: 'manual',
-    redirectUrl: '',
-    redirectStatusCode: 301,
-    deploymentId: s.deployment_id,
-    deploymentResourceType: 'site',
-    deploymentResourceId: s.id,
-    deploymentVcsProviderBranch: '',
-    status: 'verified',
-    logs: '',
-    renewAt: '',
-  }
-}
-
-/** Every address a site answers on: its subdomain here, and its custom domain if set. */
-export const siteRules = (ctx: AppContext, s: SiteRow) => [
-  siteRule(ctx, s, new URL(ctx.sites.url(s)).host),
-  ...(s.domain ? [siteRule(ctx, s)] : []),
-]
-
 function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSettings {
   const apiFunctionId = str(p.apiFunctionId) ?? base.apiFunctionId
   if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.functions.fn(apiFunctionId)
+  const domains = p.domains !== undefined ? list(p.domains).map(String) : p.domain !== undefined ? (str(p.domain) ? [str(p.domain)!] : []) : base.domains
   return {
     name: str(p.name) ?? base.name,
     enabled: bool(p.enabled, base.enabled),
     framework: str(p.framework) || base.framework,
     outputDirectory: str(p.outputDirectory) ?? base.outputDirectory,
     fallbackFile: str(p.fallbackFile) ?? base.fallbackFile,
-    domain: str(p.domain) ?? base.domain,
+    domains,
     apiFunctionId,
     installCommand: str(p.installCommand) ?? base.installCommand,
     buildCommand: str(p.buildCommand) ?? base.buildCommand,
@@ -174,7 +150,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       framework: str(params.framework) || 'other',
       outputDirectory: framework?.outputDirectory ?? '',
       fallbackFile: framework?.fallbackFile ?? '',
-      domain: '',
+      domains: [],
       apiFunctionId: '',
       installCommand: '',
       buildCommand: '',
@@ -279,25 +255,5 @@ export function siteRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'sites.read')
     ctx.sites.site(path.siteId!)
     return json({ total: 0, variables: [] })
-  })
-
-  // ---- Custom domains, as Appwrite proxy rules ----
-
-  router.post('/proxy/rules/site', ({ ctx, params }) => {
-    requireKey(ctx, 'rules.write')
-    const s = ctx.sites.site(str(params.siteId) ?? '')
-    const domain = str(params.domain)
-    if (!domain) throw err('general_argument_invalid', 'Param "domain" is not optional.')
-    return json(siteRule(ctx, ctx.sites.update(s.id, { ...ctx.sites.settingsOf(s), domain })), 201)
-  })
-
-  router.delete('/proxy/rules/:ruleId', ({ ctx, path }) => {
-    requireKey(ctx, 'rules.write')
-    const m = /^site-(.+)$/.exec(path.ruleId!)
-    if (!m) throw err('rule_not_found')
-    const s = ctx.sites.site(m[1]!)
-    if (!s.domain) throw err('rule_not_found')
-    ctx.sites.update(s.id, { ...ctx.sites.settingsOf(s), domain: '' })
-    return noContent()
   })
 }

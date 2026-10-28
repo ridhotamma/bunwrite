@@ -70,10 +70,12 @@ deprecated.
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
 | `Functions` | Functions, deployments, executions, variables |
+| `Sites` | Static sites, deployments, and custom domains |
 | `Teams` | Teams, prefs, memberships and invitations |
 | `Users` | Users, labels, prefs, sessions, tokens, JWTs, identities, memberships (API key) |
 | `Messaging` | Topics |
 | `Webhooks` | Webhooks and their secrets |
+| `Proxy` | Custom domains for sites and functions, as Appwrite proxy rules |
 | `Project` | Services, protocols, sign-in methods, policies, email templates, mock phone numbers (API key) |
 | `Organization` | Projects of the organization (console sign-in) |
 | `Realtime` | Subscriptions over WebSocket, in browsers and on servers |
@@ -96,7 +98,7 @@ Helpers: `Query`, `ID`, `Permission`, `Role`, `Operator`, `Channel`,
   `Databases` document endpoints, so the TablesDB row methods are not
   included. The same data is reachable as collections and documents.
 - **Only what Bunwrite serves.** Methods for endpoints Bunwrite does not have
-  (Avatars, Locale, Sites, MFA, phone login, sending messages, …) are left out
+  (Avatars, Locale, MFA, phone login, sending messages, …) are left out
   rather than failing at runtime.
 - **Errors** are `BunwriteException`, with the same `code`, `type`, `message`
   and `response` as Appwrite's `AppwriteException`.

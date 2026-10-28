@@ -17,7 +17,9 @@ import type { Db } from '~/db/connection'
 import { chunkRange, chunksFor, liftSingleFolder, packFolder, unpackArchive, writeChunk } from '~/functions/deployments'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
+import { hostOf, siteHost, sitesDomainOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
+import type { ProxyService } from '~/proxy/service'
 
 /** Ready deployments kept besides the live one, for rollback. */
 const KEEP_PREVIOUS = 5
@@ -25,7 +27,6 @@ const MAX_LOG = 200_000
 
 /** Site IDs are subdomains: lowercase letters, digits and hyphens. */
 export const SITE_ID = /^[a-z0-9](?:[a-z0-9-]{0,34}[a-z0-9])?$/
-const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 /** Taken by the server itself; a site may not use these names. */
 const RESERVED_IDS = new Set(['www', 'api', 'console', 'admin', 'sites', 'cloud', 'localhost'])
 
@@ -71,7 +72,7 @@ export interface SiteSettings {
   framework: string
   outputDirectory: string
   fallbackFile: string
-  domain: string
+  domains: string[]
   apiFunctionId: string
   installCommand: string
   buildCommand: string
@@ -104,21 +105,12 @@ export function sitesDir(config: Config, siteId?: string, deploymentId?: string)
   return join(...[base, siteId, deploymentId].filter((p): p is string => Boolean(p)))
 }
 
-export const sitesDomainOf = (config: Config) => config.sitesDomain || 'localhost'
-
 /** A relative folder or file inside the site: no `..`, no leading slash. */
 function relativePath(value: string, what: string): string {
   const cleaned = value.trim().replace(/\\/g, '/').replace(/^\.?\/+/, '').replace(/\/+$/, '')
   if (!cleaned || cleaned === '.') return ''
   if (isAbsolute(cleaned) || cleaned.split('/').includes('..')) throw err('general_argument_invalid', `${what} must be a path inside the site.`)
   return cleaned
-}
-
-export function normalizeDomain(value: string): string {
-  const domain = value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/:].*$/, '').replace(/\.$/, '')
-  if (!domain) return ''
-  if (!DOMAIN.test(domain)) throw err('general_argument_invalid', `"${value}" is not a valid domain.`)
-  return domain
 }
 
 function countFiles(dir: string): { files: number; bytes: number } {
@@ -142,14 +134,14 @@ const formatSize = (bytes: number) =>
   bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
 export class SiteService {
-  /** The other projects' site services, so site IDs and domains stay unique on this server. */
+  /** The other projects' site services, so site IDs stay unique on this server. */
   peers: () => SiteService[] = () => []
   private byId: Map<string, SiteRow> | null = null
-  private byDomain: Map<string, SiteRow> | null = null
 
   constructor(
     private db: Db,
     private config: Config,
+    private proxy: ProxyService,
   ) {}
 
   private get sql() {
@@ -157,16 +149,15 @@ export class SiteService {
   }
 
   private cache() {
-    if (!this.byId || !this.byDomain) {
+    if (!this.byId) {
       const rows = this.sql.query<SiteRow, []>('SELECT * FROM _sites ORDER BY seq').all()
-      this.byId = new Map(rows.map((r) => [r.id, r]))
-      this.byDomain = new Map(rows.filter((r) => r.domain).map((r) => [r.domain, r]))
+      this.byId = new Map(rows.map((row) => [row.id, row]))
     }
-    return { byId: this.byId, byDomain: this.byDomain }
+    return { byId: this.byId }
   }
 
   private changed() {
-    this.byId = this.byDomain = null
+    this.byId = null
   }
 
   // ---- Sites ----
@@ -187,26 +178,23 @@ export class SiteService {
 
   /** The site a request's Host header points at, if it is one of this project's. */
   byHost(host: string): SiteRow | null {
-    const name = host.toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '')
-    const { byId, byDomain } = this.cache()
-    const custom = byDomain.get(name)
-    if (custom) return custom
+    const name = hostOf(host)
+    const custom = this.proxy.byDomain(name)
+    if (custom?.resource_type === 'site') return this.site(custom.resource_id)
     const suffix = `.${sitesDomainOf(this.config)}`
     if (!name.endsWith(suffix)) return null
     const sub = name.slice(0, -suffix.length)
-    return sub.includes('.') ? null : (byId.get(sub) ?? null)
+    return sub.includes('.') ? null : (this.cache().byId.get(sub) ?? null)
   }
 
   /** `https://<id>.<SITES_DOMAIN>`, with the API's port when it has one (local development). */
   url(site: SiteRow): string {
-    const api = new URL(this.config.publicEndpoint)
-    return `${api.protocol}//${site.id}.${sitesDomainOf(this.config)}${api.port ? `:${api.port}` : ''}`
+    return urlForHost(this.config, siteHost(this.config, site.id))
   }
 
   /** Every address the site answers on. */
   urls(site: SiteRow): string[] {
-    const api = new URL(this.config.publicEndpoint)
-    return [this.url(site), ...(site.domain ? [`${api.protocol}//${site.domain}`] : [])]
+    return [this.url(site), ...this.proxy.domainsFor('site', site.id).map((domain) => urlForHost(this.config, domain))]
   }
 
   /** Project origins plus this project's sites, for CORS and redirect checks. */
@@ -214,18 +202,12 @@ export class SiteService {
     return [...this.config.allowedOrigins, ...this.list().flatMap((s) => this.urls(s))]
   }
 
-  private assertUnique(id: string | null, domain: string, self?: string): void {
+  private assertUnique(id: string | null): void {
     const everyone = [this, ...this.peers().filter((p) => p !== this)]
     if (id && everyone.some((s) => s.has(id))) throw err('site_already_exists')
-    if (domain && everyone.some((s) => s.list().some((r) => r.domain === domain && r.id !== self))) {
-      throw err('general_argument_invalid', `The domain ${domain} is already used by another site.`)
-    }
-    if (domain && (domain === sitesDomainOf(this.config) || domain === new URL(this.config.publicEndpoint).hostname)) {
-      throw err('general_argument_invalid', `${domain} is this server's own domain.`)
-    }
   }
 
-  private clean(settings: SiteSettings): SiteSettings {
+  private clean(settings: SiteSettings, self?: { type: 'site'; id: string }): SiteSettings {
     const name = settings.name.trim()
     if (!name || name.length > 128) throw err('general_argument_invalid', 'A site needs a name of 128 characters or less.')
     return {
@@ -233,7 +215,7 @@ export class SiteService {
       name,
       outputDirectory: relativePath(settings.outputDirectory, 'Output directory'),
       fallbackFile: relativePath(settings.fallbackFile, 'Fallback file'),
-      domain: normalizeDomain(settings.domain),
+      domains: this.proxy.normalizeAll(settings.domains, self),
       apiFunctionId: settings.apiFunctionId.trim(),
     }
   }
@@ -244,28 +226,34 @@ export class SiteService {
     }
     if (RESERVED_IDS.has(id)) throw err('general_argument_invalid', `The site ID "${id}" is reserved.`)
     const s = this.clean(input)
-    this.assertUnique(id, s.domain)
+    this.assertUnique(id)
+    this.proxy.assertDefaultHost('site', id)
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, build_runtime, adapter, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domain, s.apiFunctionId, s.installCommand, s.buildCommand, s.buildRuntime, s.adapter, stamp, stamp)
+    this.sql.transaction(() => {
+      this.sql
+        .query(
+          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, build_runtime, adapter, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.buildRuntime, s.adapter, stamp, stamp)
+      this.proxy.set('site', id, s.domains)
+    })()
     this.changed()
     return this.site(id)
   }
 
   update(id: string, input: SiteSettings): SiteRow {
     this.site(id)
-    const s = this.clean(input)
-    this.assertUnique(null, s.domain, id)
-    this.sql
-      .query(
-        `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
-         install_command = ?, build_command = ?, build_runtime = ?, adapter = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domain, s.apiFunctionId, s.installCommand, s.buildCommand, s.buildRuntime, s.adapter, now(), id)
+    const s = this.clean(input, { type: 'site', id })
+    this.sql.transaction(() => {
+      this.sql
+        .query(
+          `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
+           install_command = ?, build_command = ?, build_runtime = ?, adapter = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.buildRuntime, s.adapter, now(), id)
+      this.proxy.set('site', id, s.domains)
+    })()
     this.changed()
     return this.site(id)
   }
@@ -277,7 +265,7 @@ export class SiteService {
       framework: site.framework,
       outputDirectory: site.output_directory,
       fallbackFile: site.fallback_file,
-      domain: site.domain,
+      domains: this.proxy.domainsFor('site', site.id),
       apiFunctionId: site.api_function_id,
       installCommand: site.install_command,
       buildCommand: site.build_command,
@@ -289,6 +277,7 @@ export class SiteService {
   remove(id: string): void {
     this.site(id)
     this.sql.transaction(() => {
+      this.proxy.removeFor('site', id)
       this.sql.query('DELETE FROM _site_deployments WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
     })()
