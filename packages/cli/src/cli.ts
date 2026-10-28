@@ -1,6 +1,7 @@
 /**
  * Bunwrite CLI: `client`, `login`, `whoami`, `logout`, `init project`,
- * `pull`/`push` of the project config, and one command per SDK service.
+ * `init skill` / `skills`, `pull`/`push` of the project config, and one
+ * command per SDK service.
  */
 import { SDK_VERSION } from '@bunwrite/sdk'
 
@@ -8,6 +9,7 @@ import { bool, parseArgs } from './args'
 import { describe } from './clients'
 import { client, initProject, login, logout, whoami } from './commands/account'
 import { runService, SERVICES } from './commands/services'
+import { skills } from './commands/skills'
 import { sync } from './commands/sync'
 import { bold, CliError, dim, fail, log } from './ui'
 
@@ -27,6 +29,7 @@ ${bold('Connect')}
 
 ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing appwrite.config.json works too)
   init project --project-id <id> [--organization-id <id>] [--create --project-name <name>]
+                 [--skills | --no-skills]
   pull <what>     Write the server's state into the config
   push <what>     Apply the config to the server
 
@@ -40,6 +43,18 @@ ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing ap
   --activate false     push functions and sites without making the new version live
   --prune              push: delete what is on the server but not in the config
   --force              push: delete without asking
+
+${bold('AI agents')}
+  skills               Install Bunwrite agent skills with the Skills CLI
+  init skill           Same as skills
+    --skill <name>     Only these skills (repeat)
+    --agent <name>     Only these agents, e.g. claude-code, cursor, codex
+    --global           Install for every project
+    --copy             Copy files instead of symlinking
+    --list             List the available skills without installing
+    --all              Install all skills to all agents without prompts
+    --yes              Skip confirmation prompts
+    --print            Print the npx command instead of running it
 
 ${bold('Services')}
   ${Object.keys(SERVICES).join(', ')}
@@ -80,8 +95,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         await logout()
         break
       case 'init':
-        if (sub !== 'project') throw new CliError('Usage: bunwrite init project --project-id <id>')
+        if (sub === 'skill' || sub === 'skills') {
+          await skills(args)
+          break
+        }
+        if (sub !== 'project') throw new CliError('Usage: bunwrite init project --project-id <id>, or bunwrite init skill')
         await initProject(args)
+        break
+      case 'skills':
+        await skills(args)
         break
       case 'pull':
       case 'push':

@@ -179,6 +179,32 @@ bunwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id
 bunwrite pull all
 ```
 
+## AI agents
+
+Bunwrite ships [Agent Skills](https://agentskills.io) that teach Claude Code,
+Cursor, Codex, OpenCode, GitHub Copilot and other compatible tools how to use
+Bunwrite correctly: endpoint and SDK setup, account sessions, databases,
+storage, realtime, functions, sites and the CLI. Install them with the
+[Skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add ridhotamma/bunwrite
+```
+
+The Bunwrite CLI wraps the same installer, so you can also run:
+
+```bash
+bunwrite skills
+bunwrite skills --list
+bunwrite init skill
+```
+
+`bunwrite init project` offers to install the skills after linking a folder;
+`--skills` skips the question and `--no-skills` skips the install. The skills
+live in [`skills/`](skills/README.md): `bunwrite`, `bunwrite-cli`,
+`bunwrite-functions` and `bunwrite-sites`. Update them with
+`npx skills update`.
+
 ## Bunwrite or Appwrite naming
 
 The server reads both naming families, so the Bunwrite SDK and CLI and the

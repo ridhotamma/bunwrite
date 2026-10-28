@@ -4,6 +4,7 @@ import { bool, flag, type Args } from '../args'
 import { consoleClient, CONSOLE_PROJECT, describe, projectClient } from '../clients'
 import { currentSession, readConfig, updateSession, writeConfig } from '../config'
 import { ask, bold, CliError, dim, info, log, success, warn } from '../ui'
+import { offerSkills } from './skills'
 
 const mask = (key: string) => (key.length > 12 ? `${key.slice(0, 8)}…${key.slice(-4)}` : '••••')
 
@@ -158,4 +159,5 @@ export async function initProject(args: Args): Promise<void> {
   const next = { ...config, ...(orgId ? { organizationId: orgId } : {}), projectId, projectName: name }
   const path = writeConfig(next)
   success(`Linked this folder to ${name} ( ${projectId} ) in ${path.split('/').at(-1)}`)
+  await offerSkills(args)
 }

@@ -26,13 +26,21 @@ export async function confirm(question: string, fallback = false): Promise<boole
   return answer === 'y' || answer === 'yes'
 }
 
+let terminal: ReturnType<typeof createInterface> | undefined
 let lines: AsyncIterator<string> | undefined
+
+/** Release stdin before handing it to a child process. */
+export function closeAsk(): void {
+  terminal?.close()
+  terminal = undefined
+  lines = undefined
+}
 
 export async function ask(question: string): Promise<string> {
   process.stdout.write(question)
   if (!lines) {
-    const rl = createInterface({ input: process.stdin, terminal: false })
-    lines = rl[Symbol.asyncIterator]()
+    terminal = createInterface({ input: process.stdin, terminal: false })
+    lines = terminal[Symbol.asyncIterator]()
   }
   const next = await lines.next()
   if (!process.stdin.isTTY) process.stdout.write('\n')

@@ -51,6 +51,7 @@ plus their own storage, backups and function folder.
 | `src/lib/compat.ts` | Both naming families: reads `X-Bunwrite-*` and `X-Appwrite-*` headers and both session cookies; `API_COMPAT` picks the webhook headers, function variables and default cookie the server sends |
 | `packages/sdk/` | `@bunwrite/sdk`, its own package. `src/services`, the helpers, models and enums are generated from Appwrite's SDKs by `scripts/sdk-sync.ts`, which keeps the methods whose HTTP method and path the server routes; the client is written by hand |
 | `packages/cli/` | `@bunwrite/cli`, its own package on top of the SDK (bundled into its build): sign-in, `pull`/`push` of the project config, function deploys with its own tar.gz writer, and generic service commands |
+| `skills/` | Agent Skills for AI coding agents (`bunwrite`, `bunwrite-cli`, `bunwrite-functions`, `bunwrite-sites`), installed with `npx skills add ridhotamma/bunwrite` or `bunwrite skills` |
 
 ### Console
 

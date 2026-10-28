@@ -40,6 +40,25 @@ settings; `--reset` forgets them) do what they say. The sign-in and key live
 in `~/.bunwrite/prefs.json` (or `$BUNWRITE_HOME/prefs.json`), readable only by
 you. When both are set, the API key is used for project commands.
 
+## Agent skills
+
+Bunwrite's AI coding agent skills follow the
+[Agent Skills](https://agentskills.io) standard. `bunwrite skills` runs the
+official installer, forwarding its options:
+
+```bash
+bunwrite skills                 # interactive: choose skills and agents
+bunwrite skills --list          # show the available skills
+bunwrite skills --skill bunwrite --agent claude-code --yes
+bunwrite skills --print         # show the npx command only
+bunwrite init skill             # alias
+```
+
+It runs `npx skills add ridhotamma/bunwrite`, falling back to `bunx` when npx
+is not installed. You can run that command directly instead. `init project`
+offers the install after linking the folder; `--skills` skips the question and
+`--no-skills` skips the install. See [`skills/`](../../skills/README.md).
+
 ## Pull and push
 
 The project config is `bunwrite.config.json` or `bunwrite.json` in the

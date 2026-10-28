@@ -7,7 +7,7 @@
  * bunwrite.config.json).
  */
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -52,10 +52,10 @@ class Workspace {
     mkdirSync(this.dir, { recursive: true })
   }
 
-  async run(args: string[], stdin = ''): Promise<{ code: number; out: string }> {
+  async run(args: string[], stdin = '', env: Record<string, string> = {}): Promise<{ code: number; out: string }> {
     const proc = Bun.spawn(['bun', CLI, ...args], {
       cwd: this.dir,
-      env: { ...process.env, BUNWRITE_HOME: this.home, NO_COLOR: '1' },
+      env: { ...process.env, BUNWRITE_HOME: this.home, NO_COLOR: '1', ...env },
       stdin: new Blob([stdin]),
       stdout: 'pipe',
       stderr: 'pipe',
@@ -215,6 +215,47 @@ describe('init project', () => {
     await ws.ok('pull', 'teams')
     expect(existsSync(join(ws.dir, 'bunwrite.config.json'))).toBe(false)
     expect(JSON.parse(readFileSync(join(ws.dir, 'appwrite.config.json'), 'utf8')).teams).toBeArray()
+  })
+
+  test('points to the npx installer without asking when there is no terminal', async () => {
+    const ws = new Workspace('init-skills')
+    await ws.withKey()
+    expect(await ws.ok('init', 'project', '--project-id', PROJECT)).toContain('npx skills add ridhotamma/bunwrite')
+  })
+
+  test('--no-skills skips the install hint', async () => {
+    const ws = new Workspace('init-no-skills')
+    await ws.withKey()
+    expect(await ws.ok('init', 'project', '--project-id', PROJECT, '--no-skills')).not.toContain('npx skills add')
+  })
+})
+
+describe('agent skills', () => {
+  test('skills --print shows the npx command and forwards the choices', async () => {
+    const ws = new Workspace('skills')
+    const out = await ws.ok('skills', '--print', '--skill', 'bunwrite', '--skill', 'bunwrite-cli', '--agent', 'claude-code', '--global', '--yes')
+    expect(out).toContain('npx -y skills add ridhotamma/bunwrite')
+    expect(out).toContain('--skill bunwrite --skill bunwrite-cli')
+    expect(out).toContain('--agent claude-code')
+    expect(out).toContain('--global')
+    expect(out).toContain('--yes')
+  })
+
+  test('init skill is an alias', async () => {
+    const ws = new Workspace('skills-init')
+    expect(await ws.ok('init', 'skill', '--print', '--list')).toContain('npx -y skills add ridhotamma/bunwrite --list')
+  })
+
+  test('runs npx with the forwarded flags', async () => {
+    const ws = new Workspace('skills-run')
+    const bin = join(ws.home, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'npx'), '#!/bin/sh\necho "stub npx $@"\n')
+    chmodSync(join(bin, 'npx'), 0o755)
+    const result = await ws.run(['skills', '--skill', 'bunwrite', '--agent', 'claude-code', '--yes'], '', { PATH: `${bin}:${process.env.PATH}` })
+    expect(result.code).toBe(0)
+    expect(result.out).toContain('stub npx -y skills add ridhotamma/bunwrite --skill bunwrite --agent claude-code --yes')
+    expect(result.out).toContain('Bunwrite agent skills installed')
   })
 })
 
