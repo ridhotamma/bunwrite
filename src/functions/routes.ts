@@ -11,6 +11,8 @@ import { deploymentModel, Deployments } from './deployments'
 import { functionHttpResponse } from './http'
 import { ENV_KEY_RE } from './env'
 import { executionModel, functionModel, type FunctionRow, type FunctionSettings } from './service'
+import { applyProvider, projectOf } from '~/vcs/routes'
+import { NO_PROVIDER, providerOf } from '~/vcs/source'
 
 const strings = (value: unknown, fallback: string[]): string[] => (value === undefined || value === null ? fallback : list(value).map(String))
 
@@ -92,7 +94,7 @@ export function functionRoutes(router: Router<AppContext>): void {
     return json({ total, functions: items })
   })
 
-  router.post('/functions', ({ ctx, params }) => {
+  router.post('/functions', async ({ ctx, params }) => {
     requireKey(ctx, 'functions.write')
     const raw = str(params.functionId)
     if (!raw) throw err('general_argument_invalid', 'Param "functionId" is not optional.')
@@ -117,7 +119,16 @@ export function functionRoutes(router: Router<AppContext>): void {
       deploymentRetention: 0,
       domains: [],
     })
-    return json(model(ctx, ctx.functions.create(id, settings)), 201)
+    const created = ctx.functions.create(id, settings)
+    try {
+      await applyProvider(ctx, 'function', created.id, params, NO_PROVIDER)
+    } catch (error) {
+      // A repository that cannot be connected fails the whole create, as on Appwrite.
+      ctx.hub.forget(ctx.config.projectId, 'function', created.id)
+      ctx.functions.remove(created.id)
+      throw error
+    }
+    return json(model(ctx, ctx.functions.fn(created.id)), 201)
   })
 
   router.get('/functions/:functionId', ({ ctx, path }) => {
@@ -125,16 +136,27 @@ export function functionRoutes(router: Router<AppContext>): void {
     return json(model(ctx, ctx.functions.fn(path.functionId!)))
   })
 
-  router.put('/functions/:functionId', ({ ctx, path, params }) => {
+  router.put('/functions/:functionId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
     const f = ctx.functions.fn(path.functionId!)
-    return json(model(ctx, ctx.functions.save(f.id, settingsFrom(params, settingsOf(ctx, f)))))
+    const saved = ctx.functions.save(f.id, settingsFrom(params, settingsOf(ctx, f)))
+    await applyProvider(ctx, 'function', saved.id, params, providerOf(f))
+    return json(model(ctx, ctx.functions.fn(saved.id)))
   })
 
   router.delete('/functions/:functionId', ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
     ctx.functions.remove(path.functionId!)
+    ctx.hub.forget(ctx.config.projectId, 'function', path.functionId!)
     return noContent()
+  })
+
+  // Appwrite's createVcsDeployment: build a branch, tag or commit of the connected repository.
+  router.post('/functions/:functionId/deployments/vcs', async ({ ctx, path, params }) => {
+    requireKey(ctx, 'functions.write')
+    const f = ctx.functions.fn(path.functionId!)
+    const d = await ctx.hub.deployReference(projectOf(ctx), 'function', f.id, str(params.type) ?? 'branch', str(params.reference) ?? '', bool(params.activate, false))
+    return json(deploymentModel(deploymentsOf(ctx).get(f.id, d.id)), 202)
   })
 
   // ---- Deployments ----

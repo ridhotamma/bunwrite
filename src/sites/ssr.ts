@@ -156,14 +156,14 @@ export class SsrRuntime {
 
   constructor(
     private readonly config: Config,
-    private readonly lookup: (siteId: string) => SsrTarget | null,
+    private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null,
   ) {
     this.sandbox = config.functionsSandbox ?? null
   }
 
-  /** Answer a request by proxying it to the site's app, starting it if needed. */
-  async handle(siteId: string, request: Request): Promise<Response> {
-    const target = this.lookup(siteId)
+  /** Answer a request by proxying it to the site's app (or a preview's), starting it if needed. */
+  async handle(siteId: string, request: Request, deploymentId?: string | null): Promise<Response> {
+    const target = this.lookup(siteId, deploymentId)
     if (!target) return sitePage(404, 'Nothing here yet', 'This site has no live app.')
     let app: RunningApp
     try {
@@ -458,17 +458,18 @@ export class SsrRuntime {
 }
 
 /** The function-or-app answer for a host that belongs to an SSR site. */
-export async function ssrResponse(services: Services, site: SiteRow, request: Request): Promise<Response> {
+export async function ssrResponse(services: Services, site: SiteRow, request: Request, deploymentId?: string | null): Promise<Response> {
   if (!services.config.sitesSsr) return sitePage(503, 'SSR sites are off', 'This server has site rendering turned off.')
   let deployment: SiteDeploymentRow | null
+  const id = deploymentId || site.deployment_id
   try {
-    deployment = site.deployment_id ? services.sites.deployment(site.id, site.deployment_id) : null
+    deployment = id ? services.sites.deployment(site.id, id) : null
   } catch {
     deployment = null
   }
   if (!deployment || deployment.status !== 'ready') return sitePage(404, 'Nothing here yet', 'This site has no live deployment.')
   // The command is part of the deployment, so rolling back runs the old app.
-  if (deployment.start_command.trim()) return services.sites.ssr.handle(site.id, request)
+  if (deployment.start_command.trim()) return services.sites.ssr.handle(site.id, request, deploymentId)
   if (!site.api_function_id) return sitePage(502, 'No app', 'This SSR site has no start command and no API function.')
   let fn
   try {

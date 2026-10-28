@@ -4,11 +4,12 @@ import { Account, Client, Databases, Functions, Storage, Teams, Users } from 'no
 
 import { createApp, createServices, type Services } from '~/app'
 import { MemoryMailer } from '~/mail/mailer'
-import type { Config } from '~/config'
+import { vcsGithubFromEnv, type Config } from '~/config'
 import { openDb, type Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
 import { pushConfig } from '~/schema/push'
+import type { VcsHub } from '~/vcs/hub'
 
 export const PROJECT = 'test-project'
 export const KEY = 'standard_testkey'
@@ -71,6 +72,8 @@ export interface TestServer {
   db: Db
   mailer: MemoryMailer
   config: Config
+  /** The app's Git deployment hub (GitHub App, webhooks, builds). */
+  hub: VcsHub
   stop(): void
 }
 
@@ -97,6 +100,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sitesSsrIdleMs: 5 * 60 * 1000,
     sitesSsrMaxProcesses: 2,
     sitesSsrKeepPrevious: 2,
+    vcsGithub: vcsGithubFromEnv({}),
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,
@@ -143,6 +147,7 @@ export function startServer(schema: unknown = testSchema, over: Partial<Config> 
     db,
     mailer,
     config,
+    hub: app.hub,
     stop: () => server.stop(true),
   }
 }

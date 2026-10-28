@@ -30,11 +30,15 @@ import { topicRoutes } from './messaging/topics'
 import { CONSOLE_PROJECT, createConsoleApi } from './platform/console'
 import { projectRoutes } from './platform/project'
 import { webhookRoutes } from './webhooks/routes'
+import { VcsHub } from './vcs/hub'
+import { vcsRoutes } from './vcs/routes'
 
 export { createServices, type Services } from './services'
 
 export interface AppContext extends Services {
   caller: Caller
+  /** Git deployments for the whole server (GitHub App, webhooks, repository links). */
+  hub: VcsHub
 }
 
 interface RequestMeta {
@@ -66,6 +70,7 @@ export function createApp(source: Services | ProjectResolver) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const control = projects.control
   const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
+  const hub = new VcsHub(projects)
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
@@ -78,6 +83,7 @@ export function createApp(source: Services | ProjectResolver) {
   storageRoutes(router)
   functionRoutes(router)
   siteRoutes(router)
+  vcsRoutes(router)
   proxyRoutes(router)
   renderRoutes(router)
   projectRoutes(router)
@@ -123,7 +129,7 @@ export function createApp(source: Services | ProjectResolver) {
     return (host ? projects.findFunctionByHost(host) : null) ?? (forwarded ? projects.findFunctionByHost(forwarded) : null)
   }
 
-  const consoleApp = createConsole(projects)
+  const consoleApp = createConsole(projects, hub)
   const consoleApi = createConsoleApi(projects)
 
   /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
@@ -217,7 +223,7 @@ export function createApp(source: Services | ProjectResolver) {
       services.access.assertService(pathname)
     }
     services.store.drainEvents()
-    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller } })
+    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, hub } })
     const events = services.store.drainEvents()
     services.realtime.publish(events)
     services.webhooks.dispatch(events, caller)
@@ -230,7 +236,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
-      return serveSite(hosted.project.services, hosted.site, request)
+      return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
     const hostedFunction = functionFor(request)
     if (hostedFunction) {
@@ -245,6 +251,13 @@ export function createApp(source: Services | ProjectResolver) {
       }
     }
     // Caddy's on-demand TLS asks here before getting a certificate for a host.
+    // GitHub calls these without a project: the hub finds the project itself.
+    if (url.pathname === '/v1/vcs/github/events' && request.method === 'POST') {
+      meta.auth = 'github'
+      return hub.webhook(request)
+    }
+    if (url.pathname === '/v1/vcs/github/callback' && request.method === 'GET') return hub.completeInstall(url)
+    if (url.pathname === '/v1/vcs/github/manifest' && request.method === 'GET') return hub.completeManifest(url)
     if ((url.pathname === '/.well-known/bunwrite/site-domain' || url.pathname === '/.well-known/bunwrite/host') && request.method === 'GET') {
       const domain = url.searchParams.get('domain') ?? ''
       return new Response(null, { status: domain && (projects.findSite(domain) || projects.findFunctionByHost(domain)) ? 200 : 404 })
@@ -291,6 +304,7 @@ export function createApp(source: Services | ProjectResolver) {
   }
 
   return {
+    hub,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       const started = performance.now()
       const url = new URL(request.url)

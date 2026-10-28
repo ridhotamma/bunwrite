@@ -120,6 +120,13 @@
       "when": 1793213897757,
       "tag": "0016_site_prune_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1793214905316,
+      "tag": "0017_vcs_github",
+      "breakpoints": true
     }
   ]
 }

@@ -68,10 +68,12 @@ export function projectPages(router: ConsoleRouter): void {
   router.get('/console/projects/:id/open', ({ ctx, path }) => {
     const project = ctx.projects.get(path.id!)
     if (!project) throw err('general_argument_invalid', 'Unknown project.')
+    // Links from outside (a GitHub PR comment) open a page inside the project.
+    const next = ctx.url.searchParams.get('next') ?? ''
     return new Response(null, {
       status: 303,
       headers: {
-        location: '/console/overview',
+        location: /^\/console\/[\w\-/.?=&%]*$/.test(next) && !next.includes('//') ? next : '/console/overview',
         'set-cookie': projectCookie(project.info.id, ctx.services.config.publicEndpoint.startsWith('https')),
       },
     })

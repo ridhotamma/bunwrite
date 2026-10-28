@@ -33,7 +33,7 @@ export interface ProjectResolver {
   /** The project and function a request's Host header points at, if any. */
   findFunctionByHost(host: string): { project: ProjectRuntime; fn: FunctionRow } | null
   /** The project and site a request's Host header points at, if any. */
-  findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null
+  findSite(host: string): { project: ProjectRuntime; site: SiteRow; deploymentId: string | null } | null
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
   /** Keep the registry in step with a project's Settings page. */
   update(id: string, fields: { name?: string; orgId?: string }): ProjectInfo
@@ -61,8 +61,8 @@ export function singleProjectResolver(services: Services): ProjectResolver {
       return fn ? { project: runtime, fn } : null
     },
     findSite: (host) => {
-      const site = services.sites.byHost(host)
-      return site ? { project: runtime, site } : null
+      const found = services.sites.resolveHost(host)
+      return found ? { project: runtime, ...found } : null
     },
     create: () => {
       throw new Error('Project creation needs a ProjectManager.')

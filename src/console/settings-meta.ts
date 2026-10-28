@@ -11,6 +11,7 @@ export const TABS = [
   { key: 'cache', label: 'Caching', href: `${SETTINGS}/cache` },
   { key: 'backups', label: 'Backups', href: `${SETTINGS}/backups` },
   { key: 'functions', label: 'Functions', href: `${SETTINGS}/functions` },
+  { key: 'git', label: 'Git', href: `${SETTINGS}/git` },
   { key: 'logs', label: 'Request logs', href: `${SETTINGS}/logs` },
   { key: 'render', label: 'HTML rendering', href: `${SETTINGS}/render` },
 ] as const

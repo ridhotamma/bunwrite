@@ -1,3 +1,6 @@
+import { gitSection } from '~/console/views/vcs'
+import { detectFramework } from '~/vcs/detect'
+import { rootDirectory } from '~/vcs/hub'
 import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
@@ -88,6 +91,60 @@ async function deploy(ctx: ConsoleContext, site: SiteRow, source: FilesSource, a
     return sites.deployFiles(site, [{ path: `${prefix}index.html`, content: source.text }], activate)
   }
   return sites.deployFiles(site, starterFiles(site), activate)
+}
+
+/** A new site that builds from a GitHub repository: detect how to build it, connect, and deploy the branch. */
+async function createFromGit(ctx: ConsoleContext): Promise<Response> {
+  const installationId = value(ctx.form, 'installation_id')
+  const repositoryId = value(ctx.form, 'provider_repository_id')
+  if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
+  const installation = ctx.services.vcs.get(installationId)
+  const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
+  const branch = value(ctx.form, 'provider_branch')
+  let preset = frameworkOf(value(ctx.form, 'framework'))
+  let fields = {
+    framework: preset.key,
+    adapter: value(ctx.form, 'adapter') || preset.adapter,
+    outputDirectory: value(ctx.form, 'output_directory') || preset.outputDirectory,
+    fallbackFile: value(ctx.form, 'fallback_file') || preset.fallbackFile,
+    installCommand: value(ctx.form, 'install_command') || preset.installCommand,
+    buildCommand: value(ctx.form, 'build_command') || preset.buildCommand,
+    startCommand: value(ctx.form, 'start_command') || preset.startCommand,
+  }
+  if (checked(ctx.form.detect)) {
+    const gh = ctx.hub.github
+    const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
+    const found = await detectFramework(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
+    preset = frameworkOf(found.framework)
+    fields = { ...found }
+  }
+  const id = value(ctx.form, 'id')
+  const site = ctx.services.sites.create(id, {
+    name: value(ctx.form, 'name') || id,
+    enabled: true,
+    domains: [],
+    apiFunctionId: '',
+    buildRuntime: '',
+    pruneMode: 'auto',
+    ...fields,
+  })
+  const project = ctx.projects.get(ctx.currentProject.id)!
+  try {
+    await ctx.hub.link(project, 'site', site.id, {
+      installationId: installation.id,
+      providerRepositoryId: repositoryId,
+      providerBranch: branch,
+      providerRootDirectory: root,
+      providerSilentMode: false,
+    })
+    const linked = ctx.services.sites.site(site.id)
+    await ctx.hub.deployReference(project, 'site', site.id, 'branch', linked.provider_branch, true)
+    return ctx.go(siteUrl(site.id), { tone: 'success', text: `Site created as ${preset.name}; deploying ${linked.provider_branch}` })
+  } catch (error) {
+    ctx.hub.forget(project.info.id, 'site', site.id)
+    ctx.services.sites.remove(site.id)
+    throw error
+  }
 }
 
 const siteTabs = (id: string, on: 'deployments' | 'settings') =>
@@ -202,11 +259,12 @@ export function sitePages(router: ConsoleRouter): void {
             </tbody></table></div>`
           : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
       })}
-      ${createSiteDialog(url.searchParams.get('create') === '1', sitesDomainOf(ctx.services.config))}`,
+      ${createSiteDialog(url.searchParams.get('create') === '1', sitesDomainOf(ctx.services.config), ctx.hub.apps.get() ? ctx.services.vcs.list() : [])}`,
     )
   })
 
   router.post(SITES, async ({ ctx }) => {
+    if (value(ctx.form, 'source') === 'github') return createFromGit(ctx)
     const id = value(ctx.form, 'id')
     const source = filesSource(ctx)
     const preset = frameworkOf(value(ctx.form, 'framework'))
@@ -263,7 +321,9 @@ export function sitePages(router: ConsoleRouter): void {
   router.get(`${SITES}/:id/deployments/:did`, ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
     const deployment = ctx.services.sites.deployment(site.id, path.did!)
-    return ctx.render(`Deployment · ${site.name}`, 'sites', siteDeploymentView(site, deployment, ctx.services.sites.runtimeLogs(site.id)))
+    // A Git build that is not live can still be opened on its own preview address.
+    const preview = deployment.type === 'vcs' && deployment.status === 'ready' && deployment.id !== site.deployment_id ? ctx.services.sites.deploymentUrl(site, deployment.id) : ''
+    return ctx.render(`Deployment · ${site.name}`, 'sites', siteDeploymentView(site, deployment, ctx.services.sites.runtimeLogs(site.id), preview))
   })
 
   router.get(`${SITES}/:id/deployments/:did/download`, async ({ ctx, path }) => {
@@ -323,6 +383,7 @@ export function sitePages(router: ConsoleRouter): void {
           </form>`,
           { id: 'site-runtime' },
         )}
+        ${gitSection(ctx, { type: 'site', row: site, base: siteUrl(site.id) })}
         ${settingsSection(
           'API',
           html`Let pages call a function on the same origin, for example <code>hx-post="/api/todos"</code>. No CORS setup needed.`,
@@ -354,6 +415,7 @@ export function sitePages(router: ConsoleRouter): void {
   router.post(`${SITES}/:id/delete`, ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
     ctx.services.sites.remove(site.id)
+    ctx.hub.forget(ctx.currentProject.id, 'site', site.id)
     return ctx.go(SITES, { tone: 'success', text: `${site.name} deleted` })
   })
 }

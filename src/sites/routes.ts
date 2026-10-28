@@ -15,6 +15,8 @@ import { bool, json, list, noContent, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
+import { applyProvider, projectOf } from '~/vcs/routes'
+import { NO_PROVIDER, providerOf, sourceModel } from '~/vcs/source'
 import { FRAMEWORKS, frameworkOf } from './frameworks'
 import type { SiteDeploymentRow, SiteRow, SiteSettings } from './service'
 
@@ -25,7 +27,6 @@ export function siteDeploymentModel(d: SiteDeploymentRow) {
     $id: d.id,
     $createdAt: d.created_at,
     $updatedAt: d.updated_at,
-    type: 'manual',
     resourceId: d.site_id,
     resourceType: 'sites',
     entrypoint: '',
@@ -39,16 +40,7 @@ export function siteDeploymentModel(d: SiteDeploymentRow) {
     status: d.status,
     buildLogs: d.build_logs,
     buildDuration: d.build_duration,
-    providerRepositoryName: '',
-    providerRepositoryOwner: '',
-    providerRepositoryUrl: '',
-    providerCommitHash: '',
-    providerCommitAuthorUrl: '',
-    providerCommitAuthor: '',
-    providerCommitMessage: '',
-    providerCommitUrl: '',
-    providerBranch: '',
-    providerBranchUrl: '',
+    ...sourceModel(d),
     // The SDKs read these to tell when a chunked upload is complete.
     chunksTotal: d.chunks_total,
     chunksUploaded: d.chunks_uploaded,
@@ -85,11 +77,7 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     buildCommand: s.build_command,
     startCommand: s.start_command,
     outputDirectory: s.output_directory,
-    installationId: '',
-    providerRepositoryId: '',
-    providerBranch: '',
-    providerRootDirectory: '',
-    providerSilentMode: false,
+    ...providerOf(s),
     providerBranches: [],
     providerPaths: [],
     buildSpecification: 's-1vcpu-512mb',
@@ -134,7 +122,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     return json({ total, sites: items })
   })
 
-  router.post('/sites', ({ ctx, params }) => {
+  router.post('/sites', async ({ ctx, params }) => {
     requireKey(ctx, 'sites.write')
     const raw = str(params.siteId)
     if (!raw) throw err('general_argument_invalid', 'Param "siteId" is not optional.')
@@ -155,7 +143,15 @@ export function siteRoutes(router: Router<AppContext>): void {
       adapter: framework.adapter,
       pruneMode: 'auto',
     })
-    return json(siteModel(ctx, ctx.sites.create(id, settings)), 201)
+    const created = ctx.sites.create(id, settings)
+    try {
+      await applyProvider(ctx, 'site', created.id, params, NO_PROVIDER)
+    } catch (error) {
+      ctx.hub.forget(ctx.config.projectId, 'site', created.id)
+      ctx.sites.remove(created.id)
+      throw error
+    }
+    return json(siteModel(ctx, ctx.sites.site(created.id)), 201)
   })
 
   router.get('/sites/frameworks', () =>
@@ -189,16 +185,27 @@ export function siteRoutes(router: Router<AppContext>): void {
     return json(siteModel(ctx, ctx.sites.site(path.siteId!)))
   })
 
-  router.put('/sites/:siteId', ({ ctx, path, params }) => {
+  router.put('/sites/:siteId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'sites.write')
     const s = ctx.sites.site(path.siteId!)
-    return json(siteModel(ctx, ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))))
+    const updated = ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
+    await applyProvider(ctx, 'site', updated.id, params, providerOf(s))
+    return json(siteModel(ctx, ctx.sites.site(updated.id)))
   })
 
   router.delete('/sites/:siteId', ({ ctx, path }) => {
     requireKey(ctx, 'sites.write')
     ctx.sites.remove(path.siteId!)
+    ctx.hub.forget(ctx.config.projectId, 'site', path.siteId!)
     return noContent()
+  })
+
+  // Appwrite's createVcsDeployment: build a branch, tag or commit of the connected repository.
+  router.post('/sites/:siteId/deployments/vcs', async ({ ctx, path, params }) => {
+    requireKey(ctx, 'sites.write')
+    const s = ctx.sites.site(path.siteId!)
+    const d = await ctx.hub.deployReference(projectOf(ctx), 'site', s.id, str(params.type) ?? 'branch', str(params.reference) ?? '', bool(params.activate, false))
+    return json(siteDeploymentModel(ctx.sites.deployment(s.id, d.id)), 202)
   })
 
   // ---- Deployments ----

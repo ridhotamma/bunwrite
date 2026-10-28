@@ -256,7 +256,7 @@ redirect targets.
 
 ## Not supported
 
-- Site variables, Git deployments and preview URLs per deployment.
+- Site variables. (Git deployments and branch previews: see [GIT.md](GIT.md).)
 - WebSockets or HTTP upgrades into an SSR app, and background workers that
   outlive a request.
 - Uploading a `.zip` of an SSR app with `node_modules`: packages are installed

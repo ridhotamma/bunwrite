@@ -1,4 +1,5 @@
 /** Console views for static sites: create, deploy, deployments and settings. */
+import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, poll, when } from '~/console/ui'
@@ -26,19 +27,21 @@ export function siteStatus(site: SiteRow, latest: SiteDeploymentRow | null): Htm
   return latest?.status === 'failed' ? badge('Deploy failed', 'critical') : badge('No deployment')
 }
 
-/** Where the files come from: a starter page, an uploaded folder, or one HTML file. */
-function sourceFields(existing: boolean): Html {
+/** Where the files come from: a starter page, an uploaded folder, one HTML file, or (new sites) a GitHub repository. */
+function sourceFields(existing: boolean, installations: { id: string; organization: string }[] = []): Html {
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
   const choices = [
     choice('upload', 'Upload a folder', 'A .zip or .tar.gz of the site, or of its build output.', existing),
     choice('starter', 'htmx starter', 'A page with htmx, ready to edit. No build step.', !existing),
     choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
+    ...(installations.length ? [choice('github', 'GitHub repository', 'Build on every push; other branches get previews.', false)] : []),
   ]
   return html`<fieldset class="code-source">
       <legend>Files</legend>
-      <div class="choice">${existing ? choices : [choices[1], choices[0], choices[2]]}</div>
+      <div class="choice">${existing ? choices : [choices[1], choices[0], ...choices.slice(2)]}</div>
     </fieldset>
+    ${installations.length ? gitSourceFields(installations, 'create-site', 'Detect the framework and commands from the repository') : ''}
     <div data-show-for="upload" data-for-select="source" hidden>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
         <small>Static: served exactly as uploaded, so build before uploading. SSR: the source is installed and built here. For large sites use <code>bunwrite push sites</code>.</small></label>
@@ -110,7 +113,7 @@ export function buildFields(site?: SiteRow): Html {
     ${ssrFields(site, ssr)}`
 }
 
-export function createSiteDialog(open: boolean, sitesDomain: string): Html {
+export function createSiteDialog(open: boolean, sitesDomain: string, installations: { id: string; organization: string }[] = []): Html {
   return dialog({
     id: 'create-site',
     title: 'Create site',
@@ -123,7 +126,7 @@ export function createSiteDialog(open: boolean, sitesDomain: string): Html {
         <label>Site ID<input name="id" class="mono" required data-slug-from="name" pattern="[a-z0-9]([a-z0-9\\-]{0,34}[a-z0-9])?" placeholder="company-website"><small>Becomes the address <span class="mono">&lt;id&gt;.${sitesDomain}</span>. Lowercase letters, digits and hyphens.</small></label>
       </div>
       ${buildFields()}
-      ${sourceFields(false)}
+      ${sourceFields(false, installations)}
     </form>`,
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="create-site-form" class="primary">Create site</button>`,
   })
@@ -152,13 +155,14 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
   return html`<div class="card flush" id="deployments" ${busy ? poll(`${base}`, 'deployments', 2) : ''}>
     <div class="toolbar"><h2 style="margin:0">Deployments</h2></div>
     ${deployments.length
-      ? html`<div class="scroll"><table><thead><tr><th>Created</th><th>Status</th><th class="num hide-sm">Files</th><th class="num hide-sm">Size</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
+      ? html`<div class="scroll"><table><thead><tr><th>Created</th><th>Status</th><th class="hide-sm">Source</th><th class="num hide-sm">Files</th><th class="num hide-sm">Size</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
         ${deployments.map((d) => {
           const href = `${base}/deployments/${d.id}`
           const live = d.id === site.deployment_id
           return html`<tr>
             <td><a href="${href}">${when(d.created_at)}</a></td>
             <td>${siteDeploymentBadge(d, site.deployment_id)}</td>
+            <td class="hide-sm">${sourceCell(d)}</td>
             <td class="num subdued hide-sm">${d.file_count || '—'}</td>
             <td class="num subdued hide-sm">${formatBytes(d.total_size || d.source_size)}</td>
             <td class="num">${menu(
@@ -175,7 +179,7 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
   </div>`
 }
 
-export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeLog = ''): Html {
+export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeLog = '', previewUrl = ''): Html {
   const base = siteUrl(site.id)
   const busy = SITE_IN_PROGRESS.includes(d.status)
   const live = d.id === site.deployment_id
@@ -192,6 +196,7 @@ export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeL
       <div class="stat"><span>Files</span><b>${d.file_count || '—'}</b></div>
       <div class="stat"><span>Size</span><b>${formatBytes(d.total_size || d.source_size)}</b></div>
     </div>
+    ${sourceCard(d, previewUrl)}
     <div class="card"><h2>Log</h2>${d.build_logs ? html`<pre>${d.build_logs}</pre>` : html`<p class="subdued" style="margin:0">${busy ? 'Uploading…' : 'Nothing logged.'}</p>`}</div>
     ${live && site.adapter === 'ssr'
       ? html`<div class="card" style="margin-top:16px"><h2>Runtime</h2>

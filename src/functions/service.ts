@@ -14,6 +14,7 @@ import type { DocumentStore } from '~/documents/store'
 import { CREDENTIAL_HEADERS, functionVariables } from '~/lib/compat'
 import { formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
+import { providerOf, type ProviderColumns, type ProviderSettings } from '~/vcs/source'
 import { functionHost, functionsDomainOf, hostOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
 import type { ProxyService } from '~/proxy/service'
@@ -34,7 +35,7 @@ const NODE_RUNNER_MODE = '__bunwrite-runner-node'
 /** Server-only settings a function never needs to see. */
 const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
 
-export interface FunctionRow {
+export interface FunctionRow extends ProviderColumns {
   id: string
   name: string
   runtime: string
@@ -200,11 +201,7 @@ export function functionModel(f: FunctionRow, latest?: LatestDeployment | null, 
     entrypoint: f.entrypoint,
     commands: f.commands,
     version: 'v5',
-    installationId: '',
-    providerRepositoryId: '',
-    providerBranch: '',
-    providerRootDirectory: '',
-    providerSilentMode: false,
+    ...providerOf(f),
     buildSpecification: f.build_specification,
     runtimeSpecification: f.runtime_specification,
     // Bunwrite extensions.
@@ -379,6 +376,15 @@ export class FunctionService {
         .run(...this.settingValues(fields), now(), id)
       this.proxy.set('function', id, domains)
     })()
+    return this.fn(id)
+  }
+
+  /** Connect the function to a repository, or disconnect it with NO_PROVIDER. */
+  setProvider(id: string, provider: ProviderSettings): FunctionRow {
+    this.fn(id)
+    this.sql
+      .query('UPDATE _functions SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?')
+      .run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
     return this.fn(id)
   }
 

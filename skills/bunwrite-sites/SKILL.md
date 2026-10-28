@@ -141,12 +141,14 @@ targets.
 
 ## Not supported
 
-- Build commands. `installCommand` and `buildCommand` are stored for Appwrite
-  compatibility but never run; the deployment log says so.
-- Server-side rendering (`adapter: ssr`), site variables, Git deployments and
-  per-deployment preview URLs.
+- Site variables.
+- Build commands for uploads of static sites: an upload is served exactly as
+  it is, so build locally or in CI before `bunwrite push sites`.
 
-Build locally in CI or before `bunwrite push sites`.
+Server-side rendering (`adapter: ssr`) builds and runs the app on the server;
+see the repository's docs/SITES.md. Git deployments (push to deploy, branch
+previews at `<siteId>--git-<branch>`, PR comments) are in docs/GIT.md;
+static sites from Git are built on the server.
 
 ## Troubleshooting
 

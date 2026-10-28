@@ -1,4 +1,5 @@
 /** Settings tab markup. The page loads data and validates writes; this module renders it. */
+import { gitTabView } from '~/console/views/vcs'
 import type { BackupFile } from '~/backups/service'
 import type { S3Config } from '~/config'
 import { envBulkDialog } from '~/console/env-vars'
@@ -271,6 +272,9 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
     case 'render':
       body = renderCards(ctx)
+      break
+    case 'git':
+      body = gitTabView(ctx)
       break
   }
   return html`${header('Settings')}

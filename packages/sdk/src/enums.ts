@@ -35,3 +35,4 @@ export { ProxyRuleStatus } from './enums/proxy-rule-status';
 export { Region } from './enums/region';
 export { Runtime } from './enums/runtime';
 export { TablesDBIndexType } from './enums/tables-db-index-type';
+export { VCSReferenceType } from './enums/vcs-reference-type';

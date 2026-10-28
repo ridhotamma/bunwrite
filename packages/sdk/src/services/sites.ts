@@ -9,6 +9,7 @@ import { Framework } from '../enums/framework';
 import { BuildRuntime } from '../enums/build-runtime';
 import { Adapter } from '../enums/adapter';
 import { ProjectKeyScopes } from '../enums/project-key-scopes';
+import { VCSReferenceType } from '../enums/vcs-reference-type';
 import { DeploymentDownloadType } from '../enums/deployment-download-type';
 export class Sites {
     client: Client;
@@ -1442,6 +1443,121 @@ export class Sites {
             apiPayload,
             onProgress,
         );
+    }
+
+    /**
+     * Create a deployment when a site is connected to VCS.
+     *
+     * This endpoint lets you create deployment from a branch, commit, or a tag.
+     *
+     * @param {string} params.siteId - Site ID.
+     * @param {VCSReferenceType} params.type - Type of reference passed. Allowed values are: branch, commit
+     * @param {string} params.reference - VCS reference to create deployment from. Depending on type this can be: branch name, commit hash
+     * @param {boolean} params.activate - Automatically activate the deployment when it is finished building.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     */
+    createVcsDeployment(params: {
+        siteId: string;
+        type: VCSReferenceType;
+        reference: string;
+        activate?: boolean;
+    }): Promise<Models.Deployment>;
+    /**
+     * Create a deployment when a site is connected to VCS.
+     *
+     * This endpoint lets you create deployment from a branch, commit, or a tag.
+     *
+     * @param {string} siteId - Site ID.
+     * @param {VCSReferenceType} type - Type of reference passed. Allowed values are: branch, commit
+     * @param {string} reference - VCS reference to create deployment from. Depending on type this can be: branch name, commit hash
+     * @param {boolean} activate - Automatically activate the deployment when it is finished building.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Deployment>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createVcsDeployment(
+        siteId: string,
+        type: VCSReferenceType,
+        reference: string,
+        activate?: boolean,
+    ): Promise<Models.Deployment>;
+    createVcsDeployment(
+        paramsOrFirst:
+            | {
+                  siteId: string;
+                  type: VCSReferenceType;
+                  reference: string;
+                  activate?: boolean;
+              }
+            | string,
+        ...rest: [VCSReferenceType?, string?, boolean?]
+    ): Promise<Models.Deployment> {
+        let params: {
+            siteId: string;
+            type: VCSReferenceType;
+            reference: string;
+            activate?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                siteId: string;
+                type: VCSReferenceType;
+                reference: string;
+                activate?: boolean;
+            };
+        } else {
+            params = {
+                siteId: paramsOrFirst as string,
+                type: rest[0] as VCSReferenceType,
+                reference: rest[1] as string,
+                activate: rest[2] as boolean,
+            };
+        }
+
+        const siteId = params.siteId;
+        const type = params.type;
+        const reference = params.reference;
+        const activate = params.activate;
+        if (typeof siteId === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "siteId"');
+        }
+        if (typeof type === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "type"');
+        }
+        if (typeof reference === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "reference"',
+            );
+        }
+        const apiPath = '/sites/{siteId}/deployments/vcs'.replace(
+            '{siteId}',
+            encodeURIComponent(String(siteId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof type !== 'undefined') {
+            apiPayload['type'] = type;
+        }
+        if (typeof reference !== 'undefined') {
+            apiPayload['reference'] = reference;
+        }
+        if (typeof activate !== 'undefined') {
+            apiPayload['activate'] = activate;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
     }
 
     /**

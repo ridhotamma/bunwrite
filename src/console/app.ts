@@ -15,6 +15,7 @@ import { OrganizationService } from '~/organizations/service'
 import { singleProjectResolver, type ProjectResolver } from '~/projects/types'
 import { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
+import { VcsHub } from '~/vcs/hub'
 import { htmxPath } from './assets'
 import { ConsoleAuth } from './auth'
 import type { ConsoleContext } from './context'
@@ -40,8 +41,9 @@ function flashFrom(url: URL): Flash {
   return ok ? { tone: 'success', text: ok } : null
 }
 
-export function createConsole(source: Services | ProjectResolver) {
+export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHub) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
+  const hub = vcsHub ?? new VcsHub(projects)
   const control = projects.control
   const auth = new ConsoleAuth(control.db)
   const organizations = new OrganizationService(control.db)
@@ -214,6 +216,7 @@ export function createConsole(source: Services | ProjectResolver) {
         url,
         projects,
         organizations,
+        hub,
         currentProject: current.info,
         selectedProjectId: selected?.info.id ?? null,
         render: (title, section, body) =>

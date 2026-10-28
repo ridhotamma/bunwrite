@@ -11,6 +11,29 @@ const timestamps = {
   updatedAt: text('updated_at').notNull(),
 }
 
+/** A function's or site's Git repository (Appwrite's provider* settings); empty when not connected. */
+const providerSettings = {
+  installationId: text('installation_id').notNull().default(''),
+  providerRepositoryId: text('provider_repository_id').notNull().default(''),
+  providerBranch: text('provider_branch').notNull().default(''),
+  providerRootDirectory: text('provider_root_directory').notNull().default(''),
+  providerSilentMode: integer('provider_silent_mode', { mode: 'boolean' }).notNull().default(false),
+}
+
+/** Where a deployment's code came from: `manual` uploads, or a `vcs` commit. */
+const deploymentSource = {
+  type: text('type').notNull().default('manual'),
+  providerRepository: text('provider_repository').notNull().default(''),
+  providerBranch: text('provider_branch').notNull().default(''),
+  providerCommitHash: text('provider_commit_hash').notNull().default(''),
+  providerCommitMessage: text('provider_commit_message').notNull().default(''),
+  providerCommitAuthor: text('provider_commit_author').notNull().default(''),
+  providerCommitAuthorUrl: text('provider_commit_author_url').notNull().default(''),
+  providerCommitUrl: text('provider_commit_url').notNull().default(''),
+  /** Pull request number for a fork's PR; 0 otherwise. */
+  providerPullRequest: integer('provider_pull_request').notNull().default(0),
+}
+
 /** Project registry in the control database. Each project has its own database file. */
 export const projects = sqliteTable('_projects', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
@@ -278,6 +301,7 @@ export const functions = sqliteTable('_functions', {
   buildSpecification: text('build_specification').notNull().default('s-1vcpu-512mb'),
   runtimeSpecification: text('runtime_specification').notNull().default('s-1vcpu-512mb'),
   deploymentRetention: integer('deployment_retention').notNull().default(0),
+  ...providerSettings,
   ...timestamps,
 })
 
@@ -299,6 +323,7 @@ export const deployments = sqliteTable(
     activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
     chunksTotal: integer('chunks_total').notNull().default(1),
     chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    ...deploymentSource,
     ...timestamps,
   },
   (t) => [index('_deployments_function').on(t.functionId)],
@@ -335,6 +360,7 @@ export const sites = sqliteTable('_sites', {
   adapter: text('adapter').notNull().default('static'),
   /** After-build cleanup of SSR sites: auto, standalone, production or none (see sites/prune.ts). */
   pruneMode: text('prune_mode').notNull().default('auto'),
+  ...providerSettings,
   ...timestamps,
 })
 
@@ -357,9 +383,96 @@ export const siteDeployments = sqliteTable(
     activate: integer('activate', { mode: 'boolean' }).notNull().default(false),
     chunksTotal: integer('chunks_total').notNull().default(1),
     chunksUploaded: integer('chunks_uploaded').notNull().default(0),
+    ...deploymentSource,
     ...timestamps,
   },
   (t) => [index('_site_deployments_site').on(t.siteId, t.seq)],
+)
+
+/** A site's branch preview host (`<siteId>--git-<slug>`): the newest ready deployment of that branch. */
+export const siteBranches = sqliteTable(
+  '_site_branches',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    siteId: text('site_id').notNull(),
+    branch: text('branch').notNull(),
+    slug: text('slug').notNull(),
+    deploymentId: text('deployment_id').notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_site_branches_slug').on(t.siteId, t.slug)],
+)
+
+/** GitHub App installations connected to this project (Appwrite's `installations`). */
+export const vcsInstallations = sqliteTable('_vcs_installations', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  id: text('id').notNull().unique(),
+  provider: text('provider').notNull().default('github'),
+  providerInstallationId: text('provider_installation_id').notNull(),
+  /** Account the app is installed on: a user or organization login. */
+  organization: text('organization').notNull().default(''),
+  accountType: text('account_type').notNull().default(''),
+  ...timestamps,
+})
+
+/**
+ * Control database only: the server's GitHub App, made by the console's
+ * one-click setup. VCS_GITHUB_* env vars take precedence over this row.
+ */
+export const vcsGithubApp = sqliteTable('_vcs_github_app', {
+  key: text('key').primaryKey(),
+  appId: text('app_id').notNull(),
+  slug: text('slug').notNull(),
+  name: text('name').notNull().default(''),
+  owner: text('owner').notNull().default(''),
+  htmlUrl: text('html_url').notNull().default(''),
+  clientId: text('client_id').notNull().default(''),
+  clientSecret: text('client_secret').notNull().default(''),
+  webhookSecret: text('webhook_secret').notNull().default(''),
+  privateKey: text('private_key').notNull(),
+  ...timestamps,
+})
+
+/**
+ * Control database only: which project's site or function a repository
+ * deploys, so a webhook (which has no project) finds them. Appwrite's console
+ * `repositories` collection.
+ */
+export const vcsRepositories = sqliteTable(
+  '_vcs_repositories',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    projectId: text('project_id').notNull(),
+    installationId: text('installation_id').notNull(),
+    providerInstallationId: text('provider_installation_id').notNull(),
+    providerRepositoryId: text('provider_repository_id').notNull(),
+    /** `owner/name`, for messages; GitHub's numeric ID is what matches. */
+    providerRepositoryName: text('provider_repository_name').notNull().default(''),
+    /** function | site */
+    resourceType: text('resource_type').notNull(),
+    resourceId: text('resource_id').notNull(),
+    /** Pull requests from forks that an admin approved for builds. */
+    providerPullRequestIds: json<string[]>('provider_pull_request_ids').notNull().default(sql`'[]'`),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('_vcs_repositories_resource').on(t.projectId, t.resourceType, t.resourceId),
+    index('_vcs_repositories_provider').on(t.providerRepositoryId),
+  ],
+)
+
+/** Control database only: the one Bunwrite comment kept up to date on each pull request. */
+export const vcsComments = sqliteTable(
+  '_vcs_comments',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    providerRepositoryId: text('provider_repository_id').notNull(),
+    pullRequest: integer('pull_request').notNull(),
+    commentId: text('comment_id').notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_vcs_comments_pr').on(t.providerRepositoryId, t.pullRequest)],
 )
 
 /**

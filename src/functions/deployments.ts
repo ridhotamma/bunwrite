@@ -23,6 +23,7 @@ import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
+import { SOURCE_COLUMNS, sourceModel, sourceValues, type DeploymentSource, type SourceColumns } from '~/vcs/source'
 import type { FunctionRow, FunctionService } from './service'
 import { buildToolsDir, PYTHON_PACKAGES_DIR } from './runtime'
 import { removeTree } from './sandbox'
@@ -34,10 +35,12 @@ const MAX_SIZE = 512 * 1024 * 1024
 const MAX_LOG = 1_000_000
 /** Ready deployments kept on disk besides the active one. */
 const KEEP_PREVIOUS = 2
+/** Ready Git builds of other branches kept on disk. */
+const KEEP_PREVIEWS = 5
 /** macOS tar would add `._name` metadata files to archives; other tars ignore this. */
 const TAR_ENV = { ...process.env, COPYFILE_DISABLE: '1' }
 
-export interface DeploymentRow {
+export interface DeploymentRow extends SourceColumns {
   seq: number
   id: string
   function_id: string
@@ -71,7 +74,6 @@ export function deploymentModel(d: DeploymentRow) {
     $id: d.id,
     $createdAt: d.created_at,
     $updatedAt: d.updated_at,
-    type: 'manual',
     resourceId: d.function_id,
     resourceType: 'functions',
     entrypoint: d.entrypoint,
@@ -85,16 +87,7 @@ export function deploymentModel(d: DeploymentRow) {
     status: d.status,
     buildLogs: d.build_logs,
     buildDuration: d.build_duration,
-    providerRepositoryName: '',
-    providerRepositoryOwner: '',
-    providerRepositoryUrl: '',
-    providerCommitHash: '',
-    providerCommitAuthorUrl: '',
-    providerCommitAuthor: '',
-    providerCommitMessage: '',
-    providerCommitUrl: '',
-    providerBranch: '',
-    providerBranchUrl: '',
+    ...sourceModel(d),
     // The SDKs read these to tell when a chunked upload is complete.
     chunksTotal: d.chunks_total,
     chunksUploaded: d.chunks_uploaded,
@@ -220,6 +213,15 @@ export class Deployments {
     return this.sql.query<DeploymentRow, [string]>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC').all(functionId)
   }
 
+  /** The newest Git build of a branch, or of a fork's pull request when `pullRequest` is set. */
+  latestForBranch(functionId: string, branch: string, pullRequest = 0): DeploymentRow | null {
+    return pullRequest
+      ? this.sql.query<DeploymentRow, [string, number]>("SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1").get(functionId, pullRequest)
+      : this.sql
+          .query<DeploymentRow, [string, string]>("SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1")
+          .get(functionId, branch)
+  }
+
   latest(functionId: string): DeploymentRow | null {
     return this.sql.query<DeploymentRow, [string]>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC LIMIT 1').get(functionId)
   }
@@ -325,6 +327,38 @@ export class Deployments {
     return this.get(f.id, id)
   }
 
+  /**
+   * A deployment of a Git commit. The caller writes the code into
+   * deploymentDir(config, f.id, id) and then calls build(…, { unpacked: true }),
+   * or fail() when the code could not be fetched.
+   */
+  startGit(f: FunctionRow, source: DeploymentSource, activate: boolean): DeploymentRow {
+    const id = uniqueId()
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'processing', 0, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, f.id, f.entrypoint, f.commands, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+    const dir = deploymentDir(this.config, f.id, id)
+    removeTree(this.config.functionsSandbox, dir)
+    mkdirSync(dir, { recursive: true })
+    return this.get(f.id, id)
+  }
+
+  /** Mark a deployment failed before its build ran (the code could not be fetched). */
+  fail(functionId: string, id: string, message: string): DeploymentRow {
+    this.sql.query("UPDATE _deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?").run(message.slice(-MAX_LOG), now(), id)
+    removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
+    return this.get(functionId, id)
+  }
+
+  /** Record the size of code written straight into the folder. */
+  setSourceSize(id: string, bytes: number): void {
+    this.sql.query('UPDATE _deployments SET source_size = ?, updated_at = ? WHERE id = ?').run(bytes, now(), id)
+  }
+
   /** Unpack, run the build command, and activate when asked. Sets status ready or failed. */
   async build(functionId: string, id: string, options: { unpacked?: boolean } = {}): Promise<DeploymentRow> {
     const started = performance.now()
@@ -427,12 +461,17 @@ export class Deployments {
   }
 
   /** Keep disk use flat: drop the code of all but the active and the last few ready deployments. */
-  private prune(functionId: string): void {
+  prune(functionId: string): void {
     const active = this.functions.fn(functionId).deployment_id
+    // Git builds of other branches (never made active) are pruned on their own, so they do not push out rollbacks.
+    const preview = "type = 'vcs' AND activate = 0"
     const ready = this.sql
-      .query<{ id: string }, [string, string]>("SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? ORDER BY seq DESC")
+      .query<{ id: string }, [string, string]>(`SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND NOT (${preview}) ORDER BY seq DESC`)
       .all(functionId, active)
-    for (const { id } of ready.slice(KEEP_PREVIOUS)) {
+    const previews = this.sql
+      .query<{ id: string }, [string, string]>(`SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND ${preview} ORDER BY seq DESC`)
+      .all(functionId, active)
+    for (const { id } of [...ready.slice(KEEP_PREVIOUS), ...previews.slice(KEEP_PREVIEWS)]) {
       this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
       removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
       rmSync(this.sourcePath(functionId, id), { force: true })

@@ -53,6 +53,52 @@ export interface CacheConfig {
   previewRetentionDays: number
 }
 
+/**
+ * The server's GitHub App (VCS_GITHUB_*, or Appwrite's _APP_VCS_GITHUB_*).
+ * Fields set here win over the app made by the console's one-click setup.
+ */
+export interface VcsGithubConfig {
+  appId: string
+  /** The app's URL slug: github.com/apps/<appName>. */
+  appName: string
+  /** PEM, with real or `\n` newlines, or base64 of the PEM. */
+  privateKey: string
+  clientId: string
+  clientSecret: string
+  webhookSecret: string
+  /** REST API base; https://api.github.com, or <host>/api/v3 on GitHub Enterprise. */
+  apiUrl: string
+  /** Web base for install and app-creation pages; https://github.com. */
+  url: string
+}
+
+/** A PEM from an env var: base64, `\n` escapes, or as it is. */
+export function pemFrom(value: string | undefined): string {
+  const v = (value ?? '').trim()
+  if (!v) return ''
+  if (v.includes('-----BEGIN')) return v.replace(/\\n/g, '\n')
+  try {
+    const decoded = Buffer.from(v, 'base64').toString('utf8')
+    return decoded.includes('-----BEGIN') ? decoded.trim() : v
+  } catch {
+    return v
+  }
+}
+
+export function vcsGithubFromEnv(env: Record<string, string | undefined>): VcsGithubConfig {
+  const read = (name: string) => (env[`VCS_GITHUB_${name}`] ?? env[`_APP_VCS_GITHUB_${name}`] ?? '').trim()
+  return {
+    appId: read('APP_ID'),
+    appName: read('APP_NAME'),
+    privateKey: pemFrom(env.VCS_GITHUB_PRIVATE_KEY ?? env._APP_VCS_GITHUB_PRIVATE_KEY),
+    clientId: read('CLIENT_ID'),
+    clientSecret: read('CLIENT_SECRET'),
+    webhookSecret: read('WEBHOOK_SECRET'),
+    apiUrl: (env.VCS_GITHUB_API_URL || 'https://api.github.com').replace(/\/+$/, ''),
+    url: (env.VCS_GITHUB_URL || 'https://github.com').replace(/\/+$/, ''),
+  }
+}
+
 /** Appwrite's own values: 45 days for files, 30 for previews. */
 export const DEFAULT_CACHE: CacheConfig = { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 }
 
@@ -143,6 +189,8 @@ export interface Config {
   sitesSsrMaxProcesses: number
   /** Ready SSR deployments kept besides the live one, for rollback (SITES_SSR_KEEP_PREVIOUS). */
   sitesSsrKeepPrevious: number
+  /** GitHub App for Git deployments; see VcsGithubConfig. */
+  vcsGithub: VcsGithubConfig
   /** Serve the admin console at /console. */
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
@@ -279,6 +327,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sitesSsrIdleMs: ssrIdle,
     sitesSsrMaxProcesses: Math.max(1, ssrMax),
     sitesSsrKeepPrevious: ssrKeep,
+    vcsGithub: vcsGithubFromEnv(env),
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',

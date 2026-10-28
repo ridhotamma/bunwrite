@@ -7,7 +7,7 @@
  * (or every path on an SSR site with no start command) runs that function, so
  * pages can call their backend on the same origin.
  */
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 
 import type { Config } from '~/config'
@@ -23,7 +23,9 @@ import type { ProxyService } from '~/proxy/service'
 import { siteBaseEnv } from './env'
 import { SITE_ADAPTERS } from './frameworks'
 import { siteHome, sitesDir } from './paths'
+import { branchLabel, branchSlug, deploymentLabel, parsePreview } from './previews'
 import { isPruneMode, PRUNE_MODES, pruneScript, SIZE_MARKER, type PruneMode } from './prune'
+import { SOURCE_COLUMNS, sourceValues, type DeploymentSource, type ProviderColumns, type ProviderSettings, type SourceColumns } from '~/vcs/source'
 import { SsrRuntime, type SsrTarget } from './ssr'
 
 /** Ready deployments kept besides the live one, for rollback. SSR sites use SITES_SSR_KEEP_PREVIOUS. */
@@ -37,7 +39,7 @@ export const SITE_ID = /^[a-z0-9](?:[a-z0-9-]{0,34}[a-z0-9])?$/
 /** Taken by the server itself; a site may not use these names. */
 const RESERVED_IDS = new Set(['www', 'api', 'console', 'admin', 'sites', 'cloud', 'localhost'])
 
-export interface SiteRow {
+export interface SiteRow extends ProviderColumns {
   seq: number
   id: string
   name: string
@@ -58,7 +60,7 @@ export interface SiteRow {
   updated_at: string
 }
 
-export interface SiteDeploymentRow {
+export interface SiteDeploymentRow extends SourceColumns {
   seq: number
   id: string
   site_id: string
@@ -151,7 +153,7 @@ export class SiteService {
     private config: Config,
     private proxy: ProxyService,
   ) {
-    this.ssr = new SsrRuntime(config, (siteId) => this.ssrTarget(siteId))
+    this.ssr = new SsrRuntime(config, (siteId, deploymentId) => this.ssrTarget(siteId, deploymentId))
   }
 
   private get sql() {
@@ -188,13 +190,90 @@ export class SiteService {
 
   /** The site a request's Host header points at, if it is one of this project's. */
   byHost(host: string): SiteRow | null {
+    return this.resolveHost(host)?.site ?? null
+  }
+
+  /**
+   * The site a host belongs to and, for a preview host
+   * (`<siteId>--git-<branch>` or `<siteId>--<deploymentId>`), the deployment
+   * it shows instead of the live one.
+   */
+  resolveHost(host: string): { site: SiteRow; deploymentId: string | null } | null {
     const name = hostOf(host)
     const custom = this.proxy.byDomain(name)
-    if (custom?.resource_type === 'site') return this.site(custom.resource_id)
+    if (custom?.resource_type === 'site') return { site: this.site(custom.resource_id), deploymentId: null }
     const suffix = `.${sitesDomainOf(this.config)}`
     if (!name.endsWith(suffix)) return null
     const sub = name.slice(0, -suffix.length)
-    return sub.includes('.') ? null : (this.cache().byId.get(sub) ?? null)
+    if (sub.includes('.')) return null
+    const exact = this.cache().byId.get(sub)
+    if (exact) return { site: exact, deploymentId: null }
+    const preview = parsePreview(sub)
+    const site = preview ? this.cache().byId.get(preview.siteId) : undefined
+    if (!preview || !site) return null
+    if (preview.branchSlug) {
+      const row = this.sql.query<{ deployment_id: string }, [string, string]>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?').get(site.id, preview.branchSlug)
+      return row ? { site, deploymentId: row.deployment_id } : null
+    }
+    const d = this.sql.query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND id = ? AND status = 'ready'").get(site.id, preview.deploymentId!)
+    return d ? { site, deploymentId: d.id } : null
+  }
+
+  // ---- Previews ----
+
+  /** The address of one deployment: `<siteId>--<deploymentId>.<SITES_DOMAIN>`. */
+  deploymentUrl(site: SiteRow, deploymentId: string): string {
+    return urlForHost(this.config, `${deploymentLabel(site.id, deploymentId)}.${sitesDomainOf(this.config)}`)
+  }
+
+  /** The address of a branch's newest build: `<siteId>--git-<slug>.<SITES_DOMAIN>`. */
+  branchUrl(site: SiteRow, branch: string): string {
+    return urlForHost(this.config, `${branchLabel(site.id, branchSlug(site.id, branch))}.${sitesDomainOf(this.config)}`)
+  }
+
+  /** Branch previews of a site, newest first. */
+  branches(siteId: string): { branch: string; slug: string; deployment_id: string; updated_at: string }[] {
+    return this.sql
+      .query<{ branch: string; slug: string; deployment_id: string; updated_at: string }, [string]>('SELECT branch, slug, deployment_id, updated_at FROM _site_branches WHERE site_id = ? ORDER BY updated_at DESC')
+      .all(siteId)
+  }
+
+  /** Point a branch's preview host at a ready deployment, and drop the build it showed before. */
+  setBranchPreview(siteId: string, branch: string, deploymentId: string): void {
+    const site = this.site(siteId)
+    const slug = branchSlug(site.id, branch)
+    const before = this.sql.query<{ deployment_id: string }, [string, string]>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?').get(site.id, slug)
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _site_branches (site_id, branch, slug, deployment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(site_id, slug) DO UPDATE SET branch = excluded.branch, deployment_id = excluded.deployment_id, updated_at = excluded.updated_at`,
+      )
+      .run(site.id, branch, slug, deploymentId, stamp, stamp)
+    if (before && before.deployment_id !== deploymentId) this.dropPreview(site, before.deployment_id)
+  }
+
+  /** A branch is gone (deleted, or its pull request closed): drop its preview host and builds. */
+  removeBranch(siteId: string, branch: string): number {
+    const site = this.site(siteId)
+    this.sql.query('DELETE FROM _site_branches WHERE site_id = ? AND slug = ?').run(site.id, branchSlug(site.id, branch))
+    const pr = /^pr-(\d+)$/.exec(branch)
+    const rows = pr
+      ? this.sql.query<{ id: string }, [string, number]>("SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = ?").all(site.id, Number(pr[1]))
+      : this.sql.query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = 0 AND provider_branch = ?").all(site.id, branch)
+    let removed = 0
+    for (const { id } of rows) if (this.dropPreview(site, id)) removed++
+    return removed
+  }
+
+  /** Delete a preview deployment that is not live and no branch shows. */
+  private dropPreview(site: SiteRow, deploymentId: string): boolean {
+    if (this.site(site.id).deployment_id === deploymentId) return false
+    if (this.sql.query('SELECT 1 FROM _site_branches WHERE site_id = ? AND deployment_id = ?').get(site.id, deploymentId)) return false
+    this.ssr.stopDeployment(site.id, deploymentId)
+    this.sql.query('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?').run(deploymentId, site.id)
+    removeTree(this.config.functionsSandbox, sitesDir(this.config, site.id, deploymentId))
+    return true
   }
 
   /** `https://<id>.<SITES_DOMAIN>`, with the API's port when it has one (local development). */
@@ -283,6 +362,16 @@ export class SiteService {
     return this.site(id)
   }
 
+  /** Connect the site to a repository, or disconnect it with NO_PROVIDER. */
+  setProvider(id: string, provider: ProviderSettings): SiteRow {
+    this.site(id)
+    this.sql
+      .query('UPDATE _sites SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?')
+      .run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
+    this.changed()
+    return this.site(id)
+  }
+
   settingsOf(site: SiteRow): SiteSettings {
     return {
       name: site.name,
@@ -307,6 +396,7 @@ export class SiteService {
     this.sql.transaction(() => {
       this.proxy.removeFor('site', id)
       this.sql.query('DELETE FROM _site_deployments WHERE site_id = ?').run(id)
+      this.sql.query('DELETE FROM _site_branches WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
     })()
     this.changed()
@@ -321,19 +411,21 @@ export class SiteService {
   }
 
   /** The folder the live deployment serves from, or null when nothing is live. */
-  root(site: SiteRow): string | null {
-    if (!site.deployment_id) return null
-    const dir = join(sitesDir(this.config, site.id, site.deployment_id), site.output_directory)
+  root(site: SiteRow, deploymentId = site.deployment_id): string | null {
+    if (!deploymentId) return null
+    const dir = join(sitesDir(this.config, site.id, deploymentId), site.output_directory)
     return existsSync(dir) ? dir : null
   }
 
   /** The live SSR app, when the deployment has a start command. */
-  private ssrTarget(siteId: string): SsrTarget | null {
+  /** The live SSR app, or with `deploymentId` a preview's app. */
+  private ssrTarget(siteId: string, deploymentId?: string | null): SsrTarget | null {
     const site = this.cache().byId.get(siteId)
-    if (!site || !site.enabled || site.adapter !== 'ssr' || !site.deployment_id) return null
+    const id = deploymentId || site?.deployment_id
+    if (!site || !site.enabled || site.adapter !== 'ssr' || !id) return null
     const deployment = this.sql
       .query<SiteDeploymentRow, [string, string]>('SELECT * FROM _site_deployments WHERE id = ? AND site_id = ?')
-      .get(site.deployment_id, site.id)
+      .get(id, site.id)
     if (!deployment || deployment.status !== 'ready') return null
     const command = deployment.start_command.trim()
     if (!command) return null
@@ -357,6 +449,15 @@ export class SiteService {
 
   deployments(siteId: string): SiteDeploymentRow[] {
     return this.sql.query<SiteDeploymentRow, [string]>('SELECT * FROM _site_deployments WHERE site_id = ? ORDER BY seq DESC').all(siteId)
+  }
+
+  /** The newest Git build of a branch, or of a fork's pull request when `pullRequest` is set. */
+  latestForBranch(siteId: string, branch: string, pullRequest = 0): SiteDeploymentRow | null {
+    return pullRequest
+      ? this.sql.query<SiteDeploymentRow, [string, number]>("SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1").get(siteId, pullRequest)
+      : this.sql
+          .query<SiteDeploymentRow, [string, string]>("SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1")
+          .get(siteId, branch)
   }
 
   latest(siteId: string): SiteDeploymentRow | null {
@@ -408,6 +509,37 @@ export class SiteService {
     return this.deployment(site.id, row.id)
   }
 
+  /**
+   * A deployment of a Git commit. The caller writes the code into
+   * sitesDir(config, site.id, id), then calls process(…, { unpacked: true }),
+   * or fail() when the code could not be fetched.
+   */
+  startGit(site: SiteRow, source: DeploymentSource, activate: boolean): SiteDeploymentRow {
+    const id = uniqueId()
+    const stamp = now()
+    this.sql
+      .query(
+        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+         VALUES (?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, site.id, site.start_command, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+    const dir = sitesDir(this.config, site.id, id)
+    removeTree(this.config.functionsSandbox, dir)
+    mkdirSync(dir, { recursive: true })
+    return this.deployment(site.id, id)
+  }
+
+  /** Mark a deployment failed before it was processed (the code could not be fetched). */
+  fail(siteId: string, id: string, message: string): SiteDeploymentRow {
+    this.sql.query("UPDATE _site_deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?").run(message.slice(-MAX_LOG), now(), id)
+    removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
+    return this.deployment(siteId, id)
+  }
+
+  setSourceSize(id: string, bytes: number): void {
+    this.sql.query('UPDATE _site_deployments SET source_size = ?, updated_at = ? WHERE id = ?').run(bytes, now(), id)
+  }
+
   /** Deploy files given directly: pasted HTML from the console, or a starter page. */
   async deployFiles(site: SiteRow, files: SiteFile[], activate: boolean): Promise<SiteDeploymentRow> {
     if (!files.length) throw err('general_argument_invalid', 'Add at least one file.')
@@ -457,7 +589,9 @@ export class SiteService {
           rmSync(archive, { force: true })
         }
       }
-      const counts = site.adapter === 'ssr' ? await this.buildSsr(site, id, dir, logs, set) : this.checkStatic(site, dir, logs)
+      const fromGit = this.deployment(siteId, id).type === 'vcs'
+      const counts =
+        site.adapter === 'ssr' ? await this.buildSsr(site, id, dir, logs, set) : fromGit ? await this.buildStatic(site, dir, logs, set) : this.checkStatic(site, dir, logs)
       logs.push('Ready.')
       set('ready', counts)
       if (this.deployment(siteId, id).activate) this.activate(siteId, id)
@@ -471,11 +605,11 @@ export class SiteService {
   }
 
   /** A static deployment: the output folder must be there, with files. */
-  private checkStatic(site: SiteRow, dir: string, logs: string[]): { files: number; bytes: number } {
+  private checkStatic(site: SiteRow, dir: string, logs: string[], built = false): { files: number; bytes: number } {
     const marker = site.output_directory || 'index.html'
     const lifted = liftSingleFolder(dir, marker)
     if (lifted) logs.push(`Using the "${lifted}" folder inside the upload as the site folder.`)
-    if (site.build_command || site.install_command) {
+    if (!built && (site.build_command || site.install_command)) {
       logs.push('Static sites are served as uploaded; this server runs no install or build command. Build first and upload the output.')
     }
     const out = join(dir, site.output_directory)
@@ -487,6 +621,49 @@ export class SiteService {
     logs.push(`${counts.files} file${counts.files === 1 ? '' : 's'}, ${formatSize(counts.bytes)}${site.output_directory ? ` in ${normalize(site.output_directory)}/` : ''}.`)
     if (!existsSync(join(out, 'index.html'))) logs.push('Note: there is no index.html at the top, so the home page will be a 404.')
     return counts
+  }
+
+  /**
+   * A static site from Git: the repository holds the source, so the install
+   * and build commands run here and the output folder is served. With the
+   * sandbox on, the build runs as the site's user in a work folder, and only
+   * the output is copied back for the server to serve.
+   */
+  private async buildStatic(
+    site: SiteRow,
+    dir: string,
+    logs: string[],
+    set: (status: string, counts?: { files: number; bytes: number }) => void,
+  ): Promise<{ files: number; bytes: number }> {
+    if (!site.install_command.trim() && !site.build_command.trim()) return this.checkStatic(site, dir, logs, true)
+    if (!this.config.sitesBuildCommands) {
+      logs.push('Skipped install and build commands (SITES_BUILD_COMMANDS=false); serving the repository as it is.')
+      return this.checkStatic(site, dir, logs, true)
+    }
+    const sandbox = this.config.functionsSandbox
+    const uid = sandbox?.uidFor(this.config.projectId, `site:${site.id}`)
+    if (!sandbox || uid === undefined) {
+      await this.runSiteCommands(site, dir, logs, set, null)
+      // Static files need no packages, and node_modules must not be served.
+      rmSync(join(dir, 'node_modules'), { recursive: true, force: true })
+      return this.checkStatic(site, dir, logs, true)
+    }
+    const work = `${dir}.build`
+    removeTree(sandbox, work)
+    renameSync(dir, work)
+    mkdirSync(dir, { recursive: true })
+    try {
+      sandbox.adopt(work, siteHome(this.config, site.id), uid)
+      await this.runSiteCommands(site, work, logs, set, { sandbox, uid })
+      const out = site.output_directory || '.'
+      const pack = Bun.spawn(sandbox.wrap(uid, work, ['tar', '-cf', '-', out]), { stdout: 'pipe', stderr: 'pipe' })
+      const unpack = Bun.spawn(['tar', '-xf', '-', '-C', dir], { stdin: pack.stdout, stdout: 'ignore', stderr: 'pipe' })
+      const [packErr, unpackErr, packCode, unpackCode] = await Promise.all([new Response(pack.stderr).text(), new Response(unpack.stderr).text(), pack.exited, unpack.exited])
+      if (packCode !== 0 || unpackCode !== 0) throw new Error(`Could not copy the build output: ${(packErr || unpackErr).trim() || 'tar failed'}`)
+    } finally {
+      removeTree(sandbox, work)
+    }
+    return this.checkStatic(site, dir, logs, true)
   }
 
   /**
@@ -673,8 +850,11 @@ export class SiteService {
     const site = this.site(siteId)
     const keep = site.adapter === 'ssr' ? this.config.sitesSsrKeepPrevious : KEEP_PREVIOUS
     const live = site.deployment_id
+    // Branch previews (Git builds that were not made live) are kept by their branch, not here.
     const ready = this.sql
-      .query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? ORDER BY seq DESC")
+      .query<{ id: string }, [string, string]>(
+        "SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? AND NOT (type = 'vcs' AND activate = 0) ORDER BY seq DESC",
+      )
       .all(siteId, live)
     for (const { id } of ready.slice(keep)) {
       this.ssr.stopDeployment(siteId, id)

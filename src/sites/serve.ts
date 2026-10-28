@@ -102,30 +102,32 @@ async function apiResponse(services: Services, site: SiteRow, request: Request, 
   }
 }
 
-export async function serveSite(services: Services, site: SiteRow, request: Request): Promise<Response> {
+/** Serve a site's live deployment, or with `deploymentId` a preview of another one. */
+export async function serveSite(services: Services, site: SiteRow, request: Request, deploymentId?: string | null): Promise<Response> {
   const url = new URL(request.url)
   if (!site.enabled) return page(503, 'Site paused', 'This site is turned off for now.')
   // An SSR app answers every path, including /api, and handles methods itself.
-  if (site.adapter === 'ssr') return ssrResponse(services, site, request)
+  if (site.adapter === 'ssr') return ssrResponse(services, site, request, deploymentId)
   if (site.api_function_id && (url.pathname === API_PREFIX || url.pathname.startsWith(`${API_PREFIX}/`))) {
     return apiResponse(services, site, request, url)
   }
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return new Response('Method not allowed', { status: 405, headers: { allow: 'GET, HEAD', ...SECURITY_HEADERS } })
   }
-  const root = services.sites.root(site)
+  const shown = deploymentId || site.deployment_id
+  const root = services.sites.root(site, shown)
   if (!root) return page(404, 'Nothing here yet', 'This site has no live deployment.')
 
   const found = findFile(root, url.pathname)
   if (found?.folder) return new Response(null, { status: 308, headers: { location: `${url.pathname}/${url.search}` } })
-  if (found) return fileResponse(request, found.path, site.deployment_id)
+  if (found) return fileResponse(request, found.path, shown)
   // Single-page apps route in the browser: unknown paths get the app shell,
   // but a missing asset (it has an extension) stays a 404.
   if (site.fallback_file && !extname(url.pathname)) {
     const fallback = findFile(root, `/${site.fallback_file}`)
-    if (fallback && !fallback.folder) return fileResponse(request, fallback.path, site.deployment_id)
+    if (fallback && !fallback.folder) return fileResponse(request, fallback.path, shown)
   }
   const notFound = findFile(root, '/404.html')
-  if (notFound) return fileResponse(request, notFound.path, site.deployment_id, 404)
+  if (notFound) return fileResponse(request, notFound.path, shown, 404)
   return page(404, 'Page not found', 'There is nothing at this address.')
 }

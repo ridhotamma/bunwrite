@@ -1,4 +1,7 @@
 
+import { gitSection } from '~/console/views/vcs'
+import { detectRuntime } from '~/vcs/detect'
+import { rootDirectory } from '~/vcs/hub'
 import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/deployments'
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
@@ -47,6 +50,50 @@ function codeSource(ctx: ConsoleContext): CodeSource {
     return { kind, text: text.replace(/\r\n/g, '\n') }
   }
   return { kind: 'template' }
+}
+
+/** A new function that builds from a GitHub repository: detect its runtime, connect, and deploy the branch. */
+async function createFromGit(ctx: ConsoleContext, id: string, name: string, runtime: string): Promise<Response> {
+  const installationId = value(ctx.form, 'installation_id')
+  const repositoryId = value(ctx.form, 'provider_repository_id')
+  if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
+  const installation = ctx.services.vcs.get(installationId)
+  const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
+  const branch = value(ctx.form, 'provider_branch')
+  let found = { runtime, entrypoint: entrypointFrom(ctx), commands: value(ctx.form, 'commands') }
+  if (checked(ctx.form.detect)) {
+    const gh = ctx.hub.github
+    const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
+    found = await detectRuntime(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
+  }
+  const f = ctx.services.functions.create(id, {
+    name,
+    runtime: found.runtime,
+    execute: ['any'],
+    events: [],
+    schedule: value(ctx.form, 'schedule'),
+    timeout: 15,
+    enabled: true,
+    logging: true,
+    entrypoint: found.entrypoint,
+    commands: found.commands,
+    scopes: [],
+    buildSpecification: 's-1vcpu-512mb',
+    runtimeSpecification: 's-1vcpu-512mb',
+    deploymentRetention: 0,
+    domains: [],
+  })
+  const project = ctx.projects.get(ctx.currentProject.id)!
+  try {
+    await ctx.hub.link(project, 'function', f.id, { installationId: installation.id, providerRepositoryId: repositoryId, providerBranch: branch, providerRootDirectory: root, providerSilentMode: false })
+    const linked = ctx.services.functions.fn(f.id)
+    await ctx.hub.deployReference(project, 'function', f.id, 'branch', linked.provider_branch, true)
+    return ctx.go(functionUrl(f.id), { tone: 'success', text: `Function created; deploying ${linked.provider_branch}` })
+  } catch (error) {
+    ctx.hub.forget(project.info.id, 'function', f.id)
+    ctx.services.functions.remove(f.id)
+    throw error
+  }
 }
 
 function entrypointFrom(ctx: ConsoleContext): string {
@@ -167,7 +214,7 @@ export function functionPages(router: ConsoleRouter): void {
             </tbody></table></div>`
           : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
       })}
-      ${createFunctionDialog(url.searchParams.get('create') === '1', ctx.services.config.functionsBuildCommands)}`,
+      ${createFunctionDialog(url.searchParams.get('create') === '1', ctx.services.config.functionsBuildCommands, ctx.hub.apps.get() ? ctx.services.vcs.list() : [])}`,
     )
   })
 
@@ -177,6 +224,7 @@ export function functionPages(router: ConsoleRouter): void {
     const name = value(ctx.form, 'name') || id
     const runtime = value(ctx.form, 'runtime')
     if (!SUPPORTED_RUNTIME_IDS.includes(runtime)) throw err('general_argument_invalid', 'Choose a runtime.')
+    if (value(ctx.form, 'source') === 'github') return createFromGit(ctx, id, name, runtime)
     const entrypoint = entrypointFrom(ctx)
     const commands = value(ctx.form, 'commands')
     const source = codeSource(ctx)
@@ -312,6 +360,7 @@ export function functionPages(router: ConsoleRouter): void {
           </ul>
           <p class="help">${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'} <a href="${functionUrl(f.id)}/deployments">View deployments</a></p>`,
         )}
+        ${gitSection(ctx, { type: 'function', row: f, base: functionUrl(f.id) })}
         ${domainSettings}
         ${settingsSection(
           'Delete function',
@@ -354,6 +403,7 @@ export function functionPages(router: ConsoleRouter): void {
   router.post(`${FN}/:id/delete`, ({ ctx, path }) => {
     const f = ctx.services.functions.fn(path.id!)
     ctx.services.functions.remove(f.id)
+    ctx.hub.forget(ctx.currentProject.id, 'function', f.id)
     return ctx.go(FN, { tone: 'success', text: `${f.name} deleted` })
   })
 

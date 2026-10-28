@@ -3,6 +3,7 @@ import { arrayOf, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { icon } from '~/console/ui'
 import { membersView, organizationGeneralView, organizationHeader } from '~/console/views/organization'
+import { githubAppSection } from '~/console/views/vcs'
 import type { InviteInput, OrganizationRole } from '~/organizations/service'
 import { err } from '~/lib/errors'
 
@@ -25,7 +26,7 @@ export function organizationPages(router: ConsoleRouter): void {
   router.get('/console/organization', ({ ctx }) => {
     if (!canManage(ctx)) return ctx.go('/console')
     const { org, header } = orgHeader(ctx, 'settings')
-    return ctx.render(org.name, 'organization', html`${header}${organizationGeneralView(org)}`)
+    return ctx.render(org.name, 'organization', html`${header}${organizationGeneralView(org)}${githubAppSection(ctx)}`)
   })
 
   router.post('/console/organization', ({ ctx }) => {

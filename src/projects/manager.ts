@@ -200,10 +200,10 @@ export class ProjectManager implements ProjectResolver {
     return null
   }
 
-  findSite(host: string): { project: ProjectRuntime; site: SiteRow } | null {
+  findSite(host: string): { project: ProjectRuntime; site: SiteRow; deploymentId: string | null } | null {
     for (const runtime of this.runtimes.values()) {
-      const site = runtime.services.sites.byHost(host)
-      if (site) return { project: runtime, site }
+      const found = runtime.services.sites.resolveHost(host)
+      if (found) return { project: runtime, ...found }
     }
     return null
   }

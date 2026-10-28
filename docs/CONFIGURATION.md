@@ -167,6 +167,23 @@ over the env file, and a function's own variable wins over a global one.
 SSR apps are started on the first request and always listen on loopback; the
 server proxies to them, so Caddy and custom domains need no extra setup.
 
+## Git deployments
+
+The server's GitHub App. Leave these unset to create the app from the console
+instead (Organization → Settings → GitHub App); set values win over it.
+Appwrite's `_APP_VCS_GITHUB_*` names are read too. See [GIT.md](GIT.md).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VCS_GITHUB_APP_ID` | unset | The GitHub App's ID. |
+| `VCS_GITHUB_APP_NAME` | unset | The app's URL slug, as in `github.com/apps/<slug>`. |
+| `VCS_GITHUB_PRIVATE_KEY` | unset | The app's private key: the PEM (with `\n` for newlines) or base64 of it. |
+| `VCS_GITHUB_CLIENT_ID` | unset | The app's OAuth client ID, used to check who installed it. |
+| `VCS_GITHUB_CLIENT_SECRET` | unset | The app's OAuth client secret. |
+| `VCS_GITHUB_WEBHOOK_SECRET` | unset | Verifies GitHub's webhooks; deliveries without a matching signature are refused. |
+| `VCS_GITHUB_URL` | `https://github.com` | GitHub's web address; set it for GitHub Enterprise Server. |
+| `VCS_GITHUB_API_URL` | `https://api.github.com` | GitHub's REST API, such as `https://github.example.com/api/v3`. |
+
 ## Resource tuning
 
 Bunwrite detects host or cgroup CPU and RAM at startup and sizes limits from it.

@@ -23,6 +23,7 @@ import { AccessService } from './settings/access'
 import { TopicService } from './messaging/topics'
 import { WebhookService } from './webhooks/service'
 import { EmailTemplateService } from './mail/templates'
+import { VcsInstallations } from './vcs/installations'
 
 export interface Services {
   config: Config
@@ -51,6 +52,8 @@ export interface Services {
   requestLogs: RequestLogService
   backups: BackupService
   render: RenderService
+  /** GitHub App installations connected to this project. */
+  vcs: VcsInstallations
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
@@ -75,8 +78,9 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
+  const vcs = new VcsInstallations(db)
   proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, proxy, requestLogs, backups, render, webhooks, topics, templates } as Services
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, vcs } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {
