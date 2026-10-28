@@ -25,10 +25,11 @@ export function variableList(vars: VariableEntry[], options: VariableListOptions
       ? html`<form method="post" action="${options.clear.action}" class="inline" data-confirm="${options.clear.confirm}" data-confirm-label="${options.clear.label}" data-confirm-tone="critical" style="display:block;text-align:right;margin-bottom:8px"><button class="critical plain" ${vars.length ? '' : 'disabled'}>${options.clear.label}</button></form>`
       : ''}
     <ul class="list">${vars.map(
-      (v) => html`<li><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`}
-          <details class="inline"><summary class="subdued" style="cursor:pointer;display:inline">Edit</summary>
-            <form method="post" action="${options.save}" class="inline" style="margin-top:8px"><input type="hidden" name="key" value="${v.key}">
-              <input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'Enter a new value' : ''}" style="min-width:140px;margin:0 4px 0 0"><label class="check inline" style="margin:0"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide</label>
+      (v) => html`<li class="var-row"><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`}
+          <details class="var-edit"><summary class="subdued">Edit</summary>
+            <form method="post" action="${options.save}" class="var-edit-form"><input type="hidden" name="key" value="${v.key}">
+              <input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'New value, blank to keep' : 'Value'}">
+              <label class="check"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide</label>
               <button class="small">Save</button></form>
           </details>
           ${destroy(options.action, 'Remove', options.removeConfirm ? options.removeConfirm(v.key) : `Remove ${v.key}?`, { key: v.key })}</span></li>`,

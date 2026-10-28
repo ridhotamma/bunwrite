@@ -251,6 +251,47 @@ describe('console function creation', () => {
   })
 })
 
+describe('function variables in the console', () => {
+  beforeAll(async () => {
+    await post('/console/functions', { name: 'Vars', id: 'vars', runtime: 'node-22', entrypoint: 'src/main.js', source: 'template' })
+  })
+
+  const values = () =>
+    server.services.functions.variables('vars').map(({ key, value, secret }) => ({ key, value, secret }))
+
+  test('adds, edits and removes a variable', async () => {
+    await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'first', secret: 'on' })
+    expect(values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
+
+    const page = await (await get('/console/functions/vars/variables')).text()
+    expect(page).toContain('TOKEN')
+    expect(page).toContain('Edit')
+    expect(page).toContain('Delete all')
+
+    // A blank edit keeps a secret's stored value; a new value replaces it.
+    await post('/console/functions/vars/variables', { key: 'TOKEN', value: '', secret: 'on' })
+    expect(values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
+    await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'second', secret: 'on' })
+    expect(values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 1 }])
+    // Unhiding shows the value.
+    await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'second' })
+    expect(values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 0 }])
+
+    await post('/console/functions/vars/variables/delete', { key: 'TOKEN' })
+    expect(values()).toEqual([])
+  })
+
+  test('deletes every variable at once', async () => {
+    await post('/console/functions/vars/variables', { key: 'ONE', value: '1' })
+    await post('/console/functions/vars/variables', { key: 'TWO', value: '2' })
+    const res = await post('/console/functions/vars/variables/clear', {})
+    expect(flash(res).get('ok')).toBe('Removed 2 variables')
+    expect(values()).toEqual([])
+    const empty = await post('/console/functions/vars/variables/clear', {})
+    expect(flash(empty).get('ok')).toBe('No variables to remove')
+  })
+})
+
 describe('zip reader', () => {
   test('unpacks stored and deflated entries', () => {
     const dest = join(work, 'unzip-ok')
