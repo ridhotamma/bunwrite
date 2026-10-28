@@ -142,6 +142,21 @@ main{padding:20px 32px 48px;max-width:1100px;width:100%;margin:0 auto}
 .layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px}@media(max-width:960px){.layout{grid-template-columns:minmax(0,1fr)}}
 .split-sidebar{display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2fr);gap:16px}
 #export-panel{position:sticky;top:16px;align-self:start;max-height:calc(100vh - 32px);overflow:auto}
+.template-layout{align-items:start}
+.template-list{padding:4px 0}.template-list-head{padding:12px 16px 8px}.template-list-head h2{margin:0}
+.template-item{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;color:var(--text);border-top:1px solid var(--border)}
+.template-item:hover{background:var(--nav-on);text-decoration:none}.template-item.on{background:var(--nav)}
+.template-item .icon{flex:none;margin-top:2px;color:var(--subdued)}
+.template-item-text{display:flex;flex-direction:column;gap:2px;min-width:0}.template-item-name{font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.template-message-head{display:flex;align-items:center;gap:8px;margin:12px 0 8px}.template-message-head h3{margin:0;font-size:14px;font-weight:650}.template-message-head .seg{margin-left:auto}
+.template-vars{background:var(--bg);border-radius:8px;padding:12px;margin-bottom:12px}
+.template-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px;border-radius:8px;font-size:12px}
+.template-source{display:block;width:100%;min-height:360px;font-size:12.5px;line-height:1.55;tab-size:2}
+.template-preview{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#f4f4f5}
+.template-meta{display:flex;flex-direction:column;gap:2px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--border);font-size:13px;overflow-wrap:anywhere}
+.template-frame{display:block;width:100%;height:560px;border:0;background:#f4f4f5}
+.template-foot{justify-content:space-between;margin-top:12px}
 @media(max-width:960px){.split-sidebar{grid-template-columns:1fr}#export-panel{position:static;max-height:none;overflow:visible}}
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .stat{background:var(--surface);border-radius:12px;box-shadow:var(--shadow);padding:12px 16px}

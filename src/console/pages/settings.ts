@@ -8,9 +8,13 @@ import { SmtpMailer } from '~/mail/mailer'
 import { importEnvVariables } from '~/console/env-vars'
 import type { ConsoleRouter } from '~/console/context'
 import { arrayOf, checked, lines, value } from '~/console/forms'
-import { page } from '~/console/html'
+import { html, page } from '~/console/html'
+import { alert } from '~/console/ui'
 import { inlineStatus, settingsView } from '~/console/views/settings'
 import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-meta'
+import { templatePath, templatePreview } from '~/console/views/templates'
+import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
+import { AppwriteError } from '~/lib/errors'
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
 function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
@@ -50,6 +54,53 @@ export function settingsPages(router: ConsoleRouter): void {
     // The old Access tab moved to its own API page.
     if (tab === 'access') return ctx.go('/console/api')
     return isTab(tab) ? ctx.render('Settings', 'settings', await settingsView(ctx, tab)) : ctx.go(tabPath('general'))
+  })
+
+  // ---- Email templates ----
+
+  const templateOf = (id: string | undefined): TemplateId => {
+    if (!id || !isTemplateId(id)) throw err('general_argument_invalid', 'Unknown email template.')
+    return id
+  }
+  const templateForm = (form: Record<string, any>): TemplateFields => ({
+    subject: String(form.subject ?? ''),
+    message: String(form.message ?? ''),
+    senderName: value(form, 'senderName'),
+    senderEmail: value(form, 'senderEmail'),
+    replyToEmail: value(form, 'replyToEmail'),
+    replyToName: value(form, 'replyToName'),
+  })
+
+  router.get(`${SETTINGS}/templates/:id`, async ({ ctx, path }) => {
+    if (!path.id || !isTemplateId(path.id)) return ctx.go(tabPath('templates'))
+    return ctx.render('Email templates', 'settings', await settingsView(ctx, 'templates', { template: path.id }))
+  })
+
+  router.post(`${SETTINGS}/templates/:id`, async ({ ctx, path }) => {
+    const id = templateOf(path.id)
+    const fields = templateForm(ctx.form)
+    try {
+      ctx.services.templates.update(id, fields)
+    } catch (error) {
+      // Keep what was typed on the page instead of losing it on a redirect.
+      if (!(error instanceof AppwriteError)) throw error
+      return ctx.render('Email templates', 'settings', html`${alert('critical', html`${error.message}`)}${await settingsView(ctx, 'templates', { template: id, fields })}`)
+    }
+    return ctx.go(templatePath(id), { tone: 'success', text: 'Template updated' })
+  })
+
+  router.post(`${SETTINGS}/templates/:id/reset`, ({ ctx, path }) => {
+    const id = templateOf(path.id)
+    ctx.services.templates.reset(id)
+    return ctx.go(templatePath(id), { tone: 'success', text: 'Template reset to the default' })
+  })
+
+  // The unsaved form rendered with sample values, for the Preview tab.
+  router.post(`${SETTINGS}/templates/:id/preview`, ({ ctx, path }) => {
+    const id = templateOf(path.id)
+    const fields = templateForm(ctx.form)
+    const defaults = ctx.services.templates.defaults(id)
+    return page(templatePreview(ctx.services.templates.preview(id, { ...fields, subject: fields.subject || defaults.subject, message: fields.message || defaults.message })))
   })
 
   router.get(`${SETTINGS}/backups/:name/download`, async ({ ctx, path }) => ctx.services.backups.serve(path.name!))

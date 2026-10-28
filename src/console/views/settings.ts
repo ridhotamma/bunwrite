@@ -8,7 +8,9 @@ import { SETTINGS, TABS, type SettingsTab } from '~/console/settings-meta'
 import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, tabs, when } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
+import type { TemplateFields, TemplateId } from '~/mail/templates'
 import { MIN_COMPRESS_BYTES } from '~/lib/compress'
+import { templatesView } from './templates'
 
 function codeFound(ctx: ConsoleContext): Html {
   const fns = ctx.services.functions.list()
@@ -235,7 +237,7 @@ export function inlineStatus(message: string, tone: 'success' | 'critical'): Htm
   return html`<span style="color:var(--${tone})">${message}</span>`
 }
 
-export async function settingsView(ctx: ConsoleContext, tab: SettingsTab): Promise<Html> {
+export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, options: { template?: TemplateId; fields?: TemplateFields } = {}): Promise<Html> {
   let body: Html
   switch (tab) {
     case 'general':
@@ -243,6 +245,9 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab): Promi
       break
     case 'email':
       body = emailCards(ctx)
+      break
+    case 'templates':
+      body = templatesView(ctx, options.template ?? 'verification', options.fields)
       break
     case 'storage':
       body = storageCard(ctx)

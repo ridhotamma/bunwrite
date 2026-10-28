@@ -19,6 +19,7 @@ import { TransactionService } from './transactions/service'
 import { AccessService } from './settings/access'
 import { TopicService } from './messaging/topics'
 import { WebhookService } from './webhooks/service'
+import { EmailTemplateService } from './mail/templates'
 
 export interface Services {
   config: Config
@@ -38,6 +39,8 @@ export interface Services {
   access: AccessService
   webhooks: WebhookService
   topics: TopicService
+  /** Editable emails sent to project users (verification, recovery, OTP, invitations). */
+  templates: EmailTemplateService
   requestLogs: RequestLogService
   backups: BackupService
   render: RenderService
@@ -62,7 +65,8 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const render = new RenderService(config)
   const webhooks = new WebhookService(db, () => config.projectId)
   const topics = new TopicService(db)
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render, webhooks, topics } as Services
+  const templates = new EmailTemplateService(db, config)
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, requestLogs, backups, render, webhooks, topics, templates } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {

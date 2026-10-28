@@ -6,6 +6,7 @@ export const SETTINGS = '/console/settings'
 export const TABS = [
   { key: 'general', label: 'General', href: `${SETTINGS}/general` },
   { key: 'email', label: 'Email & sign-in', href: `${SETTINGS}/email` },
+  { key: 'templates', label: 'Email templates', href: `${SETTINGS}/templates` },
   { key: 'storage', label: 'File storage', href: `${SETTINGS}/storage` },
   { key: 'cache', label: 'Caching', href: `${SETTINGS}/cache` },
   { key: 'backups', label: 'Backups', href: `${SETTINGS}/backups` },

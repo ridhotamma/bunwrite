@@ -4,7 +4,6 @@ import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str } from '~/lib/http'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import type { RouteContext, Router } from '~/lib/router'
-import { otpMail, recoveryMail, verificationMail } from '~/mail/mailer'
 import { signJwt } from './jwt'
 import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type SessionRow, type UserRowFull } from './models'
 import { verifyPassword } from './passwords'
@@ -242,7 +241,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     const code = otpCode()
     const phrase = bool(params.phrase, false) ? `${pick(ADJECTIVES)} ${pick(NOUNS)}` : ''
     const { token } = ctx.auth.createToken(user.id, 'email', { secret: code, ttl: OTP_TTL })
-    await ctx.mailer.send(otpMail(ctx.config.projectName, email, user.name || email, code, phrase || undefined))
+    await ctx.mailer.send(ctx.templates.render('otpSession', email, { user: user.name || email, otp: code, phrase }))
     return json(tokenModel(token, ctx.caller.privileged ? code : '', phrase), 201)
   })
 
@@ -274,7 +273,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     if (!user.status) throw err('user_blocked')
     const { token, secret } = ctx.auth.createToken(user.id, 'recovery', { ttl: RECOVERY_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
-    await ctx.mailer.send(recoveryMail(ctx.config.projectName, email, user.name || email, link))
+    await ctx.mailer.send(ctx.templates.render('recovery', email, { user: user.name || email, redirect: link }))
     return json(tokenModel(token, ctx.caller.privileged ? secret : ''), 201)
   })
 
@@ -298,7 +297,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     if (!user.email) throw err('user_email_not_found')
     const { token, secret } = ctx.auth.createToken(user.id, 'verification', { ttl: VERIFICATION_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
-    await ctx.mailer.send(verificationMail(ctx.config.projectName, user.email, user.name || user.email, link))
+    await ctx.mailer.send(ctx.templates.render('verification', user.email, { user: user.name || user.email, redirect: link }))
     return json(tokenModel(token), 201)
   })
 

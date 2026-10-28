@@ -4,7 +4,6 @@ import { err } from '~/lib/errors'
 import { bool, json, list, noContent, str } from '~/lib/http'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import type { Router } from '~/lib/router'
-import { invitationMail } from '~/mail/mailer'
 
 export function teamRoutes(router: Router<AppContext>): void {
   router.get('/teams', ({ ctx, params }) => {
@@ -71,7 +70,9 @@ export function teamRoutes(router: Router<AppContext>): void {
     if (secret && url && membership.user_email) {
       const link = withQuery(url, { membershipId: membership.id, userId: membership.user_id, secret, teamId: membership.team_id })
       const owner = ctx.caller.user?.name || ctx.caller.user?.email || ctx.config.projectName
-      await ctx.mailer.send(invitationMail(ctx.config.projectName, membership.user_email, membership.user_name || membership.user_email, owner, membership.team_name, link))
+      await ctx.mailer.send(
+        ctx.templates.render('invitation', membership.user_email, { user: membership.user_name || membership.user_email, owner, team: membership.team_name, redirect: link }),
+      )
     }
     return json(membershipModel(membership), 201)
   })
