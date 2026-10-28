@@ -86,7 +86,7 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .org-title{min-width:0}.org-title h1{margin:0;font-size:22px;line-height:28px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.org-title p{margin:2px 0 0;font-size:13px}
 .settings-section{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;padding:0 0 24px;margin-bottom:24px;border-bottom:1px solid var(--border)}
 .settings-section:last-of-type{border-bottom:0;margin-bottom:0}
-.settings-section .card{margin:0}
+.settings-section .card{margin:0;min-width:0;overflow:hidden}
 .settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child){display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
 .settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child)>.hint{margin:0 0 8px}
 .settings-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -195,8 +195,9 @@ select:not([multiple]){appearance:none;-webkit-appearance:none;background-image:
 select:not([multiple]):disabled{color:var(--disabled);cursor:not-allowed;opacity:.65}
 .toolbar select{flex:0 0 auto;min-width:150px}
 textarea{min-height:80px;resize:vertical}textarea.tall{min-height:300px}
-label.check{display:flex;flex-wrap:wrap;gap:2px 8px;align-content:flex-start;align-items:flex-start;margin-bottom:12px}label.check input{width:16px;min-height:16px;margin:3px 0 0;flex:none}label.check>small{display:block;flex:0 0 100%;margin:0 0 0 24px;color:var(--subdued);font-size:12px;line-height:16px}
+label.check{display:flex;flex-wrap:wrap;gap:2px 8px;align-content:flex-start;align-items:flex-start;margin-bottom:12px;min-width:0}label.check input{width:16px;min-height:16px;margin:3px 0 0;flex:none}label.check>small{display:block;flex:0 0 100%;margin:0 0 0 24px;color:var(--subdued);font-size:12px;line-height:16px;overflow-wrap:anywhere;min-width:0}
 .fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px}
+.event-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:0 12px;min-width:0}.event-grid label.check{min-width:0}
 button,.btn{font:inherit;font-weight:550;border:0;border-radius:8px;padding:6px 12px;min-height:28px;cursor:pointer;background:var(--surface);color:var(--text);box-shadow:var(--shadow);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
 button:hover,.btn:hover{background:#f7f7f7;text-decoration:none}
 button.primary,.btn.primary{background:var(--primary);color:#fff;box-shadow:0 -1px 0 1px rgba(0,0,0,.8) inset,0 0 0 1px #303030 inset,0 .5px 0 1.5px rgba(255,255,255,.25) inset}

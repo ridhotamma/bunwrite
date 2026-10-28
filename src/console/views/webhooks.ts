@@ -47,6 +47,7 @@ function statusOf(w: WebhookRow): Html {
 interface EventChoice {
   value: string
   label: string
+  short: string
 }
 
 interface EventGroup {
@@ -60,10 +61,11 @@ const ACTIONS = ['create', 'update', 'delete'] as const
 /** Any change plus one checkbox per document action, for a `databases.<db>.collections.<id>.documents` base. */
 function choicesFor(base: string): EventChoice[] {
   return [
-    { value: `${base}.*`, label: 'Any change' },
+    { value: `${base}.*`, label: 'Any change', short: 'documents.*' },
     ...ACTIONS.map((action) => ({
       value: `${base}.*.${action}`,
       label: action === 'create' ? 'Created' : action === 'update' ? 'Updated' : 'Deleted',
+      short: `documents.*.${action}`,
     })),
   ]
 }
@@ -105,8 +107,8 @@ function eventPicker(ctx: ConsoleContext, selected: Set<string>): Html {
     ${groups.map(
       (group) => html`<details class="disclosure" ${group.open ? html`open` : ''}>
         <summary>${group.label} <span class="subdued">${plural(group.choices.length, 'event')}</span></summary>
-        <div class="fields">${group.choices.map(
-          (choice) => html`<label class="check"><input type="checkbox" name="events" value="${choice.value}" ${selected.has(choice.value) ? 'checked' : ''}>${choice.label}<small class="mono">${choice.value}</small></label>`,
+        <div class="event-grid">${group.choices.map(
+          (choice) => html`<label class="check" title="${choice.value}"><input type="checkbox" name="events" value="${choice.value}" ${selected.has(choice.value) ? 'checked' : ''}>${choice.label}<small class="mono">${choice.short}</small></label>`,
         )}</div>
       </details>`,
     )}
