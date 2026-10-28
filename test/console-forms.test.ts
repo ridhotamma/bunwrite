@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import { COMBOBOX_SCRIPT } from '~/console/combobox'
 import { FORM_SCRIPT } from '~/console/form-script'
 import { html } from '~/console/html'
 import { bare, projectShell } from '~/console/layout'
@@ -30,6 +31,23 @@ describe('console loading state', () => {
     expect(PROGRESS_SCRIPT).toContain('"htmx:beforeSend"')
     expect(PROGRESS_SCRIPT).not.toContain('"htmx:beforeRequest"')
     expect(CONSOLE_CSS).toContain('button[aria-busy="true"]::before')
+  })
+
+  test('long selects become filterable comboboxes that still submit their value', () => {
+    // The select stays in the form and keeps its htmx attributes; the input is
+    // only the visible part, and a pick is dispatched as a normal change event.
+    const page = String(projectShell('Projects', { admin: 'admin@example.com' }, html`<p>hi</p>`))
+    expect(page).toContain('__bunwriteCombobox')
+    expect(COMBOBOX_SCRIPT).toContain('dispatchEvent(new Event("change", { bubbles: true }))')
+    expect(COMBOBOX_SCRIPT).toContain('select.dataset.comboboxReady')
+    expect(COMBOBOX_SCRIPT).toContain('"htmx:afterSwap"')
+    // Pinned to the viewport and re-anchored on scroll and every frame while
+    // open, so it stays under the field even when the layout moves it.
+    expect(COMBOBOX_SCRIPT).toContain('addEventListener("scroll", reposition')
+    expect(COMBOBOX_SCRIPT).toContain('requestAnimationFrame(track)')
+    expect(CONSOLE_CSS).toContain('.combobox-list{position:fixed')
+    expect(CONSOLE_CSS).toContain('.combobox-list.is-open{')
+    expect(CONSOLE_CSS).toContain('.combobox-native{')
   })
 
   test('a followed select re-runs the conditional blocks it controls', () => {

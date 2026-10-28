@@ -1,6 +1,5 @@
 /** Console views for creating functions and deploying their code. */
 import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
-import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
@@ -57,19 +56,23 @@ function codeFields(options: CodeFieldsOptions): Html {
   const installations = options.installations ?? []
   const github = installations.length ? [choice('github', 'GitHub repository', 'Build on every push to the production branch.', false)] : []
   const choices = existing ? (options.current ? [paste, upload, template] : [upload, paste, template]) : [template, upload, paste, ...github]
+  // Render the same visibility the script would apply, so the first paint is
+  // the final layout and the selected block does not pop in after the swap.
+  const selected = existing ? (options.current ? 'paste' : 'upload') : 'template'
+  const shown = (...keys: string[]) => (keys.includes(selected) ? '' : 'hidden')
   return html`<fieldset class="code-source">
       <legend class="${options.hideLegend ? 'visually-hidden' : ''}">Code</legend>
       <div class="choice">${choices}</div>
     </fieldset>
-    <div data-show-for="upload" data-for-select="source" hidden>
+    <div data-show-for="upload" data-for-select="source" ${shown('upload')}>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
         <small>The entry file must be inside, either at the top or in one folder. For very large folders use <code>bunwrite push functions</code>.</small></label>
     </div>
-    <div data-show-for="paste" data-for-select="source" hidden>
+    <div data-show-for="paste" data-for-select="source" ${shown('paste')}>
       <label>Entry file code<textarea name="code_text" class="mono tall code-editor" spellcheck="false" required ${followCode}>${pasteDefault}</textarea></label>
     </div>
     ${github.length ? gitSourceFields(installations, 'create-function', { detectLabel: 'Detect the runtime, entry file and build command from the repository' }) : ''}
-    <div data-show-for="upload paste github" data-for-select="source" hidden>
+    <div data-show-for="upload paste github" data-for-select="source" ${shown('upload', 'paste', 'github')}>
       <label>Build command<input name="commands" class="mono" value="${options.commands}" placeholder="${options.runtime ? (python ? 'pip install -r requirements.txt' : 'npm install') : 'npm install'}">${buildHint(options.buildCommands)}</label>
     </div>`
 }
@@ -102,23 +105,14 @@ export function functionCreateView(buildCommands: boolean, installations: { id: 
     </form>`
 }
 
-/** The deploy form, shared by the dialog and its no-JavaScript page. */
-export function deployForm(f: FunctionRow, current: string | undefined, buildCommands: boolean, id = 'deploy-code-form'): Html {
-  return html`<form id="${id}" method="post" action="${FN}/${f.id}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
+/** The deploy form on its own page. */
+export function deployForm(f: FunctionRow, current: string | undefined, buildCommands: boolean): Html {
+  return html`<form id="deploy-page-form" method="post" action="${FN}/${f.id}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
     <p class="dialog-message">The current code keeps running until the new one is built.</p>
     <label>Entry file<input name="entrypoint" class="mono" required value="${f.entrypoint}"></label>
     ${codeFields({ runtime: f.runtime, commands: f.commands, current, buildCommands })}
     <label class="check"><input type="checkbox" name="activate" checked>Make it live once built</label>
   </form>`
-}
-
-export function deployDialog(f: FunctionRow, current: string | undefined, buildCommands: boolean): Html {
-  return dialog({
-    id: 'deploy-code',
-    title: 'Deploy new code',
-    body: deployForm(f, current, buildCommands),
-    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="deploy-code-form" class="primary">Deploy</button>`,
-  })
 }
 
 export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): Html {
@@ -147,7 +141,7 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
           </tr>`
         })}
       </tbody></table></div>`
-      : emptyState('No deployments', 'Deploy code from the console, or with bunwrite push functions.', html`<button type="button" class="primary" data-dialog-open="#deploy-code">Deploy code</button>`)}
+      : emptyState('No deployments', 'Deploy code from the console, or with bunwrite push functions.', html`<a class="btn primary" href="${base}/deploy">Deploy code</a>`)}
   </div>`
 }
 

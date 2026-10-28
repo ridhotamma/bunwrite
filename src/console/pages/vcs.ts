@@ -3,7 +3,7 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html, page } from '~/console/html'
 import { alert, header } from '~/console/ui'
-import { approveView, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
+import { approveView, branchOptions, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
 import { buildFields, presetValues, SITES } from '~/console/views/sites'
 import { runtimeLabel } from '~/runtimes/catalog'
 import { frameworkOf } from '~/sites/frameworks'
@@ -72,12 +72,34 @@ export function vcsPages(router: ConsoleRouter): void {
   /** htmx partial: the repository select for an installation. */
   router.get('/console/vcs/repositories', async ({ ctx, url }) => {
     const installation = ctx.services.vcs.find(url.searchParams.get('installation_id') ?? '')
+    // The picker names the branch field its repositories load into.
+    const wanted = url.searchParams.get('branch_target') ?? ''
+    const branchTarget = /^[a-zA-Z0-9_-]+$/.test(wanted) ? wanted : ''
     if (!installation) return page(repositoryOptions([], 'Pick an account.'))
     try {
-      // The Create site page detects the build settings of the first repository once the list is in.
-      return page(repositoryOptions(await ctx.hub.github.repositories(installation.provider_installation_id)), 200, { 'hx-trigger': 'repos-loaded' })
+      // The Create site page detects the build settings of the first repository
+      // once the list is in; after the swap, so the select already has a value.
+      const repos = await ctx.hub.github.repositories(installation.provider_installation_id)
+      return page(repositoryOptions(repos, '', { installationId: installation.id, branchTarget }), 200, { 'hx-trigger-after-swap': 'repos-loaded' })
     } catch (error) {
       return page(repositoryOptions([], error instanceof Error ? error.message : String(error)))
+    }
+  })
+
+  /** htmx partial: the production branch select for a repository. */
+  router.get('/console/vcs/branches', async ({ ctx, url }) => {
+    const q = url.searchParams
+    const installation = ctx.services.vcs.find(q.get('installation_id') ?? '')
+    const repositoryId = q.get('provider_repository_id') ?? ''
+    const selected = q.get('selected') ?? ''
+    if (!installation || !/^\d+$/.test(repositoryId)) return page(branchOptions([], selected, '', 'Pick a repository first.'))
+    const gh = ctx.hub.github
+    try {
+      const repo = await gh.repository(installation.provider_installation_id, repositoryId)
+      const branches = await gh.branches(installation.provider_installation_id, repositoryId)
+      return page(branchOptions(branches, selected || repo.default_branch, repo.default_branch))
+    } catch (error) {
+      return page(branchOptions([], selected, '', error instanceof Error ? error.message : String(error)))
     }
   })
 

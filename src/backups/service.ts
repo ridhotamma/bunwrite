@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import { err } from '~/lib/errors'
-import { s3Client } from '~/storage/s3'
+import { s3Call, s3Client } from '~/storage/s3'
 
 export interface BackupFile {
   name: string
@@ -49,21 +49,24 @@ export class BackupService {
 
   async list(): Promise<BackupFile[]> {
     if (this.s3.enabled) {
-      const client = s3Client(this.s3)
-      const prefix = this.s3Prefix()
-      const files: BackupFile[] = []
-      let token: string | undefined
-      do {
-        const page = await client.list({ maxKeys: 1000, continuationToken: token })
-        for (const object of page.contents ?? []) {
-          if (!object.key.endsWith('.sqlite')) continue
-          if (prefix && !object.key.startsWith(prefix)) continue
-          const name = prefix ? object.key.slice(prefix.length) : object.key
-          if (!this.validName(name)) continue
-          files.push({ name, size: object.size ?? 0, modified: object.lastModified ?? '' })
-        }
-        token = page.isTruncated ? page.nextContinuationToken : undefined
-      } while (token)
+      const files = await s3Call(this.s3, async () => {
+        const client = s3Client(this.s3)
+        const prefix = this.s3Prefix()
+        const found: BackupFile[] = []
+        let token: string | undefined
+        do {
+          const page = await client.list({ maxKeys: 1000, continuationToken: token })
+          for (const object of page.contents ?? []) {
+            if (!object.key.endsWith('.sqlite')) continue
+            if (prefix && !object.key.startsWith(prefix)) continue
+            const name = prefix ? object.key.slice(prefix.length) : object.key
+            if (!this.validName(name)) continue
+            found.push({ name, size: object.size ?? 0, modified: object.lastModified ?? '' })
+          }
+          token = page.isTruncated ? page.nextContinuationToken : undefined
+        } while (token)
+        return found
+      })
       return files.sort((a, b) => b.modified.localeCompare(a.modified))
     }
 
@@ -90,7 +93,7 @@ export class BackupService {
       this.db.sqlite.run(`VACUUM INTO '${temp.replace(/'/g, "''")}'`)
       const size = statSync(temp).size
       if (this.s3.enabled) {
-        await s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: 'application/x-sqlite3' })
+        await s3Call(this.s3, () => s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: 'application/x-sqlite3' }))
       } else {
         renameSync(temp, join(dir, name))
       }
@@ -110,7 +113,7 @@ export class BackupService {
 
   async delete(name: string): Promise<void> {
     if (!this.validName(name)) throw err('general_argument_invalid', 'Invalid backup name.')
-    if (this.s3.enabled) await s3Client(this.s3).delete(this.s3Key(name))
+    if (this.s3.enabled) await s3Call(this.s3, () => s3Client(this.s3).delete(this.s3Key(name)))
     else rmSync(join(this.config.backupsPath, name), { force: true })
   }
 

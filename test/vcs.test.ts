@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path'
 
 import { vcsGithubFromEnv } from '~/config'
 import { ConsoleAuth } from '~/console/auth'
+import { poll } from '~/console/ui'
+import { branchOptions, repositoryOptions } from '~/console/views/vcs'
 import { sitesDir } from '~/sites/paths'
 import { branchSlug, parsePreview, slugify } from '~/sites/previews'
 import { SERVER_BUN } from '~/runtimes/catalog'
@@ -316,9 +318,69 @@ describe('Git: GitHub App and installations', () => {
     expect((await api(`/vcs/github/installations/${installationId}/providerRepositories/31337`)).status).toBe(404)
   })
 
+  test('repository and branch lists are cached, not fetched on every visit', async () => {
+    const repoCalls = () => calls.filter((c) => c.path.startsWith('/installation/repositories')).length
+    const branchCalls = () => calls.filter((c) => c.path.startsWith('/repos/acme/web/branches')).length
+    const installation = server.services.vcs.get(installationId)
+
+    await server.hub.github.repositories(installation.provider_installation_id)
+    const afterRepos = repoCalls()
+    await server.hub.github.repositories(installation.provider_installation_id)
+    expect(repoCalls()).toBe(afterRepos)
+
+    await server.hub.github.branches(installation.provider_installation_id, String(REPO_ID))
+    const afterBranches = branchCalls()
+    await server.hub.github.branches(installation.provider_installation_id, String(REPO_ID))
+    expect(branchCalls()).toBe(afterBranches)
+
+    // Removing an installation drops what was kept for it, so the next visit
+    // reads GitHub again instead of a list that may be gone.
+    server.hub.github.forget(installation.provider_installation_id)
+    await server.hub.github.branches(installation.provider_installation_id, String(REPO_ID))
+    expect(branchCalls()).toBe(afterBranches + 1)
+  })
+
   test('a webhook with a bad signature is refused', async () => {
     const res = await webhook('push', { ref: 'refs/heads/main' }, 'wrong-secret')
     expect(res.status).toBe(401)
+  })
+})
+
+describe('Git: console pickers', () => {
+  test('a polling card keeps its target and select out of the links inside it', () => {
+    // hx-target and hx-select are inherited. Without hx-disinherit, a
+    // deployment link inside the polling deployments card swaps the detail
+    // page into that card instead of navigating, leaving the page blank
+    // while a build runs.
+    const attrs = String(poll('/console/sites/web', 'deployments', 2))
+    expect(attrs).toContain('hx-select="#deployments"')
+    expect(attrs).toContain('hx-target="#deployments"')
+    expect(attrs).toContain('hx-disinherit="*"')
+  })
+
+  test('the branch select starts on the default, keeps an unlisted branch, and falls back to typing', () => {
+    const select = String(branchOptions(['develop', 'main'], 'main', 'main'))
+    expect(select).toContain('<option value="main" selected>main (default)</option>')
+    expect(select).toContain('value="develop"')
+    expect(select).toContain('>develop</option>')
+    // A branch GitHub no longer lists stays selected instead of being replaced.
+    expect(String(branchOptions(['main'], 'old-branch', 'main'))).toContain('<option value="old-branch" selected>old-branch</option>')
+    // GitHub could not be read: the form still takes a typed branch.
+    const fallback = String(branchOptions([], 'main', '', 'GitHub is down'))
+    expect(fallback).toContain('<input name="provider_branch" class="mono" value="main"')
+    expect(fallback).toContain('GitHub is down')
+  })
+
+  test('picking a repository loads its branches into the branch field', () => {
+    const select = String(repositoryOptions([{ id: 500, full_name: 'acme/web', private: true }], '', { installationId: 'inst', branchTarget: 'branch-create-site' }))
+    expect(select).toContain('hx-get="/console/vcs/branches?installation_id=inst"')
+    expect(select).toContain('hx-target="#branch-create-site"')
+    expect(select).toContain('hx-trigger="load, change"')
+    // Without a branch field to fill, the select is a plain select.
+    expect(String(repositoryOptions([{ id: 500, full_name: 'acme/web', private: false }]))).not.toContain('hx-get')
+    // Long lists (repositories, branches) are filterable comboboxes.
+    expect(select).toContain('data-combobox="Repository"')
+    expect(String(branchOptions(['main'], 'main', 'main'))).toContain('data-combobox="Production branch"')
   })
 })
 
@@ -473,6 +535,9 @@ describe('Git: deployments', () => {
     expect(settings.text).toContain('id="git-repository"')
     expect(settings.text).toContain('acme/web')
     expect(settings.text).toContain('Deploy main now')
+    // A connected repository fills the Production branch select on its own.
+    expect(settings.text).toContain('/console/vcs/branches?installation_id=')
+    expect(settings.text).toContain('selected=main')
 
     const list = await get('/console/sites/web')
     expect(list.text).toContain('Source')
@@ -480,9 +545,30 @@ describe('Git: deployments', () => {
 
     const sites = await get('/console/sites/new')
     expect(sites.text).toContain('value="github"')
-    expect((await get('/console/functions/new')).text).toContain('value="github"')
-    const repos = await get(`/console/vcs/repositories?installation_id=${installationId}`)
+    // Like Create function: the starter is the default and GitHub is last.
+    const sourceChoices = (text: string) => [...text.matchAll(/name="source" value="([a-z]+)"/g)].map((m) => m[1])
+    expect(sourceChoices(sites.text)).toEqual(['starter', 'upload', 'paste', 'github'])
+    expect(sites.text).not.toMatch(/value="github"[^>]*checked/)
+    // The repository list swaps into its own field; the detect target must not
+    // follow it, or the list lands in the build fields and the picker stays "Loading…".
+    expect(sites.text).toContain('hx-target="this"')
+    expect(sites.text).toContain('hx-disinherit="*"')
+    expect(sites.text).toContain('id="branch-create-site"')
+    const functions = await get('/console/functions/new')
+    expect(functions.text).toContain('value="github"')
+    expect(sourceChoices(functions.text)).toEqual(['template', 'upload', 'paste', 'github'])
+    const repos = await get(`/console/vcs/repositories?installation_id=${installationId}&branch_target=branch-create-site`)
     expect(repos.text).toContain('acme/web (private)')
+    expect(repos.text).toContain('hx-target="#branch-create-site"')
+    // Opening the page again reads the list from memory, not from GitHub.
+    const repoFetches = calls.filter((c) => c.path.startsWith('/installation/repositories')).length
+    expect((await get(`/console/vcs/repositories?installation_id=${installationId}&branch_target=branch-create-site`)).text).toContain('acme/web (private)')
+    expect(calls.filter((c) => c.path.startsWith('/installation/repositories')).length).toBe(repoFetches)
+    expect((await get(`/console/vcs/branches?installation_id=${installationId}&provider_repository_id=${REPO_ID}`)).text).toContain(
+      '<option value="main" selected>main (default)</option>',
+    )
+    // GitHub cannot be read: the branch stays editable instead of empty.
+    expect((await get(`/console/vcs/branches?installation_id=${installationId}&provider_repository_id=31337`)).text).toContain('<input name="provider_branch"')
 
     const approve = await get(`/console/vcs/approve?repository=${server.hub.links.forResource(PROJECT, 'site', 'web')!.id}&pr=9`)
     expect(approve.text).toContain('This pull request is approved')

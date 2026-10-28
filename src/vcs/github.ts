@@ -106,6 +106,12 @@ export class GithubError extends Error {
 export class GithubClient {
   private readonly tokens = new Map<string, { token: string; until: number }>()
   private readonly repos = new Map<string, { owner: string; name: string; until: number }>()
+  /** Repository and branch lists, kept so opening a page again asks GitHub only once. */
+  private readonly lists = new Map<string, { value: unknown; until: number }>()
+  /** A list being fetched, so two pages asking at once share one request. */
+  private readonly loading = new Map<string, Promise<unknown>>()
+  /** How long a repository or branch list stays warm. */
+  private static readonly listTtlMs = 5 * 60_000
 
   constructor(
     private readonly credentials: () => GithubAppCredentials | null,
@@ -153,9 +159,30 @@ export class GithubClient {
     return res.token
   }
 
-  /** Forget cached tokens, for an installation that was removed. */
+  /** Forget cached tokens and lists, for an installation that was removed. */
   forget(installationId: string): void {
     this.tokens.delete(installationId)
+    this.lists.clear()
+    this.repos.clear()
+  }
+
+  /**
+   * A list kept for `listTtlMs`. Calls made while it is loading share the one
+   * request, so two page loads at once do not both ask GitHub.
+   */
+  private async listed<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const hit = this.lists.get(key)
+    if (hit && hit.until > Date.now()) return hit.value as T
+    const pending = this.loading.get(key)
+    if (pending) return pending as Promise<T>
+    const request = load()
+      .then((value) => {
+        this.lists.set(key, { value, until: Date.now() + GithubClient.listTtlMs })
+        return value
+      })
+      .finally(() => this.loading.delete(key))
+    this.loading.set(key, request)
+    return request
   }
 
   private async call<T>(method: string, path: string, options: { auth?: string; body?: unknown; accept?: string; base?: string } = {}): Promise<T> {
@@ -233,24 +260,35 @@ export class GithubClient {
 
   // ---- Repositories ----
 
-  /** Repositories the installation can see, newest push first; `search` filters by name. */
+  /**
+   * Repositories the installation can see, newest push first; `search` filters
+   * by name. The list is kept for a few minutes, so reopening a page or a
+   * picker does not page through GitHub again.
+   */
   async repositories(installationId: string, search = ''): Promise<GithubRepository[]> {
-    const all: GithubRepository[] = []
-    for (let page = 1; page <= 10; page++) {
-      const res = await this.asInstallation<{ repositories: GithubRepository[] }>(installationId, 'GET', `/installation/repositories?per_page=100&page=${page}`)
-      all.push(...res.repositories)
-      if (res.repositories.length < 100) break
-    }
+    const all = await this.listed(`repositories:${installationId}`, async () => {
+      const found: GithubRepository[] = []
+      for (let page = 1; page <= 10; page++) {
+        const res = await this.asInstallation<{ repositories: GithubRepository[] }>(installationId, 'GET', `/installation/repositories?per_page=100&page=${page}`)
+        found.push(...res.repositories)
+        if (res.repositories.length < 100) break
+      }
+      // Branch, file and tarball calls know the owner and name from here on.
+      for (const repo of found) this.remember(repo)
+      return found.sort((a, b) => Date.parse(b.pushed_at ?? '') - Date.parse(a.pushed_at ?? '') || a.full_name.localeCompare(b.full_name))
+    })
     const needle = search.trim().toLowerCase()
-    return all
-      .filter((r) => !needle || r.full_name.toLowerCase().includes(needle))
-      .sort((a, b) => Date.parse(b.pushed_at ?? '') - Date.parse(a.pushed_at ?? '') || a.full_name.localeCompare(b.full_name))
+    return all.filter((r) => !needle || r.full_name.toLowerCase().includes(needle))
   }
 
   async repository(installationId: string, repositoryId: string): Promise<GithubRepository> {
-    const repo = await this.asInstallation<GithubRepository>(installationId, 'GET', `/repositories/${encodeURIComponent(repositoryId)}`)
-    this.repos.set(repositoryId, { owner: repo.owner.login, name: repo.name, until: Date.now() + 600_000 })
+    const repo = await this.listed(`repository:${installationId}:${repositoryId}`, () => this.asInstallation<GithubRepository>(installationId, 'GET', `/repositories/${encodeURIComponent(repositoryId)}`))
+    this.remember(repo)
     return repo
+  }
+
+  private remember(repo: GithubRepository): void {
+    this.repos.set(String(repo.id), { owner: repo.owner.login, name: repo.name, until: Date.now() + 600_000 })
   }
 
   /** `owner` and `name` of a repository by its numeric ID, cached for a few minutes. */
@@ -262,14 +300,16 @@ export class GithubClient {
   }
 
   async branches(installationId: string, repositoryId: string): Promise<string[]> {
-    const { owner, name } = await this.repoName(installationId, repositoryId)
-    const out: string[] = []
-    for (let page = 1; page <= 10; page++) {
-      const res = await this.asInstallation<{ name: string }[]>(installationId, 'GET', `/repos/${owner}/${name}/branches?per_page=100&page=${page}`)
-      out.push(...res.map((b) => b.name))
-      if (res.length < 100) break
-    }
-    return out
+    return this.listed(`branches:${installationId}:${repositoryId}`, async () => {
+      const { owner, name } = await this.repoName(installationId, repositoryId)
+      const out: string[] = []
+      for (let page = 1; page <= 10; page++) {
+        const res = await this.asInstallation<{ name: string }[]>(installationId, 'GET', `/repos/${owner}/${name}/branches?per_page=100&page=${page}`)
+        out.push(...res.map((b) => b.name))
+        if (res.length < 100) break
+      }
+      return out
+    })
   }
 
   /** Entries of a folder at `ref` (the default branch when empty). */

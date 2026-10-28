@@ -760,7 +760,8 @@ describe('settings through the console', () => {
     })
     try {
       const runs = await (await get(`/console/functions/${fn.id}`)).text()
-      expect(runs).toContain('id="deploy-code"')
+      expect(runs).toContain(`href="/console/functions/${fn.id}/deploy"`)
+      expect(runs).not.toContain('id="deploy-code"')
       expect(runs).toContain('>Deployments</a>')
       expect(await (await get(`/console/functions/${fn.id}/deployments`)).text()).toContain('No deployments')
       expect(await (await get(`/console/functions/${fn.id}/variables`)).text()).toContain('Function variables')

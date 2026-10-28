@@ -152,7 +152,7 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
           <input type="hidden" name="installation_id" value="${row.installation_id}">
           <input type="hidden" name="provider_repository_id" value="${row.provider_repository_id}">
           <div class="fields">
-            <label>Production branch<input name="provider_branch" class="mono" value="${row.provider_branch}" required></label>
+            <label>Production branch${branchField(row.provider_branch, base, { installationId: row.installation_id, repositoryId: row.provider_repository_id, required: true })}</label>
             <label>Root directory<input name="provider_root_directory" class="mono" value="${row.provider_root_directory}" placeholder="./"><small>The folder the ${target.type} is in, for monorepos.</small></label>
           </div>
           <label class="check"><input type="checkbox" name="provider_silent_mode" ${silent ? 'checked' : ''}>Silent mode: no commit statuses or pull request comments</label>
@@ -182,7 +182,7 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
     html`<form method="post" action="${base}/git" class="stack-fields">
       ${repositoryPicker(installations, base)}
       <div class="fields">
-        <label>Production branch<input name="provider_branch" class="mono" placeholder="The default branch"></label>
+        <label>Production branch${branchField('', base)}</label>
         <label>Root directory<input name="provider_root_directory" class="mono" placeholder="./"><small>The folder the ${target.type} is in, for monorepos.</small></label>
       </div>
       <label class="check"><input type="checkbox" name="provider_silent_mode">Silent mode: no commit statuses or pull request comments</label>
@@ -192,19 +192,40 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
   )
 }
 
+/** DOM ids of one picker's repository select and branch select. */
+function pickerIds(idBase: string): { repository: string; branch: string } {
+  const slug = idBase.replace(/[^a-z0-9]+/gi, '-')
+  return { repository: `repo-${slug}`, branch: `branch-${slug}` }
+}
+
 /** Installation and repository selects; the repository list loads from GitHub. */
 export function repositoryPicker(installations: { id: string; organization: string }[], idBase: string): Html {
-  const domId = `repo-${idBase.replace(/[^a-z0-9]+/gi, '-')}`
+  const ids = pickerIds(idBase)
   return html`<div class="fields">
-    <label>Account<select name="installation_id" hx-get="/console/vcs/repositories" hx-target="#${domId}" hx-trigger="change" hx-include="this">
+    <label>Account<select name="installation_id" hx-get="/console/vcs/repositories" hx-target="#${ids.repository}" hx-swap="innerHTML" hx-trigger="change" hx-include="this">
       ${installations.map((i) => html`<option value="${i.id}">${i.organization}</option>`)}
     </select></label>
-    <label>Repository<span class="repo-select" id="${domId}" hx-get="/console/vcs/repositories?installation_id=${installations[0]?.id ?? ''}" hx-trigger="intersect once" hx-swap="innerHTML">
+    <label>Repository<span class="repo-select" id="${ids.repository}" hx-get="/console/vcs/repositories?installation_id=${installations[0]?.id ?? ''}&branch_target=${ids.branch}" hx-trigger="intersect once" hx-target="this" hx-swap="innerHTML">
       <select name="provider_repository_id" disabled><option>Loading…</option></select></span></label>
   </div>`
 }
 
-/** The "GitHub repository" source of a create dialog: account, repository, branch and folder. */
+/**
+ * The Production branch select. It starts with the branch the resource
+ * already uses, so saving never silently changes it, and `GET
+ * /console/vcs/branches` replaces it with the repository's branches. With
+ * `installationId` and `repositoryId` the list loads on its own (a connected
+ * repository); otherwise the repository select fills it through its id.
+ */
+function branchField(current: string, idBase: string, options: { installationId?: string; repositoryId?: string; required?: boolean } = {}): Html {
+  const load =
+    options.installationId && options.repositoryId
+      ? html`hx-get="/console/vcs/branches?installation_id=${options.installationId}&provider_repository_id=${options.repositoryId}&selected=${current}" hx-trigger="load" hx-target="this" hx-swap="innerHTML"`
+      : html``
+  return html`<span class="repo-select" id="${pickerIds(idBase).branch}" ${load}>
+    <select name="provider_branch" class="mono" data-combobox="Production branch" ${options.required ? 'required' : ''}>${current ? html`<option value="${current}" selected>${current}</option>` : html`<option value="">The default branch</option>`}</select></span>`
+}
+
 /**
  * The "GitHub repository" source of a create page: account, repository,
  * branch and folder. With `detectInto`, picking or changing any of them asks
@@ -212,13 +233,15 @@ export function repositoryPicker(installations: { id: string; organization: stri
  * Otherwise a checkbox says whether the server detects them on create.
  */
 export function gitSourceFields(installations: { id: string; organization: string }[], idBase: string, options: { detectInto?: string; detectLabel?: string } = {}): Html {
+  // hx-disinherit: the detect target belongs to the build fields, not to the
+  // repository and branch requests below, whose responses swap into themselves.
   const detect = options.detectInto
-    ? html`hx-get="/console/vcs/detect-site" hx-trigger="change delay:300ms, repos-loaded" hx-include="this" hx-target="#${options.detectInto}" hx-swap="innerHTML" hx-sync="this:replace"`
+    ? html`hx-get="/console/vcs/detect-site" hx-trigger="change delay:300ms, repos-loaded" hx-include="this" hx-target="#${options.detectInto}" hx-swap="innerHTML" hx-sync="this:replace" hx-disinherit="*"`
     : html``
   return html`<div class="stack-fields" data-show-for="github" data-for-select="source" hidden ${detect}>
     ${repositoryPicker(installations, idBase)}
     <div class="fields">
-      <label>Production branch<input name="provider_branch" class="mono" placeholder="The default branch"></label>
+      <label>Production branch${branchField('', idBase)}</label>
       <label>Root directory<input name="provider_root_directory" class="mono" placeholder="./"><small>For monorepos: the folder with the app's package.json.</small></label>
     </div>
     ${options.detectLabel ? html`<label class="check"><input type="checkbox" name="detect" checked>${options.detectLabel}</label>` : ''}
@@ -226,10 +249,32 @@ export function gitSourceFields(installations: { id: string; organization: strin
 }
 
 /** The repository select, from the installation's repositories. */
-export function repositoryOptions(repos: { id: number; full_name: string; private: boolean }[], error = ''): Html {
+export function repositoryOptions(
+  repos: { id: number; full_name: string; private: boolean }[],
+  error = '',
+  options: { installationId?: string; branchTarget?: string } = {},
+): Html {
   if (error) return html`<select name="provider_repository_id" disabled><option>Could not load</option></select><small style="color:var(--critical)">${error}</small>`
   if (!repos.length) return html`<select name="provider_repository_id" disabled><option>No repositories</option></select><small>Give the app access to a repository on GitHub.</small>`
-  return html`<select name="provider_repository_id" required>${repos.map((r) => html`<option value="${r.id}">${r.full_name}${r.private ? ' (private)' : ''}</option>`)}</select>`
+  // A repository is picked (on load) or changed: load its branches into the branch field.
+  const branches =
+    options.installationId && options.branchTarget
+      ? html`hx-get="/console/vcs/branches?installation_id=${options.installationId}" hx-target="#${options.branchTarget}" hx-swap="innerHTML" hx-trigger="load, change"`
+      : html``
+  return html`<select name="provider_repository_id" required data-combobox="Repository" ${branches}>${repos.map((r) => html`<option value="${r.id}">${r.full_name}${r.private ? ' (private)' : ''}</option>`)}</select>`
+}
+
+/**
+ * The branch select for `GET /console/vcs/branches`. The default branch comes
+ * first and is labelled; a branch that is no longer listed stays selected.
+ * When GitHub could not be read, a text input keeps the form usable.
+ */
+export function branchOptions(branches: string[], current = '', defaultBranch = '', error = ''): Html {
+  if (error) return html`<input name="provider_branch" class="mono" value="${current}" placeholder="The default branch"><small style="color:var(--critical)">Could not read the branches (${error}). Type one instead.</small>`
+  const ordered = defaultBranch ? [defaultBranch, ...branches.filter((name) => name !== defaultBranch)] : branches
+  const names = current && !ordered.includes(current) ? [current, ...ordered] : ordered
+  if (!names.length) return html`<input name="provider_branch" class="mono" value="${current}" placeholder="The default branch">`
+  return html`<select name="provider_branch" class="mono" data-combobox="Production branch">${names.map((name) => html`<option value="${name}" ${name === current ? 'selected' : ''}>${name}${name === defaultBranch ? ' (default)' : ''}</option>`)}</select>`
 }
 
 // ---- Fork pull request approval ----

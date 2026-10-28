@@ -3,6 +3,7 @@
  * white cards, a page header with a single primary action, index tables,
  * tone badges and short sentence-case copy.
  */
+import { COMBOBOX_SCRIPT } from './combobox'
 import { confirmDialog, DIALOG_SCRIPT } from './dialog'
 import { FORM_SCRIPT } from './form-script'
 import { PERMISSIONS_SCRIPT } from './permissions'
@@ -125,6 +126,7 @@ ${confirmDialog()}
 <script>${raw(DIALOG_SCRIPT)}</script>
 <script>${raw(PERMISSIONS_SCRIPT)}</script>
 <script>${raw(FORM_SCRIPT)}</script>
+<script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
 </body>
 </html>`
@@ -163,6 +165,7 @@ export function projectShell(title: string, nav: { admin: string }, body: Html, 
 ${confirmDialog()}
 <script>${raw(DIALOG_SCRIPT)}</script>
 <script>${raw(FORM_SCRIPT)}</script>
+<script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
 </body>
 </html>`

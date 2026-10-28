@@ -102,7 +102,6 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}.stack-fields .fields{row-gap:14px}
 .card.narrow{max-width:520px}
-#deploy-code{max-width:min(680px,calc(100vw - 32px))}
 .code-source{border:0;padding:0;margin:0;min-width:0}.code-source legend{padding:0;margin-bottom:6px;font-weight:450}
 .code-source .choice{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}
 .code-source .choice.two,.code-source .choice:has(>label:nth-child(4)){grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -197,12 +196,22 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
 input[type=checkbox],input[type=radio]{accent-color:var(--primary)}
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 button:focus-visible,.btn:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
-select:not([multiple]){appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' stroke='%23616161' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center;background-size:12px 8px;padding-right:34px;cursor:pointer}
-select:not([multiple]):disabled{color:var(--disabled);cursor:not-allowed;opacity:.65}
+select:not([multiple]),.combobox-input{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' stroke='%23616161' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center;background-size:12px 8px;padding-right:34px;cursor:pointer}
+select:not([multiple]):disabled,.combobox-input:disabled{color:var(--disabled);cursor:not-allowed;opacity:.65}
+.combobox{display:block;position:relative;margin-top:4px}
+.combobox-input{display:block;width:100%;margin:0}
+.combobox-native{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:0!important;border:0!important;opacity:0!important;pointer-events:none!important}
+.combobox-list{position:fixed;z-index:80;margin:0;padding:4px;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 28px rgba(0,0,0,.14),0 2px 6px rgba(0,0,0,.06);text-align:left;font-weight:450;visibility:hidden;opacity:0;transform:translateY(4px);transition:opacity .12s ease,transform .12s ease,visibility .12s}
+.combobox-list[data-side="below"]{transform:translateY(-4px)}
+.combobox-list.is-open{visibility:visible;opacity:1;transform:none}
+.combobox-option{padding:6px 8px;border-radius:6px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.combobox-option[aria-selected="true"]{font-weight:550}
+.combobox-option.is-active{background:#f3f3f3}
+.combobox-empty{padding:6px 8px;color:var(--subdued)}
 .toolbar select{flex:0 0 auto;min-width:150px}
 textarea{min-height:80px;resize:vertical}textarea.tall{min-height:300px}
 label.check{display:flex;flex-wrap:wrap;gap:2px 8px;align-content:flex-start;align-items:flex-start;margin-bottom:12px;min-width:0}label.check input{width:16px;min-height:16px;margin:3px 0 0;flex:none}label.check>small{display:block;flex:0 0 100%;margin:0 0 0 24px;color:var(--subdued);font-size:12px;line-height:16px;overflow-wrap:anywhere;min-width:0}
-.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px}.fields.center{align-items:center}
 .event-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:0 12px;min-width:0}.event-grid label.check{min-width:0}
 button,.btn{font:inherit;font-weight:550;border:0;border-radius:8px;padding:6px 12px;min-height:28px;cursor:pointer;background:var(--surface);color:var(--text);box-shadow:var(--shadow);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
 button:hover,.btn:hover{background:#f7f7f7;text-decoration:none}
@@ -303,7 +312,7 @@ dialog.dialog-wide{max-width:min(760px,calc(100vw - 32px))}
 .doc-inline{display:flex;gap:8px;margin-top:4px}.doc-inline input{flex:1;margin:0}
 .attr-order{display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin:4px 0 12px}
 .attr-order label{display:flex;align-items:center;gap:8px;margin:0}.attr-order label input{width:16px;min-height:16px;margin:0}.attr-order select{margin-left:auto;min-height:26px;padding:2px 30px 2px 8px;font-size:12px}
-@media(prefers-reduced-motion:reduce){dialog,.banner{animation:none!important;transition:none!important}}
+@media(prefers-reduced-motion:reduce){dialog,.banner,.combobox-list{animation:none!important;transition:none!important}}
 @media(max-width:768px){
   .frame{grid-template-columns:minmax(0,1fr)}
   .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:20;background:var(--nav);padding:8px 12px;border-bottom:1px solid var(--border)}

@@ -11,7 +11,7 @@ import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
-import { deployDialog, functionCreateView, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
+import { deployForm, functionCreateView, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
 import { err } from '~/lib/errors'
 import { requestEndpoint } from '~/lib/origins'
@@ -153,14 +153,14 @@ const functionTabs = (id: string, on: 'runs' | 'deployments' | 'variables' | 'se
 function functionActions(f: FunctionRow, active: 'runs' | 'deployments' | 'variables' | 'settings'): Html | undefined {
   const base = functionUrl(f.id)
   if (active === 'variables' || active === 'settings') return undefined
-  const deploy = html`<a class="btn" href="${base}/deploy" data-dialog-open="#deploy-code">${icon('upload-simple')}<span>Deploy</span></a>`
+  const deploy = html`<a class="btn" href="${base}/deploy">${icon('upload-simple')}<span>Deploy</span></a>`
   const more = menu(destroy(`${base}/delete`, 'Delete function', `Delete ${f.name}? Its deployments, runs and variables are removed too.`), { label: 'More actions' })
   return active === 'runs'
     ? html`${deploy}<form method="post" action="${base}/run" class="inline"><button class="primary">Run now</button></form>${more}`
     : html`${deploy}${more}`
 }
 
-/** Header, tabs, code notice and dialogs shared by every function tab. */
+/** Header, tabs and code notice shared by every function tab. */
 function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'deployments' | 'variables' | 'settings', body: Html): Html {
   const base = functionUrl(f.id)
   const deployments = deploymentsOf(ctx).list(f.id)
@@ -180,8 +180,7 @@ function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'de
   return html`${header(f.name, { back: FN, actions: functionActions(f, active) })}${functionTabs(f.id, active)}
   ${paused && f.schedule ? alert('warning', html`The schedule is paused in Settings.`) : ''}
   <div id="code-status">${notice}</div>
-  ${body}
-  ${active === 'runs' || active === 'deployments' ? deployDialog(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands) : ''}`
+  ${body}`
 }
 
 export function functionPages(router: ConsoleRouter): void {
@@ -268,14 +267,13 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(f.name, 'functions', functionShell(ctx, f, 'runs', runsList(f.id, runs, live)))
   })
 
-  // Without JavaScript the "Deploy" link lands here instead of opening the dialog.
   router.get(`${FN}/:id/deploy`, ({ ctx, path }) => {
     const f = ctx.services.functions.fn(path.id!)
     return ctx.render(
       `Deploy to ${f.name}`,
       'functions',
       html`${header('Deploy new code', { back: functionUrl(f.id) })}
-      <div class="card narrow">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands, 'deploy-page-form')}
+      <div class="card">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands)}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${functionUrl(f.id)}">Cancel</a><button type="submit" form="deploy-page-form" class="primary">Deploy</button></div>
       </div>`,
     )

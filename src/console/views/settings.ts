@@ -77,7 +77,8 @@ function s3Fields(prefix: string, s3: S3Config): Html {
       ${field('Access key', html`<input name="${prefix}AccessKey" class="mono" value="${s3.accessKey}">`)}
       ${field('Secret', html`<input name="${prefix}Secret" type="password" placeholder="${s3.secret ? 'Unchanged' : ''}" autocomplete="new-password">`)}
     </div>
-    <label class="check"><input type="checkbox" name="${prefix}ForcePathStyle" ${s3.forcePathStyle ? 'checked' : ''}>Force path-style addressing</label>`
+    <label class="check"><input type="checkbox" name="${prefix}ForcePathStyle" ${s3.forcePathStyle ? 'checked' : ''}>Force path-style addressing
+      <small>Without this, requests go to <span class="mono">&lt;bucket&gt;.&lt;endpoint host&gt;</span>, which many S3-compatible services and their certificates do not cover. Turn it on for MinIO, Supabase or R2, and for AWS bucket names that contain dots.</small></label>`
 }
 
 function storageCard(ctx: ConsoleContext): Html {
@@ -206,7 +207,7 @@ function logsCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   return card(ctx, 'logs', 'Request logs', 'logs', 'How long request logs are kept, and whether client IP addresses are stored.', html`
     <form method="post" action="${SETTINGS}/logs">
-      <div class="fields">
+      <div class="fields center">
         <label>Retention (days)<input name="retentionDays" type="number" min="0" value="${c.logRetentionDays}"><small>0 keeps logs until you clear them.</small></label>
         <label class="check"><input type="checkbox" name="logIp" ${c.logIp ? 'checked' : ''}><span>Store IP addresses</span><small>Off keeps visitor IPs out of logs.</small></label>
       </div>

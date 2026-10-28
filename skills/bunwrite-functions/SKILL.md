@@ -16,15 +16,52 @@ runs Node/Bun functions with its own Bun binary and Python functions with
 ## Layout
 
 The entrypoint defaults to `src/main.js` for Node/Bun and `src/main.py` for
-Python.
+Python. A function is a plain folder: every file and folder under it is
+deployed, so it can be split into as many modules as it needs. `main.js` stays
+the entrypoint and only wires the pieces together.
 
 ```text
 functions/
   send-invoice/
     src/
-      main.js
-    package.json
+      main.js                    # entrypoint: reads the request, calls a controller
+      controllers/
+        invoice-controller.js    # HTTP shape: status codes, request/response
+      dto/
+        create-invoice.js        # input parsing and validation
+      domain/
+        invoice.js               # business rules, no HTTP or database code
+      services/
+        invoice-service.js       # use cases, orchestration
+        invoice-repository.js    # data access
+      lib/
+        validate.js              # small shared helpers
+    package.json                 # { "type": "module" }
 ```
+
+A typical `src/main.js` stays thin:
+
+```js
+import { createInvoice } from './controllers/invoice-controller.js'
+
+export default async (context) => createInvoice(context)
+```
+
+Rules that matter when splitting a function:
+
+- Every path is relative to the entrypoint; import with `./`, `../` or a
+  package name. Anything outside the function folder is not deployed.
+- Node/Bun entries are ES modules (`export default`). The generated
+  `package.json` sets `"type": "module"`, so write relative imports with the
+  file extension (`./services/invoice-service.js`). Bun accepts extensionless
+  imports, Node does not.
+- Write plain JavaScript unless the build step compiles TypeScript. Node and
+  Bun runtimes do not strip types, so a `.ts` import fails.
+- Install packages with `commands` (`npm install`, `bun install`) and keep
+  `package.json` at the function root, not inside `src/`.
+- Python: the entrypoint's folder, the function root and `.python_packages` are
+  on `sys.path`, so `from services.invoice_service import create_invoice`
+  works from `src/main.py`.
 
 ## Handlers
 

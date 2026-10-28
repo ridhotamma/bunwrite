@@ -1,6 +1,5 @@
 /** Console views for static sites: create, deploy, deployments and settings. */
 import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
-import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
@@ -34,6 +33,8 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
   const github = installations.length > 0
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
+  // Like Create function: start from the starter, and a repository is the last
+  // choice, so a new site is never connected to GitHub by accident.
   const choices = existing
     ? [
         choice('upload', 'Upload a folder', 'A .zip or .tar.gz of the site, or of its build output.', true),
@@ -41,21 +42,25 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
         choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
       ]
     : [
-        ...(github ? [choice('github', 'GitHub repository', 'Builds here on every push; other branches get previews.', true)] : []),
+        choice('starter', 'htmx starter', 'A ready-made page. Plain files, nothing to build.', true),
         choice('upload', 'Upload a folder', 'A .zip or .tar.gz: built output, or source for a server app.', false),
-        choice('starter', 'htmx starter', 'A ready-made page. Plain files, nothing to build.', !github),
         choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
+        ...(github ? [choice('github', 'GitHub repository', 'Builds here on every push; other branches get previews.', false)] : []),
       ]
+  // Render the same visibility the script would apply, so the first paint is
+  // the final layout and the selected block does not pop in after a swap.
+  const selected = existing ? 'upload' : 'starter'
+  const shown = (...keys: string[]) => (keys.includes(selected) ? '' : 'hidden')
   return html`<fieldset class="code-source">
       <legend class="${hideLegend ? 'visually-hidden' : ''}">Source</legend>
       <div class="choice">${choices}</div>
     </fieldset>
     ${github ? gitSourceFields(installations, 'create-site', { detectInto: 'git-build-fields' }) : ''}
-    <div data-show-for="upload" data-for-select="source" hidden>
+    <div data-show-for="upload" data-for-select="source" ${shown('upload')}>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
         <small>For a static site, upload what the build made. For a server app, upload the source: it is installed, built and started here. For large sites use <code>bunwrite push sites</code>.</small></label>
     </div>
-    <div data-show-for="paste" data-for-select="source" hidden>
+    <div data-show-for="paste" data-for-select="source" ${shown('paste')}>
       <label>index.html<textarea name="html" class="mono tall code-editor" spellcheck="false" required><!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>My site</title></head>
@@ -64,7 +69,7 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
 </body>
 </html></textarea></label>
     </div>
-    ${existing ? '' : html`<p class="help" data-show-for="starter paste" data-for-select="source" ${github ? 'hidden' : ''} style="margin:0">Served as plain files from this server. There is nothing to build, so no framework or runtime to pick.</p>`}`
+    ${existing ? '' : html`<p class="help" data-show-for="starter paste" data-for-select="source" ${shown('starter', 'paste')} style="margin:0">Served as plain files from this server. There is nothing to build, so no framework or runtime to pick.</p>`}`
 }
 
 const keysOf = (group: 'static' | 'server') => FRAMEWORKS.filter((f) => f.group === group).map((f) => f.key).join(' ')
@@ -208,21 +213,12 @@ export function siteCreateView(sitesDomain: string, installations: { id: string;
     </form>`
 }
 
-export function deploySiteForm(site: SiteRow, id = 'deploy-site-form'): Html {
-  return html`<form id="${id}" method="post" action="${siteUrl(site.id)}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
+export function deploySiteForm(site: SiteRow): Html {
+  return html`<form id="deploy-site-page-form" method="post" action="${siteUrl(site.id)}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
     <p class="dialog-message">The live version keeps serving until the new one is ready.</p>
     ${sourceFields(true)}
     <label class="check"><input type="checkbox" name="activate" checked>Make it live once ready</label>
   </form>`
-}
-
-export function deploySiteDialog(site: SiteRow): Html {
-  return dialog({
-    id: 'deploy-site',
-    title: `Deploy to ${site.name}`,
-    body: deploySiteForm(site),
-    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="deploy-site-form" class="primary">Deploy</button>`,
-  })
 }
 
 export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRow[]): Html {
@@ -251,7 +247,7 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
           </tr>`
         })}
       </tbody></table></div>`
-      : emptyState('No deployments', 'Upload files from here, or with bunwrite push sites.', html`<button type="button" class="primary" data-dialog-open="#deploy-site">Deploy</button>`)}
+      : emptyState('No deployments', 'Upload files from here, or with bunwrite push sites.', html`<a class="btn primary" href="${base}/deploy">Deploy</a>`)}
   </div>`
 }
 

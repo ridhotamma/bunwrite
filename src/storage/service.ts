@@ -18,7 +18,7 @@ import { BunwriteError, err } from '~/lib/errors'
 import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
-import { s3Client, s3Key } from './s3'
+import { s3Call, s3Client, s3Key } from './s3'
 import { loadSharp } from './sharp'
 import { previewKey, previewOptions, renderPreview } from './transform'
 
@@ -300,13 +300,15 @@ export class StorageService {
   }
 
   private async deletePrefix(prefix: string): Promise<void> {
-    const client = s3Client(this.config.s3)
-    let token: string | undefined
-    do {
-      const page = await client.list({ prefix, maxKeys: 1000, continuationToken: token })
-      for (const object of page.contents ?? []) await client.delete(object.key)
-      token = page.isTruncated ? page.nextContinuationToken : undefined
-    } while (token)
+    await s3Call(this.config.s3, async () => {
+      const client = s3Client(this.config.s3)
+      let token: string | undefined
+      do {
+        const page = await client.list({ prefix, maxKeys: 1000, continuationToken: token })
+        for (const object of page.contents ?? []) await client.delete(object.key)
+        token = page.isTruncated ? page.nextContinuationToken : undefined
+      } while (token)
+    })
   }
 
   private row(bucketId: string, fileId: string): FileRow | null {
@@ -421,7 +423,7 @@ export class StorageService {
       const data = direct ? bytes : await Bun.file(chunked ? partial : target).bytes()
       signature = createHash('md5').update(data).digest('hex')
       if (this.config.s3.enabled) {
-        await s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).write(data, { type: mime })
+        await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).write(data, { type: mime }))
         rmSync(target, { force: true })
         rmSync(partial, { force: true })
       } else if (chunked) {
@@ -458,7 +460,7 @@ export class StorageService {
 
   async deleteFile(caller: Caller, bucketId: string, fileId: string): Promise<void> {
     const { file } = this.file(caller, bucketId, fileId, 'delete')
-    if (this.config.s3.enabled) await s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).delete()
+    if (this.config.s3.enabled) await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).delete())
     for (const p of [this.path(bucketId, fileId), `${this.path(bucketId, fileId)}.part`]) rmSync(p, { force: true })
     const staging = this.stagingPath(bucketId, fileId)
     for (const p of [staging, `${staging}.part`]) rmSync(p, { force: true })
@@ -561,7 +563,7 @@ export class StorageService {
       let job = this.rendering.get(cached)
       if (!job) {
         job = this.withPreviewSlot(async () => {
-          const source = this.config.s3.enabled ? await s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes() : this.path(bucket.id, file.id)
+          const source = this.config.s3.enabled ? await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes()) : this.path(bucket.id, file.id)
           const out = await renderPreview(sharp, source, options)
           mkdirSync(dirname(cached), { recursive: true })
           const tmp = `${cached}.${process.pid}.${Date.now()}.tmp`

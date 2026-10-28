@@ -212,9 +212,14 @@ export function listCard(id: string, parts: ListCardParts): Html {
   return html`<div class="card flush" id="${id}">${parts.toolbar ?? ''}${parts.body}${parts.footer ?? ''}</div>`
 }
 
-/** Attributes that make an element refresh itself on an interval. */
+/**
+ * Attributes that make an element refresh itself on an interval. A polling
+ * card holds links and forms of its own, so `hx-disinherit` keeps this
+ * target and select from following them: clicking a deployment or a run
+ * inside the card navigates the page instead of swapping into the card.
+ */
 export function poll(url: string, target: string, seconds: number): Html {
-  return html`hx-get="${url}" hx-select="#${target}" hx-target="#${target}" hx-swap="outerHTML" hx-trigger="every ${seconds}s"`
+  return html`hx-get="${url}" hx-select="#${target}" hx-target="#${target}" hx-swap="outerHTML" hx-trigger="every ${seconds}s" hx-disinherit="*"`
 }
 
 const TILE_TONES = ['blue', 'green', 'orange', 'purple', 'pink', 'teal'] as const

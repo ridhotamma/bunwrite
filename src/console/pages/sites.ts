@@ -13,7 +13,6 @@ import {
   apiFunctionSelect,
   buildFields,
   buildValuesOf,
-  deploySiteDialog,
   deploySiteForm,
   SITES,
   siteDeploymentsCard,
@@ -194,7 +193,7 @@ function siteShell(ctx: ConsoleContext, site: SiteRow, active: 'deployments' | '
   const url = ctx.services.sites.url(site)
   const latest = ctx.services.sites.latest(site.id)
   const actions = html`<a class="btn" href="${url}" target="_blank" rel="noopener">Open site</a>
-    ${active === 'deployments' ? html`<a class="btn primary" href="${siteUrl(site.id)}/deploy" data-dialog-open="#deploy-site">${icon('upload-simple')}<span>Deploy</span></a>` : ''}
+    ${active === 'deployments' ? html`<a class="btn primary" href="${siteUrl(site.id)}/deploy">${icon('upload-simple')}<span>Deploy</span></a>` : ''}
     ${menu(destroy(`${siteUrl(site.id)}/delete`, 'Delete site', `Delete ${site.name}? Its deployments and files are removed too.`), { label: 'More actions' })}`
   const notice = !site.enabled
     ? alert('warning', html`This site is paused and answers with a "paused" page. Turn it on in <a href="${siteUrl(site.id)}/settings">Settings</a>.`)
@@ -203,8 +202,7 @@ function siteShell(ctx: ConsoleContext, site: SiteRow, active: 'deployments' | '
       : ''
   return html`${header(site.name, { back: SITES, actions })}${siteTabs(site.id, active)}
     ${notice}
-    ${body}
-    ${active === 'deployments' ? deploySiteDialog(site) : ''}`
+    ${body}`
 }
 
 /**
@@ -328,14 +326,13 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.render(site.name, 'sites', siteShell(ctx, site, 'deployments', siteDeploymentsCard(site, ctx.services.sites.deployments(site.id))))
   })
 
-  // Without JavaScript the "Deploy" link lands here instead of opening the dialog.
   router.get(`${SITES}/:id/deploy`, ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
     return ctx.render(
       `Deploy to ${site.name}`,
       'sites',
       html`${header('Deploy', { back: siteUrl(site.id) })}
-      <div class="card">${deploySiteForm(site, 'deploy-site-page-form')}
+      <div class="card">${deploySiteForm(site)}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${siteUrl(site.id)}">Cancel</a><button type="submit" form="deploy-site-page-form" class="primary">Deploy</button></div>
       </div>`,
     )

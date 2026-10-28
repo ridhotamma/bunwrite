@@ -227,6 +227,7 @@ export class VcsHub {
     const installation = project.services.vcs.get(installationId)
     for (const link of this.links.removeForInstallation(project.info.id, installation.id)) this.clearProvider(project, link.resource_type, link.resource_id)
     project.services.vcs.remove(installation.id)
+    this.github.forget(installation.provider_installation_id)
   }
 
   // ---- Linking ----
