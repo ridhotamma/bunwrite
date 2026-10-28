@@ -38,8 +38,11 @@ async function getFs(): Promise<FsPromises> {
     assertFileSystemAvailable();
 
     try {
-        // A computed name keeps browser bundlers from trying to bundle fs.
-        const fs = await import('node:fs' as string);
+        // Loaded at call time, out of sight of bundlers: browser builds
+        // (webpack, Next.js) fail on a visible import of node:fs.
+        const runtime = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
+        const fs = (runtime?.getBuiltinModule?.('node:fs') ??
+            (await (new Function('id', 'return import(id)') as (id: string) => Promise<unknown>)('node:fs'))) as { promises: FsPromises };
         return fs.promises;
     } catch {
         throw new Error(

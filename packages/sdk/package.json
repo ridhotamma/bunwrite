@@ -9,15 +9,27 @@
     "sdk",
     "backend"
   ],
+  "homepage": "https://github.com/ridhotamma/bunwrite/tree/main/packages/sdk#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ridhotamma/bunwrite.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/ridhotamma/bunwrite/issues"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "unpkg": "./dist/bunwrite.iife.js",
+  "jsdelivr": "./dist/bunwrite.iife.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -33,9 +45,12 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "typecheck": "tsc --noEmit -p .",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run typecheck && (cd ../.. && bun test test/sdk.test.ts test/bunwrite-cli.test.ts) && bun run build"
   },
   "devDependencies": {
     "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -8,7 +8,9 @@ import { InputFile } from './inputFile';
 import { JSONbig } from './json';
 import type { Query } from './query';
 
-export const SDK_VERSION = '0.1.0';
+// Set from package.json by scripts/build.ts; running from source, it is a dev version.
+declare const __BUNWRITE_SDK_VERSION__: string | undefined;
+export const SDK_VERSION: string = typeof __BUNWRITE_SDK_VERSION__ === 'string' ? __BUNWRITE_SDK_VERSION__ : '0.0.0-dev';
 
 // Runtime globals, declared here so the SDK compiles with or without DOM and Node types.
 declare const process: { platform?: string; arch?: string } | undefined;

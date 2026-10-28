@@ -8,9 +8,18 @@
     "appwrite",
     "cli"
   ],
+  "homepage": "https://github.com/ridhotamma/bunwrite/tree/main/packages/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ridhotamma/bunwrite.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/ridhotamma/bunwrite/issues"
+  },
   "type": "module",
   "bin": {
-    "bunwrite": "./dist/cli.js"
+    "bunwrite": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -24,10 +33,13 @@
     "build": "bun scripts/build.ts",
     "build:binary": "bun scripts/build.ts --binary",
     "typecheck": "tsc --noEmit -p .",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "bun run typecheck && (cd ../.. && bun test test/sdk.test.ts test/bunwrite-cli.test.ts) && bun run build"
   },
   "devDependencies": {
     "@types/node": "*",
     "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

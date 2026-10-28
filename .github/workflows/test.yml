@@ -36,3 +36,8 @@ jobs:
           CHROME_NO_SANDBOX: 'true'
       - run: bun run build
       - run: ./dist/bunwrite --help
+      # The SDK and CLI packages.
+      - run: bunx tsc --noEmit -p packages/sdk
+      - run: bunx tsc --noEmit -p packages/cli
+      - run: bun run sdk:build && bun run cli:build
+      - run: node packages/cli/dist/cli.js --version

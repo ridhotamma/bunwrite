@@ -12,7 +12,9 @@ import { runService, SERVICES } from './commands/services'
 import { sync } from './commands/sync'
 import { bold, CliError, dim, fail, log } from './ui'
 
-export const VERSION = '0.1.0'
+// Set from package.json by scripts/build.ts; running from source, it is a dev version.
+declare const __BUNWRITE_CLI_VERSION__: string | undefined
+export const VERSION: string = typeof __BUNWRITE_CLI_VERSION__ === 'string' ? __BUNWRITE_CLI_VERSION__ : '0.0.0-dev'
 
 const HELP = `${bold('bunwrite')} <command> [options]
 
