@@ -12,14 +12,50 @@ the Appwrite API most apps use. Existing apps keep using the official
 
 ![Bunwrite Console](assets/screenshots/screenshot-2.png)
 
-## Why Bunwrite?
+## Why Bunwrite exists
 
-- **One process, one file.** Bun serves the API, realtime, functions and console;
-  SQLite stores everything.
-- **SDK compatible.** Point the Appwrite SDK at Bunwrite and keep your frontend
-  code.
+Bunwrite started from a simple frustration: running an Appwrite-compatible
+backend for a small product should not require a container stack, a database
+server and a machine bigger than the product itself.
+
+Appwrite's API is excellent, and its SDK ecosystem is the reason Bunwrite can be
+a drop-in replacement. Self-hosting Appwrite, however, is aimed at teams with
+more infrastructure: Docker and several services, a database server, Redis,
+workers, and CPU and memory headroom beyond a small VPS. It also has no switch
+for SQLite; its data layer is designed around a database server, not a file you
+can copy, inspect and restore.
+
+Bunwrite takes the other trade-off. One Bun server serves the API, realtime,
+functions, sites and console; function runs are short-lived child processes.
+SQLite is the source of truth. A backup is a consistent snapshot of one file.
+And because invoices are a common reason to reach for a backend, HTML-to-PDF and
+HTML-to-image rendering are built in instead of being another service or a
+Puppeteer dependency in your app.
+
+It is not a fork of Appwrite and is not affiliated with it. Bunwrite implements
+the endpoints most apps use and stays compatible with Appwrite's SDKs and CLI.
+If you need horizontal scaling, a multi-node database or the complete Appwrite
+platform, use Appwrite. If you want the Appwrite API on a small VPS with a file
+you can back up, Bunwrite is for you.
+
+## What you get
+
+- **One server, one file.** A single Bun server serves the API, realtime,
+  functions, sites and console; function runs are short-lived child processes,
+  and SQLite stores everything.
+- **Appwrite-compatible.** Point the Appwrite SDK or CLI at Bunwrite and keep
+  your existing code and workflow.
+- **SQLite-native.** Drizzle migrations create the schema, each project is its
+  own database file, and you can inspect or copy the data with standard SQLite
+  tools.
+- **Backups as a feature.** Create, download and delete consistent snapshots in
+  the console; run daily automatic backups; keep them on local disk or in any
+  S3-compatible bucket. No separate backup service.
+- **Invoices and images built in.** Render HTML to PDF or PNG/JPG/WebP/AVIF/GIF
+  with headless Chromium, then return the file or save it to a bucket. No
+  Puppeteer or Playwright in your app.
 - **Multiple projects.** Each project has its own database, users, teams,
-  storage, functions and API keys; switch projects in the console.
+  storage, functions, backups and API keys; switch projects in the console.
 - **Admin console included.** Manage databases, users, teams, files, functions,
   webhooks, schema, storage, backups and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
@@ -35,58 +71,161 @@ the Appwrite API most apps use. Existing apps keep using the official
   the host's CPU and RAM, including cgroup limits.
 - **Small footprint.** Designed for a 1 vCPU / 1 GB VPS.
 
-## Quick start
+## Setup from zero
 
-Requires **Bun 1.4+**.
+### Requirements
+
+- **Bun 1.4+** for the source install. The standalone binary needs no runtime.
+- **Node.js 20+** if you install `@bunwrite/cli` globally; Bun works too.
+- **Optional:** Chrome or Chromium for HTML rendering, `python3` for Python
+  functions, and Docker if you prefer the Compose deployment.
+- No MariaDB, Redis or Docker is required for the single-process install.
+
+### 1. Install and start
 
 ```bash
-cp .env.example .env    # optional: set PUBLIC_ENDPOINT and server tweaks
+git clone https://github.com/ridhotamma/bunwrite.git
+cd bunwrite
 bun install
-bun run dev             # API at http://localhost:8080/v1, console at /console
+cp .env.example .env
+
+# edit .env: PUBLIC_ENDPOINT, DOMAIN, paths and resource limits
+bun run dev
 ```
 
-On first start, Bunwrite generates an organization ID, project ID, signing
-secret and an initial API key, stores them in the database, and shows them on
-the first-run console setup page. After that the database is the source of
-truth: manage the project, API keys, allowed origins, email, Google sign-in and
-other application settings in the console.
+The API is at `http://localhost:8080/v1` and the console is at
+`http://localhost:8080/console`.
 
-The optional "First start only" values at the end of `.env.example` can seed an
-empty database—useful when reusing an existing Appwrite project ID and API key.
-They are imported once and then ignored. `.env` itself is for server and
-deployment settings such as `PUBLIC_ENDPOINT`, paths, logs and resource limits.
-
-On a fresh database, open `/console/setup` to create the first admin and see the
-generated instance credentials, or create the admin from the command line:
-
-```bash
-bun run console:admin you@example.com
-```
-
-Build a single executable instead—migrations, console assets and function
-runners are embedded:
+For production, build the standalone binary with the migrations, console assets
+and function runners embedded:
 
 ```bash
 bun run build             # dist/bunwrite
 ./dist/bunwrite           # API at http://localhost:8080/v1
-./dist/bunwrite console:admin you@example.com
 ```
 
 Build on the target OS and architecture so native dependencies match. The
-resulting binary needs no Bun at runtime.
+resulting binary needs no Bun at runtime. See [docs/DEPLOY.md](docs/DEPLOY.md)
+for Ubuntu, systemd and Docker Compose.
 
-Or try the self-contained demo:
+Want a throwaway instance with sample data instead?
 
 ```bash
 bun run demo            # http://localhost:8790/console
                         # demo@bunwrite.test / demo-password
 ```
 
-Import the example schema first if you want sample collections:
+### 2. Create the first admin
+
+On a fresh database, open `/console/setup` to create the first admin. The page
+also shows the generated organization ID, project ID, signing secret and initial
+API key; save the project ID and API key for your app.
+
+You can create the admin from the command line instead:
+
+```bash
+bun run console:admin you@example.com
+```
+
+After the first start, the database is the source of truth. Manage the project,
+API keys, allowed origins, email, Google sign-in and other application settings
+in the console. The optional "First start only" values at the end of
+`.env.example` can seed an empty database, then are ignored.
+
+### 3. Install the Bunwrite CLI
+
+```bash
+npm install -g @bunwrite/cli@latest
+bunwrite --version
+
+# Without a global install, from your app folder:
+npx @bunwrite/cli@latest --help
+```
+
+On a server, `bunwrite` may already be the standalone server binary. The npm
+package is the project CLI for your development machine. If the names collide,
+run the CLI as `npx @bunwrite/cli@latest ...`; the examples below use
+`bunwrite` after a normal global install.
+
+### 4. Link the folder with `init`
+
+```bash
+bunwrite login --endpoint http://localhost:8080/v1 --email you@example.com
+bunwrite init project --project-id <project-id>
+```
+
+Or use an API key:
+
+```bash
+bunwrite client --endpoint http://localhost:8080/v1 --project-id <project-id> --key <api-key>
+bunwrite init project --project-id <project-id>
+```
+
+`init project` writes `bunwrite.config.json` to the folder. It uses
+`bunwrite.json` when that exists, and keeps an existing `appwrite.config.json`
+when either is absent. `--create --project-name <name>` creates the project when
+you are signed in as a console admin.
+
+### 5. Add the agent skills
+
+Run this in the app folder you want your coding agent to work in:
+
+```bash
+npx skills add ridhotamma/bunwrite
+```
+
+Or let the Bunwrite CLI install them with the same Skills CLI:
+
+```bash
+bunwrite skills
+bunwrite init skill
+```
+
+`init project` offers to install the skills after linking; pass `--skills` to
+skip the question or `--no-skills` to skip the install. See [AI agents](#ai-agents)
+for the available skills and flags.
+
+### 6. Define and push resources
+
+Use the console, or keep the schema in the config:
+
+```bash
+bunwrite pull all
+# edit tables, functions and sites in bunwrite.config.json
+bunwrite push tables
+bunwrite push functions
+bunwrite push sites
+```
+
+The example schema can seed the default project:
 
 ```bash
 bun run schema:push examples/appwrite.config.json
 ```
+
+A pulled config pushes back with "no changes". Collection and function changes
+made in the console are live immediately; export them to the config to keep the
+repository in step.
+
+### 7. Connect the app
+
+```bash
+npm install @bunwrite/sdk
+```
+
+Or keep using `appwrite` / `node-appwrite` and point the endpoint at Bunwrite.
+See [Connect an app](#connect-an-app).
+
+### 8. Turn on optional features
+
+- **Backups:** open **Settings → Backups** in the console and create a manual
+  snapshot or enable daily automatic backups. See [Backups](#backups).
+- **HTML rendering:** install Chromium, then enable it under **Settings → HTML
+  rendering**. See [HTML rendering for invoices](#html-rendering-for-invoices).
+- **S3 storage:** configure the bucket under **Settings → File storage**, or in
+  the environment for backups.
+- **Python functions:** set `BUNWRITE_WITH_PYTHON=true` in the Docker image, or
+  install `python3` on the host.
 
 ## Appwrite CLI
 
@@ -163,12 +302,18 @@ with no dependencies and no code shared with the server:
   switching is usually a change of import. Adds `Render` for the HTML-to-PDF
   and image endpoints.
 - [`@bunwrite/cli`](packages/cli/README.md): `bunwrite client`, `login`,
-  `init project`, `pull`/`push` of `bunwrite.config.json` (or `bunwrite.json`;
-  Appwrite's `appwrite.config.json` works too, same format), function deploys,
-  and one command per SDK method.
+  `init project`, `init skill` / `skills`, `pull`/`push` of
+  `bunwrite.config.json` (or `bunwrite.json`; Appwrite's
+  `appwrite.config.json` works too, same format), function deploys, and one
+  command per SDK method.
 
 Both use Bunwrite's names (`X-Bunwrite-*` headers, `bw_session_*` cookies), so
 they need a server from this version on.
+
+```bash
+npm install -g @bunwrite/cli@latest
+# or: npx @bunwrite/cli@latest --help
+```
 
 ```ts
 import { Client, Databases } from '@bunwrite/sdk'
@@ -183,27 +328,42 @@ bunwrite pull all
 
 Bunwrite ships [Agent Skills](https://agentskills.io) that teach Claude Code,
 Cursor, Codex, OpenCode, GitHub Copilot and other compatible tools how to use
-Bunwrite correctly: endpoint and SDK setup, account sessions, databases,
-storage, realtime, functions, sites and the CLI. Install them with the
+Bunwrite correctly:
+
+- `bunwrite` — endpoint and SDK setup, account sessions, databases and
+  documents, permissions, storage, realtime, functions and sites.
+- `bunwrite-cli` — `bunwrite init project`, `pull`/`push`, config files,
+  function and site deploys, and service commands.
+- `bunwrite-functions` — `context.req`/`res`, builds, environment variables,
+  executions, cron and debugging.
+- `bunwrite-sites` — static deploys, output folders, fallbacks, custom domains
+  and `/api/*` functions.
+
+Install them from the project folder with the
 [Skills CLI](https://github.com/vercel-labs/skills):
 
 ```bash
 npx skills add ridhotamma/bunwrite
+
+# choose specific skills and agents without prompts:
+npx skills add ridhotamma/bunwrite --skill bunwrite --agent claude-code --yes
+npx skills add ridhotamma/bunwrite --list
 ```
 
-The Bunwrite CLI wraps the same installer, so you can also run:
+The Bunwrite CLI wraps the same installer:
 
 ```bash
 bunwrite skills
 bunwrite skills --list
 bunwrite init skill
+bunwrite skills --skill bunwrite --agent cursor
 ```
 
 `bunwrite init project` offers to install the skills after linking a folder;
 `--skills` skips the question and `--no-skills` skips the install. The skills
-live in [`skills/`](skills/README.md): `bunwrite`, `bunwrite-cli`,
-`bunwrite-functions` and `bunwrite-sites`. Update them with
-`npx skills update`.
+live in [`skills/`](skills/README.md) as plain Markdown and do not execute code.
+Update them with `npx skills update`. If `bunwrite` on your machine is the
+standalone server binary, use `npx @bunwrite/cli@latest skills` instead.
 
 ## Bunwrite or Appwrite naming
 
@@ -270,6 +430,130 @@ console account after it is accepted; until then the member is listed as
 invited. When SMTP is not configured the invite dialog shows the one-time links
 so they can be shared directly.
 
+## Backups
+
+Backups are a first-class feature, not a database export pipeline. The database
+is a SQLite file, and Bunwrite can snapshot it while the server is running.
+
+### From the console
+
+**Settings → Backups** lets you:
+
+- create a manual snapshot;
+- download it;
+- delete old snapshots;
+- turn on daily automatic backups at 02:00 UTC and choose how many to keep
+  (1–100);
+- keep backups on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
+  bucket.
+
+Snapshots use SQLite's `VACUUM INTO`, so they are consistent even while requests
+are being handled. Each project has its own database and backup folder.
+
+### From cron
+
+`bun run snapshot [dir]` writes a consistent copy of the default project
+database and keeps the newest `KEEP` snapshots (default 7):
+
+```bash
+bun run snapshot /var/backups/bunwrite
+```
+
+It reads `DATABASE_PATH`; for another project, point that at
+`data/projects/<project-id>/bunwrite.sqlite`:
+
+```bash
+DATABASE_PATH=./data/projects/my-project/bunwrite.sqlite bun run snapshot /var/backups/bunwrite
+```
+
+### Restoring
+
+1. Stop Bunwrite.
+2. Replace `data/bunwrite.sqlite` (or the project's
+   `data/projects/<project-id>/bunwrite.sqlite`) with the backup file.
+3. Remove the old `-wal` and `-shm` files that belonged to the replaced
+   database.
+4. Start Bunwrite and check the console and API.
+
+Backups contain the database only. Uploaded files live under `STORAGE_PATH` or
+in your S3 bucket, so back those up separately. Test a restore before you need
+it.
+
+## HTML rendering for invoices
+
+Bunwrite includes a rendering service for invoices, receipts, reports and social
+cards:
+
+- `POST /v1/pdf` turns HTML into a PDF.
+- `POST /v1/image` turns HTML into PNG, JPG, WebP, AVIF or GIF.
+
+Both use headless Chromium through `Bun.WebView`, so there is no Puppeteer or
+Playwright dependency in your app. They are Bunwrite extensions, not part of
+Appwrite's API.
+
+### Turn it on
+
+1. Install Chrome or Chromium, or set `CHROME_PATH`. In Docker, set
+   `BUNWRITE_WITH_CHROMIUM=true` in `.env` and rebuild.
+2. Open **Console → Settings → HTML rendering** and enable it, or set
+   `RENDER_ENABLED=true`.
+3. Call the endpoints with an API key from a server or function. Never put the
+   key in a browser.
+
+### Generate an invoice
+
+```ts
+import { Client, Render } from '@bunwrite/sdk'
+
+const render = new Render(
+  new Client()
+    .setEndpoint('https://api.example.com/v1')
+    .setProject('your-project-id')
+    .setKey(process.env.BUNWRITE_API_KEY!),
+)
+
+const pdf = await render.pdf({
+  html: `
+    <h1>Invoice INV-001</h1>
+    <p>Total: $42.00</p>
+  `,
+  fileName: 'INV-001',
+  format: 'A4',
+})
+
+await Bun.write('INV-001.pdf', pdf)
+```
+
+On Node.js, use `writeFile('INV-001.pdf', Buffer.from(pdf))`.
+
+Save the result directly to a bucket instead of returning the bytes:
+
+```ts
+const file = await render.pdf({
+  html,
+  bucketId: 'invoices',
+  fileName: 'INV-001',
+})
+```
+
+Images use the same options plus `output`, `width`, `height`, `selector`,
+`scale`, `quality` and `transparent`:
+
+```ts
+const card = await render.image({
+  html,
+  selector: '#receipt',
+  output: 'webp',
+  scale: 2,
+})
+```
+
+PDF options include `format`, `landscape`, `margin`, `scale`, `pageRanges`,
+`headerTemplate` and `footerTemplate`. Rendering is off by default because
+Chromium costs memory; it is serialized (one render at a time) and images are
+limited to 8 megapixels. See [docs/RENDER.md](docs/RENDER.md) for limits, remote
+assets, saving to S3 and the HTTP examples.
+
 ## What the API covers
 
 | Area | Endpoints |
@@ -322,7 +606,9 @@ cancel the real one.
   only code you trust there. Functions that run from the code folder
   (`FUNCTIONS_DIR`) need it readable by other users.
 - Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
-- `studio-render` (Chromium) does not fit in 1 GB of memory.
+- Appwrite's `studio-render` (Chromium) does not fit in 1 GB of memory.
+  Bunwrite's HTML rendering is opt-in and serialized, but Chromium still needs
+  memory beyond the base server on a small host.
 
 ## Commands
 
@@ -334,7 +620,7 @@ cancel the real one.
 | `bun run console:admin <email> [--remove]` | Create, reset or remove a console admin |
 | `bun run schema:push <bunwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
 | `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
-| `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs |
+| `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs; keeps `KEEP` (default 7) |
 | `bun run autotune` | Show the resource limits detected from the host/cgroup |
 | `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
 | `bun run typecheck` | TypeScript check |
@@ -361,6 +647,9 @@ cgroup limits in `docker-compose.yml` if you share the host with other services:
 cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy for automatic HTTPS, seeds
 docker compose up -d --build
 ```
+
+Before going live, enable **Settings → Backups** and back up uploaded files
+(`STORAGE_PATH` or the S3 bucket) separately. See [Backups](#backups).
 
 ## Architecture
 
