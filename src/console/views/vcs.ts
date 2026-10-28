@@ -61,7 +61,7 @@ export function githubAppSection(ctx: ConsoleContext): Html {
     : html`${local ? alert('warning', html`This server's address is <code>${base}</code>. GitHub must reach <code>${webhook}</code> to send pushes, so set <code>PUBLIC_ENDPOINT</code> (or <code>DOMAIN</code>) to a public address first, or use a tunnel.`) : ''}
       <form method="post" action="/console/organization/github-app" hx-boost="false" class="stack-fields">
         <fieldset class="code-source"><legend>Owner</legend>
-          <div class="choice">
+          <div class="choice two">
             <label><input type="radio" name="owner_type" value="user" data-show-by checked><div><b>My personal account</b><span>The app belongs to your GitHub user.</span></div></label>
             <label><input type="radio" name="owner_type" value="org" data-show-by><div><b>An organization</b><span>You need to be an owner of it.</span></div></label>
           </div>
