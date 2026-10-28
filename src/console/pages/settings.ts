@@ -179,13 +179,23 @@ export function settingsPages(router: ConsoleRouter): void {
   })
 
   router.post(`${SETTINGS}/functions/variables`, ({ ctx }) => {
-    ctx.services.functions.setGlobalVariable(value(ctx.form, 'key'), String(ctx.form.value ?? ''), checked(ctx.form.secret))
+    const key = value(ctx.form, 'key')
+    const existing = ctx.services.functions.globalVariables().find((v) => v.key === key)
+    // An edit that leaves a secret's value blank keeps its stored value and flag.
+    const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
+    const val = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
+    ctx.services.functions.setGlobalVariable(key, val, keep || checked(ctx.form.secret))
     return ctx.go(tabPath('functions'), { tone: 'success', text: 'Global variable saved' })
   })
 
   router.post(`${SETTINGS}/functions/variables/delete`, ({ ctx }) => {
     ctx.services.functions.deleteGlobalVariable(String(ctx.form.key ?? ''))
     return ctx.go(tabPath('functions'), { tone: 'success', text: 'Global variable removed' })
+  })
+
+  router.post(`${SETTINGS}/functions/variables/clear`, ({ ctx }) => {
+    const count = ctx.services.functions.clearGlobalVariables()
+    return ctx.go(tabPath('functions'), { tone: 'success', text: count ? `Removed ${count} global variable${count === 1 ? '' : 's'}` : 'No global variables to remove' })
   })
 
   router.post(`${SETTINGS}/functions/variables/bulk`, ({ ctx }) =>

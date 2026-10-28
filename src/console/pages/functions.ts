@@ -8,6 +8,7 @@ import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { createFunctionDialog, deployDialog, deployForm, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
+import { variableList } from '~/console/views/variables'
 import { err } from '~/lib/errors'
 import { requestEndpoint } from '~/lib/origins'
 
@@ -243,7 +244,12 @@ export function functionPages(router: ConsoleRouter): void {
           'Function variables',
           'Available only to this function. A variable here wins over a global variable with the same name.',
           html`${vars.length
-            ? html`<ul class="list">${vars.map((v) => html`<li><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`} ${destroy(`${functionUrl(f.id)}/variables/delete`, 'Remove', `Remove ${v.key}?`, { key: v.key })}</span></li>`)}</ul>`
+            ? variableList(vars, {
+                action: `${functionUrl(f.id)}/variables/delete`,
+                save: `${functionUrl(f.id)}/variables`,
+                removeConfirm: (key) => `Remove ${key}?`,
+                clear: { action: `${functionUrl(f.id)}/variables/clear`, label: 'Delete all', confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
+              })
             : html`<p class="hint" style="margin:0 0 12px">None set here. Values from the functions env file still apply.</p>`}
           <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>
           <form method="post" action="${functionUrl(f.id)}/variables" style="margin-top:12px">
@@ -322,13 +328,24 @@ export function functionPages(router: ConsoleRouter): void {
 
   router.post(`${FN}/:id/variables`, ({ ctx, path }) => {
     ctx.services.functions.fn(path.id!)
-    ctx.services.functions.setVariable(path.id!, value(ctx.form, 'key'), String(ctx.form.value ?? ''), checked(ctx.form.secret))
+    const key = value(ctx.form, 'key')
+    const existing = ctx.services.functions.variables(path.id!).find((v) => v.key === key)
+    // An edit that leaves a secret's value blank keeps its stored value and flag.
+    const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
+    const val = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
+    ctx.services.functions.setVariable(path.id!, key, val, keep || checked(ctx.form.secret))
     return ctx.go(`${functionUrl(path.id!)}/variables`, { tone: 'success', text: 'Variable saved' })
   })
 
   router.post(`${FN}/:id/variables/delete`, ({ ctx, path }) => {
     ctx.services.functions.deleteVariable(path.id!, value(ctx.form, 'key'))
     return ctx.go(`${functionUrl(path.id!)}/variables`, { tone: 'success', text: 'Variable removed' })
+  })
+
+  router.post(`${FN}/:id/variables/clear`, ({ ctx, path }) => {
+    const f = ctx.services.functions.fn(path.id!)
+    const count = ctx.services.functions.clearVariables(f.id)
+    return ctx.go(`${functionUrl(f.id)}/variables`, { tone: 'success', text: count ? `Removed ${count} variable${count === 1 ? '' : 's'}` : 'No variables to remove' })
   })
 
   router.post(`${FN}/:id/variables/bulk`, ({ ctx, path }) => {

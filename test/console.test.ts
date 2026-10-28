@@ -412,18 +412,38 @@ describe('settings through the console', () => {
     expect(server.config.render).toEqual({ enabled: false, allowRemote: false })
   })
 
-  test('global function variables can be added and removed', async () => {
+  test('global function variables can be added, edited and removed', async () => {
     await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
     expect(server.services.functions.globalVariables()).toMatchObject([
       { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1, function_id: '*' },
     ])
     const page = await (await get('/console/settings/functions')).text()
     expect(page).toContain('BUNWRITE_GLOBAL_TEST')
+    expect(page).toContain('Delete all')
     expect(page).toContain('data-dialog-open="#bulk-global-vars"')
     expect(page).toContain('id="bulk-global-vars"')
     expect(page).toContain('hx-post="/console/settings/functions/variables/bulk"')
+    // Editing keeps the stored value when the secret field is left blank.
+    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: '' })
+    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
+    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 'on' })
+    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 1 }])
+    // Unhiding a secret clears the flag.
+    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'shown' })
+    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'shown', secret: 0 }])
     await form('/console/settings/functions/variables/delete', { key: 'BUNWRITE_GLOBAL_TEST' })
     expect(server.services.functions.globalVariables()).toEqual([])
+  })
+
+  test('global variables can all be deleted at once', async () => {
+    await form('/console/settings/functions/variables', { key: 'WIPE_A', value: 'one' })
+    await form('/console/settings/functions/variables', { key: 'WIPE_B', value: 'two' })
+    expect(server.services.functions.globalVariables()).toHaveLength(2)
+    const cleared = await form('/console/settings/functions/variables/clear', {})
+    expect(flash(cleared).get('ok')).toBe('Removed 2 global variables')
+    expect(server.services.functions.globalVariables()).toEqual([])
+    const empty = await form('/console/settings/functions/variables/clear', {})
+    expect(flash(empty).get('ok')).toBe('No global variables to remove')
   })
 
   test('S3 storage settings validate required fields and endpoints', async () => {

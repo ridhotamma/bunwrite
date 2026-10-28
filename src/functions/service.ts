@@ -423,6 +423,15 @@ export class FunctionService {
     this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ?').run(functionId, key)
   }
 
+  clearVariables(functionId: string): number {
+    const result = this.sql.query('DELETE FROM _function_vars WHERE function_id = ?').run(functionId)
+    return Number(result.changes ?? 0)
+  }
+
+  clearGlobalVariables(): number {
+    return this.clearVariables('*')
+  }
+
   execution(functionId: string, executionId: string): ExecutionRow {
     const row = this.sql.query<ExecutionRow, [string, string]>('SELECT * FROM _executions WHERE id = ? AND function_id = ?').get(executionId, functionId)
     if (!row) throw err('execution_not_found')

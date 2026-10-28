@@ -11,6 +11,7 @@ import type { SettingKey } from '~/settings/service'
 import type { TemplateFields, TemplateId } from '~/mail/templates'
 import { MIN_COMPRESS_BYTES } from '~/lib/compress'
 import { templatesView } from './templates'
+import { variableList } from './variables'
 
 function codeFound(ctx: ConsoleContext): Html {
   const fns = ctx.services.functions.list()
@@ -139,7 +140,12 @@ function functionCards(ctx: ConsoleContext): Html {
       </form>`)}
     ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', html`
       ${globals.length
-        ? html`<ul class="list">${globals.map((v) => html`<li><span class="mono">${v.key}</span><span>${v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`} ${destroy(`${SETTINGS}/functions/variables/delete`, 'Remove', `Remove global variable ${v.key}?`, { key: v.key })}</span></li>`)}</ul>`
+        ? variableList(globals, {
+            action: `${SETTINGS}/functions/variables/delete`,
+            save: `${SETTINGS}/functions/variables`,
+            removeConfirm: (key) => `Remove global variable ${key}?`,
+            clear: { action: `${SETTINGS}/functions/variables/clear`, label: 'Delete all', confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
+          })
         : html`<p class="hint" style="margin:0 0 12px">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`}
       <form method="post" action="${SETTINGS}/functions/variables" style="margin-top:12px">
         <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
