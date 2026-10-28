@@ -19,7 +19,7 @@ function keyDialog(secret: string): Html {
 
 export function apiView(ctx: ConsoleContext, created?: string): Html {
   const keys = ctx.services.settings.listKeys()
-  return html`${header('API', { subtitle: ctx.currentProject.name })}
+  return html`${header('API')}
     ${settingsSection(
       'Endpoint',
       'Apps connect with this endpoint and project ID using the Appwrite SDKs or the REST API.',

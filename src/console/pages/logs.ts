@@ -49,7 +49,6 @@ export function logPages(router: ConsoleRouter): void {
       'Request logs',
       'logs',
       html`${header('Request logs', {
-        subtitle: `${retention} Requests to this page itself are not recorded.`,
         actions: menu(destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?'), { label: 'More actions' }),
       })}
       ${ctx.services.config.logRequests ? '' : alert('warning', html`Request logging is off. Set <code>LOG_REQUESTS=true</code> and restart to record new requests.`)}
@@ -72,7 +71,8 @@ export function logPages(router: ConsoleRouter): void {
           always: total > 0,
           label: `Page ${page} of ${pages} · ${total.toLocaleString('en-US')} request${total === 1 ? '' : 's'}`,
         }),
-      })}`,
+      })}
+      <p class="help">${retention} Requests to this page itself are not recorded.</p>`,
     )
   })
 
@@ -91,16 +91,13 @@ export function logPages(router: ConsoleRouter): void {
     return ctx.render(
       `${log.method} ${log.path}`,
       'logs',
-      html`${header(`${log.method} ${log.path}`, {
-        back: LOGS,
-        subtitle: when(log.created_at),
-        badges: [badge(String(log.status), tone(log.status))],
-      })}
+      html`${header(`${log.method} ${log.path}`, { back: LOGS })}
       <div class="layout">
         <div class="card"><h2>Request</h2><ul class="list">
+          ${row('Time', when(log.created_at))}
           ${row('Method', log.method)}
           ${row('Path', html`<span class="mono">${log.path}</span>`)}
-          ${row('Status', String(log.status))}
+          ${row('Status', badge(String(log.status), tone(log.status)))}
           ${row('Duration', duration(log.duration_ms))}
           ${row('Inbound', formatBytes(log.request_bytes))}
           ${row('Outbound', formatBytes(log.response_bytes))}

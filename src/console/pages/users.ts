@@ -17,13 +17,8 @@ function userStatus(u: UserRowFull) {
   return [u.status ? badge('Active', 'success') : badge('Blocked', 'critical'), u.email && !u.email_verification ? badge('Unverified', 'attention') : '']
 }
 
-function userHeader(u: UserRowFull, actions?: Html): Html {
-  return header(u.name || u.email || u.id, {
-    back: USERS,
-    subtitle: html`${u.name && u.email ? html`${u.email}<span class="dot" aria-hidden="true">·</span>` : ''}${copyableId(u.id, 'user-id-label')}`,
-    badges: userStatus(u),
-    actions,
-  })
+function userHeader(u: UserRowFull): Html {
+  return header(u.name || u.email || u.id, { back: USERS })
 }
 
 const userTabs = (id: string, on: 'profile' | 'settings') =>
@@ -156,7 +151,7 @@ export function userPages(router: ConsoleRouter): void {
         'Account details',
         'Read-only information about this account and how it signs in.',
         html`<ul class="list">
-          <li><span class="subdued">ID</span><span class="mono">${u.id}</span></li>
+          <li><span class="subdued">ID</span>${copyableId(u.id, 'user-id-label')}</li>
           <li><span class="subdued">Joined</span><span>${when(u.registration)}</span></li>
           <li><span class="subdued">Last seen</span><span>${when(u.accessed_at)}</span></li>
           <li><span class="subdued">Password</span><span>${u.password ? 'Set' : 'None'}</span></li>

@@ -121,13 +121,10 @@ main{padding:20px 32px 48px;max-width:1100px;width:100%;margin:0 auto}
 .header{display:flex;align-items:center;gap:12px;margin-bottom:16px;min-height:32px}
 .header-main{display:flex;flex-direction:column;gap:2px;min-width:0}
 .header-title{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-width:0}.header-title h1{min-width:0;max-width:100%}
-.header-sub .dot{color:var(--disabled);margin:0 6px}
 .id-copy{display:inline-flex;align-items:center;gap:2px;vertical-align:middle;max-width:100%}.id-copy .mono{overflow:hidden;text-overflow:ellipsis}
 .icon-btn.id-copy-btn{width:auto;min-width:22px;height:22px;padding:0 4px;gap:4px;border-radius:6px;font-size:12px}
 .id-copy-btn [data-copy-label]:empty{display:none}
 .header h1{font-size:20px;line-height:28px;font-weight:650;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.header-sub{color:var(--subdued);font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.header-sub a{color:inherit}.header-sub a:hover{color:var(--text)}
 .header .back{display:inline-flex;flex:none;align-self:center;width:28px;height:28px;border-radius:8px;align-items:center;justify-content:center;color:var(--text);font-size:16px}
 .header .back:hover{background:#e3e3e3;text-decoration:none}
 .header .meta{display:flex;gap:6px;align-items:center;flex:none}.header .actions{margin-left:auto;display:flex;gap:8px}
@@ -206,6 +203,8 @@ button.critical{color:var(--critical)}button.small,.btn.small{padding:2px 8px;mi
 button.critical.plain{color:var(--critical)}
 button.destructive{background:var(--critical);color:#fff;box-shadow:0 -1px 0 1px rgba(0,0,0,.8) inset,0 0 0 1px var(--critical) inset}
 button.destructive:hover{background:#721807}
+button[aria-busy]{cursor:progress;opacity:.8}button[aria-busy]::before{content:"";width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 dialog{border:0;border-radius:12px;padding:0;background:var(--surface);color:var(--text);box-shadow:0 24px 60px rgba(0,0,0,.25);max-width:min(520px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;width:100%;transition:opacity .15s ease,transform .15s ease}
 dialog[open]{animation:dialog-in .18s cubic-bezier(.2,.8,.2,1)}
 dialog.dialog-closing{opacity:0;transform:translateY(6px) scale(.98);pointer-events:none}

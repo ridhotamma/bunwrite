@@ -5,6 +5,8 @@
  * - `data-show-for`: show a block only for some values of a `data-show-by` select
  * - `data-disable-when`: disable an input while a checkbox is ticked
  * - `data-follow`: a field takes its value from another field's choice until edited by hand
+ * - `data-busy-label`: once a form submits, its submit buttons are disabled and show this label,
+ *   so a second click cannot send it again
  */
 export const FORM_SCRIPT = `
 (() => {
@@ -152,6 +154,44 @@ export const FORM_SCRIPT = `
     const doc = e.target.querySelector && e.target.querySelector("[data-docform]")
     if (doc && !doc.querySelector(".doc-fields").hidden) fieldsToJson(doc)
   }, true)
+
+  // ---- Submit once ----
+  const submitButtons = (form) => [
+    ...form.querySelectorAll("button:not([type]),button[type=submit]"),
+    ...(form.id ? document.querySelectorAll('button[type=submit][form="' + CSS.escape(form.id) + '"]') : []),
+  ]
+  function setBusy(form, busy) {
+    form.__busy = busy
+    for (const button of submitButtons(form)) {
+      if (busy) {
+        if (button.__label == null) button.__label = button.textContent
+        button.textContent = form.dataset.busyLabel || button.textContent
+      } else if (button.__label != null) {
+        button.textContent = button.__label
+        button.__label = null
+      }
+      button.disabled = busy
+      button.toggleAttribute("aria-busy", busy)
+    }
+  }
+  document.addEventListener("submit", (e) => {
+    const form = e.target instanceof HTMLFormElement && e.target.matches("[data-busy-label]") ? e.target : null
+    if (!form) return
+    if (form.__busy) { e.preventDefault(); return }
+    // Another handler (a confirm step) may have stopped this submit.
+    if (e.defaultPrevented) return
+    form.__busy = true
+    // Disable after the browser has collected the form data, so the submitter's value is still sent.
+    setTimeout(() => { if (form.__busy) setBusy(form, true) }, 0)
+  })
+  // Leaving with the back button can restore the page from cache with the buttons still disabled.
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) for (const form of document.querySelectorAll("form[data-busy-label]")) setBusy(form, false)
+  })
+  document.addEventListener("htmx:afterRequest", (e) => {
+    const form = e.target instanceof Element ? e.target.closest("form[data-busy-label]") : null
+    if (form) setBusy(form, false)
+  })
 
   function setup() { showFor(document); disableWhen(document) }
   document.addEventListener("htmx:afterSwap", setup)

@@ -13,7 +13,7 @@ export function collectionSettingsPages(router: ConsoleRouter): void {
     return ctx.render(
       c.name,
       'databases',
-      html`${collectionHeader(ctx, c)}${tabs(c, 'settings')}
+      html`${collectionHeader(c)}${tabs(c, 'settings')}
       ${settingsSection(
         'General',
         'The name shown here, and whether apps can use the collection.',

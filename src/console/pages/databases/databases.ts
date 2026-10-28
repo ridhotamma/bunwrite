@@ -132,7 +132,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     return ctx.render(
       'Create collection',
       'databases',
-      html`${header('Create collection', { back: databaseUrl(d.id), subtitle: d.name })}
+      html`${header('Create collection', { back: databaseUrl(d.id) })}
       <form method="post" action="${DB}/${d.id}/collections">
         ${settingsSection(
           'General',

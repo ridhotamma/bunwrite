@@ -81,7 +81,6 @@ export function attributePages(router: ConsoleRouter): void {
       c.name,
       'databases',
       html`${collectionHeader(
-        ctx,
         c,
         c.attributes.length ? html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">${icon('plus')}<span>Add attribute</span></a>` : undefined,
       )}${tabs(c, 'attributes')}
@@ -101,7 +100,7 @@ export function attributePages(router: ConsoleRouter): void {
 
   router.get(`${COL}/attributes/new`, ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    return ctx.render('Add attribute', 'databases', html`${header('Add attribute', { back: `${collectionUrl(c)}/attributes`, subtitle: c.name })}${attributeForm(c, null)}`)
+    return ctx.render('Add attribute', 'databases', html`${header('Add attribute', { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, null)}`)
   })
 
   router.post(`${COL}/attributes`, ({ ctx, path }) => {
@@ -114,7 +113,7 @@ export function attributePages(router: ConsoleRouter): void {
     const c = loadCollection(ctx, path)
     const a = c.attributeMap.get(path.key!)
     if (!a) throw err('attribute_not_found', undefined, [path.key])
-    return ctx.render(a.key, 'databases', html`${header(a.key, { back: `${collectionUrl(c)}/attributes`, subtitle: c.name })}${attributeForm(c, a)}`)
+    return ctx.render(a.key, 'databases', html`${header(a.key, { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, a)}`)
   })
 
   router.post(`${COL}/attributes/:key`, ({ ctx, path }) => {

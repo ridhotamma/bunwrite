@@ -40,18 +40,18 @@ export function icon(name: IconName, size = 16, className = ''): Html {
 }
 
 /** Polaris page header: back link, title (with optional context line), status badges, then actions with at most one primary. */
-export function header(title: string, opts: { back?: string; subtitle?: Html | string; badges?: (Html | string)[]; actions?: Html } = {}): Html {
+/** Every page header is the same: an optional back arrow, the page name, and optional actions. */
+export function header(title: string, opts: { back?: string; actions?: Html } = {}): Html {
   return html`<div class="header">
     ${opts.back ? html`<a class="back" href="${opts.back}" aria-label="Back">${icon('arrow-left')}</a>` : ''}
     <div class="header-main">
-      <div class="header-title"><h1>${title}</h1>${opts.badges?.length ? html`<div class="meta">${opts.badges}</div>` : ''}</div>
-      ${opts.subtitle ? html`<div class="header-sub">${opts.subtitle}</div>` : ''}
+      <div class="header-title"><h1>${title}</h1></div>
     </div>
     ${opts.actions ? html`<div class="actions">${opts.actions}</div>` : ''}
   </div>`
 }
 
-/** A monospace ID or URL with a small copy button, for header subtitles and list rows. */
+/** A monospace ID or URL with a small copy button, for detail lists and list rows. */
 export function copyableId(id: string, domId: string, label = 'Copy ID'): Html {
   return html`<span class="id-copy" title="${id}"><span class="mono" id="${domId}">${id}</span><button type="button" class="icon-btn id-copy-btn" data-copy-target="#${domId}" aria-label="${label}" title="${label}">${icon('copy', 14)}<span data-copy-label aria-live="polite"></span></button></span>`
 }

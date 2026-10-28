@@ -140,12 +140,12 @@ export function deploymentView(f: FunctionRow, d: DeploymentRow): Html {
   return html`<div id="deployment" ${live ? poll(`${base}/deployments/${d.id}`, 'deployment', 2) : ''}>
     ${header('Deployment', {
       back: `${base}/deployments`,
-      subtitle: html`${copyableId(d.id, 'deployment-id-label')}<span class="dot" aria-hidden="true">·</span><span>${f.name}</span>`,
-      badges: [deploymentBadge(d, f.deployment_id)],
       actions: html`${d.status === 'ready' && d.id !== f.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}
         ${d.id === f.deployment_id ? '' : destroy(`${base}/deployments/${d.id}/delete`, 'Delete', 'Delete this deployment and its files?')}`,
     })}
     <div class="stats" style="margin-bottom:16px">
+      <div class="stat"><span>Status</span><b style="font-size:14px">${deploymentBadge(d, f.deployment_id)}</b></div>
+      <div class="stat"><span>Deployment ID</span><b style="font-size:13px">${copyableId(d.id, 'deployment-id-label')}</b></div>
       <div class="stat"><span>Created</span><b style="font-size:14px">${when(d.created_at)}</b></div>
       <div class="stat"><span>Size</span><b>${formatBytes(d.source_size)}</b></div>
       <div class="stat"><span>Build time</span><b>${live ? '…' : `${d.build_duration.toFixed(1)}s`}</b></div>

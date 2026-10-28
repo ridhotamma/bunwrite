@@ -5,7 +5,7 @@ import { dialog } from '~/console/dialog'
 import { lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { avatar, badge, copyableId, destroy, emptyState, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import { avatar, badge, destroy, emptyState, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
 
 const USERS = '/console/auth/users'
 const TEAMS = '/console/auth/teams'
@@ -23,11 +23,7 @@ const teamTabs = (id: string, on: 'members' | 'settings') =>
   )
 
 const teamHeader = (t: { id: string; name: string; total?: number }, actions?: Html): Html =>
-  header(t.name, {
-    back: TEAMS,
-    subtitle: html`${copyableId(t.id, 'team-id-label')}<span class="dot" aria-hidden="true">·</span><span>${plural(t.total ?? 0, 'member')}</span>`,
-    actions,
-  })
+  header(t.name, { back: TEAMS, actions })
 
 function memberFields(): Html {
   return html`<label>Email or user ID<input name="who" required autofocus placeholder="name@example.com"></label>
@@ -120,7 +116,7 @@ export function teamPages(router: ConsoleRouter): void {
     return ctx.render(
       'Add member',
       'teams',
-      html`${header('Add member', { back: teamUrl(t.id), subtitle: t.name })}
+      html`${header('Add member', { back: teamUrl(t.id) })}
       <form method="post" action="${teamUrl(t.id)}/members" class="card narrow">
         ${memberFields()}
         <div class="foot"><a class="btn" href="${teamUrl(t.id)}">Cancel</a><button class="primary">Add member</button></div>

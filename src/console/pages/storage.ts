@@ -10,7 +10,7 @@ import { checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, DOCUMENT_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { badge, copyableId, destroy, emptyState, formatBytes, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import { badge, destroy, emptyState, formatBytes, header, icon, listCard, pageFooter, pager, searchForm, settingsSection, tabs, when } from '~/console/ui'
 
 const STORAGE = '/console/storage'
 const bucketUrl = (id: string) => `${STORAGE}/${encodeURIComponent(id)}`
@@ -120,12 +120,7 @@ function sectionInput(form: Record<string, any>, b: BucketRow): BucketInput {
 }
 
 function bucketHeader(b: BucketRow, actions?: Html): Html {
-  return header(b.name, {
-    back: STORAGE,
-    subtitle: html`${copyableId(b.id, 'bucket-id-label')}<span class="dot" aria-hidden="true">·</span><span>${b.file_security ? 'File security' : 'Bucket permissions only'}</span>`,
-    badges: [b.enabled ? badge('Enabled', 'success') : badge('Disabled')],
-    actions,
-  })
+  return header(b.name, { back: STORAGE, actions })
 }
 
 const bucketTabs = (b: BucketRow, on: 'files' | 'settings') =>

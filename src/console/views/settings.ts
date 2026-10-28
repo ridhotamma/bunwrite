@@ -268,7 +268,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       body = renderCards(ctx)
       break
   }
-  return html`${header('Settings', { subtitle: ctx.currentProject.name })}
+  return html`${header('Settings')}
     ${tabs(TABS, tab)}
     ${body}`
 }

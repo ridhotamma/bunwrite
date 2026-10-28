@@ -39,7 +39,7 @@ export function indexPages(router: ConsoleRouter): void {
     return ctx.render(
       c.name,
       'databases',
-      html`${collectionHeader(ctx, c, c.indexes.length ? add : undefined)}${tabs(c, 'indexes')}
+      html`${collectionHeader(c, c.indexes.length ? add : undefined)}${tabs(c, 'indexes')}
       ${listCard('indexes', {
         body: c.indexes.length
           ? html`<div class="scroll"><table><thead><tr><th>Index</th><th>Type</th><th>Attributes</th><th></th></tr></thead><tbody>
@@ -59,7 +59,7 @@ export function indexPages(router: ConsoleRouter): void {
     return ctx.render(
       'Add index',
       'databases',
-      html`${header('Add index', { back: `${collectionUrl(c)}/indexes`, subtitle: c.name })}
+      html`${header('Add index', { back: `${collectionUrl(c)}/indexes` })}
       <form method="post" action="${collectionUrl(c)}/indexes" class="card narrow">
         ${indexFields(c)}
         <div class="foot"><a class="btn" href="${collectionUrl(c)}/indexes">Cancel</a><button class="primary">Add index</button></div>

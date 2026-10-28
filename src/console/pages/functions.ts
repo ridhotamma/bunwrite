@@ -1,3 +1,4 @@
+
 import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/deployments'
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
@@ -126,12 +127,7 @@ function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'de
         : deployments.length
           ? alert('warning', html`No deployment is live. Make one live from Deployments.`)
           : alert('critical', html`Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Deploy code below, or set the code folder in <a href="/console/settings/functions">Settings</a>.`)
-  return html`${header(f.name, {
-    back: FN,
-    subtitle: html`${copyableId(f.id, 'function-id-label')}<span class="dot" aria-hidden="true">·</span><span>${f.runtime}</span>`,
-    badges: [f.enabled ? badge('Enabled', 'success') : badge('Disabled')],
-    actions: functionActions(f, active),
-  })}${functionTabs(f.id, active)}
+  return html`${header(f.name, { back: FN, actions: functionActions(f, active) })}${functionTabs(f.id, active)}
   ${paused && f.schedule ? alert('warning', html`The schedule is paused in Settings.`) : ''}
   <div id="code-status">${notice}</div>
   ${body}
@@ -221,7 +217,7 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(
       `Deploy to ${f.name}`,
       'functions',
-      html`${header('Deploy new code', { back: functionUrl(f.id), subtitle: f.name })}
+      html`${header('Deploy new code', { back: functionUrl(f.id) })}
       <div class="card narrow">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands, 'deploy-page-form')}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${functionUrl(f.id)}">Cancel</a><button type="submit" form="deploy-page-form" class="primary">Deploy</button></div>
       </div>`,
@@ -290,6 +286,8 @@ export function functionPages(router: ConsoleRouter): void {
           'Code',
           'Where the live code comes from and how to reach it over HTTP.',
           html`<ul class="list" id="code-card">
+            <li><span class="subdued">Function ID</span>${copyableId(f.id, 'function-id-label')}</li>
+            <li><span class="subdued">Runtime</span><span class="mono">${f.runtime}</span></li>
             <li><span class="subdued">Source</span><span>${fromDeployment ? 'Live deployment' : code.dir ? 'Code folder' : html`<span style="color:var(--critical)">None</span>`}</span></li>
             ${code.dir && !fromDeployment ? html`<li><span class="subdued">Folder</span><span class="mono clip">${code.dir}</span></li>` : ''}
             <li><span class="subdued">Entry file</span><span class="mono">${code.entrypoint}</span></li>
@@ -376,12 +374,12 @@ export function functionPages(router: ConsoleRouter): void {
       `Run ${e.id}`,
       'functions',
       html`<div id="run" ${live ? poll(`${functionUrl(path.id!)}/executions/${e.id}`, 'run', 2) : ''}>
-        ${header('Run', {
-          back: functionUrl(f.id),
-          subtitle: html`${copyableId(e.id, 'execution-id-label')}<span class="dot" aria-hidden="true">·</span><span>${when(e.created_at)}</span><span class="dot" aria-hidden="true">·</span><span>${f.name}</span>`,
-          badges: [statusBadge(e.status), badge(e.trigger)],
-        })}
+        ${header('Run', { back: functionUrl(f.id) })}
         <div class="stats" style="margin-bottom:16px">
+          <div class="stat"><span>Status</span><b style="font-size:14px">${statusBadge(e.status)}</b></div>
+          ${stat('Trigger', e.trigger)}
+          <div class="stat"><span>Started</span><b style="font-size:14px">${when(e.created_at)}</b></div>
+          <div class="stat"><span>Run ID</span><b style="font-size:13px">${copyableId(e.id, 'execution-id-label')}</b></div>
           ${stat('Response', e.response_status_code || '—')}
           ${stat('Time', `${e.duration.toFixed(2)}s`)}
           ${stat('Request', `${e.request_method} ${e.request_path}`)}

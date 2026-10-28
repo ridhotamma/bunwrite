@@ -95,7 +95,7 @@ function inviteDialog(open: boolean): Html {
     title: 'Invite members',
     open,
     body: html`<p class="dialog-message">Each person gets an email with a link to join.</p>
-      <form id="invite-members-form" method="post" action="/console/organization/members/invite" hx-boost="false">
+      <form id="invite-members-form" method="post" action="/console/organization/members/invite" hx-boost="false" data-busy-label="Sending…">
         <div class="invite-rows" id="invite-rows">${inviteRow()}</div>
         <button type="button" class="small" data-add-row="#invite-row-template" data-row-target="#invite-rows">${icon('plus')}<span>Add another</span></button>
         <p class="help">Owners manage members, settings and every project. Developers work in every project.</p>

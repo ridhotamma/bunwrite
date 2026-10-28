@@ -69,11 +69,7 @@ export function documentFormView(ctx: ConsoleContext, c: Collection, doc: Record
   for (const a of c.attributes) data[a.key] = doc ? doc[a.key] : (a.default ?? (a.array ? [] : null))
   const action = doc ? `${collectionUrl(c)}/documents/${encodeURIComponent(String(doc.$id))}` : `${collectionUrl(c)}/documents`
   const schema = c.attributes.map((a) => ({ key: a.key, type: a.type, array: a.array }))
-  return html`${header(doc ? String(doc.$id) : 'Create document', {
-      back: `${collectionUrl(c)}/documents`,
-      subtitle: c.name,
-      badges: doc ? [badge('Document')] : [],
-    })}${tabs(c, 'documents')}
+  return html`${header(doc ? String(doc.$id) : 'Create document', { back: `${collectionUrl(c)}/documents` })}${tabs(c, 'documents')}
     <form method="post" action="${action}" class="layout">
       <div class="card docform" data-docform="${JSON.stringify(schema)}">
       <div class="docform-head"><h2>Data</h2>
@@ -165,7 +161,7 @@ export function documentsListView(ctx: ConsoleContext, view: DocumentsListView):
         label: html`Page ${page} of ${pages} · ${total.toLocaleString('en-US')}${total >= 5000 ? '+' : ''} document${total === 1 ? '' : 's'}`,
       })
     : html``
-  return html`${collectionHeader(ctx, c, documents.length || filter ? create : undefined)}
+  return html`${collectionHeader(c, documents.length || filter ? create : undefined)}
     ${tabs(c, 'documents')}
     ${listCard('docs', { toolbar, body, footer })}`
 }
