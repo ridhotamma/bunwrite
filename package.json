@@ -32,6 +32,7 @@
     "stress": "bun scripts/stress/index.ts",
     "stress:seed": "bun scripts/stress/index.ts seed",
     "stress:run": "bun scripts/stress/index.ts run",
+    "stress:booking": "bun scripts/stress/booking.ts",
     "sdk:sync": "bun scripts/sdk-sync.ts",
     "sdk:build": "cd packages/sdk && bun run build",
     "cli:build": "cd packages/cli && bun run build"

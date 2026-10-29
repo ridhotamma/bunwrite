@@ -46,6 +46,51 @@ pass `--key`, `--session` or `--jwt` instead of the environment variable.
 `seed` requires an API key because it uses the bulk-create endpoint. `run` can
 use an API key, a session or a JWT.
 
+## Booking-app scenario
+
+`bun run stress:booking` builds a disposable booking dataset and measures the
+paths a booking user generates. It creates the `booking_stress` database and
+three collections (`services`, `slots`, `bookings`) through the normal API,
+seeds them, then runs either one path at a time or a concurrent mix.
+
+```bash
+export STRESS_API_KEY=your-api-key
+
+# Create the schema and seed services, slots and bookings.
+bun run stress:booking setup \
+  --base https://bunwrite.example.com/v1 \
+  --project booking-app \
+  --reset
+
+# Per-path throughput and latency (uses oha).
+bun run stress:booking run \
+  --manifest data/stress/booking-bkg-202610301200.json \
+  --concurrency 1,10,50,100,200,400
+
+# Real concurrent mix: 30% booking writes, 70% reads.
+bun run stress:booking mix \
+  --manifest data/stress/booking-bkg-202610301200.json \
+  --mix-concurrency 50,75,100,125,150 \
+  --mix-duration 30 --mix-warmup 3
+```
+
+`setup` prints the manifest path. The mix assigns clients as 15% services,
+35% availability, 15% bookings, 5% point read and 30% create. The report gives
+the highest client count that stays under a p95 latency SLO with at least 99%
+success, plus an active-user estimate based on five API calls per user per
+minute. Change that assumption for your real page.
+
+This scenario deliberately writes more than most booking apps (30% of calls).
+It is useful for finding the SQLite write ceiling; a read-heavy storefront mix
+will sustain more throughput. HTML rendering is not included.
+
+Delete the disposable database when done:
+
+```bash
+bun run stress:booking cleanup --yes \
+  --base https://bunwrite.example.com/v1 --project booking-app
+```
+
 ## Docker at 2 vCPU / 2 GB
 
 This is the setup used for the published measurements:

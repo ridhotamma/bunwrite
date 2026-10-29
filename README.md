@@ -719,6 +719,7 @@ cancel the real one.
 | `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs; keeps `KEEP` (default 7) |
 | `bun run autotune` | Show the resource limits detected from the host/cgroup |
 | `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
+| `bun run stress:booking` | Seed and load-test a booking-app read/write mix |
 | `bun run typecheck` | TypeScript check |
 | `bun test` | Contract tests through the real SDKs |
 | `bun run sdk:sync` | Copy the Appwrite SDK code Bunwrite serves into `packages/sdk` |
@@ -730,6 +731,62 @@ cancel the real one.
 throughput and latency with `oha` (or a built-in Bun client). See
 [scripts/stress/README.md](scripts/stress/README.md) for the 2 vCPU / 2 GB
 Docker recipe and custom targets.
+
+For a booking-app workload, `bun run stress:booking` creates a disposable
+`booking_stress` database, seeds services, slots and bookings, and measures a
+concurrent read/write mix (browse, availability, my bookings, point read and
+create). See the same guide for the setup, mix and cleanup commands.
+
+### Booking-app workload
+
+The booking test creates its own database and collections through the normal
+API, so it does not touch application data. It needs an API key and a
+disposable project or database:
+
+```bash
+export STRESS_API_KEY=your-api-key
+
+# 1. Create the schema and seed services, slots and bookings.
+bun run stress:booking setup \
+  --base https://bunwrite.example.com/v1 \
+  --project booking-app \
+  --reset
+
+# 2. Measure each path separately.
+bun run stress:booking run \
+  --manifest data/stress/booking-bkg-202610301200.json \
+  --concurrency 1,10,50,100,200,400
+
+# 3. Measure a concurrent mix: 30% writes, 70% reads.
+bun run stress:booking mix \
+  --manifest data/stress/booking-bkg-202610301200.json \
+  --mix-concurrency 50,75,100,125,150 \
+  --mix-duration 30 --mix-warmup 3
+
+# 4. Remove the disposable database.
+bun run stress:booking cleanup --yes \
+  --base https://bunwrite.example.com/v1 \
+  --project booking-app
+```
+
+`setup` prints the manifest path and seeds before testing. The mix is 15%
+services, 35% availability, 15% bookings, 5% point read and 30% create. A
+report is written next to every raw result in `data/stress/`.
+
+On the tested **1 vCPU / 1 GB** staging host, the mix saturated at roughly
+**760–790 requests/second**. With **75–100 concurrent HTTP clients** it held
+**724–761 rps** at **p95 160–230 ms** and **99.1–99.7% success**. At 125
+clients success fell below 99%; at 400 clients p95 reached 1.4 seconds. Using
+the report's model of five API calls per active user per minute, that is about
+**8,700–9,100 active users** at the 99% SLO, so plan for roughly 5,000–6,000
+with headroom. These figures are host- and workload-specific; rerun the mix
+with your real calls-per-page and read/write ratio.
+
+The test deliberately writes more than most booking apps. It does not enforce
+seat inventory, and it excludes HTML rendering, WebSocket realtime, file
+uploads and function runs. HTML/PDF rendering is not a good fit for a 1 GB
+host. See [scripts/stress/README.md](scripts/stress/README.md) for every flag
+and the 2 vCPU / 2 GB Docker recipe.
 
 ## Deploy
 
