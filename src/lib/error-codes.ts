@@ -19,6 +19,8 @@ export const ERRORS: Record<string, readonly [number, string]> = {
   "general_column_query_limit_exceeded": [400, "Query limit exceeded for the current column."],
   "general_query_invalid": [400, "The query's syntax is invalid. Please check the query and try again."],
   "general_route_not_found": [404, "Route not found. Please ensure the endpoint is configured correctly and that the API route is valid for this SDK version. Refer to the API docs for more details."],
+  "queue_message_not_found": [404, "Message with the requested ID could not be found in this queue."],
+  "queue_message_conflict": [409, "The message is not processing, or its lease was lost. Claim it again before acking or failing it."],
   "general_cursor_not_found": [400, "The cursor is invalid. This can happen if the item represented by the cursor has been deleted."],
   "general_server_error": [500, "An internal server error occurred."],
   "general_protocol_unsupported": [426, "The request cannot be fulfilled with the current protocol. Please check the value of the _APP_OPTIONS_FORCE_HTTPS environment variable."],

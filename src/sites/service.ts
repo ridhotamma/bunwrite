@@ -28,6 +28,7 @@ import { siteHome, sitesDir } from './paths'
 import { branchLabel, branchSlug, deploymentLabel, parsePreview } from './previews'
 import { isPruneMode, PRUNE_MODES, pruneScript, SIZE_MARKER, type PruneMode } from './prune'
 import { SOURCE_COLUMNS, sourceValues, type DeploymentSource, type ProviderColumns, type ProviderSettings, type SourceColumns } from '~/vcs/source'
+import type { VariablesService } from '~/variables/service'
 import { SsrRuntime, type SsrTarget } from './ssr'
 
 /** Ready deployments kept besides the live one, for rollback. SSR sites use SITES_SSR_KEEP_PREVIOUS. */
@@ -156,8 +157,13 @@ export class SiteService {
     private db: Db,
     private config: Config,
     private proxy: ProxyService,
+    private variables: VariablesService,
   ) {
-    this.ssr = new SsrRuntime(config, (siteId, deploymentId) => this.ssrTarget(siteId, deploymentId))
+    this.ssr = new SsrRuntime(
+      config,
+      (siteId, deploymentId) => this.ssrTarget(siteId, deploymentId),
+      (siteId) => this.variables.siteEnvironment(siteId),
+    )
   }
 
   private get sql() {
@@ -410,6 +416,7 @@ export class SiteService {
       this.sql.query('DELETE FROM _site_branches WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
     })()
+    this.variables.removeSite(id)
     this.changed()
     // A request could have started the old app between the first stop and here.
     this.ssr.forget(id)
@@ -816,7 +823,10 @@ export class SiteService {
       set('building')
     })
     logs.push(`Runtime: ${runtime.version ? `${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}` : `this server's Bun ${process.versions.bun}`}`)
-    const env = withRuntime(siteBaseEnv(this.config, site.id), runtime)
+    const env = withRuntime(
+      siteBaseEnv(this.config, site.id, this.variables.siteEnvironment(site.id)),
+      runtime,
+    )
     for (const [label, command] of commands) {
       logs.push(`$ ${command}`)
       set('building')

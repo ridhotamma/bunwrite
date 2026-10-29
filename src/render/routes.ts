@@ -3,13 +3,17 @@
  * extensions, not part of Appwrite). Need an API key. Return the bytes, or save
  * them to a bucket when bucketId is set (local disk or S3, whichever file
  * storage uses) and return the file.
+ *
+ * With `async: true` (and a bucketId) the render is queued instead: the
+ * response is a job (202) and GET /v1/render/jobs/:jobId reports when the
+ * file is in the bucket. Use it for bursts, so callers never wait in line.
  */
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
 import { err } from '~/lib/errors'
 import { bool, json, num, str } from '~/lib/http'
 import type { Router } from '~/lib/router'
-import { IMAGE_OUTPUTS, PAPER_SIZES, type ImageOptions, type ImageOutput, type PaperSize, type PdfOptions } from './service'
+import { IMAGE_OUTPUTS, PAPER_SIZES, renderJobModel, type ImageOptions, type ImageOutput, type PaperSize, type PdfOptions, type RenderTarget } from './service'
 
 function margin(value: unknown): PdfOptions['margin'] {
   if (value === undefined || value === null || value === '') return undefined
@@ -67,7 +71,8 @@ export function imageOptions(params: Record<string, unknown>): ImageOptions {
   if (output === 'jpeg') output = 'jpg'
   if (!(IMAGE_OUTPUTS as readonly string[]).includes(output)) throw err('general_argument_invalid', `Param "output" must be one of ${IMAGE_OUTPUTS.join(', ')}.`)
   const scale = num(params.scale, 1)!
-  if (!(scale >= 1 && scale <= 3)) throw err('general_argument_invalid', 'Param "scale" must be between 1 and 3.')
+  // Below 1 the page still lays out at width × height and the bitmap shrinks: thumbnails without a second layout.
+  if (!(scale >= 0.1 && scale <= 3)) throw err('general_argument_invalid', 'Param "scale" must be between 0.1 and 3.')
   return {
     output: output as ImageOutput,
     width: int(params, 'width', 16, 4000),
@@ -109,17 +114,34 @@ const html = (params: Record<string, unknown>): string => {
   return params.html
 }
 
+/** Where an async render goes: it has no response to carry the bytes, so a bucket is required. */
+function target(params: Record<string, unknown>, name: string): RenderTarget {
+  const bucketId = str(params.bucketId)
+  if (!bucketId) throw err('general_argument_invalid', 'Param "bucketId" is required with async: true. The result is saved to that bucket.')
+  return { bucketId, fileId: params.fileId, fileName: name, permissions: params.permissions ?? null }
+}
+
 export function renderRoutes(router: Router<AppContext>): void {
   router.post('/pdf', async ({ ctx, params }) => {
     requireKey(ctx, 'render.write')
-    const bytes = await ctx.render.pdf(html(params), pdfOptions(params))
-    return respond(ctx, params, bytes, fileName(str(params.fileName), 'document', 'pdf'), 'application/pdf')
+    const options = pdfOptions(params)
+    const name = fileName(str(params.fileName), 'document', 'pdf')
+    if (bool(params.async, false)) return json(renderJobModel(ctx.render.enqueue('pdf', html(params), options, target(params, name))), 202)
+    const bytes = await ctx.render.pdf(html(params), options)
+    return respond(ctx, params, bytes, name, 'application/pdf')
   })
 
   router.post('/image', async ({ ctx, params }) => {
     requireKey(ctx, 'render.write')
     const options = imageOptions(params)
+    const name = fileName(str(params.fileName), 'image', options.output!)
+    if (bool(params.async, false)) return json(renderJobModel(ctx.render.enqueue('image', html(params), options, target(params, name))), 202)
     const { bytes, mime } = await ctx.render.image(html(params), options)
-    return respond(ctx, params, bytes, fileName(str(params.fileName), 'image', options.output!), mime)
+    return respond(ctx, params, bytes, name, mime)
+  })
+
+  router.get('/render/jobs/:jobId', ({ ctx, path }) => {
+    requireKey(ctx, 'render.read')
+    return json(renderJobModel(ctx.render.job(path.jobId!)))
   })
 }

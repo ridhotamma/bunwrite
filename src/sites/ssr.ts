@@ -160,6 +160,8 @@ export class SsrRuntime {
   constructor(
     private readonly config: Config,
     private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null,
+    /** Project + site variables for a site; empty when the service does not have them. */
+    private readonly variablesFor: (siteId: string) => Record<string, string> = () => ({}),
   ) {
     this.sandbox = config.functionsSandbox ?? null
   }
@@ -278,7 +280,10 @@ export class SsrRuntime {
       const runtime = await ensureRuntime(this.config, target.runtime, (line) => this.log(app, `[runtime] ${line}`))
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
-        env: withRuntime(siteRuntimeEnv(this.config, target.siteId, port), runtime),
+        env: withRuntime(
+          siteRuntimeEnv(this.config, target.siteId, port, this.variablesFor(target.siteId)),
+          runtime,
+        ),
         stdout: 'pipe',
         stderr: 'pipe',
         // One session per app: stopping it takes `npm start`'s children too.

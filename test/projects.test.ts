@@ -133,6 +133,7 @@ describe('multiple projects', () => {
     })
     expect(select.status).toBe(303)
     expect(select.headers.get('set-cookie')).toContain('console_project=project-b')
+    expect(select.headers.get('set-cookie')).toContain('SameSite=Lax')
 
     const home = await fetch(`${base}/console/overview`, { headers: { cookie: `${cookie}; console_project=project-b` } })
     expect(home.status).toBe(200)

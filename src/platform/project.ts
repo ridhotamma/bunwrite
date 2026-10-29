@@ -6,13 +6,16 @@
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
 import { err } from '~/lib/errors'
-import { json, list, noContent } from '~/lib/http'
+import { bool, json, list, noContent, str } from '~/lib/http'
+import { resolveId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import type { ProjectInfo } from '~/projects/types'
 import type { Services } from '~/services'
 import type { MockPhone } from '~/settings/access'
 import { localeParam, TEMPLATE_IDS, TEMPLATE_LOCALE, templateIdParam, type TemplateFields, type TemplateId } from '~/mail/templates'
+import { variableModel } from '~/variables/model'
+import { PROJECT_SCOPE } from '~/variables/service'
 
 const templateModel = (id: TemplateId, t: TemplateFields) => ({ templateId: id, locale: TEMPLATE_LOCALE, ...t })
 
@@ -84,6 +87,55 @@ export function projectRoutes(router: Router<AppContext>): void {
   router.get('/project', ({ ctx }) => {
     requireKey(ctx, 'project.read')
     return json(projectModel(infoOf(ctx), ctx))
+  })
+
+  // Project variables: available to every site and function in this project.
+  router.get('/project/variables', ({ ctx, params }) => {
+    requireKey(ctx, 'project.read')
+    const { total, items } = page(
+      ctx.variables.list(PROJECT_SCOPE).map((v) => variableModel(v, 'project', '')),
+      list(params.queries),
+    )
+    return json({ total, variables: items })
+  })
+
+  router.post('/project/variables', ({ ctx, params }) => {
+    requireKey(ctx, 'project.write')
+    const key = str(params.key) ?? ''
+    const id = resolveId(params.variableId ?? 'unique()', 'Variable ID')
+    const row = ctx.variables.create(
+      PROJECT_SCOPE,
+      id,
+      key,
+      str(params.value) ?? '',
+      bool(params.secret, false),
+    )
+    // The next request starts SSR apps with the new environment.
+    for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
+    return json(variableModel(row, 'project', ''), 201)
+  })
+
+  router.get('/project/variables/:variableId', ({ ctx, path }) => {
+    requireKey(ctx, 'project.read')
+    return json(variableModel(ctx.variables.get(PROJECT_SCOPE, path.variableId!), 'project', ''))
+  })
+
+  router.put('/project/variables/:variableId', ({ ctx, path, params }) => {
+    requireKey(ctx, 'project.write')
+    const row = ctx.variables.update(PROJECT_SCOPE, path.variableId!, {
+      key: str(params.key),
+      value: str(params.value),
+      secret: params.secret === undefined ? undefined : bool(params.secret, false),
+    })
+    for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
+    return json(variableModel(row, 'project', ''))
+  })
+
+  router.delete('/project/variables/:variableId', ({ ctx, path }) => {
+    requireKey(ctx, 'project.write')
+    ctx.variables.deleteById(PROJECT_SCOPE, path.variableId!)
+    for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
+    return noContent()
   })
 
   router.patch('/project/services/:serviceId', ({ ctx, path, params }) => {

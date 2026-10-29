@@ -69,11 +69,7 @@ export const organizationMembers = sqliteTable(
     joinedAt: text('joined_at'),
     ...timestamps,
   },
-  (t) => [
-    uniqueIndex('_organization_members_email').on(t.organizationId, t.email),
-    index('_organization_members_org').on(t.organizationId),
-    uniqueIndex('_organization_members_invite').on(t.inviteHash),
-  ],
+  (t) => [uniqueIndex('_organization_members_email').on(t.organizationId, t.email), index('_organization_members_org').on(t.organizationId), uniqueIndex('_organization_members_invite').on(t.inviteHash)],
 )
 
 export const databases = sqliteTable('_databases', {
@@ -93,9 +89,15 @@ export const collections = sqliteTable(
     name: text('name').notNull(),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
     documentSecurity: integer('document_security', { mode: 'boolean' }).notNull().default(true),
-    permissions: json<string[]>('permissions').notNull().default(sql`'[]'`),
-    attributes: json<unknown[]>('attributes').notNull().default(sql`'[]'`),
-    indexes: json<unknown[]>('indexes').notNull().default(sql`'[]'`),
+    permissions: json<string[]>('permissions')
+      .notNull()
+      .default(sql`'[]'`),
+    attributes: json<unknown[]>('attributes')
+      .notNull()
+      .default(sql`'[]'`),
+    indexes: json<unknown[]>('indexes')
+      .notNull()
+      .default(sql`'[]'`),
     ...timestamps,
   },
   (t) => [uniqueIndex('_collections_db_id').on(t.databaseId, t.id)],
@@ -139,15 +141,21 @@ export const users = sqliteTable('_users', {
   /** Password hash, in the format named by `hash`. */
   password: text('password'),
   hash: text('hash').notNull().default('argon2'),
-  hashOptions: json<Record<string, unknown>>('hash_options').notNull().default(sql`'{}'`),
+  hashOptions: json<Record<string, unknown>>('hash_options')
+    .notNull()
+    .default(sql`'{}'`),
   registration: text('registration').notNull(),
   status: integer('status', { mode: 'boolean' }).notNull().default(true),
-  labels: json<string[]>('labels').notNull().default(sql`'[]'`),
+  labels: json<string[]>('labels')
+    .notNull()
+    .default(sql`'[]'`),
   passwordUpdate: text('password_update'),
   emailVerification: integer('email_verification', { mode: 'boolean' }).notNull().default(false),
   phoneVerification: integer('phone_verification', { mode: 'boolean' }).notNull().default(false),
   mfa: integer('mfa', { mode: 'boolean' }).notNull().default(false),
-  prefs: json<Record<string, unknown>>('prefs').notNull().default(sql`'{}'`),
+  prefs: json<Record<string, unknown>>('prefs')
+    .notNull()
+    .default(sql`'{}'`),
   accessedAt: text('accessed_at'),
   ...timestamps,
 })
@@ -169,7 +177,9 @@ export const sessions = sqliteTable(
     providerRefreshToken: text('provider_refresh_token').notNull().default(''),
     ip: text('ip').notNull().default(''),
     userAgent: text('user_agent').notNull().default(''),
-    factors: json<string[]>('factors').notNull().default(sql`'[]'`),
+    factors: json<string[]>('factors')
+      .notNull()
+      .default(sql`'[]'`),
     expire: text('expire').notNull(),
     ...timestamps,
   },
@@ -199,7 +209,9 @@ export const teams = sqliteTable('_teams', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   id: text('id').notNull().unique(),
   name: text('name').notNull(),
-  prefs: json<Record<string, unknown>>('prefs').notNull().default(sql`'{}'`),
+  prefs: json<Record<string, unknown>>('prefs')
+    .notNull()
+    .default(sql`'{}'`),
   ...timestamps,
 })
 
@@ -214,7 +226,9 @@ export const memberships = sqliteTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    roles: json<string[]>('roles').notNull().default(sql`'[]'`),
+    roles: json<string[]>('roles')
+      .notNull()
+      .default(sql`'[]'`),
     invited: text('invited').notNull(),
     joined: text('joined'),
     confirm: integer('confirm', { mode: 'boolean' }).notNull().default(false),
@@ -250,9 +264,13 @@ export const buckets = sqliteTable('_buckets', {
   name: text('name').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   fileSecurity: integer('file_security', { mode: 'boolean' }).notNull().default(true),
-  permissions: json<string[]>('permissions').notNull().default(sql`'[]'`),
+  permissions: json<string[]>('permissions')
+    .notNull()
+    .default(sql`'[]'`),
   maximumFileSize: integer('maximum_file_size').notNull().default(30000000),
-  allowedFileExtensions: json<string[]>('allowed_file_extensions').notNull().default(sql`'[]'`),
+  allowedFileExtensions: json<string[]>('allowed_file_extensions')
+    .notNull()
+    .default(sql`'[]'`),
   compression: text('compression').notNull().default('none'),
   encryption: integer('encryption', { mode: 'boolean' }).notNull().default(false),
   antivirus: integer('antivirus', { mode: 'boolean' }).notNull().default(false),
@@ -267,7 +285,9 @@ export const files = sqliteTable(
     id: text('id').notNull(),
     bucketId: text('bucket_id').notNull(),
     name: text('name').notNull(),
-    permissions: json<string[]>('permissions').notNull().default(sql`'[]'`),
+    permissions: json<string[]>('permissions')
+      .notNull()
+      .default(sql`'[]'`),
     signature: text('signature').notNull().default(''),
     mimeType: text('mime_type').notNull().default('application/octet-stream'),
     sizeOriginal: integer('size_original').notNull().default(0),
@@ -286,12 +306,18 @@ export const functions = sqliteTable('_functions', {
   entrypoint: text('entrypoint').notNull(),
   /** Absolute folder of the function's code. */
   path: text('path').notNull(),
-  execute: json<string[]>('execute').notNull().default(sql`'[]'`),
-  events: json<string[]>('events').notNull().default(sql`'[]'`),
+  execute: json<string[]>('execute')
+    .notNull()
+    .default(sql`'[]'`),
+  events: json<string[]>('events')
+    .notNull()
+    .default(sql`'[]'`),
   schedule: text('schedule').notNull().default(''),
   timeout: integer('timeout').notNull().default(15),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-  scopes: json<string[]>('scopes').notNull().default(sql`'[]'`),
+  scopes: json<string[]>('scopes')
+    .notNull()
+    .default(sql`'[]'`),
   /** Build command run on each new deployment. */
   commands: text('commands').notNull().default(''),
   logging: integer('logging', { mode: 'boolean' }).notNull().default(true),
@@ -457,13 +483,12 @@ export const vcsRepositories = sqliteTable(
     resourceType: text('resource_type').notNull(),
     resourceId: text('resource_id').notNull(),
     /** Pull requests from forks that an admin approved for builds. */
-    providerPullRequestIds: json<string[]>('provider_pull_request_ids').notNull().default(sql`'[]'`),
+    providerPullRequestIds: json<string[]>('provider_pull_request_ids')
+      .notNull()
+      .default(sql`'[]'`),
     ...timestamps,
   },
-  (t) => [
-    uniqueIndex('_vcs_repositories_resource').on(t.projectId, t.resourceType, t.resourceId),
-    index('_vcs_repositories_provider').on(t.providerRepositoryId),
-  ],
+  (t) => [uniqueIndex('_vcs_repositories_resource').on(t.projectId, t.resourceType, t.resourceId), index('_vcs_repositories_provider').on(t.providerRepositoryId)],
 )
 
 /** Control database only: the one Bunwrite comment kept up to date on each pull request. */
@@ -509,19 +534,61 @@ export const executions = sqliteTable(
     status: text('status').notNull(),
     requestMethod: text('request_method').notNull().default('POST'),
     requestPath: text('request_path').notNull().default('/'),
-    requestHeaders: json<{ name: string; value: string }[]>('request_headers').notNull().default(sql`'[]'`),
+    requestHeaders: json<{ name: string; value: string }[]>('request_headers')
+      .notNull()
+      .default(sql`'[]'`),
     requestBody: text('request_body').notNull().default(''),
     responseStatusCode: integer('response_status_code').notNull().default(0),
     responseBody: text('response_body').notNull().default(''),
-    responseHeaders: json<{ name: string; value: string }[]>('response_headers').notNull().default(sql`'[]'`),
+    responseHeaders: json<{ name: string; value: string }[]>('response_headers')
+      .notNull()
+      .default(sql`'[]'`),
     logs: text('logs').notNull().default(''),
     errors: text('errors').notNull().default(''),
     duration: real('duration').notNull().default(0),
     scheduledAt: text('scheduled_at'),
     userId: text('user_id'),
+    /** Runs started so far; a run is retried until it reaches `maxAttempts`. */
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(1),
+    /** Earliest time an asynchronous run may be claimed (retries back off). */
+    availableAt: text('available_at'),
+    /** When the current run's claim expires; a crashed run is reclaimed after it. */
+    leaseUntil: text('lease_until'),
     ...timestamps,
   },
-  (t) => [index('_executions_function').on(t.functionId, t.seq)],
+  (t) => [index('_executions_function').on(t.functionId, t.seq), index('_executions_queue').on(t.status, t.availableAt)],
+)
+
+/**
+ * Queue messages for the built-in job queue (see docs/QUEUE.md). Workers claim
+ * a lease over HTTP with the SDK, run the handler in their own process, then
+ * ack or fail the message. Bunwrite only stores the state.
+ */
+export const queueMessages = sqliteTable(
+  '_queue_messages',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    queue: text('queue').notNull(),
+    /** waiting | processing | completed | failed */
+    status: text('status').notNull().default('waiting'),
+    /** The job payload, as JSON text (or a plain string when the caller sent one). */
+    data: text('data').notNull().default(''),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    /** Earliest time a waiting message may be claimed; delayed and retried jobs move it. */
+    availableAt: text('available_at').notNull(),
+    /** When the current claim expires; the message returns to `waiting` after it. */
+    leaseUntil: text('lease_until'),
+    /** Unique per queue; enqueueing the same key returns the existing message. */
+    idempotencyKey: text('idempotency_key'),
+    result: text('result').notNull().default(''),
+    errors: text('errors').notNull().default(''),
+    completedAt: text('completed_at'),
+    ...timestamps,
+  },
+  (t) => [index('_queue_messages_claim').on(t.queue, t.status, t.availableAt, t.seq), uniqueIndex('_queue_messages_idempotency').on(t.queue, t.idempotencyKey)],
 )
 
 /** People who may sign in to /console. Separate from project users, as in Appwrite. */
@@ -561,6 +628,27 @@ export const apiKeys = sqliteTable('_api_keys', {
   accessedAt: text('accessed_at'),
   ...timestamps,
 })
+
+/**
+ * Project and site environment variables.
+ *
+ * `scope` is `project` for values available to every site and function, or
+ * `site:<id>` for one site. A site variable wins over a project variable with
+ * the same key; a function variable wins over both in a function run.
+ */
+export const variables = sqliteTable(
+  '_variables',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull().unique(),
+    scope: text('scope').notNull(),
+    key: text('key').notNull(),
+    value: text('value').notNull(),
+    secret: integer('secret', { mode: 'boolean' }).notNull().default(false),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_variables_scope_key').on(t.scope, t.key)],
+)
 
 /** Function variables (Appwrite's per-function env). function_id '*' applies to every function. */
 export const functionVars = sqliteTable(
@@ -607,7 +695,9 @@ export const webhooks = sqliteTable('_webhooks', {
   id: text('id').notNull().unique(),
   name: text('name').notNull(),
   url: text('url').notNull(),
-  events: json<string[]>('events').notNull().default(sql`'[]'`),
+  events: json<string[]>('events')
+    .notNull()
+    .default(sql`'[]'`),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   /** Verify the receiver's TLS certificate. */
   tls: integer('tls', { mode: 'boolean' }).notNull().default(true),
@@ -627,6 +717,8 @@ export const topics = sqliteTable('_topics', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   id: text('id').notNull().unique(),
   name: text('name').notNull(),
-  subscribe: json<string[]>('subscribe').notNull().default(sql`'[]'`),
+  subscribe: json<string[]>('subscribe')
+    .notNull()
+    .default(sql`'[]'`),
   ...timestamps,
 })

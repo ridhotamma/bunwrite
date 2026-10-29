@@ -64,7 +64,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         return new Response(file, { headers: { 'content-type': 'text/javascript', 'content-length': String(file.size), 'cache-control': 'public, max-age=86400' } })
       }
 
-      // Forms must come from this console (SameSite=Strict covers modern browsers; this covers the rest).
+      // Forms must come from this console (SameSite=Lax withholds cookies from cross-site POSTs; this covers the rest).
       if (request.method === 'POST') {
         const origin = request.headers.get('origin')
         if (origin && new URL(origin).host !== url.host) return new Response('Cross-site request refused', { status: 403 })

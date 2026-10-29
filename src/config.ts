@@ -162,6 +162,10 @@ export interface Config {
   functionsDir: string
   /** Run a function's build command (`commands`) on each new deployment. */
   functionsBuildCommands: boolean
+  /** Function runs allowed at once (FUNCTIONS_CONCURRENCY); async and scheduled runs wait their turn. */
+  functionsConcurrency: number
+  /** Attempts a failed asynchronous function run gets (FUNCTIONS_MAX_ATTEMPTS); default 1, no retry. */
+  functionMaxAttempts: number
   /** Each function builds and runs as its own user (functions/sandbox.ts); null when off. */
   functionsSandbox?: FunctionSandbox | null
   /** Per-process key handed to function executions; never stored. */
@@ -321,6 +325,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     skipSchedules: [],
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
+    functionsConcurrency: Math.max(1, Number(env.FUNCTIONS_CONCURRENCY) || 4),
+    functionMaxAttempts: Math.max(1, Number(env.FUNCTIONS_MAX_ATTEMPTS) || 1),
     sitesDomain,
     functionsDomain,
     sitesPrefix,

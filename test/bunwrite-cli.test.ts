@@ -506,6 +506,33 @@ describe('sites', () => {
     expect(readFileSync(join(fresh.dir, 'sites/landing/dist/index.html'), 'utf8')).toContain('Landing from the CLI')
   })
 
+  test('push --with-variables syncs the site .env and keeps only what is there', async () => {
+    const ws = new Workspace('sites-variables')
+    await ws.withKey()
+    const site = join(ws.dir, 'sites', 'vars')
+    mkdirSync(join(site, 'dist'), { recursive: true })
+    writeFileSync(join(site, 'dist', 'index.html'), '<h1>Vars</h1>')
+    writeFileSync(join(site, '.env'), 'APPWRITE_API_KEY=secret-value\nPUBLIC_NAME=Vars\n')
+    ws.config = {
+      projectId: PROJECT,
+      sites: [{ $id: 'vars', name: 'Vars', framework: 'other', path: 'sites/vars', outputDirectory: 'dist' }],
+    }
+
+    await ws.ok('push', 'sites', '--with-variables')
+    const sites = new Sites(admin())
+    const first = await sites.listVariables({ siteId: 'vars' })
+    expect(first.total).toBe(2)
+    expect(first.variables.find((v) => v.key === 'APPWRITE_API_KEY')?.secret).toBe(true)
+    expect(first.variables.find((v) => v.key === 'PUBLIC_NAME')?.secret).toBe(false)
+
+    writeFileSync(join(site, '.env'), 'PUBLIC_NAME=Changed\n')
+    await ws.ok('push', 'sites', '--with-variables')
+    const second = await sites.listVariables({ siteId: 'vars' })
+    expect(second.total).toBe(1)
+    expect(second.variables[0]?.key).toBe('PUBLIC_NAME')
+    expect(second.variables[0]?.value).toBe('Changed')
+  })
+
   test('a missing output folder says to build first', async () => {
     const ws = new Workspace('sites-unbuilt')
     await ws.withKey()

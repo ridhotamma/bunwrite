@@ -47,9 +47,10 @@ function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
   )
 }
 
+// Lax, like the session cookie, so the project survives a return from GitHub.
 const projectCookie = (id: string, secure: boolean) =>
-  `console_project=${encodeURIComponent(id)}; Path=/console; HttpOnly; SameSite=Strict${secure ? '; Secure' : ''}`
-const clearProjectCookie = 'console_project=; Path=/console; HttpOnly; SameSite=Strict; Max-Age=0'
+  `console_project=${encodeURIComponent(id)}; Path=/console; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`
+const clearProjectCookie = 'console_project=; Path=/console; HttpOnly; SameSite=Lax; Max-Age=0'
 
 /** Project selection at /console, plus project create, edit, delete and switch. */
 export function projectPages(router: ConsoleRouter): void {

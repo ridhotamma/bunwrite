@@ -3,14 +3,23 @@
  * DevTools protocol (Page.printToPDF, Page.captureScreenshot). No Puppeteer
  * or Playwright.
  *
- * Built for small hosts: one render at a time (others wait in line), Chromium
- * starts on the first request and is shut down after a minute idle, and remote
- * URLs are blocked unless allowed in settings.
+ * Built for small hosts: one render at a time across every project (others
+ * wait in line), Chromium starts on the first request and is shut down after
+ * a minute idle, and remote URLs are blocked unless allowed in settings.
+ *
+ * A render sent with `async: true` is a durable job in the built-in queue
+ * (`_render`): the caller gets a job at once, a worker in this process renders
+ * it when the line is free and saves it to a bucket. Jobs survive a restart
+ * and are retried when Chromium fails.
  */
 import { existsSync } from 'node:fs'
 
+import { keyCaller } from '~/auth/caller'
 import type { Config } from '~/config'
 import { BunwriteError, err } from '~/lib/errors'
+import { resolveId } from '~/lib/ids'
+import type { QueueMessageRow, QueueService } from '~/queue/service'
+import type { StorageService } from '~/storage/service'
 import { loadSharp } from '~/storage/sharp'
 import { avifTooLarge, maxAvifPixels } from '~/storage/transform'
 
@@ -52,7 +61,7 @@ export interface ImageOptions {
   fullPage?: boolean
   /** Capture only the first element matching this CSS selector. */
   selector?: string
-  /** Device pixel ratio, 1–3. 2 gives sharp text on high-DPI screens. @default 1 */
+  /** Device pixel ratio, 0.1–3. 2 gives sharp text on high-DPI screens; below 1 makes a smaller bitmap of the same layout. @default 1 */
   scale?: number
   /** 1–100 for jpg, webp and avif. */
   quality?: number
@@ -80,6 +89,13 @@ const RENDER_TIMEOUT_MS = 30_000
 const RETRY_DELAY_MS = 300
 const IDLE_SHUTDOWN_MS = 60_000
 const MAX_WAITING = 20
+/** The system queue that holds async render jobs. */
+export const RENDER_QUEUE = '_render'
+/** A job's lease; heartbeated while it waits in line and renders. */
+const JOB_LEASE_S = 120
+const JOB_ATTEMPTS = 3
+/** How often each project looks for due jobs (retries, jobs left by a restart). */
+const JOB_POLL_MS = 5_000
 const BLOCKED_URLS = ['http://*', 'https://*', 'ws://*', 'wss://*', 'file://*', 'ftp://*']
 
 const CHROME_ARGS = [
@@ -139,21 +155,83 @@ interface Rect {
   height: number
 }
 
-export class RenderService {
-  private line: Promise<unknown> = Promise.resolve()
-  private waiting = 0
-  private idle: ReturnType<typeof setTimeout> | null = null
-  private running = false
+/** Where an async render is saved. */
+export interface RenderTarget {
+  bucketId: string
+  fileId?: unknown
+  fileName: string
+  permissions?: unknown
+}
 
-  constructor(private config: Config) {}
+interface RenderJobData {
+  type: 'pdf' | 'image'
+  /** Dropped once the job is finished, so old jobs do not keep 5 MB of HTML. */
+  html?: string
+  options: PdfOptions | ImageOptions
+  bucketId: string
+  fileId: string
+  fileName: string
+  permissions: unknown
+}
+
+export function renderJobModel(m: QueueMessageRow) {
+  let data: Partial<RenderJobData> = {}
+  try {
+    data = JSON.parse(m.data) as RenderJobData
+  } catch {
+    // Not a render job's payload; report what the row has.
+  }
+  return {
+    $id: m.id,
+    $createdAt: m.created_at,
+    $updatedAt: m.updated_at,
+    type: data.type ?? '',
+    status: m.status,
+    attempts: m.attempts,
+    maxAttempts: m.max_attempts,
+    bucketId: data.bucketId ?? '',
+    fileId: data.fileId ?? '',
+    fileName: data.fileName ?? '',
+    completedAt: m.completed_at,
+    errors: m.errors,
+  }
+}
+
+/**
+ * Chromium is one browser for the whole process (Bun.WebView.closeAll closes
+ * every tab), so the line is shared by every project, not one per project.
+ */
+const shared = {
+  line: Promise.resolve() as Promise<unknown>,
+  waiting: 0,
+  idle: null as ReturnType<typeof setTimeout> | null,
+  running: false,
+}
+
+function closeChrome(): void {
+  if (shared.idle) clearTimeout(shared.idle)
+  shared.idle = null
+  if (shared.running) Bun.WebView.closeAll()
+  shared.running = false
+}
+
+export class RenderService {
+  private timer: ReturnType<typeof setInterval> | null = null
+  private draining = false
+
+  constructor(
+    private config: Config,
+    /** The queue and storage for async jobs; without them `async: true` is refused. */
+    private jobs?: { queue: QueueService; storage: StorageService },
+  ) {}
 
   status(): { enabled: boolean; chrome: string | null; running: boolean } {
-    return { enabled: this.config.render.enabled, chrome: findChrome(), running: this.running }
+    return { enabled: this.config.render.enabled, chrome: findChrome(), running: shared.running }
   }
 
   /** Render HTML to PDF bytes. */
-  pdf(html: string, o: PdfOptions = {}): Promise<Uint8Array> {
-    return this.queue(html, { width: 794, height: 1123, scale: 1, transparent: false }, async (view) => {
+  pdf(html: string, o: PdfOptions = {}, fromJob = false): Promise<Uint8Array> {
+    return this.inLine(html, { width: 794, height: 1123, scale: 1, transparent: false }, fromJob, async (view) => {
       const [width, height] = PAPER_SIZES[o.format ?? 'A4']
       const margin = o.margin ?? {}
       const header = o.headerTemplate ?? ''
@@ -179,7 +257,7 @@ export class RenderService {
   }
 
   /** Render HTML to an image. Returns the bytes and their MIME type. */
-  async image(html: string, o: ImageOptions = {}): Promise<{ bytes: Uint8Array; mime: string }> {
+  async image(html: string, o: ImageOptions = {}, fromJob = false): Promise<{ bytes: Uint8Array; mime: string }> {
     const output = o.output ?? 'png'
     const width = o.width ?? 1200
     const height = o.height ?? 800
@@ -187,7 +265,7 @@ export class RenderService {
     const transparent = Boolean(o.transparent) && output !== 'jpg'
     const maxPixels = maxImagePixels()
     if (width * height * scale * scale > maxPixels) throw tooLarge(maxPixels)
-    const bytes = await this.queue(html, { width, height, scale, transparent }, async (view) => {
+    const bytes = await this.inLine(html, { width, height, scale, transparent }, fromJob, async (view) => {
       let clip: Rect = { x: 0, y: 0, width, height }
       if (o.selector) {
         const found = await view.evaluate<Rect | null>(
@@ -221,31 +299,179 @@ export class RenderService {
     return { bytes, mime: IMAGE_MIME[output] }
   }
 
-  /** Stop Chromium now. The next render starts it again. */
-  shutdown(): void {
-    if (this.idle) clearTimeout(this.idle)
-    this.idle = null
-    if (this.running) Bun.WebView.closeAll()
-    this.running = false
+  /**
+   * Queue a render. Everything that can be checked now is checked now, so a
+   * bad request fails here with 4xx instead of later as a failed job.
+   */
+  enqueue(type: 'pdf' | 'image', html: string, options: PdfOptions | ImageOptions, target: RenderTarget): QueueMessageRow {
+    if (!this.jobs) throw err('general_service_disabled', 'Async rendering is not available on this server.')
+    this.check(html)
+    if (type === 'image') {
+      const o = options as ImageOptions
+      const maxPixels = maxImagePixels()
+      if ((o.width ?? 1200) * (o.height ?? 800) * (o.scale ?? 1) ** 2 > maxPixels) throw tooLarge(maxPixels)
+    }
+    const caller = keyCaller()
+    this.jobs.storage.bucket(target.bucketId, true)
+    // Fixed now, so the caller knows the file ID and a retry writes the same file.
+    const fileId = resolveId(target.fileId, 'File ID')
+    let exists = false
+    try {
+      this.jobs.storage.file(caller, target.bucketId, fileId)
+      exists = true
+    } catch {
+      // Not there yet: good.
+    }
+    if (exists) throw err('storage_file_already_exists')
+    const data: RenderJobData = { type, html, options, bucketId: target.bucketId, fileId, fileName: target.fileName, permissions: target.permissions ?? null }
+    const { message } = this.jobs.queue.enqueue(RENDER_QUEUE, { data, maxAttempts: JOB_ATTEMPTS })
+    queueMicrotask(() => this.drain())
+    return message
   }
 
-  /** Checks, then one render at a time with a timeout; Chromium stops after a minute idle. */
-  private async queue<T>(html: string, setup: PageSetup, work: (view: View) => Promise<T>): Promise<T> {
+  /** One async render job. */
+  job(id: string): QueueMessageRow {
+    if (!this.jobs) throw err('queue_message_not_found', 'Render job with the requested ID could not be found.')
+    try {
+      return this.jobs.queue.getMessage(RENDER_QUEUE, id)
+    } catch {
+      throw err('queue_message_not_found', 'Render job with the requested ID could not be found.')
+    }
+  }
+
+  /** Look for due jobs regularly: retries after backoff, and jobs left by a restart. */
+  start(): void {
+    if (this.timer || !this.jobs) return
+    this.drain()
+    this.timer = setInterval(() => this.drain(), JOB_POLL_MS)
+    this.timer.unref?.()
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  /**
+   * Run waiting jobs, one at a time per project. Each job joins the same line
+   * as direct requests, so queued work never adds a second Chromium tab.
+   */
+  drain(): void {
+    if (this.draining || !this.jobs || !this.config.render.enabled) return
+    this.draining = true
+    void (async () => {
+      try {
+        while (this.config.render.enabled) {
+          const [message] = this.jobs!.queue.claim(RENDER_QUEUE, { count: 1, lease: JOB_LEASE_S })
+          if (!message) break
+          await this.runJob(message)
+        }
+      } catch (error) {
+        console.error('[render] job worker failed', error)
+      } finally {
+        this.draining = false
+      }
+    })()
+  }
+
+  private async runJob(message: QueueMessageRow): Promise<void> {
+    const { queue, storage } = this.jobs!
+    // Waiting in line counts against the lease too, so keep it alive.
+    const beat = setInterval(() => {
+      try {
+        queue.heartbeat(RENDER_QUEUE, message.id, JOB_LEASE_S)
+      } catch {
+        // Already finished or reaped; the result write below reports it.
+      }
+    }, (JOB_LEASE_S * 1000) / 4)
+    beat.unref?.()
+    let data: RenderJobData | null = null
+    try {
+      data = JSON.parse(message.data) as RenderJobData
+      if (typeof data.html !== 'string') throw err('general_argument_invalid', 'The job has no HTML.')
+      const { bytes, mime } =
+        data.type === 'pdf'
+          ? { bytes: await this.pdf(data.html, data.options as PdfOptions, true), mime: 'application/pdf' }
+          : await this.image(data.html, data.options as ImageOptions, true)
+      try {
+        await storage.createFile(keyCaller(), data.bucketId, {
+          fileId: data.fileId,
+          file: new File([bytes], data.fileName, { type: mime }),
+          permissions: data.permissions ?? null,
+          contentRange: null,
+          uploadId: null,
+        })
+      } catch (error) {
+        // An earlier attempt saved it, then stopped before acking.
+        const savedBefore = error instanceof BunwriteError && error.type === 'storage_file_already_exists' && message.attempts > 1
+        if (!savedBefore) throw error
+      }
+      queue.ack(RENDER_QUEUE, message.id, { bucketId: data.bucketId, fileId: data.fileId })
+      this.dropHtml(message.id, data)
+    } catch (error) {
+      // A 4xx (bad selector, too large, bucket gone) fails the same way again.
+      const final =
+        error instanceof BunwriteError && error.code < 500 && error.type !== 'general_rate_limit_exceeded' && error.type !== 'general_service_disabled'
+      const text = error instanceof Error ? error.message : String(error)
+      try {
+        const row = queue.fail(RENDER_QUEUE, message.id, text, undefined, final)
+        if (row.status === 'failed' && data) this.dropHtml(message.id, data)
+      } catch {
+        // The lease was lost; whoever holds it now reports the outcome.
+      }
+      if (!final) console.warn(`[render] job ${message.id} failed: ${text}`)
+    } finally {
+      clearInterval(beat)
+    }
+  }
+
+  private dropHtml(id: string, data: RenderJobData): void {
+    const { html: _html, ...rest } = data
+    this.jobs!.queue.replaceData(RENDER_QUEUE, id, rest)
+  }
+
+  /**
+   * Stop Chromium now; the next render starts it again. Unless `force`, a
+   * render in progress (any project's) is left to finish, and Chromium stops
+   * after the usual idle minute instead.
+   */
+  shutdown(force = false): void {
+    if (!force && shared.waiting > 0) return
+    closeChrome()
+  }
+
+  private check(html: string): void {
     if (!this.config.render.enabled) throw err('general_service_disabled', 'HTML rendering is disabled. Turn it on in Console > Settings > HTML rendering.')
     if (typeof html !== 'string' || !html.trim()) throw err('general_argument_invalid', 'Param "html" is required.')
     if (Buffer.byteLength(html) > MAX_HTML_BYTES) throw err('general_argument_invalid', 'Param "html" must be 5 MB or smaller.')
-    const chrome = findChrome()
-    if (!chrome) throw err('general_service_disabled', 'HTML rendering needs Chromium. Install it or set CHROME_PATH.')
-    if (this.waiting >= MAX_WAITING) throw err('general_rate_limit_exceeded', 'Too many renders are waiting. Try again shortly.')
+    if (!findChrome()) throw err('general_service_disabled', 'HTML rendering needs Chromium. Install it or set CHROME_PATH.')
+  }
 
-    this.waiting++
-    if (this.idle) clearTimeout(this.idle)
+  /**
+   * Checks, then one render at a time with a timeout; Chromium stops after a
+   * minute idle. Direct requests are refused once MAX_WAITING are in line;
+   * queued jobs always get a place (at most one per project).
+   */
+  private async inLine<T>(html: string, setup: PageSetup, fromJob: boolean, work: (view: View) => Promise<T>): Promise<T> {
+    this.check(html)
+    if (!fromJob && shared.waiting >= MAX_WAITING) {
+      throw err(
+        'general_rate_limit_exceeded',
+        this.jobs
+          ? 'Too many renders are waiting. Try again shortly, or send async: true with a bucketId to queue it.'
+          : 'Too many renders are waiting. Try again shortly.',
+      )
+    }
+
+    shared.waiting++
+    if (shared.idle) clearTimeout(shared.idle)
+    shared.idle = null
     const attempt = (): Promise<T> => {
       const chrome = findChrome()
       if (!chrome) throw err('general_service_disabled', 'HTML rendering needs Chromium. Install it or set CHROME_PATH.')
       return this.withTimeout(this.withPage(chrome, html, setup, work))
     }
-    const job = this.line.then(async () => {
+    const job = shared.line.then(async () => {
       try {
         return await attempt()
       } catch (error) {
@@ -258,12 +484,16 @@ export class RenderService {
         return attempt()
       }
     })
-    this.line = job.catch(() => {})
+    shared.line = job.catch(() => {})
     try {
       return await job
     } finally {
-      this.waiting--
-      if (this.waiting === 0) this.idle = setTimeout(() => this.shutdown(), IDLE_SHUTDOWN_MS)
+      shared.waiting--
+      if (shared.waiting === 0) {
+        if (shared.idle) clearTimeout(shared.idle)
+        shared.idle = setTimeout(closeChrome, IDLE_SHUTDOWN_MS)
+        shared.idle.unref?.()
+      }
     }
   }
 
@@ -272,7 +502,7 @@ export class RenderService {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         // Kill Chromium so a stuck page cannot hold memory or block the line.
-        this.shutdown()
+        closeChrome()
         reject(err('general_server_error', `The page did not render within ${RENDER_TIMEOUT_MS / 1000} seconds.`))
       }, RENDER_TIMEOUT_MS)
     })
@@ -285,7 +515,7 @@ export class RenderService {
 
   /** Open a tab, load the HTML, wait for images and fonts, run `work`, close the tab. */
   private async withPage<T>(chrome: string, html: string, setup: PageSetup, work: (view: View) => Promise<T>): Promise<T> {
-    this.running = true
+    shared.running = true
     const view = new Bun.WebView({ width: setup.width, height: setup.height, backend: { type: 'chrome', url: false, path: chrome, argv: chromeArgs() } })
     try {
       await view.navigate('about:blank')

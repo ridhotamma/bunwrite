@@ -5,10 +5,12 @@ import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { envBulkDialog } from '~/console/env-vars'
 import { checked, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, copyableId, destroy, emptyState, header, icon, listCard, menu, settingsSection, tabs, when } from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
+import { variableList } from '~/console/views/variables'
 import {
   apiFunctionSelect,
   buildFields,
@@ -26,7 +28,9 @@ import { sitesDomainOf } from '~/lib/hosts'
 import { DEFAULT_RUNTIME } from '~/runtimes/catalog'
 import { frameworkOf } from '~/sites/frameworks'
 import type { SiteDeploymentRow, SiteFile, SiteRow, SiteSettings } from '~/sites/service'
+import { siteScope } from '~/variables/service'
 import { registerDomainRoutes } from './domains'
+import { registerVariableRoutes } from './variables'
 
 /** What the deploy form asks for, checked before anything is created. */
 type FilesSource = { kind: 'starter' } | { kind: 'upload'; file: File } | { kind: 'paste'; text: string }
@@ -180,16 +184,22 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   }
 }
 
-const siteTabs = (id: string, on: 'deployments' | 'settings') =>
+const siteTabs = (id: string, on: 'deployments' | 'variables' | 'settings') =>
   tabs(
     [
       { key: 'deployments', label: 'Deployments', href: siteUrl(id) },
+      { key: 'variables', label: 'Variables', href: `${siteUrl(id)}/variables` },
       { key: 'settings', label: 'Settings', href: `${siteUrl(id)}/settings` },
     ],
     on,
   )
 
-function siteShell(ctx: ConsoleContext, site: SiteRow, active: 'deployments' | 'settings', body: Html): Html {
+function siteShell(
+  ctx: ConsoleContext,
+  site: SiteRow,
+  active: 'deployments' | 'variables' | 'settings',
+  body: Html,
+): Html {
   const url = ctx.services.sites.url(site)
   const latest = ctx.services.sites.latest(site.id)
   const actions = html`<a class="btn" href="${url}" target="_blank" rel="noopener">Open site</a>
@@ -368,6 +378,50 @@ export function sitePages(router: ConsoleRouter): void {
   router.post(`${SITES}/:id/deployments/:did/delete`, ({ ctx, path }) => {
     ctx.services.sites.removeDeployment(path.id!, path.did!)
     return ctx.go(siteUrl(path.id!), { tone: 'success', text: 'Deployment deleted' })
+  })
+
+  router.get(`${SITES}/:id/variables`, ({ ctx, path }) => {
+    const site = ctx.services.sites.site(path.id!)
+    const vars = ctx.services.variables.list(siteScope(site.id))
+    return ctx.render(
+      `Variables · ${site.name}`,
+      'sites',
+      siteShell(
+        ctx,
+        site,
+        'variables',
+        settingsSection(
+          'Site variables',
+          'Available only to this site. A variable here wins over a global variable with the same name. Changes apply the next time the app starts; redeploy to bake them into a build.',
+          html`
+            ${vars.length
+              ? variableList(vars, {
+                  save: `${siteUrl(site.id)}/variables`,
+                  remove: `${siteUrl(site.id)}/variables/delete`,
+                  clear: {
+                    action: `${siteUrl(site.id)}/variables/clear`,
+                    confirm: `Delete all ${vars.length} variables for ${site.name}? This cannot be undone.`,
+                  },
+                })
+              : html`<p class="hint" style="margin:0 0 12px">None set. Global variables from Settings also apply.</p>`}
+            <form method="post" action="${siteUrl(site.id)}/variables" style="margin-top:12px">
+              <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
+              <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
+              <div class="foot"><button type="button" data-dialog-open="#bulk-site-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add variable</button></div>
+            </form>
+            ${envBulkDialog({ id: 'bulk-site-vars', title: `Import variables for ${site.name}`, action: `${siteUrl(site.id)}/variables/bulk` })}`,
+          { id: 'site-variables' },
+        ),
+      ),
+    )
+  })
+
+  registerVariableRoutes(router, {
+    base: `${SITES}/:id/variables`,
+    scope: ({ ctx, path }) => siteScope(ctx.services.sites.site(path.id!).id),
+    store: (ctx) => ctx.services.variables,
+    changed: (ctx, scope) => ctx.services.sites.ssr.stopSite(scope.slice('site:'.length)),
+    then: (route) => `${siteUrl(route.path.id!)}/variables`,
   })
 
   router.get(`${SITES}/:id/settings`, async ({ ctx, path }) => {

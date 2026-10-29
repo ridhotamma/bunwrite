@@ -177,7 +177,7 @@ table{width:100%;border-collapse:collapse}
 th{background:#f7f7f7;color:var(--subdued);font-weight:550;font-size:12px;text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}tbody tr.row-link{cursor:pointer}tbody tr.row-link:hover{background:#f7f7f7}
-td.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}td.num{text-align:right;font-variant-numeric:tabular-nums}td.nowrap{white-space:nowrap}
 .record-table td{padding:8px 12px}
 .domain-table td{padding:6px 12px}
 .domain-table td.actions-col{text-align:right;white-space:nowrap}

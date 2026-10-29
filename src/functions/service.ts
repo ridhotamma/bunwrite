@@ -12,7 +12,7 @@ import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
 import { CREDENTIAL_HEADERS, functionVariables } from '~/lib/compat'
-import { formatDate, now } from '~/lib/datetime'
+import { addSeconds, formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { providerOf, type ProviderColumns, type ProviderSettings } from '~/vcs/source'
 import { functionHost, functionsDomainOf, hostOf, urlForHost } from '~/lib/hosts'
@@ -108,6 +108,10 @@ export interface ExecutionRow {
   duration: number
   scheduled_at: string | null
   user_id: string | null
+  attempts: number
+  max_attempts: number
+  available_at: string | null
+  lease_until: string | null
   created_at: string
   updated_at: string
 }
@@ -179,8 +183,20 @@ const EXECUTIONS: Collection = (() => {
     ] as const
   ).map(([key, type]) => normalizeAttribute({ key, type, size: 1_000_000 }))
   return {
-    seq: 0, databaseId: '', databaseSeq: 0, id: 'executions', name: 'executions', enabled: true, documentSecurity: false,
-    permissions: [], attributes, indexes: [], createdAt: '', updatedAt: '', table: 'v_executions', permsTable: '',
+    seq: 0,
+    databaseId: '',
+    databaseSeq: 0,
+    id: 'executions',
+    name: 'executions',
+    enabled: true,
+    documentSecurity: false,
+    permissions: [],
+    attributes,
+    indexes: [],
+    createdAt: '',
+    updatedAt: '',
+    table: 'v_executions',
+    permsTable: '',
     attributeMap: new Map(attributes.map((a) => [a.key, a])),
   }
 })()
@@ -282,6 +298,8 @@ export class FunctionService {
   /** Other projects, so default function hosts do not collide on this server. */
   peers: () => FunctionService[] = () => []
   private running = new Map<string, number>()
+  /** Executions started by this process that have not finished yet. */
+  private inflight = new Set<string>()
   private timer: ReturnType<typeof setInterval> | null = null
   private lastTick = -1
 
@@ -290,7 +308,12 @@ export class FunctionService {
     private config: Config,
     private store: DocumentStore,
     private proxy: ProxyService,
-    private options: { functionEnv?: Record<string, string>; internalEndpoint?: string } = {},
+    private options: {
+      functionEnv?: Record<string, string>
+      internalEndpoint?: string
+      /** Project variables (`/project/variables`), shared by functions and sites. */
+      projectVariables?: () => Record<string, string>
+    } = {},
   ) {}
 
   private get sql() {
@@ -338,12 +361,18 @@ export class FunctionService {
     return this.proxy.domainsFor('function', f.id)
   }
 
-  update(id: string, fields: { enabled: boolean; schedule: string; timeout: number; execute: string[] }): FunctionRow {
+  update(
+    id: string,
+    fields: {
+      enabled: boolean
+      schedule: string
+      timeout: number
+      execute: string[]
+    },
+  ): FunctionRow {
     this.fn(id)
     this.check(fields)
-    this.sql
-      .query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, updated_at = ? WHERE id = ?')
-      .run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), now(), id)
+    this.sql.query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, updated_at = ? WHERE id = ?').run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), now(), id)
     return this.fn(id)
   }
 
@@ -403,29 +432,12 @@ export class FunctionService {
   /** Connect the function to a repository, or disconnect it with NO_PROVIDER. */
   setProvider(id: string, provider: ProviderSettings): FunctionRow {
     this.fn(id)
-    this.sql
-      .query('UPDATE _functions SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?')
-      .run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
+    this.sql.query('UPDATE _functions SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?').run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
     return this.fn(id)
   }
 
   private settingValues(f: FunctionSettings) {
-    return [
-      f.name,
-      f.runtime,
-      f.entrypoint,
-      JSON.stringify(f.execute),
-      JSON.stringify(f.events),
-      f.schedule,
-      f.timeout,
-      f.enabled ? 1 : 0,
-      JSON.stringify(f.scopes),
-      f.commands,
-      f.logging ? 1 : 0,
-      f.buildSpecification,
-      f.runtimeSpecification,
-      f.deploymentRetention,
-    ] as const
+    return [f.name, f.runtime, f.entrypoint, JSON.stringify(f.execute), JSON.stringify(f.events), f.schedule, f.timeout, f.enabled ? 1 : 0, JSON.stringify(f.scopes), f.commands, f.logging ? 1 : 0, f.buildSpecification, f.runtimeSpecification, f.deploymentRetention] as const
   }
 
   /**
@@ -460,9 +472,7 @@ export class FunctionService {
 
   /** Every variable scope is a `function_id`: `*` holds the global ones. */
   variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
-    return this.sql
-      .query<{ key: string; value: string; secret: number; function_id: string }, [string]>('SELECT key, value, secret, function_id FROM _function_vars WHERE function_id = ? ORDER BY key')
-      .all(functionId)
+    return this.sql.query<{ key: string; value: string; secret: number; function_id: string }, [string]>('SELECT key, value, secret, function_id FROM _function_vars WHERE function_id = ? ORDER BY key').all(functionId)
   }
 
   globalVariables() {
@@ -504,42 +514,47 @@ export class FunctionService {
 
   listExecutions(functionId: string, queries: unknown[], includeTotal = true) {
     this.fn(functionId)
-    const scope = [JSON.stringify({ method: 'equal', attribute: 'functionId', values: [functionId] })]
-    const { total, seqs } = listSeqs(this.store, EXECUTIONS, queries, { scope, includeTotal })
-    const rows = seqs.length
-      ? (this.sql.query(`SELECT * FROM _executions WHERE seq IN (${seqs.map(() => '?').join(', ')})`).all(...seqs) as ExecutionRow[])
-      : []
+    const scope = [
+      JSON.stringify({
+        method: 'equal',
+        attribute: 'functionId',
+        values: [functionId],
+      }),
+    ]
+    const { total, seqs } = listSeqs(this.store, EXECUTIONS, queries, {
+      scope,
+      includeTotal,
+    })
+    const rows = seqs.length ? (this.sql.query(`SELECT * FROM _executions WHERE seq IN (${seqs.map(() => '?').join(', ')})`).all(...seqs) as ExecutionRow[]) : []
     const bySeq = new Map(rows.map((r) => [r.seq, r]))
-    return { total, executions: seqs.map((s) => bySeq.get(s)!).filter(Boolean).map(executionModel) }
+    return {
+      total,
+      executions: seqs
+        .map((s) => bySeq.get(s)!)
+        .filter(Boolean)
+        .map(executionModel),
+    }
   }
 
   /** The newest execution for each function, keyed by function ID. */
   latestByFunction(): Map<string, ExecutionStatus> {
-    const rows = this.sql
-      .query<ExecutionStatus, []>('SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)')
-      .all()
+    const rows = this.sql.query<ExecutionStatus, []>('SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)').all()
     return new Map(rows.map((row) => [row.function_id, row]))
   }
 
   /** Recent executions across all functions, newest first. */
   recent(limit = 6): ExecutionSummary[] {
-    return this.sql
-      .query<ExecutionSummary, [number]>('SELECT id, function_id, status, trigger, duration, created_at FROM _executions ORDER BY seq DESC LIMIT ?')
-      .all(limit)
+    return this.sql.query<ExecutionSummary, [number]>('SELECT id, function_id, status, trigger, duration, created_at FROM _executions ORDER BY seq DESC LIMIT ?').all(limit)
   }
 
   /** Executions of one function, newest first. */
   runsFor(functionId: string, limit = 20): ExecutionRow[] {
-    return this.sql
-      .query<ExecutionRow, [string, number]>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT ?')
-      .all(functionId, limit)
+    return this.sql.query<ExecutionRow, [string, number]>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT ?').all(functionId, limit)
   }
 
   /** Number of failed executions created after `since`, an ISO timestamp. */
   failedSince(since: string): number {
-    return (this.sql
-      .query<{ n: number }, [string]>("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?")
-      .get(since) as { n: number }).n
+    return (this.sql.query<{ n: number }, [string]>("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?").get(since) as { n: number }).n
   }
 
   /** Who may run it: API keys always; others need a role in `execute`. */
@@ -561,23 +576,129 @@ export class FunctionService {
   /** Create an execution. Async ones return at once with status `waiting`. */
   async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async', stream?: ExecutionStream): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
     if (!f.enabled) throw err('function_not_found')
-    request = { ...request, headers: withCallerHeaders(request.headers, request.userId) }
+    request = {
+      ...request,
+      headers: withCallerHeaders(request.headers, request.userId),
+    }
     const id = uniqueId()
     const stamp = now()
     const headers = this.headerList(request.headers)
+    if (mode === 'sync') {
+      // A sync run is not queued: the caller waits for it, so claim it here.
+      this.sql
+        .query(
+          `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, lease_until, created_at, updated_at)
+           VALUES (?, ?, ?, 'processing', ?, ?, ?, '', ?, 1, 1, ?, ?, ?)`,
+        )
+        .run(id, f.id, request.trigger, request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), request.userId ?? null, addSeconds(SYNC_TIMEOUT + 30), stamp, stamp)
+      const result = await this.run(id, f, request, Math.min(f.timeout, SYNC_TIMEOUT), stream)
+      return { execution: this.execution(f.id, id), result }
+    }
     this.sql
       .query(
-        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, available_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
       )
-      .run(id, f.id, request.trigger, mode === 'async' ? 'waiting' : 'processing', request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), mode === 'async' ? (request.body ?? '') : '', request.userId ?? null, stamp, stamp)
-    const run = this.run(id, f, request, mode === 'sync' ? Math.min(f.timeout, SYNC_TIMEOUT) : f.timeout, mode === 'sync' ? stream : undefined)
-    if (mode === 'async') {
-      run.catch((e) => console.error('[functions] execution failed to run', e))
-      return { execution: this.execution(f.id, id), result: null }
+      .run(id, f.id, request.trigger, request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), request.body ?? '', request.userId ?? null, this.maxAttempts(f), stamp, stamp, stamp)
+    // Start the queue drain without delaying the caller: async runs wait for a
+    // free worker, and a restart picks up whatever is still `waiting`.
+    queueMicrotask(() => this.drain())
+    return { execution: this.execution(f.id, id), result: null }
+  }
+
+  /** Attempts an execution gets before it stays failed. */
+  private maxAttempts(_f: FunctionRow): number {
+    return Math.max(1, Math.floor(Number(this.config.functionMaxAttempts ?? 1)) || 1)
+  }
+
+  /** How many runs may execute at the same time in this process. */
+  private get concurrency(): number {
+    return Math.max(1, Math.floor(Number(this.config.functionsConcurrency) || 4))
+  }
+
+  /**
+   * Claim the oldest runnable execution.
+   *
+   * The claim is a single UPDATE, so a run is handed to exactly one caller
+   * even when the drain and the scheduler tick race. `attempts` and the lease
+   * move forward before the first await, so a crashed run is reclaimable.
+   */
+  private claim(stamp: string, lease: number, id?: string, dueAt = stamp): ExecutionRow | null {
+    const params: (string | number)[] = [addSeconds(lease), stamp]
+    const due = '(status = ? AND (available_at IS NULL OR available_at <= ?)) OR (status = ? AND scheduled_at IS NOT NULL AND scheduled_at <= ?)'
+    if (id) params.push(id)
+    params.push('waiting', stamp, 'scheduled', dueAt)
+    const filter = id ? `id = ? AND (${due})` : due
+    const row = this.sql
+      .query<ExecutionRow, (string | number)[]>(
+        `UPDATE _executions SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
+         WHERE seq = (SELECT seq FROM _executions WHERE ${filter} ORDER BY seq LIMIT 1)
+         RETURNING *`,
+      )
+      .get(...params)
+    return row ?? null
+  }
+
+  /**
+   * Start waiting runs while capacity is free. Called after enqueueing an
+   * execution, when a run finishes, and on the scheduler tick.
+   */
+  drain(): void {
+    while (this.inflight.size < this.concurrency) {
+      const row = this.claim(now(), this.leaseFor())
+      if (!row) break
+      let f: FunctionRow
+      try {
+        f = this.fn(row.function_id)
+      } catch {
+        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ?").run('The function was deleted before this execution ran.', now(), row.id)
+        continue
+      }
+      const request: ExecutionRequest = {
+        trigger: row.trigger as ExecutionRequest['trigger'],
+        method: row.request_method,
+        path: row.request_path,
+        headers: Object.fromEntries(parse<{ name: string; value: string }[]>(row.request_headers, []).map((h) => [h.name, h.value])),
+        body: row.request_body,
+        userId: row.user_id,
+      }
+      this.startRun(row.id, f, request, f.timeout)
     }
-    const result = await run
-    return { execution: this.execution(f.id, id), result }
+  }
+
+  /** Lease length: the run's own timeout, plus room to write the result. */
+  private leaseFor(timeout = 60): number {
+    return Math.max(30, Math.ceil(timeout) + 30)
+  }
+
+  private startRun(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number): void {
+    this.inflight.add(id)
+    // The claim's lease was sized for the default timeout; fit it to this run.
+    this.sql.query('UPDATE _executions SET lease_until = ? WHERE id = ?').run(addSeconds(this.leaseFor(timeout)), id)
+    void this.run(id, f, request, timeout).finally(() => {
+      this.inflight.delete(id)
+      this.drain()
+    })
+  }
+
+  /**
+   * Return claims that outlived their lease to the queue, so a crash or a
+   * killed process does not leave an execution `processing` forever.
+   */
+  reap(): string[] {
+    const stamp = now()
+    const stale = this.sql.query<ExecutionRow, [string]>("SELECT * FROM _executions WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?").all(stamp)
+    const retried: string[] = []
+    for (const row of stale) {
+      if (row.attempts < row.max_attempts) {
+        this.sql.query("UPDATE _executions SET status = 'waiting', lease_until = NULL, available_at = ?, updated_at = ? WHERE id = ?").run(stamp, stamp, row.id)
+        retried.push(row.id)
+      } else {
+        this.sql.query("UPDATE _executions SET status = 'failed', lease_until = NULL, errors = ?, updated_at = ? WHERE id = ?").run('The execution stopped before it finished (the server restarted or the run was killed).', stamp, row.id)
+      }
+    }
+    if (retried.length) queueMicrotask(() => this.drain())
+    return retried
   }
 
   /**
@@ -594,10 +715,10 @@ export class FunctionService {
     const stamp = now()
     this.sql
       .query(
-        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, scheduled_at, user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, scheduled_at, available_at, user_id, attempts, max_attempts, created_at, updated_at)
+         VALUES (?, ?, 'schedule', 'scheduled', ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?)`,
       )
-      .run(id, f.id, 'schedule', 'scheduled', request.method ?? 'POST', request.path ?? '/', JSON.stringify(this.headerList(request.headers)), request.body ?? '', scheduledAt, request.userId ?? null, stamp, stamp)
+      .run(id, f.id, request.method ?? 'POST', request.path ?? '/', JSON.stringify(this.headerList(request.headers)), request.body ?? '', scheduledAt, request.userId ?? null, this.maxAttempts(f), stamp, stamp)
     return this.execution(f.id, id)
   }
 
@@ -611,16 +732,16 @@ export class FunctionService {
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
     const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
     const vars: Record<string, string> = {}
-    for (const v of this.sql
-      .query<{ key: string; value: string }, [string]>("SELECT key, value FROM _function_vars WHERE function_id IN ('*', ?) ORDER BY function_id = '*' DESC")
-      .all(f.id)) {
+    for (const v of this.sql.query<{ key: string; value: string }, [string]>("SELECT key, value FROM _function_vars WHERE function_id IN ('*', ?) ORDER BY function_id = '*' DESC").all(f.id)) {
       vars[v.key] = v.value
     }
+    const projectVars = this.options.projectVariables?.() ?? {}
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
-    const own = { ...this.options.functionEnv, ...vars }
+    const own = { ...projectVars, ...this.options.functionEnv, ...vars }
     const fromVars = (name: string) => own[`BUNWRITE_${name}`] ?? own[`APPWRITE_${name}`]
     return {
       ...base,
+      ...projectVars,
       ...this.options.functionEnv,
       ...vars,
       ...functionVariables(this.config, {
@@ -648,21 +769,35 @@ export class FunctionService {
    * relative to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The
    * last one also repairs paths stored against the wrong folder by an uploaded import.
    */
-  codeDir(f: FunctionRow): { dir: string | null; tried: string[]; entrypoint: string; runtime: string } {
+  codeDir(f: FunctionRow): {
+    dir: string | null
+    tried: string[]
+    entrypoint: string
+    runtime: string
+  } {
     if (f.deployment_id) {
-      const deployment = this.sql
-        .query<{ entrypoint: string; runtime: string }, [string, string]>("SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'")
-        .get(f.deployment_id, f.id)
+      const deployment = this.sql.query<{ entrypoint: string; runtime: string }, [string, string]>("SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'").get(f.deployment_id, f.id)
       const dir = deploymentDir(this.config, f.id, f.deployment_id)
       // An isolated deployment folder is closed to the server; the build already checked the entrypoint.
       const present = existsSync(join(dir, deployment?.entrypoint ?? '')) || (Boolean(this.config.functionsSandbox) && existsSync(dir))
-      if (deployment && present) return { dir, tried: [join(dir, deployment.entrypoint)], entrypoint: deployment.entrypoint, runtime: deployment.runtime }
+      if (deployment && present)
+        return {
+          dir,
+          tried: [join(dir, deployment.entrypoint)],
+          entrypoint: deployment.entrypoint,
+          runtime: deployment.runtime,
+        }
     }
     // Code from the code folder (schema push) runs on the server's Bun, as it always has.
     const base = this.config.functionsDir
     const tried = [...new Set([isAbsolute(f.path) ? f.path : resolve(base, f.path), join(base, 'functions', f.id)])]
     const dir = tried.find((d) => existsSync(join(d, f.entrypoint))) ?? null
-    return { dir, tried: tried.map((d) => join(d, f.entrypoint)), entrypoint: f.entrypoint, runtime: '' }
+    return {
+      dir,
+      tried: tried.map((d) => join(d, f.entrypoint)),
+      entrypoint: f.entrypoint,
+      runtime: '',
+    }
   }
 
   private command(f: FunctionRow, dir: string, entrypoint: string, runtime: ResolvedRuntime | null): string[] {
@@ -681,7 +816,14 @@ export class FunctionService {
   private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, stream?: ExecutionStream): Promise<ExecutionResult> {
     const started = performance.now()
     this.running.set(f.id, (this.running.get(f.id) ?? 0) + 1)
-    this.sql.query("UPDATE _executions SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), id)
+    // Keep the claim alive while the child runs, so the reaper leaves it alone.
+    const heartbeat = setInterval(
+      () => {
+        this.sql.query('UPDATE _executions SET lease_until = ?, updated_at = ? WHERE id = ? AND status = ?').run(addSeconds(this.leaseFor(timeout)), now(), id, 'processing')
+      },
+      Math.max(5_000, Math.floor((timeout * 1000) / 2)),
+    )
+    heartbeat.unref?.()
     let statusCode = 500
     let headers: Record<string, string> = {}
     let body = ''
@@ -692,10 +834,7 @@ export class FunctionService {
     try {
       const { dir, tried, entrypoint, runtime: runtimeId } = this.codeDir(f)
       if (!dir) {
-        throw new Error(
-          `Function code not found. Looked for ${tried.join(' and ')}. ` +
-            'Set the code folder (the folder with bunwrite.config.json or appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
-        )
+        throw new Error(`Function code not found. Looked for ${tried.join(' and ')}. ` + 'Set the code folder (the folder with bunwrite.config.json or appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.')
       }
       const sandbox = this.config.functionsSandbox
       const runtime = runtimeId && !f.runtime.startsWith('python') ? await ensureRuntime(this.config, runtimeId) : null
@@ -844,6 +983,7 @@ export class FunctionService {
     } catch (error) {
       errors = error instanceof Error ? error.message : String(error)
     } finally {
+      clearInterval(heartbeat)
       // Never leave a client waiting on a stream that will get no more data.
       const open = head as { ended: boolean } | null
       if (open && !open.ended) {
@@ -853,23 +993,45 @@ export class FunctionService {
       this.running.set(f.id, (this.running.get(f.id) ?? 1) - 1)
     }
     const failed = statusCode >= 400 || statusCode === 0
-    const responseHeaders = Object.entries(headers).map(([name, value]) => ({ name, value: String(value) }))
+    const responseHeaders = Object.entries(headers).map(([name, value]) => ({
+      name,
+      value: String(value),
+    }))
+    const attempts = this.sql.query<{ attempts: number }, [string]>('SELECT attempts FROM _executions WHERE id = ?').get(id)?.attempts ?? 1
+    // A failed run goes back to the queue until it runs out of attempts.
+    if (failed && attempts < this.maxAttempts(f)) {
+      const backoff = Math.min(60, 2 ** attempts)
+      this.sql
+        .query(
+          `UPDATE _executions SET status = 'waiting', response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, available_at = ?, lease_until = NULL, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, addSeconds(backoff), now(), id)
+      // Wake the queue when the backoff ends; the scheduler tick also drains.
+      setTimeout(() => this.drain(), backoff * 1000).unref?.()
+      return { statusCode, headers, body }
+    }
     this.sql
       .query(
-        `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', updated_at = ?
+        `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', lease_until = NULL, updated_at = ?
          WHERE id = ?`,
       )
       .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id)
     return { statusCode, headers, body }
   }
 
-  /** Run due cron schedules (once a minute) and due deferred executions (every tick). */
+  /** Fire due cron jobs, deferred executions and reclaim abandoned runs. */
   start(): void {
     if (this.timer) return
+    // Pick up what the previous process left in the queue before the first tick.
+    this.reap()
+    this.drain()
     this.timer = setInterval(() => {
       const date = new Date()
       this.tick(date)
       this.tickScheduled(date)
+      this.reap()
+      this.drain()
     }, 15_000)
     this.timer.unref?.()
   }
@@ -904,41 +1066,35 @@ export class FunctionService {
   /**
    * Run the one-off executions `scheduledAt` deferred whose time has come.
    *
-   * Rows are claimed by `run()`, which flips `scheduled` to `processing` before
-   * its first await, so a slow run can never be picked up twice. A run that is
-   * still going leaves the rest of that function's queue for the next tick
-   * rather than overlapping it, matching the cron path.
+   * Each row is claimed first, so a slow run can never be picked up twice and
+   * a crashed one is not stuck. A run that is still going leaves the rest of
+   * that function's queue for the next tick rather than overlapping it,
+   * matching the cron path.
    */
   tickScheduled(date: Date): string[] {
-    const due = this.sql
-      .query<ExecutionRow, [string, number]>(
-        "SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?",
-      )
-      .all(formatDate(date), 50)
+    const due = this.sql.query<ExecutionRow, [string, number]>("SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?").all(formatDate(date), 50)
     const fired: string[] = []
     for (const row of due) {
       let f: FunctionRow
       try {
         f = this.fn(row.function_id)
       } catch {
-        this.sql
-          .query("UPDATE _executions SET status = 'failed', errors = ?, updated_at = ? WHERE id = ?")
-          .run('The function was deleted before this execution ran.', now(), row.id)
+        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ?").run('The function was deleted before this execution ran.', now(), row.id)
         continue
       }
       if ((this.running.get(f.id) ?? 0) > 0) continue
+      const claimed = this.claim(now(), this.leaseFor(f.timeout), row.id, formatDate(date))
+      if (!claimed) continue
       fired.push(row.id)
       const request: ExecutionRequest = {
         trigger: 'schedule',
-        method: row.request_method,
-        path: row.request_path,
-        headers: Object.fromEntries(
-          parse<{ name: string; value: string }[]>(row.request_headers, []).map((h) => [h.name, h.value]),
-        ),
-        body: row.request_body,
-        userId: row.user_id,
+        method: claimed.request_method,
+        path: claimed.request_path,
+        headers: Object.fromEntries(parse<{ name: string; value: string }[]>(claimed.request_headers, []).map((h) => [h.name, h.value])),
+        body: claimed.request_body,
+        userId: claimed.user_id,
       }
-      this.run(row.id, f, request, f.timeout).catch((e) => console.error(`[functions] ${f.id}`, e))
+      this.startRun(claimed.id, f, request, f.timeout)
     }
     return fired
   }

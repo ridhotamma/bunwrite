@@ -1,7 +1,9 @@
 /**
  * Console sign-in. Admins are separate from project users (as in Appwrite);
- * sessions are random secrets in an HttpOnly, SameSite=Strict cookie scoped to
- * /console, stored as sha256.
+ * sessions are random secrets in an HttpOnly, SameSite=Lax cookie scoped to
+ * /console, stored as sha256. Lax (not Strict) so the cookie is sent when a
+ * GitHub round trip lands back on the console; Lax still withholds it from
+ * cross-site POSTs, and the console checks Origin as well.
  */
 import type { Db } from '~/db/connection'
 import { addSeconds, now } from '~/lib/datetime'
@@ -100,10 +102,10 @@ export class ConsoleAuth {
   }
 
   cookie(secret: string, secure: boolean): string {
-    return `${CONSOLE_COOKIE}=${secret}; Path=/console; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL}${secure ? '; Secure' : ''}`
+    return `${CONSOLE_COOKIE}=${secret}; Path=/console; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}${secure ? '; Secure' : ''}`
   }
 
   clearCookie(): string {
-    return `${CONSOLE_COOKIE}=; Path=/console; HttpOnly; SameSite=Strict; Max-Age=0`
+    return `${CONSOLE_COOKIE}=; Path=/console; HttpOnly; SameSite=Lax; Max-Age=0`
   }
 }

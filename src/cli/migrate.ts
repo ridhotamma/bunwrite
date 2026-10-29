@@ -2,7 +2,7 @@
  * Copy a live Appwrite project into this server's database (read-only on Appwrite).
  *
  *   bun run migrate --endpoint https://appwrite.example.com/v1 --project <id> --key <api key> \
- *     [--functions ./appwrite.config.json] [--only schema,users,teams,documents,files] [--verify]
+ *     [--functions ./appwrite.config.json] [--only schema,users,teams,variables,documents,files] [--verify]
  *
  * Writes to DATABASE_PATH and STORAGE_PATH (same env as the server). Safe to run
  * again: rows are replaced by ID, so a final run at cutover picks up changes.
@@ -47,6 +47,7 @@ console.log('\n=== Migration report')
 console.log(`collections: ${report.collections.length}, documents: ${docs}`)
 console.log(`users: ${report.users} (password hashes: ${JSON.stringify(report.hashFormats)}), identities: ${report.identities}`)
 console.log(`teams: ${report.teams}, memberships: ${report.memberships}`)
+console.log(`project variables: ${report.variables}`)
 console.log(`files: ${report.files} (${(report.fileBytes / 1024 / 1024).toFixed(1)} MB)`)
 if (short.length) console.log('incomplete collections:', short)
 if (report.skipped.length) console.log('skipped:', report.skipped)

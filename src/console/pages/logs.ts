@@ -30,7 +30,7 @@ export function logPages(router: ConsoleRouter): void {
     </select>`
     const body = logs.length
       ? html`<div class="scroll"><table><thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th class="num">Duration</th><th class="hide-sm">Auth</th><th class="hide-sm">IP</th><th class="hide-sm">Request ID</th></tr></thead><tbody>
-        ${logs.map((l) => html`<tr class="row-link" onclick="location='${LOGS}/${l.seq}'"><td>${when(l.created_at)}</td><td class="mono">${l.method}</td>
+        ${logs.map((l) => html`<tr class="row-link" onclick="location='${LOGS}/${l.seq}'"><td class="nowrap">${when(l.created_at)}</td><td class="mono">${l.method}</td>
           <td class="clip mono"><a href="${LOGS}/${l.seq}" title="${l.path}">${l.path}</a></td>
           <td><span title="${l.error || ''}">${badge(String(l.status), tone(l.status))}</span></td><td class="num">${duration(l.duration_ms)}</td>
           <td class="clip hide-sm">${l.auth || '—'}</td><td class="mono hide-sm">${l.ip || '—'}</td><td class="mono clip hide-sm" title="${l.id}">${l.id}</td></tr>`)}

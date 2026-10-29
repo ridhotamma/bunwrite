@@ -11,6 +11,7 @@ import { randomSecret } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
 import { ProxyService } from './proxy/service'
+import { QueueService } from './queue/service'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
 import { SettingsService } from './settings/service'
@@ -19,6 +20,7 @@ import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
 import { TeamService } from './teams/service'
 import { TransactionService } from './transactions/service'
+import { VariablesService } from './variables/service'
 import { AccessService } from './settings/access'
 import { TopicService } from './messaging/topics'
 import { WebhookService } from './webhooks/service'
@@ -38,6 +40,8 @@ export interface Services {
   realtime: RealtimeHub
   storage: StorageService
   functions: FunctionService
+  /** Project and site environment variables. */
+  variables: VariablesService
   /** Static sites served by Host header. */
   sites: SiteService
   /** Custom domains for sites and functions (Appwrite proxy rules). */
@@ -54,6 +58,8 @@ export interface Services {
   render: RenderService
   /** GitHub App installations connected to this project. */
   vcs: VcsInstallations
+  /** Durable job queue for SDK workers (docs/QUEUE.md). */
+  queue: QueueService
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
@@ -64,29 +70,37 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const auth = new AuthService(db, config, store)
   const teams = new TeamService(db, store, auth)
   const proxy = new ProxyService(db, config)
-  const sites = new SiteService(db, config, proxy)
+  const variables = new VariablesService(db)
+  const sites = new SiteService(db, config, proxy, variables)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db)
   const storage = new StorageService(db, config, store)
   const functions = new FunctionService(db, config, store, proxy, {
     functionEnv: readEnvFile(config.functionsEnvFile),
+    projectVariables: () => variables.projectEnvironment(),
   })
   const requestLogs = new RequestLogService(db, config)
   const backups = new BackupService(db, config)
-  const render = new RenderService(config)
+  const queue = new QueueService(db)
+  // Async renders are jobs in the queue, saved to storage when done.
+  const render = new RenderService(config, { queue, storage })
   const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
   const vcs = new VcsInstallations(db)
   proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, vcs } as Services
+  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, vcs, queue } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(db, config, (key) => {
     if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
-    // Turning HTML rendering off frees Chromium's memory right away.
-    if (key === 'render' && !config.render.enabled) services.render.shutdown()
+    // Turning HTML rendering off frees Chromium's memory right away; turning
+    // it on runs the jobs that waited meanwhile.
+    if (key === 'render') {
+      if (config.render.enabled) services.render.drain()
+      else services.render.shutdown()
+    }
   })
   if (!overrides.mailer) services.mailer = makeMailer()
   return Object.assign(services, overrides)

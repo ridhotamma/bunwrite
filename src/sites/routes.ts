@@ -12,9 +12,11 @@ import { requireKey } from '~/auth/routes'
 import { apiHeader } from '~/lib/compat'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, str, type Params } from '~/lib/http'
-import { uniqueId } from '~/lib/ids'
+import { resolveId, uniqueId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
+import { variableModel } from '~/variables/model'
+import { siteScope } from '~/variables/service'
 import { applyProvider, projectOf } from '~/vcs/routes'
 import { NO_PROVIDER, providerOf, sourceModel } from '~/vcs/source'
 import { DEFAULT_RUNTIME, SITE_RUNTIMES } from '~/runtimes/catalog'
@@ -72,7 +74,7 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     latestDeploymentCreatedAt: latest?.created_at ?? '',
     latestDeploymentStatus: latest?.status ?? '',
     scopes: [],
-    vars: [],
+    vars: ctx.variables.list(siteScope(s.id)).map((v) => variableModel(v, 'site', s.id)),
     timeout: 30,
     installCommand: s.install_command,
     buildCommand: s.build_command,
@@ -267,10 +269,63 @@ export function siteRoutes(router: Router<AppContext>): void {
     return json(siteModel(ctx, ctx.sites.activate(path.siteId!, deploymentId)))
   })
 
-  /** Sites have no variables; an empty list keeps `appwrite pull sites` going. */
-  router.get('/sites/:siteId/variables', ({ ctx, path }) => {
+  // ---- Variables ----
+
+  router.get('/sites/:siteId/variables', ({ ctx, path, params }) => {
     requireKey(ctx, 'sites.read')
     ctx.sites.site(path.siteId!)
-    return json({ total: 0, variables: [] })
+    const { total, items } = page(
+      ctx.variables.list(siteScope(path.siteId!)).map((v) => variableModel(v, 'site', path.siteId!)),
+      list(params.queries),
+    )
+    return json({ total, variables: items })
+  })
+
+  router.post('/sites/:siteId/variables', ({ ctx, path, params }) => {
+    requireKey(ctx, 'sites.write')
+    ctx.sites.site(path.siteId!)
+    const key = str(params.key) ?? ''
+    const id = resolveId(params.variableId ?? 'unique()', 'Variable ID')
+    const row = ctx.variables.create(
+      siteScope(path.siteId!),
+      id,
+      key,
+      str(params.value) ?? '',
+      bool(params.secret, false),
+    )
+    ctx.sites.ssr.stopSite(path.siteId!)
+    return json(variableModel(row, 'site', path.siteId!), 201)
+  })
+
+  router.get('/sites/:siteId/variables/:variableId', ({ ctx, path }) => {
+    requireKey(ctx, 'sites.read')
+    ctx.sites.site(path.siteId!)
+    return json(
+      variableModel(
+        ctx.variables.get(siteScope(path.siteId!), path.variableId!),
+        'site',
+        path.siteId!,
+      ),
+    )
+  })
+
+  router.put('/sites/:siteId/variables/:variableId', ({ ctx, path, params }) => {
+    requireKey(ctx, 'sites.write')
+    ctx.sites.site(path.siteId!)
+    const row = ctx.variables.update(siteScope(path.siteId!), path.variableId!, {
+      key: str(params.key),
+      value: str(params.value),
+      secret: params.secret === undefined ? undefined : bool(params.secret, false),
+    })
+    ctx.sites.ssr.stopSite(path.siteId!)
+    return json(variableModel(row, 'site', path.siteId!))
+  })
+
+  router.delete('/sites/:siteId/variables/:variableId', ({ ctx, path }) => {
+    requireKey(ctx, 'sites.write')
+    ctx.sites.site(path.siteId!)
+    ctx.variables.deleteById(siteScope(path.siteId!), path.variableId!)
+    ctx.sites.ssr.stopSite(path.siteId!)
+    return noContent()
   })
 }

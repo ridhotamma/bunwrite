@@ -259,6 +259,8 @@ export class ProjectManager implements ProjectResolver {
       this.linkServices(services)
       services.functions.start()
       services.backups.start()
+      services.queue.start()
+      services.render.start()
       return { project: runtime, apiKey }
     } catch (error) {
       this.runtimes.delete(id)
@@ -291,6 +293,8 @@ export class ProjectManager implements ProjectResolver {
     runtime.services.functions.stop()
     runtime.services.sites.stop()
     runtime.services.backups.stop()
+    runtime.services.queue.stop()
+    runtime.services.render.stop()
     runtime.services.render.shutdown()
 
     // Best effort: remove external objects before the local database goes away.
@@ -319,6 +323,8 @@ export class ProjectManager implements ProjectResolver {
     for (const runtime of this.runtimes.values()) {
       runtime.services.functions.start()
       runtime.services.backups.start()
+      runtime.services.queue.start()
+      runtime.services.render.start()
     }
   }
 
@@ -328,6 +334,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.transactions.prune()
       runtime.services.auth.pruneExpired()
       runtime.services.functions.prune()
+      runtime.services.queue.prune()
       runtime.services.requestLogs.prune()
       runtime.services.storage.prunePreviews()
     }
@@ -339,6 +346,8 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.functions.stop()
       runtime.services.sites.stop()
       runtime.services.backups.stop()
+      runtime.services.queue.stop()
+      runtime.services.render.stop()
       runtime.services.requestLogs.flush()
       if (id !== this.config.projectId) runtime.services.db.sqlite.close()
     }

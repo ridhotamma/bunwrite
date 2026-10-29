@@ -66,7 +66,8 @@ you can back up, Bunwrite is for you.
 - **Sites, static or server-rendered.** Host plain HTML, htmx pages, a built
   single-page app, or an SSR app (`adapter: ssr`) that Bunwrite builds and runs
   on demand, on `<site-id>.<SITES_DOMAIN>` plus any number of custom domains.
-  `/api/*` on the site can run a function on the same origin. See
+  `/api/*` on the site can run a function on the same origin. Project and
+  per-site variables apply at build and runtime. See
   [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.

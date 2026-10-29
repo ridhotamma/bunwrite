@@ -43,6 +43,8 @@ export interface ImportReport {
   identities: number
   teams: number
   memberships: number
+  /** Project variables (`/project/variables`); site variables follow their sites. */
+  variables: number
   files: number
   fileBytes: number
   skipped: string[]
@@ -141,7 +143,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
   const source = new Source(opts)
   const pageSize = opts.pageSize ?? 500
   const sql = db.sqlite
-  const report: ImportReport = { collections: [], users: 0, identities: 0, teams: 0, memberships: 0, files: 0, fileBytes: 0, skipped: [], hashFormats: {} }
+  const report: ImportReport = { collections: [], users: 0, identities: 0, teams: 0, memberships: 0, variables: 0, files: 0, fileBytes: 0, skipped: [], hashFormats: {} }
 
   // ---------------------------------------------------------- schema
   const databases = (await source.get<{ databases: any[] }>('/databases')).databases
@@ -215,6 +217,29 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     }
     report.teams = teams.length
     log(`teams: ${teams.length}, memberships: ${report.memberships}`)
+  }
+
+  // ---------------------------------------------------------- variables
+  if (want('variables')) {
+    // Project variables apply to every function and site. Site variables are
+    // set with the sites themselves (the importer does not create sites).
+    const vars = await source
+      .all<any>('/project/variables', 'variables', [], pageSize)
+      .catch((error) => {
+        report.skipped.push(`project variables: ${(error as Error).message}`)
+        return []
+      })
+    const insert = sql.query(
+      `INSERT OR REPLACE INTO _variables (id, scope, key, value, secret, created_at, updated_at)
+       VALUES (?, 'project', ?, ?, ?, ?, ?)`,
+    )
+    sql.transaction(() => {
+      for (const v of vars) {
+        insert.run(v.$id, v.key, v.value ?? '', v.secret ? 1 : 0, v.$createdAt, v.$updatedAt)
+        report.variables++
+      }
+    })()
+    log(`project variables: ${report.variables}`)
   }
 
   // ---------------------------------------------------------- documents

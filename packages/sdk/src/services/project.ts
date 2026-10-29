@@ -1838,4 +1838,398 @@ export class Project {
 
         return this.client.call('get', uri, apiHeaders, apiPayload);
     }
+
+    /**
+     * Get a list of all project environment variables.
+     *
+     * @param {string[]} params.queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: key, resourceType, resourceId, secret
+     * @param {boolean} params.total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.VariableList>}
+     */
+    listVariables(params?: {
+        queries?: string[];
+        total?: boolean;
+    }): Promise<Models.VariableList>;
+    /**
+     * Get a list of all project environment variables.
+     *
+     * @param {string[]} queries - Array of query strings generated using the Query class provided by the SDK. [Learn more about queries](https://appwrite.io/docs/queries). Maximum of 100 queries are allowed, each 4096 characters long. You may filter on the following attributes: key, resourceType, resourceId, secret
+     * @param {boolean} total - When set to false, the total count returned will be 0 and will not be calculated.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.VariableList>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    listVariables(
+        queries?: string[],
+        total?: boolean,
+    ): Promise<Models.VariableList>;
+    listVariables(
+        paramsOrFirst?: { queries?: string[]; total?: boolean } | string[],
+        ...rest: [boolean?]
+    ): Promise<Models.VariableList> {
+        let params: { queries?: string[]; total?: boolean };
+
+        if (
+            !paramsOrFirst ||
+            (paramsOrFirst &&
+                typeof paramsOrFirst === 'object' &&
+                !Array.isArray(paramsOrFirst))
+        ) {
+            params = (paramsOrFirst || {}) as {
+                queries?: string[];
+                total?: boolean;
+            };
+        } else {
+            params = {
+                queries: paramsOrFirst as string[],
+                total: rest[0] as boolean,
+            };
+        }
+
+        const queries = params.queries;
+        const total = params.total;
+        const apiPath = '/project/variables';
+        const apiPayload: Payload = {};
+        if (typeof queries !== 'undefined') {
+            apiPayload['queries'] = queries;
+        }
+        if (typeof total !== 'undefined') {
+            apiPayload['total'] = total;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Create a new project environment variable. These variables can be accessed by all functions and sites in the project.
+     *
+     * @param {string} params.variableId - Variable unique ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only projects can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    createVariable(params: {
+        variableId: string;
+        key: string;
+        value: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Create a new project environment variable. These variables can be accessed by all functions and sites in the project.
+     *
+     * @param {string} variableId - Variable unique ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only projects can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createVariable(
+        variableId: string,
+        key: string,
+        value: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    createVariable(
+        paramsOrFirst:
+            | {
+                  variableId: string;
+                  key: string;
+                  value: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            variableId: string;
+            key: string;
+            value: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                variableId: string;
+                key: string;
+                value: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                variableId: paramsOrFirst as string,
+                key: rest[0] as string,
+                value: rest[1] as string,
+                secret: rest[2] as boolean,
+            };
+        }
+
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        if (typeof key === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "key"');
+        }
+        if (typeof value === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "value"');
+        }
+        const apiPath = '/project/variables';
+        const apiPayload: Payload = {};
+        if (typeof variableId !== 'undefined') {
+            apiPayload['variableId'] = variableId;
+        }
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    getVariable(params: { variableId: string }): Promise<Models.Variable>;
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getVariable(variableId: string): Promise<Models.Variable>;
+    getVariable(
+        paramsOrFirst: { variableId: string } | string,
+    ): Promise<Models.Variable> {
+        let params: { variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as { variableId: string };
+        } else {
+            params = {
+                variableId: paramsOrFirst as string,
+            };
+        }
+
+        const variableId = params.variableId;
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/project/variables/{variableId}'.replace(
+            '{variableId}',
+            encodeURIComponent(String(variableId)),
+        );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} params.variableId - Variable unique ID.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only projects can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    updateVariable(params: {
+        variableId: string;
+        key?: string;
+        value?: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} variableId - Variable unique ID.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only projects can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    updateVariable(
+        variableId: string,
+        key?: string,
+        value?: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    updateVariable(
+        paramsOrFirst:
+            | {
+                  variableId: string;
+                  key?: string;
+                  value?: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            variableId: string;
+            key?: string;
+            value?: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                variableId: string;
+                key?: string;
+                value?: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                variableId: paramsOrFirst as string,
+                key: rest[0] as string,
+                value: rest[1] as string,
+                secret: rest[2] as boolean,
+            };
+        }
+
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/project/variables/{variableId}'.replace(
+            '{variableId}',
+            encodeURIComponent(String(variableId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('put', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    deleteVariable(params: { variableId: string }): Promise<{}>;
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    deleteVariable(variableId: string): Promise<{}>;
+    deleteVariable(
+        paramsOrFirst: { variableId: string } | string,
+    ): Promise<{}> {
+        let params: { variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as { variableId: string };
+        } else {
+            params = {
+                variableId: paramsOrFirst as string,
+            };
+        }
+
+        const variableId = params.variableId;
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/project/variables/{variableId}'.replace(
+            '{variableId}',
+            encodeURIComponent(String(variableId)),
+        );
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
 }

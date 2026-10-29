@@ -1897,4 +1897,379 @@ export class Sites {
 
         return this.client.call('get', uri, apiHeaders, apiPayload);
     }
+
+    /**
+     * Create a new site variable. These variables can be accessed during build and runtime (server-side rendering) as environment variables.
+     *
+     * @param {string} params.siteId - Site unique ID.
+     * @param {string} params.variableId - Variable ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only sites can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    createVariable(params: {
+        siteId: string;
+        variableId: string;
+        key: string;
+        value: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Create a new site variable. These variables can be accessed during build and runtime (server-side rendering) as environment variables.
+     *
+     * @param {string} siteId - Site unique ID.
+     * @param {string} variableId - Variable ID. Choose a custom ID or generate a random ID with `ID.unique()`. Valid chars are a-z, A-Z, 0-9, period, hyphen, and underscore. Can't start with a special char. Max length is 36 chars.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only sites can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    createVariable(
+        siteId: string,
+        variableId: string,
+        key: string,
+        value: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    createVariable(
+        paramsOrFirst:
+            | {
+                  siteId: string;
+                  variableId: string;
+                  key: string;
+                  value: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            siteId: string;
+            variableId: string;
+            key: string;
+            value: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                siteId: string;
+                variableId: string;
+                key: string;
+                value: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                siteId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+                key: rest[1] as string,
+                value: rest[2] as string,
+                secret: rest[3] as boolean,
+            };
+        }
+
+        const siteId = params.siteId;
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof siteId === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "siteId"');
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        if (typeof key === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "key"');
+        }
+        if (typeof value === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "value"');
+        }
+        const apiPath = '/sites/{siteId}/variables'.replace(
+            '{siteId}',
+            encodeURIComponent(String(siteId)),
+        );
+        const apiPayload: Payload = {};
+        if (typeof variableId !== 'undefined') {
+            apiPayload['variableId'] = variableId;
+        }
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('post', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} params.siteId - Site unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    getVariable(params: {
+        siteId: string;
+        variableId: string;
+    }): Promise<Models.Variable>;
+    /**
+     * Get a variable by its unique ID.
+     *
+     * @param {string} siteId - Site unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    getVariable(siteId: string, variableId: string): Promise<Models.Variable>;
+    getVariable(
+        paramsOrFirst: { siteId: string; variableId: string } | string,
+        ...rest: [string?]
+    ): Promise<Models.Variable> {
+        let params: { siteId: string; variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                siteId: string;
+                variableId: string;
+            };
+        } else {
+            params = {
+                siteId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+            };
+        }
+
+        const siteId = params.siteId;
+        const variableId = params.variableId;
+        if (typeof siteId === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "siteId"');
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/sites/{siteId}/variables/{variableId}'
+            .replace('{siteId}', encodeURIComponent(String(siteId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            accept: 'application/json',
+        };
+
+        return this.client.call('get', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} params.siteId - Site unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @param {string} params.key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} params.value - Variable value. Max length: 8192 chars.
+     * @param {boolean} params.secret - Secret variables can be updated or deleted, but only sites can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     */
+    updateVariable(params: {
+        siteId: string;
+        variableId: string;
+        key?: string;
+        value?: string;
+        secret?: boolean;
+    }): Promise<Models.Variable>;
+    /**
+     * Update variable by its unique ID.
+     *
+     * @param {string} siteId - Site unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @param {string} key - Variable key. Letters, digits and underscores only, must not start with a digit. Max length: 255 chars.
+     * @param {string} value - Variable value. Max length: 8192 chars.
+     * @param {boolean} secret - Secret variables can be updated or deleted, but only sites can read them during build and runtime.
+     * @throws {BunwriteException}
+     * @returns {Promise<Models.Variable>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    updateVariable(
+        siteId: string,
+        variableId: string,
+        key?: string,
+        value?: string,
+        secret?: boolean,
+    ): Promise<Models.Variable>;
+    updateVariable(
+        paramsOrFirst:
+            | {
+                  siteId: string;
+                  variableId: string;
+                  key?: string;
+                  value?: string;
+                  secret?: boolean;
+              }
+            | string,
+        ...rest: [string?, string?, string?, boolean?]
+    ): Promise<Models.Variable> {
+        let params: {
+            siteId: string;
+            variableId: string;
+            key?: string;
+            value?: string;
+            secret?: boolean;
+        };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                siteId: string;
+                variableId: string;
+                key?: string;
+                value?: string;
+                secret?: boolean;
+            };
+        } else {
+            params = {
+                siteId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+                key: rest[1] as string,
+                value: rest[2] as string,
+                secret: rest[3] as boolean,
+            };
+        }
+
+        const siteId = params.siteId;
+        const variableId = params.variableId;
+        const key = params.key;
+        const value = params.value;
+        const secret = params.secret;
+        if (typeof siteId === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "siteId"');
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/sites/{siteId}/variables/{variableId}'
+            .replace('{siteId}', encodeURIComponent(String(siteId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        if (typeof key !== 'undefined') {
+            apiPayload['key'] = key;
+        }
+        if (typeof value !== 'undefined') {
+            apiPayload['value'] = value;
+        }
+        if (typeof secret !== 'undefined') {
+            apiPayload['secret'] = secret;
+        }
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+            accept: 'application/json',
+        };
+
+        return this.client.call('put', uri, apiHeaders, apiPayload);
+    }
+
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} params.siteId - Site unique ID.
+     * @param {string} params.variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     */
+    deleteVariable(params: { siteId: string; variableId: string }): Promise<{}>;
+    /**
+     * Delete a variable by its unique ID.
+     *
+     * @param {string} siteId - Site unique ID.
+     * @param {string} variableId - Variable unique ID.
+     * @throws {BunwriteException}
+     * @returns {Promise<{}>}
+     * @deprecated Use the object parameter style method for a better developer experience.
+     */
+    deleteVariable(siteId: string, variableId: string): Promise<{}>;
+    deleteVariable(
+        paramsOrFirst: { siteId: string; variableId: string } | string,
+        ...rest: [string?]
+    ): Promise<{}> {
+        let params: { siteId: string; variableId: string };
+
+        if (
+            paramsOrFirst &&
+            typeof paramsOrFirst === 'object' &&
+            !Array.isArray(paramsOrFirst)
+        ) {
+            params = (paramsOrFirst || {}) as {
+                siteId: string;
+                variableId: string;
+            };
+        } else {
+            params = {
+                siteId: paramsOrFirst as string,
+                variableId: rest[0] as string,
+            };
+        }
+
+        const siteId = params.siteId;
+        const variableId = params.variableId;
+        if (typeof siteId === 'undefined') {
+            throw new BunwriteException('Missing required parameter: "siteId"');
+        }
+        if (typeof variableId === 'undefined') {
+            throw new BunwriteException(
+                'Missing required parameter: "variableId"',
+            );
+        }
+        const apiPath = '/sites/{siteId}/variables/{variableId}'
+            .replace('{siteId}', encodeURIComponent(String(siteId)))
+            .replace('{variableId}', encodeURIComponent(String(variableId)));
+        const apiPayload: Payload = {};
+        const uri = new URL(this.client.config.endpoint + apiPath);
+
+        const apiHeaders: { [header: string]: string } = {
+            'X-Bunwrite-Project': this.client.config.project,
+            'content-type': 'application/json',
+        };
+
+        return this.client.call('delete', uri, apiHeaders, apiPayload);
+    }
 }

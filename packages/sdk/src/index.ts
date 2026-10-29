@@ -17,6 +17,19 @@ export { Messaging } from './services/messaging';
 export { Organization } from './services/organization';
 export { Project } from './services/project';
 export { Proxy } from './services/proxy';
+export { Queue, createQueueWorker } from './services/queue';
+export type {
+    QueueMessage,
+    QueueMessageList,
+    QueueMessageStatus,
+    QueueStats,
+    CreateQueueMessageParams,
+    ClaimQueueMessagesParams,
+    QueueMessageParams,
+    QueueWorker,
+    QueueWorkerContext,
+    QueueWorkerOptions,
+} from './services/queue';
 export { Realtime, RealtimeCode } from './services/realtime';
 export type {
     RealtimeSubscription,
@@ -27,7 +40,7 @@ export type {
 } from './services/realtime';
 export { Render } from './services/render';
 export { Sites } from './services/sites';
-export type { RenderPdfParams, RenderImageParams, RenderMargin } from './services/render';
+export type { RenderPdfParams, RenderImageParams, RenderMargin, RenderJob, RenderJobStatus } from './services/render';
 export { Storage } from './services/storage';
 export { TablesDB } from './services/tables-db';
 export { Teams } from './services/teams';

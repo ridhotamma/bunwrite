@@ -72,7 +72,7 @@ curl -X POST https://api.example.com/v1/image \
 | `height` | `800` | Viewport height in CSS pixels, 16–16384; the minimum height with `fullPage` |
 | `fullPage` | `true` | Capture the whole page; `false` captures only the viewport |
 | `selector` | none | Capture only the first element matching this CSS selector |
-| `scale` | `1` | Device pixel ratio, 1–3. `2` gives sharp text on phones and retina screens |
+| `scale` | `1` | Device pixel ratio, 0.1–3. `2` gives sharp text on phones and retina screens; below `1` gives a smaller image of the same layout (thumbnails) |
 | `quality` | encoder default | 1–100 for `jpg`, `webp` and `avif` |
 | `transparent` | `false` | Transparent instead of white page background (not for `jpg`) |
 | `fileName` | `image` | The extension for `output` is added when missing |
@@ -123,6 +123,46 @@ export default async ({ req, res }) => {
 }
 ```
 
+## Queue it: `async: true`
+
+Renders run one at a time, so a burst of direct requests waits in line, and
+past 20 waiting they get 429. For bursts (a batch of invoices, a webhook
+storm), send `async: true` with a `bucketId` instead. The call returns at
+once with a job (status 202); the server renders it when the line is free and
+saves it to the bucket. Queued renders are never refused for being busy.
+
+```bash
+curl -X POST https://api.example.com/v1/pdf \
+  -H "X-Bunwrite-Project: $PROJECT_ID" -H "X-Bunwrite-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"html": "<h1>INV-001</h1>", "async": true, "bucketId": "invoices", "fileId": "inv-001"}'
+```
+
+```json
+{ "$id": "68f...", "type": "pdf", "status": "waiting", "attempts": 0, "maxAttempts": 3,
+  "bucketId": "invoices", "fileId": "inv-001", "fileName": "document.pdf", "completedAt": null, "errors": "" }
+```
+
+`fileId` is fixed when the job is created (a unique one if you leave it out),
+so you can store it right away. `GET /v1/render/jobs/:jobId` returns the job;
+the file is in the bucket once `status` is `completed`. With the SDK:
+
+```ts
+const job = await render.pdfJob({ html, bucketId: 'invoices', fileId: 'inv-001' })
+// later
+const { status } = await render.getJob({ jobId: job.$id })
+```
+
+- Bad input (no bucket, a taken `fileId`, HTML too large, an image too big) is
+  refused when the job is created, with the same 4xx as a direct render.
+- Jobs are stored in SQLite (the `_render` system queue). A restart picks up
+  where it left off: a job that was rendering is retried after its lease.
+- A Chromium failure or timeout is retried with backoff, 3 attempts in all.
+  An error another attempt cannot fix (a selector that matches nothing) fails
+  the job on the first attempt, with `errors` saying why.
+- While rendering is turned off, jobs wait; turning it on runs them.
+- A finished job keeps its status for 30 days but drops its HTML.
+
 ## Remote assets and safety
 
 By default every `http(s)`, `ws(s)`, `file` and `ftp` request from the page is
@@ -135,7 +175,9 @@ it cannot reach the network while remote assets are blocked.
 
 ## Memory and limits
 
-- One render at a time; up to 20 more wait in line, then requests get 429.
+- One render at a time across all projects; up to 20 direct requests wait in
+  line, then they get 429. Queued (`async: true`) renders wait in SQLite
+  instead and are never refused for being busy.
 - A render taking over 30 seconds is stopped and Chromium is restarted.
 - Chromium starts on the first render and stops after one minute idle.
 - Images are limited to 8 megapixels (width × height × scale²): a 1200 px

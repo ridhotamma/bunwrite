@@ -400,6 +400,7 @@ export function functionPages(router: ConsoleRouter): void {
     base: `${FN}/:id/variables`,
     // Looking the function up here also answers 404 for an ID that is not there.
     scope: ({ ctx, path }) => ctx.services.functions.fn(path.id!).id,
+    store: (ctx) => ctx.services.functions,
     then: (_route, scope) => `${functionUrl(scope)}/variables`,
   })
 

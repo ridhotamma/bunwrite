@@ -40,6 +40,7 @@ ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing ap
   --site-id <id>       pull/push only these sites
   --table-id <id>      push only these tables (--collection-id for collections)
   --no-code            pull/push functions and sites without their code or files
+  --with-variables     push sites with the variables in their .env
   --activate false     push functions and sites without making the new version live
   --prune              push: delete what is on the server but not in the config
   --force              push: delete without asking

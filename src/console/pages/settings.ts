@@ -14,6 +14,7 @@ import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-met
 import { templatePath, templatePreview } from '~/console/views/templates'
 import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { BunwriteError } from '~/lib/errors'
+import { PROJECT_SCOPE } from '~/variables/service'
 import { registerVariableRoutes } from './variables'
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
@@ -179,8 +180,19 @@ export function settingsPages(router: ConsoleRouter): void {
   })
 
   registerVariableRoutes(router, {
+    base: `${SETTINGS}/variables`,
+    scope: () => PROJECT_SCOPE,
+    store: (ctx) => ctx.services.variables,
+    changed: (ctx) => {
+      for (const site of ctx.services.sites.list()) ctx.services.sites.ssr.stopSite(site.id)
+    },
+    then: () => tabPath('variables'),
+  })
+
+  registerVariableRoutes(router, {
     base: `${SETTINGS}/functions/variables`,
     scope: () => '*',
+    store: (ctx) => ctx.services.functions,
     then: () => tabPath('functions'),
   })
 

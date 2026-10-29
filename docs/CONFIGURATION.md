@@ -156,6 +156,13 @@ over the env file, and a function's own variable wins over a global one.
 
 ## Sites
 
+Project and site variables are not environment settings on the Bunwrite
+process; they are stored per project and edited in **Settings → Variables** or
+**Sites → a site → Variables**. They are applied to install/build commands and
+to the SSR app. Precedence is server environment < project variables < site
+variables. Secret values are write-only through the API. See
+[SITES.md](SITES.md#variables).
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SITES_BUILD_COMMANDS` | `true` | Run an SSR site's `installCommand` and `buildCommand` on this server. Set `false` to upload an already-built app and only run its start command. |

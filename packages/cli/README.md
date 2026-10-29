@@ -92,6 +92,9 @@ Options:
   (repeat the flag, or separate with commas).
 - `--no-code`: functions and sites without their code or files.
 - `--site-id <id>`: only these sites.
+- `--with-variables`: for `push sites`, reconcile the site's variables from the
+  `.env` next to its `path`; credential-looking names are stored as secret and
+  `.env` is left out of the upload.
 - `--activate false`: deploy without activating the new code.
 - `--prune`: also delete what is on the server but not in the config. It lists
   them and asks first; `--force` skips the question.

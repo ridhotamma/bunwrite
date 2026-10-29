@@ -43,12 +43,32 @@ export type RenderImageParams = SaveTo & {
     fullPage?: boolean;
     /** Capture only the first element matching this CSS selector. */
     selector?: string;
-    /** Device pixel ratio, 1 to 3. */
+    /** Device pixel ratio, 0.1 to 3. Below 1 shrinks the bitmap, not the layout. */
     scale?: number;
     /** 1 to 100 for jpg, webp and avif. */
     quality?: number;
     /** Transparent page background (not for jpg). */
     transparent?: boolean;
+};
+
+export type RenderJobStatus = 'waiting' | 'processing' | 'completed' | 'failed';
+
+/** A queued render (`pdfJob`, `imageJob`). The file is in the bucket once `status` is `completed`. */
+export type RenderJob = {
+    $id: string;
+    $createdAt: string;
+    $updatedAt: string;
+    type: 'pdf' | 'image';
+    status: RenderJobStatus;
+    attempts: number;
+    maxAttempts: number;
+    bucketId: string;
+    /** Fixed when the job is created, so you can store it before the render runs. */
+    fileId: string;
+    fileName: string;
+    completedAt: string | null;
+    /** Why the last attempt failed; empty when none did. */
+    errors: string;
 };
 
 /**
@@ -76,7 +96,33 @@ export class Render {
         return this.render('/image', params);
     }
 
-    private render(path: string, params: Payload): Promise<any> {
+    /**
+     * Queue a PDF render and resolve at once with the job. The server renders
+     * it when the line is free and saves it to `bucketId`; poll `getJob`.
+     * Use it for bursts: queued renders never get 429.
+     */
+    pdfJob(params: RenderPdfParams & { bucketId: string }): Promise<RenderJob> {
+        return this.render('/pdf', { ...params, async: true }, 'json');
+    }
+
+    /** Queue an image render; see `pdfJob`. */
+    imageJob(params: RenderImageParams & { bucketId: string }): Promise<RenderJob> {
+        return this.render('/image', { ...params, async: true }, 'json');
+    }
+
+    /** Read a queued render. */
+    getJob(params: { jobId: string }): Promise<RenderJob> {
+        if (typeof params?.jobId !== 'string' || !params.jobId) {
+            throw new BunwriteException('Missing required parameter: "jobId"');
+        }
+        return this.client.call(
+            'get',
+            new URL(this.client.config.endpoint + `/render/jobs/${encodeURIComponent(params.jobId)}`),
+            { 'X-Bunwrite-Project': this.client.config.project },
+        );
+    }
+
+    private render(path: string, params: Payload, responseType = 'arrayBuffer'): Promise<any> {
         if (typeof params?.html !== 'string') {
             throw new BunwriteException('Missing required parameter: "html"');
         }
@@ -87,7 +133,7 @@ export class Render {
             new URL(this.client.config.endpoint + path),
             { 'X-Bunwrite-Project': this.client.config.project, 'content-type': 'application/json' },
             payload,
-            'arrayBuffer',
+            responseType,
         );
     }
 }

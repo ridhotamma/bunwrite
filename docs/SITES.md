@@ -245,6 +245,31 @@ trust model as functions: the uploaded commands run on the server. Keep
 `SITES_SSR_MAX_PROCESSES` small on a 1 GB machine; memory, not CPU, is the
 limit.
 
+## Variables
+
+Sites read the same project and site variables as Appwrite:
+
+- **Project variables** (`/v1/project/variables`) are available to every site
+  and function in the project.
+- **Site variables** (`/v1/sites/<id>/variables`) belong to one site and win
+  over a project variable with the same name.
+- **Server environment** is the base. A variable saved in the console or API
+  overrides the host's value.
+
+`createVariable`, `listVariables`, `getVariable`, `updateVariable` and
+`deleteVariable` work through `node-appwrite`, `@bunwrite/sdk` and the console:
+**Sites → a site → Variables**, and **Settings → Variables**.
+
+Values are available to the install/build commands and to the running app.
+Secret variables are write-only: the API returns an empty `value`. Changing a
+variable stops the site's SSR process; the next request starts it with the new
+environment. Redeploy to bake a value into a build.
+
+`bunwrite push sites --with-variables` reconciles a site's variables from the
+`.env` next to its `path`. Names that look like credentials (`*_KEY`, `*_SECRET`,
+`*_TOKEN`, `*_PASSWORD`, …) are stored as secret; public `VITE_*` values are
+not. `.env` itself is left out of that deployment.
+
 ## Serving rules
 
 These rules apply to static sites. An SSR site sends every path and method to
@@ -340,7 +365,6 @@ redirect targets.
 
 ## Not supported
 
-- Site variables. (Git deployments and branch previews: see [GIT.md](GIT.md).)
 - WebSockets or HTTP upgrades into an SSR app, and background workers that
   outlive a request.
 - Uploading a `.zip` of an SSR app with `node_modules`: packages are installed

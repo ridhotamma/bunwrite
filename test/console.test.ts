@@ -38,7 +38,7 @@ describe('console access', () => {
     expect(res.headers.get('location')).toBe('/console/login')
   })
 
-  test('wrong password is refused; the right one sets a strict cookie', async () => {
+  test('wrong password is refused; the right one sets a Lax cookie', async () => {
     const bad = await form('/console/login', { email: 'admin@example.com', password: 'nope-nope' })
     expect(bad.status).toBe(200)
     const body = await bad.text()
@@ -50,7 +50,7 @@ describe('console access', () => {
     expect(ok.status).toBe(303)
     const set = ok.headers.get('set-cookie')!
     expect(set).toContain('HttpOnly')
-    expect(set).toContain('SameSite=Strict')
+    expect(set).toContain('SameSite=Lax')
     expect(set).toContain('Path=/console')
     cookie = set.split(';')[0]!
     const projectsPage = await (await get('/console')).text()

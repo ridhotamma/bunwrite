@@ -1,19 +1,34 @@
 /**
- * The console routes shared by every variable scope (global variables and each
- * function's own), so the save/remove/clear/import rules live in one place.
+ * The console routes shared by every variable scope (project, a site, and the
+ * global or per-function scopes), so the save/remove/clear/import rules live in
+ * one place.
  *
  * A POST to the base path adds a variable or replaces one by name; a blank
  * value on a secret keeps what is stored, so an edit need not reveal it.
  */
-import type { ConsoleRoute, ConsoleRouter } from '~/console/context'
+import type { ConsoleContext, ConsoleRoute, ConsoleRouter } from '~/console/context'
 import { importEnvVariables } from '~/console/env-vars'
 import { checked, value } from '~/console/forms'
+import type { EnvVariable } from '~/functions/env'
+
+/** The subset of the function and variable services this page writes to. */
+export interface VariableStore {
+  variables(scope: string): { key: string; value: string; secret: number }[]
+  setVariable(scope: string, key: string, value: string, secret: boolean): void
+  setVariables(scope: string, entries: EnvVariable[], secret: boolean): void
+  deleteVariable(scope: string, key: string): void
+  clearVariables(scope: string): number
+}
 
 export interface VariableRouteOptions {
   /** Where variables are saved, e.g. `/console/functions/:id/variables`. */
   base: string
-  /** The scope a request acts on: `*` for global variables, otherwise a function ID. */
+  /** The scope a request acts on: `'*'` for global function variables, `project`, or `site:<id>`. */
   scope: (route: ConsoleRoute) => string
+  /** The service that owns the scope; functions and project/site variables share the same shape. */
+  store: (ctx: ConsoleContext) => VariableStore
+  /** Restart anything that cached the old environment (SSR apps). */
+  changed?: (ctx: ConsoleContext, scope: string) => void
   /** Where the browser lands after a write. */
   then: (route: ConsoleRoute, scope: string) => string
 }
@@ -24,30 +39,41 @@ export function registerVariableRoutes(router: ConsoleRouter, options: VariableR
   router.post(base, (route) => {
     const { ctx } = route
     const scope = options.scope(route)
+    const store = options.store(ctx)
     const key = value(ctx.form, 'key')
-    const existing = ctx.services.functions.variables(scope).find((v) => v.key === key)
+    const existing = store.variables(scope).find((v) => v.key === key)
     // An edit that leaves a secret's value blank keeps its stored value and flag.
     const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
     const next = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
-    ctx.services.functions.setVariable(scope, key, next, keep || checked(ctx.form.secret))
+    store.setVariable(scope, key, next, keep || checked(ctx.form.secret))
+    options.changed?.(ctx, scope)
     return ctx.go(options.then(route, scope), { tone: 'success', text: 'Variable saved' })
   })
 
   router.post(`${base}/delete`, (route) => {
     const scope = options.scope(route)
-    route.ctx.services.functions.deleteVariable(scope, value(route.ctx.form, 'key'))
+    options.store(route.ctx).deleteVariable(scope, value(route.ctx.form, 'key'))
+    options.changed?.(route.ctx, scope)
     return route.ctx.go(options.then(route, scope), { tone: 'success', text: 'Variable removed' })
   })
 
   router.post(`${base}/clear`, (route) => {
     const scope = options.scope(route)
-    const count = route.ctx.services.functions.clearVariables(scope)
+    const count = options.store(route.ctx).clearVariables(scope)
+    options.changed?.(route.ctx, scope)
     const text = count ? `Removed ${count} variable${count === 1 ? '' : 's'}` : 'No variables to remove'
     return route.ctx.go(options.then(route, scope), { tone: 'success', text })
   })
 
   router.post(`${base}/bulk`, (route) => {
     const scope = options.scope(route)
-    return importEnvVariables(route.ctx, (vars, secret) => route.ctx.services.functions.setVariables(scope, vars, secret), options.then(route, scope))
+    return importEnvVariables(
+      route.ctx,
+      (vars, secret) => {
+        options.store(route.ctx).setVariables(scope, vars, secret)
+        options.changed?.(route.ctx, scope)
+      },
+      options.then(route, scope),
+    )
   })
 }

@@ -70,13 +70,13 @@ deprecated.
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
 | `Functions` | Functions, deployments, executions, variables |
-| `Sites` | Static sites, deployments, and custom domains |
+| `Sites` | Static sites, deployments, custom domains and variables |
 | `Teams` | Teams, prefs, memberships and invitations |
 | `Users` | Users, labels, prefs, sessions, tokens, JWTs, identities, memberships (API key) |
 | `Messaging` | Topics |
 | `Webhooks` | Webhooks and their secrets |
 | `Proxy` | Custom domains for sites and functions, as Appwrite proxy rules |
-| `Project` | Services, protocols, sign-in methods, policies, email templates, mock phone numbers (API key) |
+| `Project` | Services, protocols, sign-in methods, policies, email templates, mock phone numbers and global variables (API key) |
 | `Organization` | Projects of the organization (console sign-in) |
 | `Realtime` | Subscriptions over WebSocket, in browsers and on servers |
 | `Health` | Is the server up, and which API version it speaks |

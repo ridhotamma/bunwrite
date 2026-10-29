@@ -11,6 +11,7 @@ import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
 import type { TemplateFields, TemplateId } from '~/mail/templates'
 import { MIN_COMPRESS_BYTES } from '~/lib/compress'
+import { PROJECT_SCOPE } from '~/variables/service'
 import { templatesView } from './templates'
 import { variableList } from './variables'
 
@@ -126,6 +127,25 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
         ${s3Fields('backupS3', c.backups.s3)}
         <div class="foot"><button>Save</button></div>
       </form>`)}`
+}
+
+function projectVariablesCard(ctx: ConsoleContext): Html {
+  const projectVars = ctx.services.variables.list(PROJECT_SCOPE)
+  return html`
+    ${card(ctx, 'project-vars', 'Global variables', null, 'Available to every site and function. A site or function variable with the same name wins.', html`
+      ${projectVars.length
+        ? variableList(projectVars, {
+            save: `${SETTINGS}/variables`,
+            remove: `${SETTINGS}/variables/delete`,
+            clear: { action: `${SETTINGS}/variables/clear`, confirm: `Delete all ${projectVars.length} global variables? This cannot be undone.` },
+          })
+        : html`<p class="hint" style="margin:0 0 12px">None set. Values from the server environment still apply.</p>`}
+      <form method="post" action="${SETTINGS}/variables" style="margin-top:12px">
+        <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
+        <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
+        <div class="foot"><button type="button" data-dialog-open="#bulk-project-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add global variable</button></div>
+      </form>`)}
+    ${envBulkDialog({ id: 'bulk-project-vars', title: 'Import global variables', action: `${SETTINGS}/variables/bulk` })}`
 }
 
 function functionCards(ctx: ConsoleContext): Html {
@@ -264,6 +284,9 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
     case 'functions':
       body = functionCards(ctx)
+      break
+    case 'variables':
+      body = projectVariablesCard(ctx)
       break
     case 'logs':
       body = logsCard(ctx)

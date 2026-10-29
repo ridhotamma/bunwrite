@@ -3,7 +3,7 @@
  * against the server. The format is the same as Appwrite's appwrite.config.json,
  * so either file works.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import {
@@ -543,6 +543,55 @@ const SITE_FIELDS = ['name', 'framework', 'enabled', 'outputDirectory', 'fallbac
 
 const siteParams = (site: Item) => ({ ...pick(site, SITE_FIELDS), framework: site.framework ?? 'other', buildRuntime: site.buildRuntime ?? 'static-1' })
 
+/** .env reader for `push sites --with-variables`; comments and quotes are enough here. */
+function readSiteEnv(path: string): Record<string, string> {
+  if (!existsSync(path)) return {}
+  const out: Record<string, string> = {}
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line)
+    if (!match) continue
+    let value = (match[2] ?? '').trim()
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      value = value.slice(1, -1)
+    }
+    out[match[1]!] = value
+  }
+  return out
+}
+
+/** Values that should not be readable back through the API. */
+const SECRET_NAME = /(KEY|SECRET|TOKEN|PASSWORD|PASS|CREDENTIAL|PEPPER|PRIVATE|SERVICE_ACCOUNT)/i
+
+/**
+ * `push sites --with-variables`: reconcile a site's variables with the `.env`
+ * next to its `path`. Values are secret unless their name is public (`VITE_`)
+ * or obviously not a credential.
+ */
+async function syncSiteVariables(ctx: Ctx, sites: Sites, site: Item): Promise<void> {
+  const root = resolve(site.path ?? `sites/${slug(site.name ?? site.$id)}`)
+  const wanted = readSiteEnv(join(root, '.env'))
+  if (!Object.keys(wanted).length) {
+    info(`${site.$id}: no ${join(root, '.env')}; variables left as they are`)
+    return
+  }
+
+  const existing = await listAll(async (queries) => (await sites.listVariables({ siteId: site.$id, queries })).variables)
+  const byKey = new Map(existing.map((v) => [v.key, v]))
+  for (const variable of existing) {
+    if (!(variable.key in wanted)) await sites.deleteVariable({ siteId: site.$id, variableId: variable.$id })
+  }
+  for (const [key, value] of Object.entries(wanted)) {
+    const secret = !key.startsWith('VITE_') && SECRET_NAME.test(key)
+    const current = byKey.get(key)
+    if (current) {
+      await sites.updateVariable({ siteId: site.$id, variableId: current.$id, key, value, secret: current.secret || secret })
+    } else {
+      await sites.createVariable({ siteId: site.$id, variableId: 'unique()', key, value, secret })
+    }
+  }
+  success(`${site.$id}: ${Object.keys(wanted).length} variable${Object.keys(wanted).length === 1 ? '' : 's'}`)
+}
+
 async function pullSites(ctx: Ctx): Promise<string> {
   const sites = new Sites(ctx.client)
   const all = await listAll(async (queries) => (await sites.list({ queries })).sites)
@@ -578,9 +627,16 @@ async function deploySite(ctx: Ctx, site: Item): Promise<void> {
   // Static sites upload their built output; SSR sites upload the source and build here.
   const folder = ssr || !out ? root : join(root, out)
   if (!existsSync(folder)) throw new CliError(`The files of ${site.$id} are not at ${folder}.${out && !ssr ? ' Run the build first.' : ''}`)
-  const ignore = ssr ? ['node_modules', ...(site.ignore ?? [])] : site.ignore ?? []
+  const withVariables = bool(ctx.args, 'with-variables')
+  const ignore = [
+    ...(ssr ? ['node_modules'] : []),
+    ...(withVariables ? ['.env'] : []),
+    ...(site.ignore ?? []),
+  ]
   const files = collect(folder, ignore).map((f) => (!ssr && out ? { ...f, path: `${out}/${f.path}` } : f))
   if (!files.length) throw new CliError(`No files to deploy in ${folder}`)
+  // Set before the deployment so a server-side build (SSR) sees them too.
+  if (withVariables) await syncSiteVariables(ctx, sites, site)
   const code = packGzip(files)
   const activate = bool(ctx.args, 'activate', true)
   info(`Deploying ${site.name ?? site.$id}: ${files.length} files, ${(code.length / 1024).toFixed(1)} KB`)

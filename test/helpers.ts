@@ -111,6 +111,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     skipSchedules: [],
     functionsDir: process.cwd(),
     functionsBuildCommands: true,
+    functionsConcurrency: 4,
+    functionMaxAttempts: 1,
     consoleEnabled: true,
     schemaSyncOnStart: false,
     logRequests: false,

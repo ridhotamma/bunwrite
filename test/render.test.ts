@@ -19,6 +19,15 @@ const post = (path: string, body: unknown, key: string | null = KEY) =>
     body: JSON.stringify(body),
   })
 const errorType = async (res: Response) => ((await res.json()) as { type: string }).type
+const waitForJob = async (id: string, timeoutMs = 30_000) => {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const res = await fetch(`${server.endpoint}/render/jobs/${id}`, { headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY } })
+    const job = (await res.json()) as { status: string; attempts: number; errors: string }
+    if (job.status === 'completed' || job.status === 'failed' || Date.now() > deadline) return job
+    await Bun.sleep(50)
+  }
+}
 const on = (allowRemote = false) => server.services.settings.set('render', { enabled: true, allowRemote })
 
 // A 400×300 card on a transparent page, then a tall block for full-page captures.
@@ -56,6 +65,7 @@ describe('html rendering', () => {
     expect((await post('/pdf', { html: '<p>x</p>', format: 'B9' })).status).toBe(400)
     expect((await post('/image', { html: '<p>x</p>', output: 'tiff' })).status).toBe(400)
     expect((await post('/image', { html: '<p>x</p>', scale: 5 })).status).toBe(400)
+    expect((await post('/image', { html: '<p>x</p>', scale: 0.05 })).status).toBe(400)
     expect((await post('/image', { html: '<p>x</p>', width: 4000, height: 4000, scale: 2 })).status).toBe(400) // 64 MP
   })
 
@@ -95,6 +105,10 @@ describe('html rendering', () => {
     const e = await sharp(Buffer.from(await el.arrayBuffer())).metadata()
     expect([e.format, e.width, e.height]).toEqual(['webp', 800, 600])
 
+    // Below 1: the same 600×400 layout, a smaller bitmap (thumbnails).
+    const thumb = await sharp(Buffer.from(await (await post('/image', { html: CARD, width: 600, height: 400, fullPage: false, scale: 0.5, output: 'jpg' })).arrayBuffer())).metadata()
+    expect([thumb.format, thumb.width, thumb.height]).toEqual(['jpeg', 300, 200])
+
     const none = await post('/image', { html: CARD, selector: '#nope' })
     expect([none.status, await errorType(none)]).toEqual([400, 'general_argument_invalid'])
   }, 60_000)
@@ -131,6 +145,57 @@ describe('html rendering', () => {
     const saved = (await img.json()) as { name: string; mimeType: string }
     expect([saved.name, saved.mimeType]).toEqual(['card.webp', 'image/webp'])
   }, 60_000)
+
+  withChrome('async: queued renders are saved to the bucket', async () => {
+    on()
+    const missing = await post('/pdf', { html: '<p>x</p>', async: true })
+    expect([missing.status, await errorType(missing)]).toEqual([400, 'general_argument_invalid'])
+    expect((await post('/pdf', { html: '<p>x</p>', async: true, bucketId: 'nope' })).status).toBe(404)
+
+    const res = await post('/pdf', { html: '<p>Queued receipt</p>', async: true, bucketId: 'invoices', fileId: 'queued-1', fileName: 'queued' })
+    expect(res.status).toBe(202)
+    const job = (await res.json()) as { $id: string; status: string; fileId: string; bucketId: string; fileName: string }
+    expect(job).toMatchObject({ type: 'pdf', status: 'waiting', fileId: 'queued-1', bucketId: 'invoices', fileName: 'queued.pdf' })
+    expect(job).not.toHaveProperty('html')
+
+    const done = await waitForJob(job.$id)
+    expect(done).toMatchObject({ status: 'completed', attempts: 1, errors: '' })
+    const view = await fetch(`${server.endpoint}/storage/buckets/invoices/files/queued-1/view?project=${PROJECT}`, { headers: { 'x-appwrite-key': KEY } })
+    expect(Buffer.from(await view.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-')
+    // The finished job no longer stores its HTML.
+    const row = server.db.sqlite.query<{ data: string }, [string]>('SELECT data FROM _queue_messages WHERE id = ?').get(job.$id)!
+    expect(JSON.parse(row.data)).not.toHaveProperty('html')
+
+    // The file ID is fixed up front, so a taken one is refused right away.
+    const taken = await post('/pdf', { html: '<p>x</p>', async: true, bucketId: 'invoices', fileId: 'queued-1' })
+    expect([taken.status, await errorType(taken)]).toEqual([409, 'storage_file_already_exists'])
+
+    // An error a retry cannot fix fails the job on the first attempt.
+    const bad = (await (await post('/image', { html: CARD, selector: '#nope', async: true, bucketId: 'invoices' })).json()) as { $id: string }
+    expect(await waitForJob(bad.$id)).toMatchObject({ status: 'failed', attempts: 1 })
+
+    const unknown = await fetch(`${server.endpoint}/render/jobs/nope`, { headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY } })
+    expect(unknown.status).toBe(404)
+  }, 60_000)
+
+  withChrome('a burst: direct requests over the limit get 429, queued ones all finish', async () => {
+    on()
+    const html = '<p>burst</p>'
+    const direct = await Promise.all(Array.from({ length: 26 }, () => post('/pdf', { html })))
+    const statuses = direct.map((r) => r.status)
+    expect(statuses.filter((s) => s === 200).length).toBeGreaterThan(0)
+    expect(statuses.every((s) => s === 200 || s === 429)).toBe(true)
+    // 20 wait in line; the rest are refused instead of piling up.
+    const limited = direct.find((r) => r.status === 429)!
+    expect(limited).toBeDefined()
+    expect(((await limited.json()) as { message: string }).message).toContain('async: true')
+
+    const queued = await Promise.all(Array.from({ length: 30 }, (_, i) => post('/pdf', { html, async: true, bucketId: 'invoices', fileId: `burst-${i}` })))
+    expect(queued.every((r) => r.status === 202)).toBe(true)
+    const jobs = (await Promise.all(queued.map((r) => r.json()))) as { $id: string }[]
+    const results = await Promise.all(jobs.map((j) => waitForJob(j.$id, 120_000)))
+    expect(results.every((r) => r.status === 'completed')).toBe(true)
+  }, 180_000)
 
   test('turning it off stops renders', async () => {
     server.services.settings.set('render', { enabled: false, allowRemote: false })
