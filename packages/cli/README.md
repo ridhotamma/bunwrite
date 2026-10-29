@@ -106,8 +106,25 @@ leaves the active deployment in place.
 
 ## Environments
 
-Name your targets (staging, production, or anything else) in
-`bunwrite.config.json`. Each is a server and a project; `extends` copies
+The quickest start is `bunwrite env add`:
+
+```bash
+bunwrite env add staging
+? Server endpoint (https://api.example.com/v1):
+? Project ID (shop-staging):
+? Protect staging? Pushes then ask you to type its name. (y/N)
+✓ Added staging → shop-staging @ api.example.com
+ℹ Created .env.staging and .env.staging.local
+```
+
+It checks the server and, when you are signed in to that server's console,
+creates the project if it is missing (`--create` without asking) and labels it
+`staging` so the console shows the badge. `production` suggests this folder's
+current project and protection. `--endpoint`, `--project-id`, `--protected`
+and `--yes` answer the questions up front, for scripts.
+
+Or name your targets (staging, production, or anything else) in
+`bunwrite.config.json` yourself. Each is a server and a project; `extends` copies
 another environment and changes some of it:
 
 ```json
@@ -172,6 +189,29 @@ bunwrite env push                  # shows the changes, asks, applies
 bunwrite env pull --env production # writes the server's variables into the files
 bunwrite env check                 # variables one environment sets and another misses
 ```
+
+### Run locally with an environment's variables
+
+```bash
+bunwrite run --env staging -- bun run dev
+bunwrite run --env staging --function-id billing -- bun functions/billing/src/main.ts
+```
+
+`run` starts the command with the same variables the server would use: the
+project's files, then (with `--function-id` or `--site-id`) that function's or
+site's own, over your shell's environment. A secret pulled as an empty
+placeholder stays unset; put a value in the `.local` file to use it locally.
+The command's exit code is passed on.
+
+### Labels in the console
+
+A project can carry an environment label (Settings → General → Environment,
+or `bunwrite env add`). The console shows it as a badge next to the project's
+name in the sidebar, the project switcher and the projects page; `production`
+is red and adds a red line along the top of every page, staging-like names are
+amber.
+
+### Checking environments
 
 `env check` compares the files only, so it fits in CI before a deploy: it exits
 with 1 when an environment is missing a variable another one sets, and names

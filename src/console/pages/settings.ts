@@ -15,6 +15,7 @@ import { templatePath, templatePreview } from '~/console/views/templates'
 import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { BunwriteError } from '~/lib/errors'
 import { PROJECT_SCOPE } from '~/variables/service'
+import { environmentLabel } from '~/projects/environment'
 import { registerVariableRoutes } from './variables'
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
@@ -120,6 +121,13 @@ export function settingsPages(router: ConsoleRouter): void {
     })
     ctx.projects.update(ctx.currentProject.id, { name: projectName })
     return ctx.go(tabPath('general'), { tone: 'success', text: 'Project settings saved' })
+  })
+
+  router.post(`${SETTINGS}/environment`, ({ ctx }) => {
+    const label = environmentLabel(ctx.form.environment)
+    if (label) ctx.services.settings.set('environment', { label })
+    else ctx.services.settings.reset('environment')
+    return ctx.go(tabPath('general'), { tone: 'success', text: label ? `Environment set to ${label}` : 'Environment label removed' })
   })
 
   router.post(`${SETTINGS}/smtp`, ({ ctx }) => {

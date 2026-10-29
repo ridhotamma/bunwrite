@@ -11,7 +11,8 @@ import { html, raw, type Html } from './html'
 import { MENU_SCRIPT } from './menu'
 import { PROGRESS_SCRIPT } from './progress'
 import { CONSOLE_CSS } from './styles'
-import { alert, avatar, icon, menu, tile, type IconName } from './ui'
+import { environmentTone } from '~/projects/environment'
+import { alert, avatar, environmentBadge, icon, menu, tile, type IconName } from './ui'
 
 export interface Nav {
   section: string
@@ -19,8 +20,10 @@ export interface Nav {
   projectName: string
   /** The organization that owns every project, shown above the project name. */
   orgName: string
-  projects: { id: string; name: string }[]
+  projects: { id: string; name: string; environment?: string }[]
   currentProject: string
+  /** The current project's environment label (production, staging, ...). */
+  environment?: string
 }
 
 const MAIN: [string, string, string, IconName][] = [
@@ -54,7 +57,7 @@ function projectSwitcher(nav: Nav): Html {
       ${nav.projects.map(
         (project) => html`<form method="post" action="/console/projects/select" hx-boost="false">
           <input type="hidden" name="project" value="${project.id}"><input type="hidden" name="next" value="${next}">
-          <button type="submit" class="menu-item" ${project.id === nav.currentProject ? html`aria-current="true"` : ''}>${tile(project.name, project.id, 'sm')}<span class="menu-item-text">${project.name}</span>${project.id === nav.currentProject ? icon('check', 14, 'menu-check') : ''}</button>
+          <button type="submit" class="menu-item" ${project.id === nav.currentProject ? html`aria-current="true"` : ''}>${tile(project.name, project.id, 'sm')}<span class="menu-item-text">${project.name}</span>${environmentBadge(project.environment)}${project.id === nav.currentProject ? icon('check', 14, 'menu-check') : ''}</button>
         </form>`,
       )}
     </div>
@@ -67,7 +70,7 @@ function projectSwitcher(nav: Nav): Html {
     align: 'start',
     className: 'switcher',
     triggerClass: 'switcher-btn',
-    trigger: html`${tile(nav.projectName, nav.currentProject)}<span class="switcher-text"><span class="switcher-org">${nav.orgName}</span><b>${nav.projectName}</b></span>${icon('caret-up-down', 14, 'switcher-caret')}`,
+    trigger: html`${tile(nav.projectName, nav.currentProject)}<span class="switcher-text"><span class="switcher-org"><span class="switcher-org-name">${nav.orgName}</span>${environmentBadge(nav.environment, 'switcher-env')}</span><b>${nav.projectName}</b></span>${icon('caret-up-down', 14, 'switcher-caret')}`,
   })
 }
 
@@ -96,10 +99,10 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <script src="/console/assets/htmx.min.js"></script>
 <script>${raw(PROGRESS_SCRIPT)}</script>
 </head>
-<body hx-boost="true">
+<body hx-boost="true"${environmentTone(nav.environment) === 'critical' ? html` data-env="critical"` : ''}>
 <input type="checkbox" id="nav-toggle" aria-hidden="true">
 <label for="nav-toggle" class="scrim" aria-hidden="true"></label>
-<div class="topbar"><label for="nav-toggle" aria-label="Menu">${icon('list', 20)}</label><div class="brand">${tile(nav.projectName, nav.currentProject, 'sm')}<span>${nav.projectName}</span></div></div>
+<div class="topbar"><label for="nav-toggle" aria-label="Menu">${icon('list', 20)}</label><div class="brand">${tile(nav.projectName, nav.currentProject, 'sm')}<span>${nav.projectName}</span>${environmentBadge(nav.environment)}</div></div>
 <div class="frame">
   <nav class="nav">
     <div class="nav-head">

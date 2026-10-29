@@ -9,6 +9,7 @@ import { bool, flag, parseArgs } from './args'
 import { describe } from './clients'
 import { client, initProject, login, logout, whoami } from './commands/account'
 import { env } from './commands/env'
+import { run } from './commands/run'
 import { runService, SERVICES } from './commands/services'
 import { skills } from './commands/skills'
 import { sync } from './commands/sync'
@@ -49,11 +50,15 @@ ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing ap
 
 ${bold('Environments')} ("environments" in the config: a server and project per name)
   env list             Environments, their targets and .env files
+  env add <name>       Add one: asks for the server and project, creates its files
+                       (--endpoint, --project-id, --protected, --create, --yes)
   env use <name>       Use this environment in this folder (--clear forgets it)
   env diff             What env push would change
   env push             Apply .env, .env.<name> and .env.<name>.local to the variables
   env pull             Write the variables on the server into those files
   env check            List variables one environment sets and another misses
+  run -- <command>     Start a local command with the environment's variables
+                       (--function-id or --site-id adds that one's files)
 
   --env <name>         Any command: run against this environment (or set BUNWRITE_ENV)
   --scope <kind>       env diff/push/pull/check: project, functions or sites (default: all)
@@ -135,6 +140,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       case 'env':
         await env(args)
         break
+      case 'run':
+        return await run(args)
       default:
         await runService(args)
     }

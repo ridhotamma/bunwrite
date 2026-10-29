@@ -827,6 +827,65 @@ describe('environments', () => {
     }
   })
 
+  test('env add writes the environment, its files, and labels the project', async () => {
+    const ws = new Workspace('env-add')
+    await ws.signedIn()
+    try {
+      const added = await ws.ok('env', 'add', 'production', '--yes')
+      expect(added).toContain(`Added production → ${PROJECT} @ ${new URL(server.endpoint).host} (protected), labelled production in the console`)
+      expect(added).toContain('Created .env.production and .env.production.local')
+      expect(ws.config.environments.production).toEqual({ endpoint: server.endpoint, projectId: PROJECT, protected: true })
+      expect(server.services.config.environmentLabel).toBe('production')
+      expect(statSync(join(ws.dir, '.env.production.local')).mode & 0o777).toBe(0o600)
+      expect(readFileSync(join(ws.dir, '.gitignore'), 'utf8')).toContain('.env*.local')
+
+      const again = await ws.run(['env', 'add', 'production', '--yes'])
+      expect(again.code).toBe(1)
+      expect(again.out).toContain('production is already in bunwrite.config.json')
+
+      // Answers come from stdin: endpoint (default), project, protect.
+      const asked = await ws.run(['env', 'add', 'qa'], `\n${PROJECT}\nn\n`)
+      expect(asked.code).toBe(0)
+      expect(ws.config.environments.qa).toEqual({ endpoint: server.endpoint, projectId: PROJECT })
+      expect(server.services.config.environmentLabel).toBe('qa')
+
+      const missing = await ws.run(['env', 'add', 'staging', '--yes'])
+      expect(missing.code).toBe(1)
+      expect(missing.out).toContain(`Project ${PROJECT}-staging does not exist`)
+      expect(ws.config.environments.staging).toBeUndefined()
+
+      const bad = await ws.run(['env', 'add', 'Bad Name', '--yes'])
+      expect(bad.out).toContain('is not a valid environment name')
+    } finally {
+      server.services.settings.reset('environment')
+    }
+  })
+
+  test('run starts a command with the merged variables and passes its exit code on', async () => {
+    const ws = new Workspace('env-run')
+    ws.config = environments({ functions: [{ $id: 'runner', name: 'Runner', path: 'functions/runner' }] })
+    mkdirSync(join(ws.dir, 'functions/runner'), { recursive: true })
+    writeFileSync(join(ws.dir, '.env'), 'SHARED=all\nOVERRIDE=shared\n')
+    writeFileSync(join(ws.dir, '.env.staging'), 'OVERRIDE=staging\n')
+    writeFileSync(join(ws.dir, '.env.staging.local'), 'TOKEN=t0k3n\nPLACEHOLDER=  # secret: set on the server\n')
+    writeFileSync(join(ws.dir, 'functions/runner/.env.staging'), 'OVERRIDE=function\nFN=1\n')
+    const show = 'console.log(JSON.stringify(["SHARED","OVERRIDE","TOKEN","PLACEHOLDER","FN"].map((k) => process.env[k] ?? null)))'
+
+    const project = await ws.run(['run', '--env', 'staging', '--', 'bun', '-e', show])
+    expect(project.code).toBe(0)
+    expect(project.out).toContain('["all","staging","t0k3n",null,null]')
+    expect(project.out).toContain('→ staging: 3 variables from .env, .env.staging, .env.staging.local')
+    expect(project.out).toContain('PLACEHOLDER is a secret set only on the server')
+
+    const fn = await ws.run(['run', '--env', 'staging', '--function-id', 'runner', '--', 'bun', '-e', show])
+    expect(fn.out).toContain('["all","function","t0k3n",null,"1"]')
+
+    expect((await ws.run(['run', '--', 'bun', '-e', 'process.exit(7)'])).code).toBe(7)
+    const missing = await ws.run(['run', '--', 'definitely-not-a-command-xyz'])
+    expect(missing.code).toBe(1)
+    expect(missing.out).toContain('Command not found: definitely-not-a-command-xyz')
+  })
+
   test('without environments, env uses .env and .env.local for the linked project', async () => {
     await clearVariables()
     const ws = new Workspace('env-none')

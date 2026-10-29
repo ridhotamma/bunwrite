@@ -48,6 +48,9 @@ you can back up, Bunwrite is for you.
 - **SQLite-native.** Drizzle migrations create the schema, each project is its
   own database file, and you can inspect or copy the data with standard SQLite
   tools.
+- **Environment labels.** Mark a project as production, staging or anything
+  else; the console shows the label everywhere, and production gets a red edge.
+  The CLI's `bunwrite env` keeps each environment's variables in `.env` files.
 - **Backups as a feature.** Create, download and delete consistent snapshots in
   the console; run daily automatic backups; keep them on local disk or in any
   S3-compatible bucket. No separate backup service.

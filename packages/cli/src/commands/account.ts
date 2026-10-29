@@ -10,7 +10,7 @@ import { offerSkills } from './skills'
 const mask = (key: string) => (key.length > 12 ? `${key.slice(0, 8)}…${key.slice(-4)}` : '••••')
 
 /** Refuse an endpoint that is not a Bunwrite API. */
-async function checkEndpoint(endpoint: string, selfSigned: boolean): Promise<void> {
+export async function checkEndpoint(endpoint: string, selfSigned: boolean): Promise<void> {
   try {
     const client = new Client().setEndpoint(endpoint)
     if (selfSigned) client.setSelfSigned(true)

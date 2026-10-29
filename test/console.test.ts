@@ -508,6 +508,35 @@ describe('settings through the console', () => {
     expect(server.config.s3.enabled).toBe(false)
   })
 
+  test('an environment label shows as a badge, and production marks every page', async () => {
+    try {
+      const saved = await form('/console/settings/environment', { environment: 'Production' })
+      expect(flash(saved).get('ok')).toBe('Environment set to production')
+      expect(server.config.environmentLabel).toBe('production')
+      const page = await (await get('/console/overview')).text()
+      expect(page).toContain('data-env="critical"')
+      expect(page).toContain('class="badge env-badge critical switcher-env"')
+      expect(await (await get('/console')).text()).toContain('env-badge critical')
+      const project = await fetch(`${server.endpoint}/project`, { headers: { 'x-bunwrite-project': PROJECT, 'x-bunwrite-key': 'standard_testkey' } })
+      expect(((await project.json()) as { environment: string }).environment).toBe('production')
+
+      await form('/console/settings/environment', { environment: 'staging' })
+      const staging = await (await get('/console/overview')).text()
+      expect(staging).not.toContain('data-env="critical"')
+      expect(staging).toContain('env-badge attention')
+
+      const bad = await form('/console/settings/environment', { environment: 'not valid!' })
+      expect(flash(bad).get('err') ?? (await bad.text())).toContain('up to 32 letters')
+      expect(server.config.environmentLabel).toBe('staging')
+
+      expect(flash(await form('/console/settings/environment', { environment: '' })).get('ok')).toBe('Environment label removed')
+      expect(server.config.environmentLabel).toBeUndefined()
+      expect(await (await get('/console/overview')).text()).not.toContain('class="badge env-badge')
+    } finally {
+      server.services.settings.reset('environment')
+    }
+  })
+
   test('backups can be created, downloaded and deleted locally', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backups-'))
     const original = server.config.backupsPath

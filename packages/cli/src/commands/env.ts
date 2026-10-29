@@ -2,6 +2,7 @@
  * `bunwrite env`: variables kept in .env files, per environment.
  *
  *   env list               environments, their targets and files
+ *   env add <name>         add one: server, project, files (see env-add.ts)
  *   env use <name>         remember an environment for this folder (--clear forgets it)
  *   env diff               what `env push` would change
  *   env push [--prune]     apply the files to the variables on the server
@@ -26,6 +27,7 @@ import { editEnv, envFiles, filesIn, ignoreLocalFiles, mergeEnv, readEnvFile, SE
 import { changeCount, planPush, type Plan, type Variable } from '../envplan'
 import { confirmProtected, environment, environmentNames, projectDir, target, targetConfig } from '../environments'
 import { bold, CliError, confirm, dim, green, info, log, red, success, table, warn, yellow } from '../ui'
+import { envAdd } from './env-add'
 import { slug } from './sync'
 
 // ---- Scopes ----
@@ -87,7 +89,7 @@ interface Clients {
 }
 
 /** The scopes in the config, with their files for one environment. Clients are needed only to talk to the server. */
-function scopesOf(config: ProjectConfig, name: string | null, args: Args, clients?: Clients): Scope[] {
+export function scopesOf(config: ProjectConfig, name: string | null, args: Args, clients?: Clients): Scope[] {
   const kinds = kindsOf(args)
   const root = projectDir()
   const out: Scope[] = []
@@ -444,7 +446,7 @@ function list(): void {
   const config = readConfig()
   const names = environmentNames(config)
   if (!names.length) {
-    info('No environments yet. Add them to bunwrite.config.json, for example:')
+    info('No environments yet. Add one with `bunwrite env add staging`, or in bunwrite.config.json:')
     log(
       dim(`  "environments": {
     "staging":    { "endpoint": "https://staging.example.com/v1", "projectId": "my-app-staging" },
@@ -508,7 +510,9 @@ export async function env(args: Args): Promise<void> {
       return pull(args)
     case 'check':
       return check(args)
+    case 'add':
+      return envAdd(args)
     default:
-      throw new CliError(`Unknown env command "${sub}". Use list, use, diff, push, pull or check.`)
+      throw new CliError(`Unknown env command "${sub}". Use list, add, use, diff, push, pull or check.`)
   }
 }

@@ -1,5 +1,6 @@
 /** Small, reusable console UI pieces. Pages compose these instead of repeating markup. */
 import { html, type Html } from './html'
+import { environmentTone } from '~/projects/environment'
 
 /** Phosphor regular icon paths, inlined so the console needs no font or extra request. */
 const ICON_PATHS = {
@@ -109,6 +110,10 @@ export function alert(tone: AlertTone, body: Html, options: { style?: string } =
 }
 
 export const badge = (text: string, tone = '') => html`<span class="badge ${tone}">${text}</span>`
+
+/** A project's environment (production, staging, ...) as a badge; nothing without one. */
+export const environmentBadge = (label: string | undefined, className = '') =>
+  label ? html`<span class="badge env-badge ${environmentTone(label)} ${className}" title="Environment: ${label}">${label}</span>` : html``
 
 export function statusBadge(status: string): Html {
   const tone = status === 'completed' ? 'success' : status === 'failed' ? 'critical' : status === 'processing' ? 'info' : 'attention'

@@ -278,6 +278,8 @@ export interface Config {
   backupsPrefix?: string
   /** Local folder for backups when backup S3 storage is off. */
   backupsPath: string
+  /** production, staging, ...: a console badge (Settings → General). */
+  environmentLabel?: string
   /** Encrypts backups (BACKUP_ENCRYPTION_KEY). Read from the environment only, so it is never inside a backup. */
   backupEncryptionKey?: string
   /** HTML to PDF and image rendering (POST /v1/pdf, /v1/image). */

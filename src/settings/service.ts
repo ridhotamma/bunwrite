@@ -32,6 +32,7 @@ export type SettingKey =
   | 'backups'
   | 'render'
   | 'cache'
+  | 'environment'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',
@@ -46,6 +47,7 @@ export const SETTING_KEYS: SettingKey[] = [
   'backups',
   'render',
   'cache',
+  'environment',
 ]
 
 const cloneOAuth = (oauth: Config['oauth']): Config['oauth'] =>
@@ -166,6 +168,10 @@ export class SettingsService {
       case 'cache': {
         const v = this.read<Partial<CacheConfig>>('cache')
         c.cache = { ...this.defaults.cache, ...v }
+        break
+      }
+      case 'environment': {
+        c.environmentLabel = this.read<{ label?: string }>('environment')?.label || undefined
         break
       }
     }

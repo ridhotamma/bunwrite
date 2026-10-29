@@ -27,6 +27,8 @@ export function projectModel(info: ProjectInfo, services: Services) {
     $createdAt: info.createdAt,
     $updatedAt: info.updatedAt,
     name: info.name,
+    // Bunwrite: production, staging, ... ('' for none); set in Settings → General.
+    environment: services.config.environmentLabel ?? '',
     description: '',
     teamId: info.orgId,
     region: 'default',

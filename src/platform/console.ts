@@ -29,6 +29,7 @@ import { Router } from '~/lib/router'
 import { OrganizationService } from '~/organizations/service'
 import type { ProjectResolver, ProjectRuntime } from '~/projects/types'
 import { projectModel } from './project'
+import { environmentLabel } from '~/projects/environment'
 
 export const CONSOLE_PROJECT = 'console'
 /** Same lifetime as a console sign-in in the browser. */
@@ -228,11 +229,19 @@ function routes(): Router<ConsoleApiContext> {
     signedIn(ctx)
     const target = orgProject(ctx, path.projectId!)
     const name = str(ctx.params.name)?.trim()
-    if (!name || name.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
-    // Same as renaming in the console: the project's own setting and the registry.
-    const c = target.services.config
-    target.services.settings.set('project', { projectName: name, allowedOrigins: c.allowedOrigins, sessionDuration: c.sessionDuration, sessionsLimit: c.sessionsLimit })
-    ctx.projects.update(target.info.id, { name })
+    // Bunwrite: `environment` labels the project (production, staging, ...); '' clears it.
+    const environment = ctx.params.environment === undefined ? undefined : environmentLabel(ctx.params.environment)
+    if (environment === undefined || name !== undefined) {
+      if (!name || name.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
+      // Same as renaming in the console: the project's own setting and the registry.
+      const c = target.services.config
+      target.services.settings.set('project', { projectName: name, allowedOrigins: c.allowedOrigins, sessionDuration: c.sessionDuration, sessionsLimit: c.sessionsLimit })
+      ctx.projects.update(target.info.id, { name })
+    }
+    if (environment !== undefined) {
+      if (environment) target.services.settings.set('environment', { label: environment })
+      else target.services.settings.reset('environment')
+    }
     return json(modelOf(project(ctx, target.info.id)))
   })
 
