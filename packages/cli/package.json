@@ -1,6 +1,6 @@
 {
   "name": "@bunwrite/cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Command-line tool for Bunwrite: sign in, pull and push project config, deploy functions and call any API.",
   "license": "MIT AND BSD-3-Clause",
   "keywords": [
