@@ -1,5 +1,5 @@
 /** Console views for static sites: create, deploy, deployments and settings. */
-import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
+import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
@@ -237,7 +237,14 @@ export function siteCreateView(
     </form>`
 }
 
-export function deploySiteForm(site: SiteRow): Html {
+export function deploySiteForm(site: SiteRow, git: GitDeploySource | null = null): Html {
+  if (git) {
+    return html`<form id="deploy-site-page-form" method="post" action="${siteUrl(site.id)}/git/deploy" hx-boost="false" class="stack-fields">
+      <p class="dialog-message">The live version keeps serving until the new one is ready.</p>
+      ${gitDeployFields('site', site.id, git)}
+      <label class="check"><input type="checkbox" name="activate" checked>Make it live once ready</label>
+    </form>`
+  }
   return html`<form id="deploy-site-page-form" method="post" action="${siteUrl(site.id)}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
     <p class="dialog-message">The live version keeps serving until the new one is ready.</p>
     ${sourceFields(true)}

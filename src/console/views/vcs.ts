@@ -4,7 +4,7 @@ import { html, type Html } from '~/console/html'
 import { alert, badge, cardHead, copyableId, destroy, emptyState, icon, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
 import type { SiteRow } from '~/sites/service'
-import type { GithubPull } from '~/vcs/github'
+import type { GithubCommit, GithubPull } from '~/vcs/github'
 import type { RepositoryRow, ResourceType } from '~/vcs/repositories'
 import { firstLine, type SourceColumns } from '~/vcs/source'
 
@@ -35,6 +35,66 @@ export function sourceCard(d: SourceColumns, previewUrl = ''): Html {
       ${d.provider_commit_author ? html`<li><span class="subdued">Author</span>${d.provider_commit_author_url ? html`<a href="${d.provider_commit_author_url}" target="_blank" rel="noopener">${d.provider_commit_author}</a>` : d.provider_commit_author}</li>` : ''}
       ${previewUrl ? html`<li><span class="subdued">Preview</span>${copyableId(previewUrl, 'deployment-preview-url', 'Copy preview URL')}</li>` : ''}
     </ul></div>`
+}
+
+// ---- Deploying from a connected repository ----
+
+/** What a connected resource needs to deploy a branch or one of its commits. */
+export interface GitDeploySource {
+  repository: string
+  repositoryUrl: string
+  /** The production branch, selected by default. */
+  branch: string
+  branches: string[]
+  commits: GithubCommit[]
+  /** Why a list could not be read; that field then takes a typed value. */
+  branchError?: string
+  commitError?: string
+}
+
+/** A commit picker: recent commits of the selected branch, or a free-form SHA. */
+export function commitOptions(commits: GithubCommit[], selected = '', branch = '', error = ''): Html {
+  if (error) {
+    return html`<input name="provider_commit" class="mono" value="${selected}" placeholder="A commit SHA, or empty for the newest">
+      <small style="color:var(--critical)">Could not read the commits (${error}). Type a SHA instead.</small>`
+  }
+  if (!commits.length) {
+    return html`<input name="provider_commit" class="mono" value="${selected}" placeholder="A commit SHA, or empty for the newest">
+      <small>No commits found${branch ? ` on ${branch}` : ''}; empty deploys the branch's newest commit.</small>`
+  }
+  const labelled = commits.map((commit) => {
+    const meta = [commit.author, commit.date ? when(commit.date) : ''].filter(Boolean).join(', ')
+    return { value: commit.sha, label: `${commit.sha.slice(0, 7)} · ${firstLine(commit.message)}${meta ? ` — ${meta}` : ''}` }
+  })
+  // A commit chosen in the URL stays selected even when it is not in the list.
+  if (selected && !labelled.some((commit) => commit.value === selected)) labelled.unshift({ value: selected, label: selected.slice(0, 7) })
+  return html`<select name="provider_commit" class="mono" data-combobox="Commit">
+    <option value="">Newest commit${branch ? ` on ${branch}` : ''}</option>
+    ${labelled.map((commit) => html`<option value="${commit.value}" ${commit.value === selected ? 'selected' : ''}>${commit.label}</option>`)}
+  </select>`
+}
+
+/**
+ * The source part of a deploy form for a connected site or function: the
+ * repository, a branch, and either its newest commit or one of its recent
+ * commits. Changing the branch refreshes the commit list through htmx.
+ */
+export function gitDeployFields(type: ResourceType, id: string, source: GitDeploySource): Html {
+  const branchId = 'deploy-branch'
+  const commitsId = 'deploy-commits'
+  const branchField = source.branches.length
+    ? html`<select name="provider_branch" id="${branchId}" class="mono" data-combobox="Branch"
+        hx-get="/console/vcs/deploy-commits?type=${type}&id=${encodeURIComponent(id)}"
+        hx-target="#${commitsId}" hx-include="this" hx-trigger="change" hx-swap="innerHTML">
+        ${source.branches.map((branch) => html`<option value="${branch}" ${branch === source.branch ? 'selected' : ''}>${branch}</option>`)}
+      </select>`
+    : html`<input name="provider_branch" class="mono" value="${source.branch}" placeholder="main">`
+  return html`<p class="subdued" style="margin:0">Builds from <a href="${source.repositoryUrl}" target="_blank" rel="noopener">${source.repository}</a>. Choose a branch, then its newest commit or a specific one.</p>
+    <div class="fields">
+      <label>Branch${branchField}<small>Pushes to the production branch still deploy on their own.</small></label>
+      <label>Commit<span id="${commitsId}" class="repo-select">${commitOptions(source.commits, '', source.branch, source.commitError)}</span><small>Pick an older commit to rebuild exactly that version.</small></label>
+    </div>
+    ${source.branchError ? alert('warning', html`GitHub could not list the branches (${source.branchError}). Type one instead; it is read from the repository when you deploy.`) : ''}`
 }
 
 // ---- Organization → GitHub App ----
@@ -146,7 +206,7 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
       hint,
       html`${cardHead(
           html`<a href="${repoUrl}" target="_blank" rel="noopener">${link.provider_repository_name}</a>`,
-          html`<form method="post" action="${base}/git/deploy" class="inline"><button>${icon('lightning')}<span>Deploy ${row.provider_branch} now</span></button></form>`,
+          html`<form method="post" action="${base}/git/deploy" class="inline"><input type="hidden" name="activate" value="on"><button>${icon('lightning')}<span>Deploy ${row.provider_branch} now</span></button></form>`,
         )}
         <form method="post" action="${base}/git" class="stack-fields">
           <input type="hidden" name="installation_id" value="${row.installation_id}">

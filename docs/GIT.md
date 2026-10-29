@@ -80,7 +80,15 @@ GitHub.
   fields out keeps the connection as it is.
 
 Connecting, or changing the repository or production branch, deploys that
-branch right away. `createVcsDeployment` builds any branch, tag or commit:
+branch right away. The **Deploy** button on a connected site or function then
+opens a Git deploy form instead of the upload form: pick a branch and either
+its newest commit or one of its recent commits. The branch list and commit list
+come from GitHub; a branch can still be typed if GitHub cannot be read. This is
+the same flow as Netlify, Vercel and Cloudflare Pages: the production branch
+deploys live on every push, while this page can rebuild any branch or commit
+on demand, live or as a preview.
+
+`createVcsDeployment` builds any branch, tag or commit:
 
 ```js
 await sites.createVcsDeployment({ siteId: 'web', type: 'branch', reference: 'main', activate: true })

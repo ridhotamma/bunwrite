@@ -89,9 +89,11 @@ The framework list has two groups:
 The adapter (`static` or `ssr`) follows from the group. The "Other" entries
 take any commands.
 
-**Deploy** on the site page uploads a new version. The old one keeps serving
-until the new one is ready. **Make live** on an older deployment rolls back at
-once. The live deployment and the last five ready ones are kept (the last two
+**Deploy** on an uploaded site uploads a new version. When the site is
+connected to GitHub, the same button opens the Git deploy form instead: choose
+a branch and its newest commit or a specific one ([GIT.md](GIT.md)). The old
+version keeps serving until the new one is ready. **Make live** on an older
+deployment rolls back at once. The live deployment and the last five ready ones are kept (the last two
 for SSR sites, whose source trees may include installed packages).
 
 ### CLI

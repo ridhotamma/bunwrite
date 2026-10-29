@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { vcsGithubFromEnv } from '~/config'
 import { ConsoleAuth } from '~/console/auth'
 import { poll } from '~/console/ui'
+import { Deployments } from '~/functions/deployments'
 import { branchOptions, repositoryOptions } from '~/console/views/vcs'
 import { sitesDir } from '~/sites/paths'
 import { branchSlug, parsePreview, slugify } from '~/sites/previews'
@@ -110,6 +111,20 @@ async function fakeGithub(req: Request): Promise<Response> {
   if (path === '/installation/repositories') return json({ repositories: [repoJson()] })
   if (path === `/repositories/${REPO_ID}`) return json(repoJson())
   if (path === `${repo}/branches`) return json([...refs.keys()].map((name) => ({ name })))
+  if (path === `${repo}/commits`) {
+    const head = shaOf(url.searchParams.get('sha') ?? '')
+    if (!head) return json({ message: 'No commit found' }, 422)
+    const limit = Number(url.searchParams.get('per_page') ?? 30)
+    const shas = [...new Set([head, ...[...commits.keys()].reverse()])].slice(0, limit)
+    return json(
+      shas.map((sha) => ({
+        sha,
+        html_url: `${gh}/acme/web/commit/${sha}`,
+        commit: { message: commits.get(sha)!.message, author: { name: 'Dev', date: '2026-10-29T12:00:00Z' } },
+        author: { login: 'dev', html_url: `${gh}/dev` },
+      })),
+    )
+  }
   if (path.startsWith(`${repo}/commits/`)) {
     const sha = shaOf(decodeURIComponent(path.slice(`${repo}/commits/`.length)))
     if (!sha) return json({ message: 'No commit found' }, 422)
@@ -594,6 +609,62 @@ describe('Git: deployments', () => {
     const detail = await get(`/console/sites/from-git/deployments/${server.services.sites.site('from-git').deployment_id}`)
     expect(detail.text).toContain('<h2>Source</h2>')
     expect(detail.text).toContain('release')
+  })
+
+  test('a connected site or function deploys the chosen branch and commit', async () => {
+    const auth = new ConsoleAuth(server.db)
+    const cookie = `bunwrite_console=${(await auth.login('git-admin@example.com', 'console-password'))!}; console_project=${PROJECT}`
+    const get = async (path: string) => {
+      const res = await fetch(`${base()}${path}`, { headers: { cookie }, redirect: 'manual' })
+      return { status: res.status, text: await res.text(), location: res.headers.get('location') ?? '' }
+    }
+    const post = (path: string, fields: Record<string, string>) =>
+      fetch(`${base()}${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields), redirect: 'manual' })
+
+    // Two commits on the production branch: the deploy page can pick either.
+    const older = commit('release', { 'index.html': '<h1>release one</h1>' })
+    const newer = commit('release', { 'index.html': '<h1>release two</h1>' })
+    const fnSha = commit('main', { 'api/index.js': 'module.exports = async ({ res }) => res.text("function from a chosen commit")' })
+
+    const sitePage = await get('/console/sites/from-git/deploy')
+    expect(sitePage.status).toBe(200)
+    expect(sitePage.text).toContain('action="/console/sites/from-git/git/deploy"')
+    expect(sitePage.text).toContain('name="provider_branch"')
+    expect(sitePage.text).toContain('name="provider_commit"')
+    expect(sitePage.text).toContain('acme/web')
+    // A connected site deploys from Git, not from a manual upload.
+    expect(sitePage.text).not.toContain('Upload a folder')
+
+    const functionPage = await get('/console/functions/api/deploy')
+    expect(functionPage.status).toBe(200)
+    expect(functionPage.text).toContain('action="/console/functions/api/git/deploy"')
+    expect(functionPage.text).toContain('name="provider_branch"')
+    expect(functionPage.text).toContain('name="provider_commit"')
+    expect(functionPage.text).not.toContain('Starter template')
+
+    // Changing the branch asks for that branch's commits.
+    const commits = await get('/console/vcs/deploy-commits?type=site&id=from-git&provider_branch=release')
+    expect(commits.text).toContain(older.slice(0, 7))
+    expect(commits.text).toContain(newer.slice(0, 7))
+    expect(commits.text).toContain('Newest commit on release')
+
+    const siteDeploy = await post('/console/sites/from-git/git/deploy', { provider_branch: 'release', provider_commit: older, activate: 'on' })
+    expect(siteDeploy.status).toBe(303)
+    expect(siteDeploy.headers.get('location')).toStartWith('/console/sites/from-git/deployments/')
+    await server.hub.settled()
+    const live = server.services.sites.deployment('from-git', server.services.sites.site('from-git').deployment_id)
+    expect(live).toMatchObject({ type: 'vcs', provider_branch: 'release', provider_commit_hash: older })
+    expect(await (await visit('from-git')).text()).toBe('<h1>release one</h1>')
+
+    const fnDeploy = await post('/console/functions/api/git/deploy', { provider_branch: 'main', provider_commit: fnSha, activate: 'on' })
+    expect(fnDeploy.status).toBe(303)
+    expect(fnDeploy.headers.get('location')).toStartWith('/console/functions/api/deployments/')
+    await server.hub.settled()
+    const fnLive = server.services.functions.fn('api')
+    const fnDeployment = new Deployments(server.db, server.config, server.services.functions).get('api', fnLive.deployment_id)
+    expect(fnDeployment).toMatchObject({ type: 'vcs', provider_branch: 'main', provider_commit_hash: fnSha })
+    const run = (await (await api('/functions/api/executions', { method: 'POST', body: JSON.stringify({}) })).json()) as any
+    expect(run.responseBody).toBe('function from a chosen commit')
   })
 
   test('disconnecting stops deploys, and removing the installation unlinks everything', async () => {

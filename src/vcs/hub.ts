@@ -58,6 +58,18 @@ interface PullRef {
   fork: boolean
 }
 
+/** What the console's deploy page offers for a connected resource. */
+export interface DeployOptions {
+  /** Branches of the repository, production branch first. */
+  branches: string[]
+  /** Recent commits on the production branch. */
+  commits: GithubCommit[]
+  /** Why the branch list could not be read; empty when it could. */
+  branchError: string
+  /** Why the commit list could not be read; empty when it could. */
+  commitError: string
+}
+
 type AnyDeployment = DeploymentRow | SiteDeploymentRow
 
 const IN_PROGRESS = new Set(['waiting', 'processing', 'building'])
@@ -366,8 +378,61 @@ export class VcsHub {
 
   // ---- Deploying ----
 
-  /** createVcsDeployment: build a branch, tag or commit of the linked repository. */
-  async deployReference(project: ProjectRuntime, type: ResourceType, id: string, refType: string, reference: string, activate: boolean): Promise<AnyDeployment> {
+  /** Branches of a connected repository, for a deploy picker. */
+  branches(target: HubTarget): Promise<string[]> {
+    return this.github.branches(target.link.provider_installation_id, target.link.provider_repository_id)
+  }
+
+  /** Recent commits of one branch, for a deploy picker. */
+  commits(target: HubTarget, branch: string): Promise<GithubCommit[]> {
+    return this.github.commits(target.link.provider_installation_id, target.link.provider_repository_id, branch)
+  }
+
+  /**
+   * The branches and commits the console's deploy page shows. A failure is
+   * returned instead of thrown: a connected resource must still be deployable
+   * from its production branch when GitHub's commit list cannot be read.
+   */
+  async deployOptions(target: HubTarget): Promise<DeployOptions> {
+    const production = target.provider.providerBranch
+    const message = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure))
+    const [branchResult, commitResult] = await Promise.allSettled([this.branches(target), this.commits(target, production)])
+    let branches = branchResult.status === 'fulfilled' ? branchResult.value : []
+    const commits = commitResult.status === 'fulfilled' ? commitResult.value : []
+    const branchError = branchResult.status === 'rejected' ? message(branchResult.reason) : ''
+    const commitError = commitResult.status === 'rejected' ? message(commitResult.reason) : ''
+    // Keep the branch the resource is set to first, even when GitHub no longer lists it.
+    // After a failed read the field is free text instead, so do not hide that behind a one-option select.
+    if (!branchError && production) branches = [production, ...branches.filter((branch) => branch !== production)]
+    return { branches, commits, branchError, commitError }
+  }
+
+  /**
+   * Deploy a branch, or one commit of it, as chosen on the console's deploy
+   * page. An empty commit means the branch's newest commit.
+   */
+  async deploySelection(target: HubTarget, branch: string, commit: string, activate: boolean): Promise<AnyDeployment> {
+    const selected = branch.trim() || target.provider.providerBranch
+    const sha = commit.trim()
+    if (sha) return this.deployReference(target.project, target.type, target.id, 'commit', sha, activate, { branch: selected })
+    if (!selected) throw err('general_argument_invalid', 'Choose a branch to deploy.')
+    return this.deployReference(target.project, target.type, target.id, 'branch', selected, activate)
+  }
+
+  /**
+   * createVcsDeployment: build a branch, tag or commit of the linked
+   * repository. `options.branch` labels a commit with the branch it came from,
+   * so a deploy of an older commit still gets the right preview address.
+   */
+  async deployReference(
+    project: ProjectRuntime,
+    type: ResourceType,
+    id: string,
+    refType: string,
+    reference: string,
+    activate: boolean,
+    options: { branch?: string } = {},
+  ): Promise<AnyDeployment> {
     this.resource(project, type, id)
     const target = this.target(project, type, id)
     if (!target) throw err('general_argument_invalid', 'Connect a Git repository first (installationId and providerRepositoryId).')
@@ -381,7 +446,7 @@ export class VcsHub {
       if (error instanceof GithubError && (error.status === 404 || error.status === 422)) throw err('general_argument_invalid', `"${ref}" is not a ${refType} of ${target.link.provider_repository_name}.`)
       throw error
     }
-    const branch = refType === 'branch' ? ref : target.provider.providerBranch
+    const branch = options.branch?.trim() || (refType === 'branch' ? ref : target.provider.providerBranch)
     return this.start(target, commit, {
       repository: target.link.provider_repository_name,
       branch,

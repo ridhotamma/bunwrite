@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { gitDeploySource } from '~/console/git-deploy'
 import { checked, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, copyableId, destroy, emptyState, header, icon, listCard, menu, settingsSection, tabs, when } from '~/console/ui'
@@ -344,13 +345,14 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.render(site.name, 'sites', siteShell(ctx, site, 'deployments', siteDeploymentsCard(site, ctx.services.sites.deployments(site.id))))
   })
 
-  router.get(`${SITES}/:id/deploy`, ({ ctx, path }) => {
+  router.get(`${SITES}/:id/deploy`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
+    const git = await gitDeploySource(ctx, 'site', site.id)
     return ctx.render(
       `Deploy to ${site.name}`,
       'sites',
       html`${header('Deploy', { back: siteUrl(site.id) })}
-      <div class="card">${deploySiteForm(site)}
+      <div class="card">${deploySiteForm(site, git)}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${siteUrl(site.id)}">Cancel</a><button type="submit" form="deploy-site-page-form" class="primary">Deploy</button></div>
       </div>`,
     )

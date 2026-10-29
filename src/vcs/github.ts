@@ -46,6 +46,8 @@ export interface GithubCommit {
   author: string
   authorUrl: string
   url: string
+  /** When the commit was made; set for commit lists, not for single lookups. */
+  date?: string
 }
 
 export interface GithubContent {
@@ -112,6 +114,8 @@ export class GithubClient {
   private readonly loading = new Map<string, Promise<unknown>>()
   /** How long a repository or branch list stays warm. */
   private static readonly listTtlMs = 5 * 60_000
+  /** Commits change on every push, so their list is kept only briefly. */
+  private static readonly recentTtlMs = 30_000
 
   constructor(
     private readonly credentials: () => GithubAppCredentials | null,
@@ -170,14 +174,14 @@ export class GithubClient {
    * A list kept for `listTtlMs`. Calls made while it is loading share the one
    * request, so two page loads at once do not both ask GitHub.
    */
-  private async listed<T>(key: string, load: () => Promise<T>): Promise<T> {
+  private async listed<T>(key: string, load: () => Promise<T>, ttlMs = GithubClient.listTtlMs): Promise<T> {
     const hit = this.lists.get(key)
     if (hit && hit.until > Date.now()) return hit.value as T
     const pending = this.loading.get(key)
     if (pending) return pending as Promise<T>
     const request = load()
       .then((value) => {
-        this.lists.set(key, { value, until: Date.now() + GithubClient.listTtlMs })
+        this.lists.set(key, { value, until: Date.now() + ttlMs })
         return value
       })
       .finally(() => this.loading.delete(key))
@@ -310,6 +314,40 @@ export class GithubClient {
       }
       return out
     })
+  }
+
+  /**
+   * Recent commits, newest first: those of `ref` when given (a branch, tag or
+   * SHA), else the default branch. Kept only briefly so a deploy page opened
+   * after a push still offers the new commit.
+   */
+  async commits(installationId: string, repositoryId: string, ref = '', limit = 30): Promise<GithubCommit[]> {
+    const perPage = Math.min(Math.max(Math.trunc(limit), 1), 100)
+    return this.listed(
+      `commits:${installationId}:${repositoryId}:${ref}:${perPage}`,
+      async () => {
+        const { owner, name } = await this.repoName(installationId, repositoryId)
+        const query = new URLSearchParams({ per_page: String(perPage) })
+        if (ref) query.set('sha', ref)
+        const rows = await this.asInstallation<
+          {
+            sha: string
+            html_url: string
+            commit: { message: string; author: { name: string; date?: string } | null }
+            author: { login: string; html_url: string } | null
+          }[]
+        >(installationId, 'GET', `/repos/${owner}/${name}/commits?${query.toString()}`)
+        return rows.map((c) => ({
+          sha: c.sha,
+          message: c.commit.message,
+          author: c.author?.login ?? c.commit.author?.name ?? '',
+          authorUrl: c.author?.html_url ?? '',
+          url: c.html_url,
+          date: c.commit.author?.date ?? '',
+        }))
+      },
+      GithubClient.recentTtlMs,
+    )
   }
 
   /** Entries of a folder at `ref` (the default branch when empty). */

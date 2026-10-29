@@ -1,5 +1,5 @@
 /** Console views for creating functions and deploying their code. */
-import { gitSourceFields, sourceCard, sourceCell } from '~/console/views/vcs'
+import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
 import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
@@ -130,7 +130,14 @@ export function functionCreateView(
 }
 
 /** The deploy form on its own page. */
-export function deployForm(f: FunctionRow, current: string | undefined, buildCommands: boolean): Html {
+export function deployForm(f: FunctionRow, current: string | undefined, buildCommands: boolean, git: GitDeploySource | null = null): Html {
+  if (git) {
+    return html`<form id="deploy-page-form" method="post" action="${FN}/${f.id}/git/deploy" hx-boost="false" class="stack-fields">
+      <p class="dialog-message">The current code keeps running until the new one is built.</p>
+      ${gitDeployFields('function', f.id, git)}
+      <label class="check"><input type="checkbox" name="activate" checked>Make it live once built</label>
+    </form>`
+  }
   return html`<form id="deploy-page-form" method="post" action="${FN}/${f.id}/deployments" enctype="multipart/form-data" hx-boost="false" class="stack-fields">
     <p class="dialog-message">The current code keeps running until the new one is built.</p>
     <label>Entry file<input name="entrypoint" class="mono" required value="${f.entrypoint}"></label>

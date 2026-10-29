@@ -3,7 +3,7 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html, page } from '~/console/html'
 import { alert, header } from '~/console/ui'
-import { approveView, branchOptions, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
+import { approveView, branchOptions, commitOptions, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
 import { buildFields, presetValues, SITES } from '~/console/views/sites'
 import { runtimeLabel } from '~/runtimes/catalog'
 import { frameworkOf } from '~/sites/frameworks'
@@ -88,6 +88,22 @@ export function vcsPages(router: ConsoleRouter): void {
       return page(repositoryOptions(repos, '', { installationId: installation.id, branchTarget }), 200, { 'hx-trigger-after-swap': 'repos-loaded' })
     } catch (error) {
       return page(repositoryOptions([], error instanceof Error ? error.message : String(error)))
+    }
+  })
+
+  /** htmx partial: the commits of a branch, for a connected resource's deploy form. */
+  router.get('/console/vcs/deploy-commits', async ({ ctx, url }) => {
+    const q = url.searchParams
+    const type: ResourceType = q.get('type') === 'function' ? 'function' : 'site'
+    const id = q.get('id') ?? ''
+    const selected = q.get('selected') ?? ''
+    const target = ctx.hub.target(projectOf(ctx), type, id)
+    if (!target) return page(commitOptions([], selected, '', 'This resource is not connected to a repository.'))
+    const branch = q.get('provider_branch') || q.get('branch') || target.provider.providerBranch
+    try {
+      return page(commitOptions(await ctx.hub.commits(target, branch), selected, branch))
+    } catch (error) {
+      return page(commitOptions([], selected, branch, error instanceof Error ? error.message : String(error)))
     }
   })
 
@@ -184,9 +200,14 @@ export function vcsPages(router: ConsoleRouter): void {
     })
 
     router.post(`${resource.prefix}/:id/git/deploy`, async ({ ctx, path }) => {
-      const current = resource.current(ctx, path.id!)
-      const d = await ctx.hub.deployReference(projectOf(ctx), resource.type, path.id!, 'branch', current.providerBranch, true)
-      return ctx.go(`${resource.prefix}/${path.id}/deployments/${d.id}`, { tone: 'success', text: `Deploying ${current.providerBranch}` })
+      const target = ctx.hub.target(projectOf(ctx), resource.type, path.id!)
+      if (!target) throw err('general_argument_invalid', 'Connect a Git repository first.')
+      // The settings card's quick deploy posts no branch; the Deploy page sends one.
+      const branch = value(ctx.form, 'provider_branch') || target.provider.providerBranch
+      const commit = value(ctx.form, 'provider_commit')
+      const d = await ctx.hub.deploySelection(target, branch, commit, checked(ctx.form.activate))
+      const text = commit ? `Deploying ${commit.slice(0, 7)} from ${branch}` : `Deploying ${branch}`
+      return ctx.go(`${resource.prefix}/${path.id}/deployments/${d.id}`, { tone: 'success', text })
     })
   }
 }

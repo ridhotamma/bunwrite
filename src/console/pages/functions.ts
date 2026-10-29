@@ -6,6 +6,7 @@ import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/depl
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { gitDeploySource } from '~/console/git-deploy'
 import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
@@ -275,13 +276,14 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(f.name, 'functions', functionShell(ctx, f, 'runs', runsList(f.id, runs, live)))
   })
 
-  router.get(`${FN}/:id/deploy`, ({ ctx, path }) => {
+  router.get(`${FN}/:id/deploy`, async ({ ctx, path }) => {
     const f = ctx.services.functions.fn(path.id!)
+    const git = await gitDeploySource(ctx, 'function', f.id)
     return ctx.render(
       `Deploy to ${f.name}`,
       'functions',
       html`${header('Deploy new code', { back: functionUrl(f.id) })}
-      <div class="card">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands)}
+      <div class="card">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands, git)}
         <div class="foot" style="margin-top:12px"><a class="btn" href="${functionUrl(f.id)}">Cancel</a><button type="submit" form="deploy-page-form" class="primary">Deploy</button></div>
       </div>`,
     )
