@@ -22,6 +22,7 @@ import { NO_PROVIDER, providerOf, sourceModel } from '~/vcs/source'
 import { DEFAULT_RUNTIME, SITE_RUNTIMES } from '~/runtimes/catalog'
 import { FRAMEWORKS, frameworkOf } from './frameworks'
 import type { SiteDeploymentRow, SiteRow, SiteSettings } from './service'
+import { variableContext } from '~/variables/context'
 
 export { FRAMEWORKS }
 
@@ -292,6 +293,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       key,
       str(params.value) ?? '',
       bool(params.secret, false),
+      variableContext(params.context),
     )
     ctx.sites.ssr.stopSite(path.siteId!)
     return json(variableModel(row, 'site', path.siteId!), 201)
@@ -316,6 +318,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       key: str(params.key),
       value: str(params.value),
       secret: params.secret === undefined ? undefined : bool(params.secret, false),
+      context: params.context === undefined ? undefined : variableContext(params.context),
     })
     ctx.sites.ssr.stopSite(path.siteId!)
     return json(variableModel(row, 'site', path.siteId!))

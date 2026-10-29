@@ -30,6 +30,7 @@ import type { FunctionRow, FunctionService } from './service'
 import { buildToolsDir, PYTHON_PACKAGES_DIR } from './runtime'
 import { removeTree } from './sandbox'
 import { extractZip, isZip } from './zip'
+import { buildContext, type DeployContext } from '~/variables/context'
 
 /** The SDKs upload in chunks of this size. */
 const CHUNK_SIZE = 5 * 1024 * 1024
@@ -414,7 +415,8 @@ export class Deployments {
           command: d.commands,
           cwd: sandbox && uid !== undefined ? undefined : dir,
           wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv) : undefined,
-          env: withRuntime(this.buildEnv(f, dir), runtime),
+          // A build that goes live sees live values; one that does not (a Git preview) sees preview values.
+          env: withRuntime(this.buildEnv(f, dir, buildContext(d.activate)), runtime),
           timeoutMs: BUILD_TIMEOUT_MS,
         })
         logs.push(result.output)
@@ -441,8 +443,8 @@ export class Deployments {
    * imports them from (and never into the system Python). A PIP_TARGET set in
    * the function's variables wins.
    */
-  private buildEnv(f: FunctionRow, dir: string): Record<string, string> {
-    const env = this.functions.env(f, 'build')
+  private buildEnv(f: FunctionRow, dir: string, context: DeployContext): Record<string, string> {
+    const env = this.functions.env(f, 'build', context)
     env.PATH = [env.PATH, buildToolsDir(this.config)].filter(Boolean).join(':')
     if (this.config.functionsSandbox) env.HOME = env.TMPDIR = functionHome(this.config, f.id)
     if (f.runtime.startsWith('python')) {

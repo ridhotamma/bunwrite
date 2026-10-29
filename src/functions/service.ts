@@ -27,6 +27,7 @@ import { removeTree } from './sandbox'
 import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
 import { PRIVATE_ENV } from '~/lib/private-env'
+import { resolveContext, type DeployContext, type VariableContext } from '~/variables/context'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 const STREAM_MARKER = '__BUNWRITE_EXECUTION_STREAM__'
@@ -311,7 +312,7 @@ export class FunctionService {
       functionEnv?: Record<string, string>
       internalEndpoint?: string
       /** Project variables (`/project/variables`), shared by functions and sites. */
-      projectVariables?: () => Record<string, string>
+      projectVariables?: (context: DeployContext) => Record<string, string>
     } = {},
   ) {}
 
@@ -470,34 +471,38 @@ export class FunctionService {
   }
 
   /** Every variable scope is a `function_id`: `*` holds the global ones. */
-  variables(functionId: string): { key: string; value: string; secret: number; function_id: string }[] {
-    return this.sql.query<{ key: string; value: string; secret: number; function_id: string }, [string]>('SELECT key, value, secret, function_id FROM _function_vars WHERE function_id = ? ORDER BY key').all(functionId)
+  variables(functionId: string): { key: string; value: string; secret: number; function_id: string; context: string }[] {
+    return this.sql
+      .query<{ key: string; value: string; secret: number; function_id: string; context: string }, [string]>(
+        'SELECT key, value, secret, function_id, context FROM _function_vars WHERE function_id = ? ORDER BY key, context',
+      )
+      .all(functionId)
   }
 
   globalVariables() {
     return this.variables('*')
   }
 
-  setVariable(functionId: string, key: string, value: string, secret: boolean): void {
-    this.setVariables(functionId, [{ key, value }], secret)
+  setVariable(functionId: string, key: string, value: string, secret: boolean, context: VariableContext = ''): void {
+    this.setVariables(functionId, [{ key, value }], secret, context)
   }
 
-  setVariables(functionId: string, entries: EnvVariable[], secret: boolean): void {
+  setVariables(functionId: string, entries: EnvVariable[], secret: boolean, context: VariableContext = ''): void {
     const stamp = now()
     const statement = this.sql.prepare(
-      `INSERT INTO _function_vars (function_id, key, value, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(function_id, key) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
+      `INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(function_id, key, context) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
     )
     this.sql.transaction(() => {
       for (const { key, value } of entries) {
         if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
-        statement.run(functionId, key, value, secret ? 1 : 0, stamp, stamp)
+        statement.run(functionId, key, value, secret ? 1 : 0, context, stamp, stamp)
       }
     })()
   }
 
-  deleteVariable(functionId: string, key: string): void {
-    this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ?').run(functionId, key)
+  deleteVariable(functionId: string, key: string, context: VariableContext = ''): void {
+    this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?').run(functionId, key, context)
   }
 
   /** Forget every variable in a scope; returns how many were removed. */
@@ -725,16 +730,14 @@ export class FunctionService {
    * Environment for a run or a build: server env without secrets, function variables, and
    * BUNWRITE_FUNCTION_* values (plus APPWRITE_FUNCTION_* in Appwrite mode).
    */
-  env(f: FunctionRow, trigger: string): Record<string, string> {
+  env(f: FunctionRow, trigger: string, context: DeployContext = 'live'): Record<string, string> {
     const base: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
     const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
-    const vars: Record<string, string> = {}
-    for (const v of this.sql.query<{ key: string; value: string }, [string]>("SELECT key, value FROM _function_vars WHERE function_id IN ('*', ?) ORDER BY function_id = '*' DESC").all(f.id)) {
-      vars[v.key] = v.value
-    }
-    const projectVars = this.options.projectVariables?.() ?? {}
+    // Global ('*') values first, then the function's own; each for this deploy context.
+    const vars = { ...resolveContext(this.variables('*'), context), ...resolveContext(this.variables(f.id), context) }
+    const projectVars = this.options.projectVariables?.(context) ?? {}
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
     const own = { ...projectVars, ...this.options.functionEnv, ...vars }
     const fromVars = (name: string) => own[`BUNWRITE_${name}`] ?? own[`APPWRITE_${name}`]

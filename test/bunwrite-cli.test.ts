@@ -886,6 +886,50 @@ describe('environments', () => {
     expect(missing.out).toContain('Command not found: definitely-not-a-command-xyz')
   })
 
+  test('.preview and .live files hold values for one deploy context', async () => {
+    await clearVariables()
+    const ws = new Workspace('env-contexts')
+    await ws.withKey()
+    ws.config = environments()
+    writeFileSync(join(ws.dir, '.env.staging'), 'API_URL=https://api.example.com\n')
+    writeFileSync(join(ws.dir, '.env.staging.preview'), 'API_URL=https://preview.example.com\n')
+    writeFileSync(join(ws.dir, '.env.staging.preview.local'), 'STRIPE_KEY=sk_test\n')
+    writeFileSync(join(ws.dir, '.env.staging.live.local'), 'STRIPE_KEY=sk_live\n')
+
+    const plan = await ws.ok('env', 'diff', '--env', 'staging')
+    expect(plan).toMatch(/\+ API_URL\s+new/)
+    expect(plan).toMatch(/\+ STRIPE_KEY \(live only\)\s+new, secret/)
+    expect(plan).toMatch(/\+ API_URL \(previews only\)\s+new/)
+    expect(plan).toMatch(/\+ STRIPE_KEY \(previews only\)\s+new, secret/)
+    expect(await ws.ok('env', 'push', '--env', 'staging', '--yes')).toContain('Pushed 4 changes to staging')
+    const listed = (await project().listVariables()).variables as any[]
+    expect(listed.map((v) => [v.key, v.context, v.secret]).sort()).toEqual([
+      ['API_URL', '', false],
+      ['API_URL', 'preview', false],
+      ['STRIPE_KEY', 'live', true],
+      ['STRIPE_KEY', 'preview', true],
+    ])
+    expect(server.services.variables.projectEnvironment('preview')).toMatchObject({ API_URL: 'https://preview.example.com', STRIPE_KEY: 'sk_test' })
+    expect(server.services.variables.projectEnvironment('live')).toMatchObject({ API_URL: 'https://api.example.com', STRIPE_KEY: 'sk_live' })
+
+    const show = 'console.log(JSON.stringify([process.env.API_URL, process.env.STRIPE_KEY]))'
+    expect((await ws.run(['run', '--env', 'staging', '--', 'bun', '-e', show])).out).toContain('["https://api.example.com","sk_live"]')
+    const preview = await ws.run(['run', '--env', 'staging', '--preview', '--', 'bun', '-e', show])
+    expect(preview.out).toContain('["https://preview.example.com","sk_test"]')
+    expect(preview.out).toContain('→ staging (preview): 2 variables from .env.staging, .env.staging.preview, .env.staging.preview.local')
+
+    const fresh = new Workspace('env-contexts-pull')
+    await fresh.withKey()
+    fresh.config = environments()
+    expect(await fresh.ok('env', 'pull', '--env', 'staging')).toContain(
+      'Pulled staging into .env.staging, .env.staging.live.local, .env.staging.preview and .env.staging.preview.local',
+    )
+    expect(readFileSync(join(fresh.dir, '.env.staging.preview'), 'utf8')).toBe('API_URL=https://preview.example.com\n')
+    expect(readFileSync(join(fresh.dir, '.env.staging.live.local'), 'utf8')).toBe('STRIPE_KEY=  # secret: set on the server\n')
+    expect(await fresh.ok('env', 'push', '--env', 'staging')).toContain('No changes to push to staging')
+    await clearVariables()
+  })
+
   test('without environments, env uses .env and .env.local for the linked project', async () => {
     await clearVariables()
     const ws = new Workspace('env-none')

@@ -125,6 +125,11 @@ Push only sends differences. A freshly pulled config pushes back with
   `.env.local`. `"envDir"` moves them.
 - A function's or site's own variables use the same file names inside its
   `path`; the server applies them over the project's.
+- Deploy contexts (Vercel-style): `.env.<name>.preview[.local]` holds values
+  only Git previews see, `.env.<name>.live[.local]` values only live
+  deployments see; they win over the plain files. Variables carry `context`
+  (`''`, `live`, `preview`) in the API; function variable IDs gain `.live` /
+  `.preview`. `bunwrite run --preview` uses preview values.
 - `bunwrite env diff`, `env push`, `env pull` cover the project and every
   function and site in the config (`--scope project|functions|sites`,
   `--function-id`, `--site-id` narrow it); `--prune` removes what the other

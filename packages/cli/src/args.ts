@@ -5,7 +5,7 @@ export interface Args {
 }
 
 /** Flags that take no value. `--no-x` sets `x` to false. */
-const BOOLEAN = new Set(['all', 'force', 'code', 'prune', 'json', 'help', 'version', 'self-signed', 'reset', 'yes', 'create', 'clear', 'protected'])
+const BOOLEAN = new Set(['all', 'force', 'code', 'prune', 'json', 'help', 'version', 'self-signed', 'reset', 'yes', 'create', 'clear', 'protected', 'preview'])
 
 export function parseArgs(argv: string[]): Args {
   const positional: string[] = []

@@ -9,6 +9,8 @@ export function variableModel(row: VariableRow, resourceType: 'project' | 'site'
     key: row.key,
     value: row.secret ? '' : row.value,
     secret: Boolean(row.secret),
+    // Bunwrite: '' for every deployment, or live / preview.
+    context: row.context ?? '',
     resourceType,
     resourceId,
   }

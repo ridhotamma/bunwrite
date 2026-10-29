@@ -13,6 +13,7 @@ import { ENV_KEY_RE } from './env'
 import { executionModel, functionModel, type FunctionRow, type FunctionSettings } from './service'
 import { applyProvider, projectOf } from '~/vcs/routes'
 import { NO_PROVIDER, providerOf } from '~/vcs/source'
+import { functionVariableId, parseFunctionVariableId, variableContext, type VariableContext } from '~/variables/context'
 
 const strings = (value: unknown, fallback: string[]): string[] => (value === undefined || value === null ? fallback : list(value).map(String))
 
@@ -65,27 +66,36 @@ interface VariableRow {
   value: string
   secret: number
   function_id: string
+  context: string
   created_at: string
   updated_at: string
 }
 
-/** Function variables are keyed by name here, so a variable's $id is its key. */
+/** Function variables are keyed by name here, so a variable's $id is its key (plus `.live` / `.preview`). */
 const variableModel = (v: VariableRow) => ({
-  $id: v.key,
+  $id: functionVariableId(v.key, v.context),
   $createdAt: v.created_at,
   $updatedAt: v.updated_at,
   key: v.key,
   value: v.secret ? '' : v.value,
   secret: Boolean(v.secret),
+  // Bunwrite: '' for every deployment, or live / preview.
+  context: v.context,
   resourceType: 'function',
   resourceId: v.function_id,
 })
 
-function variableOf(ctx: AppContext, functionId: string, key: string): VariableRow {
-  const row = ctx.db.sqlite.query<VariableRow, [string, string]>('SELECT * FROM _function_vars WHERE function_id = ? AND key = ?').get(functionId, key)
+function variableOf(ctx: AppContext, functionId: string, id: string): VariableRow {
+  const { key, context } = parseFunctionVariableId(id)
+  const row = ctx.db.sqlite
+    .query<VariableRow, [string, string, string]>('SELECT * FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?')
+    .get(functionId, key, context)
   if (!row) throw err('variable_not_found')
   return row
 }
+
+const variableExists = (ctx: AppContext, functionId: string, key: string, context: string) =>
+  Boolean(ctx.db.sqlite.query('SELECT 1 FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?').get(functionId, key, context))
 
 export function functionRoutes(router: Router<AppContext>): void {
   router.get('/functions', ({ ctx, params }) => {
@@ -222,7 +232,7 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.get('/functions/:functionId/variables', ({ ctx, path }) => {
     requireKey(ctx, 'functions.read')
     ctx.functions.fn(path.functionId!)
-    const rows = ctx.db.sqlite.query<VariableRow, [string]>('SELECT * FROM _function_vars WHERE function_id = ? ORDER BY key').all(path.functionId!)
+    const rows = ctx.db.sqlite.query<VariableRow, [string]>('SELECT * FROM _function_vars WHERE function_id = ? ORDER BY key, context').all(path.functionId!)
     return json({ total: rows.length, variables: rows.map(variableModel) })
   })
 
@@ -231,9 +241,10 @@ export function functionRoutes(router: Router<AppContext>): void {
     const f = ctx.functions.fn(path.functionId!)
     const key = str(params.key) ?? ''
     if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
-    if (ctx.db.sqlite.query('SELECT 1 FROM _function_vars WHERE function_id = ? AND key = ?').get(f.id, key)) throw err('variable_already_exists')
-    ctx.functions.setVariable(f.id, key, str(params.value) ?? '', bool(params.secret, false))
-    return json(variableModel(variableOf(ctx, f.id, key)), 201)
+    const context = variableContext(params.context)
+    if (variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
+    ctx.functions.setVariable(f.id, key, str(params.value) ?? '', bool(params.secret, false), context)
+    return json(variableModel(variableOf(ctx, f.id, functionVariableId(key, context))), 201)
   })
 
   router.get('/functions/:functionId/variables/:variableId', ({ ctx, path }) => {
@@ -250,21 +261,22 @@ export function functionRoutes(router: Router<AppContext>): void {
     if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
     const secret = bool(params.secret, Boolean(current.secret))
     if (current.secret && !secret) throw err('variable_cannot_unset_secret')
+    const context = params.context === undefined ? (current.context as VariableContext) : variableContext(params.context)
     ctx.db.sqlite.transaction(() => {
-      if (key !== current.key) {
-        if (ctx.db.sqlite.query('SELECT 1 FROM _function_vars WHERE function_id = ? AND key = ?').get(f.id, key)) throw err('variable_already_exists')
-        ctx.functions.deleteVariable(f.id, current.key)
+      if (key !== current.key || context !== current.context) {
+        if (variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
+        ctx.functions.deleteVariable(f.id, current.key, current.context as VariableContext)
       }
-      ctx.functions.setVariable(f.id, key, str(params.value) ?? current.value, secret)
+      ctx.functions.setVariable(f.id, key, str(params.value) ?? current.value, secret, context)
     })()
-    return json(variableModel(variableOf(ctx, f.id, key)))
+    return json(variableModel(variableOf(ctx, f.id, functionVariableId(key, context))))
   })
 
   router.delete('/functions/:functionId/variables/:variableId', ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
     ctx.functions.fn(path.functionId!)
-    variableOf(ctx, path.functionId!, path.variableId!)
-    ctx.functions.deleteVariable(path.functionId!, path.variableId!)
+    const current = variableOf(ctx, path.functionId!, path.variableId!)
+    ctx.functions.deleteVariable(path.functionId!, current.key, current.context as VariableContext)
     return noContent()
   })
 

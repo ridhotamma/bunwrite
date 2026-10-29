@@ -107,6 +107,30 @@ answers for them.
 - Previews are public, like the live site. Branch addresses are easy to
   guess, so do not rely on them staying private.
 
+### Preview variables
+
+Previews live in the same project as the live site, with the same database,
+so give them their own values where it matters, like Vercel's Preview
+environment. Each project, site and function variable applies to:
+
+| Deployments | Seen by |
+| --- | --- |
+| All deployments (default) | everything |
+| Live only | the active deployment and builds that go live: the production branch, `bunwrite push`, the console |
+| Previews only | builds that do not go live (other branches, fork pull requests, `--activate false`) and their SSR apps |
+
+A live-only or preview-only value wins over an all-deployments one with the
+same name, so `STRIPE_KEY` can be the live key for all deployments and a test
+key for previews only. Use **Live only** for anything previews must never
+see. Pick it when adding a variable in the console (the **Deployments**
+field), with `context` (`live` or `preview`) on the variable APIs, or with
+`.live` / `.preview` files and `bunwrite env push` (see the CLI README).
+
+Scopes keep their order on top of this: a site's or function's own value wins
+over a project value, whatever their deployments. A static site keeps the
+values it was built with; an SSR app restarts with live values when its build
+is made live.
+
 ## Pull requests from forks
 
 The PR comment shows **Approve builds** for each connected resource. It opens

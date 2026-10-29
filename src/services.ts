@@ -75,7 +75,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const storage = new StorageService(db, config, store)
   const functions = new FunctionService(db, config, store, proxy, {
     functionEnv: readEnvFile(config.functionsEnvFile),
-    projectVariables: () => variables.projectEnvironment(),
+    projectVariables: (context) => variables.projectEnvironment(context),
   })
   const requestLogs = new RequestLogService(db, config)
   const backups = new BackupService(db, config)

@@ -148,6 +148,13 @@
       "when": 1793232552753,
       "tag": "0020_lean_bruce_banner",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1793284475412,
+      "tag": "0021_variable_context",
+      "breakpoints": true
     }
   ]
 }

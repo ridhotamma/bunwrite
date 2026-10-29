@@ -269,6 +269,7 @@ body[data-env=critical]{box-shadow:inset 0 3px 0 var(--critical)}
 .var-count{color:var(--subdued);font-size:12px}
 .var-toolbar-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .var-table{table-layout:fixed}
+.var-table td.var-name{overflow:hidden}.var-name>.mono{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.var-name>.badge{margin-top:2px;line-height:18px}
 .var-table th:first-child{width:38%}
 .var-table th.var-actions-col{width:150px;text-align:right}
 .var-table th.var-actions-col .menu-root{vertical-align:middle}

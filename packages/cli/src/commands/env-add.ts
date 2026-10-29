@@ -95,7 +95,8 @@ export async function envAdd(args: Args): Promise<void> {
   writeConfig({ ...config, environments: { ...config.environments, [name]: entry } })
   success(`Added ${bold(name)} → ${projectId} @ ${hostOf(endpoint)}${protect ? ' (protected)' : ''}${labelled ? `, labelled ${name} in the console` : ''}`)
 
-  const files = envFiles(config, name).filter((f) => f.own)
+  // The live/preview files are optional; only the everyday pair is made.
+  const files = envFiles(config, name).filter((f) => f.own && f.context === '')
   const created: string[] = []
   for (const file of files) {
     if (existsSync(file.path)) continue

@@ -30,6 +30,7 @@ import { isPruneMode, PRUNE_MODES, pruneScript, SIZE_MARKER, type PruneMode } fr
 import { SOURCE_COLUMNS, sourceValues, type DeploymentSource, type ProviderColumns, type ProviderSettings, type SourceColumns } from '~/vcs/source'
 import type { VariablesService } from '~/variables/service'
 import { SsrRuntime, type SsrTarget } from './ssr'
+import { buildContext, type DeployContext } from '~/variables/context'
 
 /** Ready deployments kept besides the live one, for rollback. SSR sites use SITES_SSR_KEEP_PREVIOUS. */
 const KEEP_PREVIOUS = 5
@@ -162,7 +163,7 @@ export class SiteService {
     this.ssr = new SsrRuntime(
       config,
       (siteId, deploymentId) => this.ssrTarget(siteId, deploymentId),
-      (siteId) => this.variables.siteEnvironment(siteId),
+      (siteId, context) => this.variables.siteEnvironment(siteId, context),
     )
   }
 
@@ -449,7 +450,9 @@ export class SiteService {
     if (!command) return null
     const cwd = join(sitesDir(this.config, site.id, deployment.id), site.output_directory)
     if (!existsSync(cwd)) return null
-    return { key: `${site.id}/${deployment.id}`, siteId: site.id, deploymentId: deployment.id, command, cwd, runtime: deployment.runtime }
+    // The live app and a preview of the same build run with different values, so they are different apps.
+    const context: DeployContext = deployment.id === site.deployment_id ? 'live' : 'preview'
+    return { key: `${site.id}/${deployment.id}/${context}`, siteId: site.id, deploymentId: deployment.id, command, cwd, runtime: deployment.runtime, context }
   }
 
   /** The last output of the site's app, for the console. */
@@ -613,7 +616,7 @@ export class SiteService {
         site.adapter === 'ssr'
           ? await this.buildSsr(site, id, dir, logs, set)
           : fromGit
-            ? await this.buildStatic(site, this.deployment(siteId, id).runtime, dir, logs, set)
+            ? await this.buildStatic(site, this.deployment(siteId, id).runtime, dir, logs, set, buildContext(this.deployment(siteId, id).activate))
             : this.checkStatic(site, dir, logs)
       logs.push('Ready.')
       set('ready', counts)
@@ -658,6 +661,7 @@ export class SiteService {
     dir: string,
     logs: string[],
     set: (status: string, counts?: { files: number; bytes: number }) => void,
+    context: DeployContext,
   ): Promise<{ files: number; bytes: number }> {
     if (!site.install_command.trim() && !site.build_command.trim()) return this.checkStatic(site, dir, logs, true)
     if (!this.config.sitesBuildCommands) {
@@ -667,7 +671,7 @@ export class SiteService {
     const sandbox = this.config.functionsSandbox
     const uid = sandbox?.uidFor(this.config.projectId, `site:${site.id}`)
     if (!sandbox || uid === undefined) {
-      await this.runSiteCommands(site, runtime, dir, logs, set, null)
+      await this.runSiteCommands(site, runtime, dir, logs, set, null, context)
       // Static files need no packages, and node_modules must not be served.
       rmSync(join(dir, 'node_modules'), { recursive: true, force: true })
       return this.checkStatic(site, dir, logs, true)
@@ -678,7 +682,7 @@ export class SiteService {
     mkdirSync(dir, { recursive: true })
     try {
       sandbox.adopt(work, siteHome(this.config, site.id), uid)
-      await this.runSiteCommands(site, runtime, work, logs, set, { sandbox, uid })
+      await this.runSiteCommands(site, runtime, work, logs, set, { sandbox, uid }, context)
       const out = site.output_directory || '.'
       const pack = Bun.spawn(sandbox.wrap(uid, work, ['tar', '-cf', '-', out]), { stdout: 'pipe', stderr: 'pipe' })
       const unpack = Bun.spawn(['tar', '-xf', '-', '-C', dir], { stdin: pack.stdout, stdout: 'ignore', stderr: 'pipe' })
@@ -723,7 +727,7 @@ export class SiteService {
     if (!this.config.sitesBuildCommands) {
       if (site.install_command.trim() || site.build_command.trim()) logs.push('Skipped install and build commands (SITES_BUILD_COMMANDS=false).')
     } else {
-      const env = await this.runSiteCommands(site, deployment.runtime, dir, logs, set, isolated ? { sandbox, uid } : null)
+      const env = await this.runSiteCommands(site, deployment.runtime, dir, logs, set, isolated ? { sandbox, uid } : null, buildContext(deployment.activate))
       if (env) await this.pruneBuild(site, command, dir, logs, isolated ? { sandbox, uid } : null, env)
     }
 
@@ -808,6 +812,8 @@ export class SiteService {
     logs: string[],
     set: (status: string, counts?: { files: number; bytes: number }) => void,
     sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
+    /** Builds that go live see live values; previews see preview values. */
+    context: DeployContext,
   ): Promise<Record<string, string> | null> {
     const commands = [
       ['install', site.install_command.trim()],
@@ -824,7 +830,7 @@ export class SiteService {
     })
     logs.push(`Runtime: ${runtime.version ? `${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}` : `this server's Bun ${process.versions.bun}`}`)
     const env = withRuntime(
-      siteBaseEnv(this.config, site.id, this.variables.siteEnvironment(site.id)),
+      siteBaseEnv(this.config, site.id, this.variables.siteEnvironment(site.id, context)),
       runtime,
     )
     for (const [label, command] of commands) {

@@ -8,12 +8,16 @@
  *
  * Function variables live in `_function_vars` (see functions/service.ts) and
  * keep their own precedence: project < global function (`'*'`) < function.
+ *
+ * Every variable also has a deploy context ('' for every deployment, `live`
+ * or `preview`); see context.ts.
  */
 import type { Db } from '~/db/connection'
 import { ENV_KEY_RE, type EnvVariable } from '~/functions/env'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
+import { resolveContext, type DeployContext, type VariableContext } from './context'
 
 export const PROJECT_SCOPE = 'project'
 export const siteScope = (siteId: string) => `site:${siteId}`
@@ -25,6 +29,8 @@ export interface VariableRow {
   key: string
   value: string
   secret: number
+  /** '' for every deployment, or live / preview. */
+  context: string
   created_at: string
   updated_at: string
 }
@@ -38,7 +44,7 @@ export class VariablesService {
 
   /** Variables in one scope, keyed by name. */
   list(scope: string): VariableRow[] {
-    return this.sql.query<VariableRow, [string]>('SELECT * FROM _variables WHERE scope = ? ORDER BY key').all(scope)
+    return this.sql.query<VariableRow, [string]>('SELECT * FROM _variables WHERE scope = ? ORDER BY key, context').all(scope)
   }
 
   /** `list` under the name the shared console variable routes expect. */
@@ -56,55 +62,59 @@ export class VariablesService {
     return row
   }
 
-  byKey(scope: string, key: string): VariableRow | null {
-    return this.sql.query<VariableRow, [string, string]>('SELECT * FROM _variables WHERE scope = ? AND key = ?').get(scope, key) ?? null
+  /** The variable for a key in one context ('' is every deployment). */
+  byKey(scope: string, key: string, context: VariableContext = ''): VariableRow | null {
+    return this.sql.query<VariableRow, [string, string, string]>('SELECT * FROM _variables WHERE scope = ? AND key = ? AND context = ?').get(scope, key, context) ?? null
   }
 
-  /** The scope as an environment record. */
-  environment(scope: string): Record<string, string> {
-    const out: Record<string, string> = {}
-    for (const row of this.list(scope)) out[row.key] = row.value
-    return out
+  /** The scope as an environment record for one deploy context. */
+  environment(scope: string, context: DeployContext = 'live'): Record<string, string> {
+    return resolveContext(this.list(scope), context)
   }
 
-  projectEnvironment(): Record<string, string> {
-    return this.environment(PROJECT_SCOPE)
+  projectEnvironment(context: DeployContext = 'live'): Record<string, string> {
+    return this.environment(PROJECT_SCOPE, context)
   }
 
   /** Project values first, then the site's own — the site wins. */
-  siteEnvironment(siteId: string): Record<string, string> {
+  siteEnvironment(siteId: string, context: DeployContext = 'live'): Record<string, string> {
     return {
-      ...this.projectEnvironment(),
-      ...this.environment(siteScope(siteId)),
+      ...this.projectEnvironment(context),
+      ...this.environment(siteScope(siteId), context),
     }
   }
 
-  /** Create one variable. `id` is Appwrite's variableId; the key is unique per scope. */
-  create(scope: string, id: string, key: string, value: string, secret: boolean): VariableRow {
+  /** Create one variable. `id` is Appwrite's variableId; a key is unique per scope and context. */
+  create(scope: string, id: string, key: string, value: string, secret: boolean, context: VariableContext = ''): VariableRow {
     if (!ENV_KEY_RE.test(key)) {
       throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
     }
     if (this.byId(scope, id)) throw err('variable_already_exists')
-    if (this.byKey(scope, key)) throw err('variable_already_exists')
+    if (this.byKey(scope, key, context)) throw err('variable_already_exists')
     const stamp = now()
-    this.sql.query('INSERT INTO _variables (id, scope, key, value, secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, scope, key, value, secret ? 1 : 0, stamp, stamp)
+    this.sql
+      .query('INSERT INTO _variables (id, scope, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, scope, key, value, secret ? 1 : 0, context, stamp, stamp)
     return this.get(scope, id)
   }
 
-  /** Update by variable ID; a new key must not collide with another variable in the scope. */
-  update(scope: string, id: string, params: { key?: string; value?: string; secret?: boolean }): VariableRow {
+  /** Update by variable ID; the key and context must not collide with another variable in the scope. */
+  update(scope: string, id: string, params: { key?: string; value?: string; secret?: boolean; context?: VariableContext }): VariableRow {
     const current = this.get(scope, id)
     const key = params.key ?? current.key
+    const context = params.context ?? (current.context as VariableContext)
     if (!ENV_KEY_RE.test(key)) {
       throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
     }
     const secret = params.secret ?? Boolean(current.secret)
     if (current.secret && !secret) throw err('variable_cannot_unset_secret')
-    if (key !== current.key) {
-      const rival = this.byKey(scope, key)
+    if (key !== current.key || context !== current.context) {
+      const rival = this.byKey(scope, key, context)
       if (rival && rival.id !== id) throw err('variable_already_exists')
     }
-    this.sql.query('UPDATE _variables SET key = ?, value = ?, secret = ?, updated_at = ? WHERE scope = ? AND id = ?').run(key, params.value ?? current.value, secret ? 1 : 0, now(), scope, id)
+    this.sql
+      .query('UPDATE _variables SET key = ?, value = ?, secret = ?, context = ?, updated_at = ? WHERE scope = ? AND id = ?')
+      .run(key, params.value ?? current.value, secret ? 1 : 0, context, now(), scope, id)
     return this.get(scope, id)
   }
 
@@ -112,18 +122,18 @@ export class VariablesService {
    * Console upsert by name, used by the shared variable cards. A new variable
    * gets a generated ID; one created through the API keeps its own ID.
    */
-  setVariable(scope: string, key: string, value: string, secret: boolean): void {
-    const existing = this.byKey(scope, key)
+  setVariable(scope: string, key: string, value: string, secret: boolean, context: VariableContext = ''): void {
+    const existing = this.byKey(scope, key, context)
     if (existing) {
-      this.sql.query('UPDATE _variables SET value = ?, secret = ?, updated_at = ? WHERE scope = ? AND key = ?').run(value, secret ? 1 : 0, now(), scope, key)
+      this.sql.query('UPDATE _variables SET value = ?, secret = ?, updated_at = ? WHERE id = ?').run(value, secret ? 1 : 0, now(), existing.id)
       return
     }
-    this.create(scope, uniqueId(), key, value, secret)
+    this.create(scope, uniqueId(), key, value, secret, context)
   }
 
-  /** Bulk console import: every entry goes to one scope and one secret flag. */
-  setVariables(scope: string, entries: EnvVariable[], secret: boolean): void {
-    for (const { key, value } of entries) this.setVariable(scope, key, value, secret)
+  /** Bulk console import: every entry goes to one scope, one secret flag and one context. */
+  setVariables(scope: string, entries: EnvVariable[], secret: boolean, context: VariableContext = ''): void {
+    for (const { key, value } of entries) this.setVariable(scope, key, value, secret, context)
   }
 
   deleteById(scope: string, id: string): void {
@@ -131,8 +141,8 @@ export class VariablesService {
     this.sql.query('DELETE FROM _variables WHERE scope = ? AND id = ?').run(scope, id)
   }
 
-  deleteVariable(scope: string, key: string): void {
-    this.sql.query('DELETE FROM _variables WHERE scope = ? AND key = ?').run(scope, key)
+  deleteVariable(scope: string, key: string, context: VariableContext = ''): void {
+    this.sql.query('DELETE FROM _variables WHERE scope = ? AND key = ? AND context = ?').run(scope, key, context)
   }
 
   /** Forget every variable in a scope; returns how many were removed. */

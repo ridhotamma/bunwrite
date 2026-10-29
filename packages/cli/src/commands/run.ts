@@ -1,15 +1,16 @@
 /**
- * `bunwrite run [--env <name>] [--function-id <id> | --site-id <id>] -- <command>`:
+ * `bunwrite run [--env <name>] [--function-id <id> | --site-id <id>] [--preview] -- <command>`:
  * start a local command with the variables the server would use, from the
  * same .env files as `bunwrite env`. The project's files apply first, then a
- * function's or site's own, over the shell's environment.
+ * function's or site's own, over the shell's environment. Live values by
+ * default; `--preview` uses what a Git preview build sees instead.
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 
-import { flagList, type Args } from '../args'
+import { bool, flagList, type Args } from '../args'
 import { readConfig } from '../config'
-import { envFiles, mergeEnv, type EnvFile } from '../envfiles'
+import { envFiles, mergeEnv, type EnvFile, type EnvValue } from '../envfiles'
 import { target } from '../environments'
 import { CliError, closeAsk, dim, warn } from '../ui'
 import { scopesOf } from './env'
@@ -26,9 +27,12 @@ export function runEnvironment(args: Args): { values: Map<string, string>; files
     if (!scope) throw new CliError(`${ids[0]} is not a function or site in the config.`)
     files.push(...scope.files)
   }
+  // Like the server: a variable's live or preview value wins over its every-deployment one.
+  const context = bool(args, 'preview') ? 'preview' : 'live'
+  const merged = new Map<string, EnvValue>([...mergeEnv(files), ...mergeEnv(files, context)])
   const values = new Map<string, string>()
   const placeholders: string[] = []
-  for (const [key, { value, secret }] of mergeEnv(files)) {
+  for (const [key, { value, secret }] of merged) {
     // A pulled secret is an empty placeholder: leave it unset rather than empty.
     if (secret && value === '') {
       placeholders.push(key)
@@ -37,7 +41,7 @@ export function runEnvironment(args: Args): { values: Map<string, string>; files
     }
     values.set(key, value)
   }
-  return { values, files: files.filter((f) => existsSync(f.path)), placeholders }
+  return { values, files: files.filter((f) => (f.context === '' || f.context === context) && existsSync(f.path)), placeholders }
 }
 
 export async function run(args: Args): Promise<number> {
@@ -45,7 +49,8 @@ export async function run(args: Args): Promise<number> {
   if (!command.length) throw new CliError('Usage: bunwrite run [--env <name>] [--function-id <id>] -- <command> [args...]')
   const { values, files, placeholders } = runEnvironment(args)
   const name = target().name
-  console.error(dim(`→ ${name ?? 'local'}: ${values.size} variable${values.size === 1 ? '' : 's'} from ${files.map((f) => f.label).join(', ') || 'no env files'}`))
+  const preview = bool(args, 'preview') ? ' (preview)' : ''
+  console.error(dim(`→ ${name ?? 'local'}${preview}: ${values.size} variable${values.size === 1 ? '' : 's'} from ${files.map((f) => f.label).join(', ') || 'no env files'}`))
   if (placeholders.length) {
     warn(`${placeholders.join(', ')} ${placeholders.length === 1 ? 'is a secret' : 'are secrets'} set only on the server; put a value in the .local file to use it here.`)
   }

@@ -16,6 +16,7 @@ import type { MockPhone } from '~/settings/access'
 import { localeParam, TEMPLATE_IDS, TEMPLATE_LOCALE, templateIdParam, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { variableModel } from '~/variables/model'
 import { PROJECT_SCOPE } from '~/variables/service'
+import { variableContext } from '~/variables/context'
 
 const templateModel = (id: TemplateId, t: TemplateFields) => ({ templateId: id, locale: TEMPLATE_LOCALE, ...t })
 
@@ -111,6 +112,7 @@ export function projectRoutes(router: Router<AppContext>): void {
       key,
       str(params.value) ?? '',
       bool(params.secret, false),
+      variableContext(params.context),
     )
     // The next request starts SSR apps with the new environment.
     for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
@@ -128,6 +130,7 @@ export function projectRoutes(router: Router<AppContext>): void {
       key: str(params.key),
       value: str(params.value),
       secret: params.secret === undefined ? undefined : bool(params.secret, false),
+      context: params.context === undefined ? undefined : variableContext(params.context),
     })
     for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
     return json(variableModel(row, 'project', ''))

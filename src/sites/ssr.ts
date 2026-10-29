@@ -28,6 +28,7 @@ import { sitePage } from './pages'
 import type { SiteDeploymentRow, SiteRow } from './service'
 import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { siteRuntimeEnv } from './env'
+import type { DeployContext } from '~/variables/context'
 
 /** How long an app may take to open its port. */
 const START_TIMEOUT_MS = 30_000
@@ -51,8 +52,13 @@ const HOP_BY_HOP = new Set([
 
 /** What the runtime needs to start one deployment. */
 export interface SsrTarget {
-  /** `<siteId>/<deploymentId>`: activation is a pointer swap, not a restart. */
+  /**
+   * `<siteId>/<deploymentId>/<context>`. Activating a build stops its apps, and
+   * the next request starts it again as the live app, with live values.
+   */
   key: string
+  /** live for the site's active deployment, preview for any other. */
+  context: DeployContext
   siteId: string
   deploymentId: string
   command: string
@@ -160,8 +166,8 @@ export class SsrRuntime {
   constructor(
     private readonly config: Config,
     private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null,
-    /** Project + site variables for a site; empty when the service does not have them. */
-    private readonly variablesFor: (siteId: string) => Record<string, string> = () => ({}),
+    /** Project + site variables for a site in a deploy context; empty when the service does not have them. */
+    private readonly variablesFor: (siteId: string, context: DeployContext) => Record<string, string> = () => ({}),
   ) {
     this.sandbox = config.functionsSandbox ?? null
   }
@@ -208,8 +214,10 @@ export class SsrRuntime {
 
   /** One deployment is no longer live: stop its app, and let the next one start fresh. */
   stopDeployment(siteId: string, deploymentId: string): void {
-    const app = this.apps.get(`${siteId}/${deploymentId}`)
-    if (app) void this.stopApp(app, 'deployment changed')
+    // A build may run twice: as the live app and as a preview, each with its own values.
+    for (const app of this.apps.values()) {
+      if (app.target.siteId === siteId && app.target.deploymentId === deploymentId) void this.stopApp(app, 'deployment changed')
+    }
     this.failures.delete(siteId)
   }
 
@@ -281,7 +289,7 @@ export class SsrRuntime {
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
         env: withRuntime(
-          siteRuntimeEnv(this.config, target.siteId, port, this.variablesFor(target.siteId)),
+          siteRuntimeEnv(this.config, target.siteId, port, this.variablesFor(target.siteId, target.context)),
           runtime,
         ),
         stdout: 'pipe',

@@ -291,6 +291,15 @@ describe('SSR sites: build and serve', () => {
     expect(server.services.sites.site('app').deployment_id).not.toBe(old)
   })
 
+  test('the live app and a preview of another build each get their own deploy context', async () => {
+    const live = server.services.sites.site('app').deployment_id
+    const preview = await deploy('app', { 'server.js': APP }, false)
+    const target = (id?: string) => (server.services.sites as any).ssrTarget('app', id)
+    expect(target().context).toBe('live')
+    expect(target(live).context).toBe('live')
+    expect(target(preview.id)).toMatchObject({ context: 'preview', key: `app/${preview.id}/preview` })
+  })
+
   test('a rollback runs the start command that belonged to that deployment', async () => {
     server.services.sites.update('app', { ...server.services.sites.settingsOf(server.services.sites.site('app')), startCommand: 'bun server.js one' })
     const one = await deploy('app', { 'server.js': APP })

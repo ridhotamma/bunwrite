@@ -11,6 +11,11 @@
  * Without an environment: `.env`, then `.env.local`. A variable from a
  * `.local` file is stored as secret on the server.
  *
+ * Deploy contexts, like Vercel's Production/Preview: `.env.staging.preview`
+ * (and `.preview.local`) hold values only Git previews see, `.env.staging.live`
+ * values only live deployments see. Without an environment they are
+ * `.env.preview` and `.env.live`. A context's value wins over the others.
+ *
  * The project's files are in `envDir` (default: the config's folder); a
  * function's or site's are in its `path` and set its own variables.
  */
@@ -28,6 +33,10 @@ export interface EnvLine {
   end: number
 }
 
+/** '' for every deployment, or live / preview only (the server's deploy contexts). */
+export type FileContext = '' | 'live' | 'preview'
+export const FILE_CONTEXTS: FileContext[] = ['', 'live', 'preview']
+
 export interface EnvFile {
   path: string
   /** Shown to people: relative to the project folder. */
@@ -35,6 +44,7 @@ export interface EnvFile {
   secret: boolean
   /** The environment's own file (pull writes here); false for the shared .env of an environment. */
   own: boolean
+  context: FileContext
 }
 
 export interface EnvValue {
@@ -135,26 +145,38 @@ export function envDir(config: ProjectConfig, dir = process.cwd()): string {
   return config.envDir ? resolve(root, config.envDir) : root
 }
 
-/** The files in one folder for an environment (or none), in the order they apply. */
-export function filesIn(folder: string, name: string | null, dir = process.cwd()): EnvFile[] {
+/**
+ * The files in one folder for an environment (or none), in the order they
+ * apply. `reserved` names environments: without an active one, `.env.preview`
+ * belongs to an environment named preview rather than to the preview context.
+ */
+export function filesIn(folder: string, name: string | null, dir = process.cwd(), reserved: string[] = []): EnvFile[] {
   const root = projectDir(dir)
-  const file = (base: string, secret: boolean, own: boolean): EnvFile => {
+  const file = (base: string, secret: boolean, own: boolean, context: FileContext = ''): EnvFile => {
     const path = join(folder, base)
-    return { path, label: relative(root, path) || base, secret, own }
+    return { path, label: relative(root, path) || base, secret, own, context }
   }
-  if (!name) return [file('.env', false, true), file('.env.local', true, true)]
-  return [file('.env', false, false), file(`.env.${name}`, false, true), file(`.env.${name}.local`, true, true)]
+  const files = name
+    ? [file('.env', false, false), file(`.env.${name}`, false, true), file(`.env.${name}.local`, true, true)]
+    : [file('.env', false, true), file('.env.local', true, true)]
+  for (const context of ['live', 'preview'] as const) {
+    if (!name && reserved.includes(context)) continue
+    const base = name ? `.env.${name}.${context}` : `.env.${context}`
+    files.push(file(base, false, true, context), file(`${base}.local`, true, true, context))
+  }
+  return files
 }
 
 /** The project's files for an environment (or none), in `envDir`. */
 export function envFiles(config: ProjectConfig, name: string | null, dir = process.cwd()): EnvFile[] {
-  return filesIn(envDir(config, dir), name, dir)
+  return filesIn(envDir(config, dir), name, dir, Object.keys(config.environments ?? {}))
 }
 
-/** Every variable the files set, with the last file winning. */
-export function mergeEnv(files: EnvFile[]): Map<string, EnvValue> {
+/** Every variable one context's files set ('' is every deployment), with the last file winning. */
+export function mergeEnv(files: EnvFile[], context: FileContext = ''): Map<string, EnvValue> {
   const out = new Map<string, EnvValue>()
   for (const file of files) {
+    if (file.context !== context) continue
     for (const [key, value] of readEnvFile(file.path)) out.set(key, { value, secret: file.secret, file })
   }
   return out

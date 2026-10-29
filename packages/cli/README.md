@@ -164,6 +164,21 @@ Later files win:
 
 Without environments, the files are `.env` and `.env.local`.
 
+Values for one kind of deployment go in `.live` and `.preview` files, like
+Vercel's Production and Preview environments. Previews are builds that do not
+go live, such as Git branches other than the production one:
+
+| File | Holds |
+| --- | --- |
+| `.env.<name>.preview` / `.preview.local` | values only previews see |
+| `.env.<name>.live` / `.live.local` | values only live deployments see |
+
+They win over the files above for those deployments, so a test key can sit in
+`.env.staging.preview.local` next to the live one in `.env.staging.local`.
+Without environments they are `.env.preview` and `.env.live`. A context with no
+file is left alone on the server. See
+[Preview variables](../../docs/GIT.md#preview-variables).
+
 A function or site from the config has the same files in its own `path`, and
 they set that function's or site's variables. The server applies them over the
 project's, so put shared values in the project files and only overrides here:
@@ -199,7 +214,8 @@ bunwrite run --env staging --function-id billing -- bun functions/billing/src/ma
 
 `run` starts the command with the same variables the server would use: the
 project's files, then (with `--function-id` or `--site-id`) that function's or
-site's own, over your shell's environment. A secret pulled as an empty
+site's own, over your shell's environment. It uses live values; `--preview`
+uses what a Git preview build would see. A secret pulled as an empty
 placeholder stays unset; put a value in the `.local` file to use it locally.
 The command's exit code is passed on.
 

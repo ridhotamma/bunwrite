@@ -58,7 +58,8 @@ ${bold('Environments')} ("environments" in the config: a server and project per 
   env pull             Write the variables on the server into those files
   env check            List variables one environment sets and another misses
   run -- <command>     Start a local command with the environment's variables
-                       (--function-id or --site-id adds that one's files)
+                       (--function-id or --site-id adds that one's files;
+                       --preview uses what Git preview builds see)
 
   --env <name>         Any command: run against this environment (or set BUNWRITE_ENV)
   --scope <kind>       env diff/push/pull/check: project, functions or sites (default: all)
@@ -67,7 +68,8 @@ ${bold('Environments')} ("environments" in the config: a server and project per 
   --yes                env push/pull, push: apply without asking (CI)
 
   The project's files are next to the config (or in "envDir"); a function's or
-  site's are in its path and set its own variables. Values in a .local file
+  site's are in its path and set its own variables. .env.<name>.preview and
+  .env.<name>.live hold values only previews or only live deployments see. Values in a .local file
   are stored as secret and never uploaded with code. Secrets cannot be read
   back, so pull writes them as empty placeholders, and push never sends one.
 

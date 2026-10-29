@@ -10,7 +10,8 @@
  *   env check              list variables some environments set and others miss
  *
  * Each scope has its own files: the project's in `envDir`, and each function's
- * and site's in its `path` (from the config). Secret values cannot be read back
+ * and site's in its `path` (from the config). `.live` and `.preview` files hold
+ * values for one deploy context (see envfiles.ts). Secret values cannot be read back
  * from the server, so pull writes them as empty placeholders in the `.local`
  * file, and push never sends an empty `.local` value: a pull followed by a
  * push leaves secrets as they are.
@@ -18,12 +19,12 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { BunwriteException, Functions, Project, Query, Sites } from '@bunwrite/sdk'
+import { BunwriteException, Client, Functions, Project, Query, Sites } from '@bunwrite/sdk'
 
 import { bool, flagList, type Args } from '../args'
 import { projectClient } from '../clients'
 import { readConfig, readPrefs, writePrefs, type ProjectConfig } from '../config'
-import { editEnv, envFiles, filesIn, ignoreLocalFiles, mergeEnv, readEnvFile, SECRET_NAME, writeEnvFile, type EnvFile, type EnvValue } from '../envfiles'
+import { editEnv, envFiles, FILE_CONTEXTS, filesIn, ignoreLocalFiles, mergeEnv, readEnvFile, SECRET_NAME, writeEnvFile, type EnvFile, type EnvValue, type FileContext } from '../envfiles'
 import { changeCount, planPush, type Plan, type Variable } from '../envplan'
 import { confirmProtected, environment, environmentNames, projectDir, target, targetConfig } from '../environments'
 import { bold, CliError, confirm, dim, green, info, log, red, success, table, warn, yellow } from '../ui'
@@ -44,7 +45,7 @@ interface Scope {
   files: EnvFile[]
   /** null when the function or site is not on the server yet. */
   list(): Promise<Variable[] | null>
-  create(key: string, value: string, secret: boolean): Promise<unknown>
+  create(key: string, value: string, secret: boolean, context: FileContext): Promise<unknown>
   update(variable: Variable, value: string, secret: boolean): Promise<unknown>
   remove(variable: Variable): Promise<unknown>
 }
@@ -83,15 +84,26 @@ function kindsOf(args: Args): Kind[] {
 }
 
 interface Clients {
+  client: Client
   project: Project
   functions: Functions
   sites: Sites
+}
+
+/**
+ * Create a variable with a deploy context. `context` is a Bunwrite extension
+ * the generated SDK methods do not send, so this calls the API directly.
+ */
+function createWithContext(clients: Clients, path: string, key: string, value: string, secret: boolean, context: FileContext): Promise<unknown> {
+  const url = new URL(clients.client.config.endpoint + path)
+  return clients.client.call('post', url, { 'content-type': 'application/json' }, { variableId: 'unique()', key, value, secret, context })
 }
 
 /** The scopes in the config, with their files for one environment. Clients are needed only to talk to the server. */
 export function scopesOf(config: ProjectConfig, name: string | null, args: Args, clients?: Clients): Scope[] {
   const kinds = kindsOf(args)
   const root = projectDir()
+  const reserved = environmentNames(config)
   const out: Scope[] = []
   const need = (): Clients => {
     if (!clients) throw new Error('No server client')
@@ -104,7 +116,8 @@ export function scopesOf(config: ProjectConfig, name: string | null, args: Args,
       folder: root,
       files: envFiles(config, name),
       list: () => listAll((queries) => need().project.listVariables({ queries })),
-      create: (key, value, secret) => need().project.createVariable({ variableId: 'unique()', key, value, secret }),
+      create: (key, value, secret, context) =>
+        context ? createWithContext(need(), '/project/variables', key, value, secret, context) : need().project.createVariable({ variableId: 'unique()', key, value, secret }),
       update: (v, value, secret) => need().project.updateVariable({ variableId: v.$id, key: v.key, value, secret }),
       remove: (v) => need().project.deleteVariable({ variableId: v.$id }),
     })
@@ -118,9 +131,12 @@ export function scopesOf(config: ProjectConfig, name: string | null, args: Args,
         kind: 'functions',
         label: `function ${functionId}`,
         folder,
-        files: filesIn(folder, name),
+        files: filesIn(folder, name, root, reserved),
         list: () => orMissing(listAll((queries) => need().functions.listVariables({ functionId, queries }))),
-        create: (key, value, secret) => need().functions.createVariable({ functionId, variableId: 'unique()', key, value, secret }),
+        create: (key, value, secret, context) =>
+          context
+            ? createWithContext(need(), `/functions/${encodeURIComponent(functionId)}/variables`, key, value, secret, context)
+            : need().functions.createVariable({ functionId, variableId: 'unique()', key, value, secret }),
         update: (v, value, secret) => need().functions.updateVariable({ functionId, variableId: v.$id, key: v.key, value, secret }),
         remove: (v) => need().functions.deleteVariable({ functionId, variableId: v.$id }),
       })
@@ -134,9 +150,12 @@ export function scopesOf(config: ProjectConfig, name: string | null, args: Args,
         kind: 'sites',
         label: `site ${siteId}`,
         folder,
-        files: filesIn(folder, name),
+        files: filesIn(folder, name, root, reserved),
         list: () => orMissing(listAll((queries) => need().sites.listVariables({ siteId, queries }))),
-        create: (key, value, secret) => need().sites.createVariable({ siteId, variableId: 'unique()', key, value, secret }),
+        create: (key, value, secret, context) =>
+          context
+            ? createWithContext(need(), `/sites/${encodeURIComponent(siteId)}/variables`, key, value, secret, context)
+            : need().sites.createVariable({ siteId, variableId: 'unique()', key, value, secret }),
         update: (v, value, secret) => need().sites.updateVariable({ siteId, variableId: v.$id, key: v.key, value, secret }),
         remove: (v) => need().sites.deleteVariable({ siteId, variableId: v.$id }),
       })
@@ -145,8 +164,13 @@ export function scopesOf(config: ProjectConfig, name: string | null, args: Args,
   return out
 }
 
-const hasFiles = (scope: Scope) => scope.files.some((f) => existsSync(f.path))
-const secretFileOf = (scope: Scope) => scope.files.find((f) => f.own && f.secret)!
+const filesOf = (scope: Scope, context: FileContext) => scope.files.filter((f) => f.context === context)
+const hasFiles = (scope: Scope, context?: FileContext) => (context === undefined ? scope.files : filesOf(scope, context)).some((f) => existsSync(f.path))
+const secretFileOf = (scope: Scope, context: FileContext = '') => filesOf(scope, context).find((f) => f.own && f.secret)!
+
+const CONTEXT_NOTE: Record<FileContext, string> = { '': '', live: 'live only', preview: 'previews only' }
+/** `KEY`, or `KEY (previews only)` for a context's variable. */
+const keyLabel = (key: string, context: FileContext) => (context ? `${key} (${CONTEXT_NOTE[context]})` : key)
 
 // ---- Output ----
 
@@ -159,19 +183,20 @@ function printRows(rows: Row[]): void {
 
 function planRows(plan: Plan, prune: boolean): Row[] {
   const rows: Row[] = []
-  for (const c of plan.create) rows.push([green('+'), c.key, c.secret ? 'new, secret' : 'new'])
-  for (const u of plan.update) rows.push([yellow('~'), u.variable.key, u.becomesSecret ? 'becomes secret' : 'changed'])
-  for (const r of plan.resend) rows.push([yellow('↻'), r.variable.key, "secret, sent again (its value can't be read back to compare)"])
-  for (const v of plan.remove) rows.push([red('-'), v.key, prune ? 'removed' : 'only on the server (removed with --prune)'])
-  for (const m of plan.missing) rows.push([yellow('!'), m.key, `no value: set it in ${m.file.label}`])
+  const k = (key: string) => keyLabel(key, plan.context)
+  for (const c of plan.create) rows.push([green('+'), k(c.key), c.secret ? 'new, secret' : 'new'])
+  for (const u of plan.update) rows.push([yellow('~'), k(u.variable.key), u.becomesSecret ? 'becomes secret' : 'changed'])
+  for (const r of plan.resend) rows.push([yellow('↻'), k(r.variable.key), "secret, sent again (its value can't be read back to compare)"])
+  for (const v of plan.remove) rows.push([red('-'), k(v.key), prune ? 'removed' : 'only on the server (removed with --prune)'])
+  for (const m of plan.missing) rows.push([yellow('!'), k(m.key), `no value: set it in ${m.file.label}`])
   return rows
 }
 
 /** Values that look like credentials but sit in a file that is usually committed. */
-function warnCommittedSecrets(scope: Scope, local: Map<string, EnvValue>): void {
+function warnCommittedSecrets(scope: Scope, local: Map<string, EnvValue>, context: FileContext): void {
   const exposed = [...local].filter(([key, v]) => !v.secret && v.value && SECRET_NAME.test(key) && !key.startsWith('VITE_') && !key.startsWith('PUBLIC_'))
   for (const [key, v] of exposed) {
-    warn(`${key} looks like a secret but is in ${v.file.label}. Move it to ${secretFileOf(scope).label} to store it as secret.`)
+    warn(`${key} looks like a secret but is in ${v.file.label}. Move it to ${secretFileOf(scope, context).label} to store it as secret.`)
   }
 }
 
@@ -196,7 +221,7 @@ function context(args: Args): EnvContext {
   const config = readConfig()
   const t = target(config)
   const { client } = projectClient(targetConfig(config))
-  const clients = { project: new Project(client), functions: new Functions(client), sites: new Sites(client) }
+  const clients = { client, project: new Project(client), functions: new Functions(client), sites: new Sites(client) }
   return { config, name: t.name, scopes: scopesOf(config, t.name, args, clients), skip: bool(args, 'yes') || bool(args, 'force'), prune: bool(args, 'prune') }
 }
 
@@ -207,9 +232,13 @@ interface ScopePlan {
   plan: Plan
 }
 
-/** Plans for every scope that has files. A function or site not on the server yet is skipped with a warning. */
+/**
+ * Plans for every scope and deploy context that has files: a context nobody
+ * keeps files for is left alone. A function or site not on the server yet is
+ * skipped with a warning.
+ */
 async function plans(ctx: EnvContext): Promise<ScopePlan[]> {
-  const withFiles = ctx.scopes.filter(hasFiles)
+  const withFiles = ctx.scopes.filter((scope) => hasFiles(scope))
   if (!withFiles.length) {
     const project = ctx.scopes.find((s) => s.kind === 'project')
     const looked = project ? project.files.map((f) => f.label).join(', ') : 'the selected functions and sites'
@@ -222,9 +251,12 @@ async function plans(ctx: EnvContext): Promise<ScopePlan[]> {
       warn(`${scope.label} is not on the server yet; push it first (\`bunwrite push ${scope.kind}\`). Its variables were skipped.`)
       continue
     }
-    const local = mergeEnv(scope.files)
-    warnCommittedSecrets(scope, local)
-    out.push({ scope, plan: planPush(local, server) })
+    for (const context of FILE_CONTEXTS) {
+      if (!hasFiles(scope, context)) continue
+      const local = mergeEnv(scope.files, context)
+      warnCommittedSecrets(scope, local, context)
+      out.push({ scope, plan: planPush(local, server, context) })
+    }
   }
   return out
 }
@@ -232,12 +264,14 @@ async function plans(ctx: EnvContext): Promise<ScopePlan[]> {
 function printPlans(all: ScopePlan[], prune: boolean): void {
   // Headings only when more than the project is involved.
   const many = all.some((p) => p.scope.kind !== 'project')
+  let last: Scope | null = null
   for (const { scope, plan } of all) {
     const rows = planRows(plan, prune)
     if (!rows.length && !plan.unchanged) continue
-    if (many) log(bold(scope.label))
+    if (many && scope !== last) log(bold(scope.label))
+    last = scope
     printRows(rows)
-    if (plan.unchanged) log(dim(`  = ${plan.unchanged} unchanged`))
+    if (plan.unchanged) log(dim(`  = ${plan.unchanged} unchanged${plan.context ? ` (${CONTEXT_NOTE[plan.context]})` : ''}`))
   }
 }
 
@@ -272,7 +306,7 @@ async function push(args: Args): Promise<void> {
   }
 
   for (const { scope, plan } of all) {
-    for (const c of plan.create) await scope.create(c.key, c.value, c.secret)
+    for (const c of plan.create) await scope.create(c.key, c.value, c.secret, plan.context)
     for (const u of plan.update) await scope.update(u.variable, u.value, u.secret || u.variable.secret)
     for (const r of plan.resend) await scope.update(r.variable, r.value, true)
     if (ctx.prune) for (const v of plan.remove) await scope.remove(v)
@@ -294,11 +328,14 @@ interface ScopePull {
   overwrites: number
 }
 
-/** What pull would write for one scope. */
-function pullScope(scope: Scope, server: Variable[], prune: boolean): ScopePull {
-  const own = scope.files.find((f) => f.own && !f.secret)!
-  const secretFile = secretFileOf(scope)
-  const shared = scope.files.find((f) => !f.own)
+/** What pull would write for one scope's files of one deploy context. */
+function pullScope(scope: Scope, context: FileContext, all: Variable[], prune: boolean): ScopePull {
+  const server = all.filter((v) => (v.context ?? '') === context)
+  const files = filesOf(scope, context)
+  const own = files.find((f) => f.own && !f.secret)!
+  const secretFile = files.find((f) => f.own && f.secret)!
+  const shared = files.find((f) => !f.own)
+  const k = (key: string) => keyLabel(key, context)
   const sharedValues = shared ? readEnvFile(shared.path) : new Map<string, string>()
   const ownValues = readEnvFile(own.path)
   const secretValues = readEnvFile(secretFile.path)
@@ -312,7 +349,7 @@ function pullScope(scope: Scope, server: Variable[], prune: boolean): ScopePull 
       if (secretValues.has(v.key)) continue
       secretWrite.changes.set(v.key, '')
       secretWrite.comments.set(v.key, 'secret: set on the server')
-      rows.push([green('+'), v.key, `secret placeholder in ${secretFile.label}`])
+      rows.push([green('+'), k(v.key), `secret placeholder in ${secretFile.label}`])
       continue
     }
     const [values, write] = secretValues.has(v.key) ? [secretValues, secretWrite] : [ownValues, ownWrite]
@@ -320,12 +357,12 @@ function pullScope(scope: Scope, server: Variable[], prune: boolean): ScopePull 
       if (values.get(v.key) === v.value) continue
       write.changes.set(v.key, v.value)
       overwrites++
-      rows.push([yellow('~'), v.key, `your value in ${write.file.label} is replaced`])
+      rows.push([yellow('~'), k(v.key), `your value in ${write.file.label} is replaced`])
     } else if (shared && sharedValues.get(v.key) === v.value) {
       continue
     } else {
       write.changes.set(v.key, v.value)
-      rows.push([green('+'), v.key, `added to ${write.file.label}`])
+      rows.push([green('+'), k(v.key), `added to ${write.file.label}`])
     }
   }
 
@@ -336,14 +373,14 @@ function pullScope(scope: Scope, server: Variable[], prune: boolean): ScopePull 
       if (prune) {
         write.changes.set(key, null)
         overwrites++
-        rows.push([red('-'), key, `removed from ${write.file.label}`])
+        rows.push([red('-'), k(key), `removed from ${write.file.label}`])
       } else {
-        rows.push([dim('?'), key, `only in ${write.file.label} (kept; push adds it, pull --prune removes it)`])
+        rows.push([dim('?'), k(key), `only in ${write.file.label} (kept; push adds it, pull --prune removes it)`])
       }
     }
   }
   for (const key of sharedValues.keys()) {
-    if (!onServer.has(key)) rows.push([dim('?'), key, `only in ${shared!.label} (kept; pull never writes the shared file)`])
+    if (!onServer.has(key)) rows.push([dim('?'), k(key), `only in ${shared!.label} (kept; pull never writes the shared file)`])
   }
   return { scope, rows, writes: [ownWrite, secretWrite].filter((w) => w.changes.size), overwrites }
 }
@@ -356,14 +393,20 @@ async function pull(args: Args): Promise<void> {
     if (scope.kind !== 'project' && !existsSync(scope.folder)) continue
     const server = await scope.list()
     if (!server) continue
-    if (scope.kind !== 'project' && !server.length && !hasFiles(scope)) continue
-    pulls.push(pullScope(scope, server, ctx.prune))
+    for (const context of FILE_CONTEXTS) {
+      // The project's every-deployment files are always pulled; anything else only when there is something to write.
+      const always = scope.kind === 'project' && context === ''
+      if (!always && !server.some((v) => (v.context ?? '') === context) && !hasFiles(scope, context)) continue
+      pulls.push(pullScope(scope, context, server, ctx.prune))
+    }
   }
 
   const many = pulls.some((p) => p.scope.kind !== 'project' && p.rows.length)
+  let last: Scope | null = null
   for (const p of pulls) {
     if (!p.rows.length) continue
-    if (many) log(bold(p.scope.label))
+    if (many && p.scope !== last) log(bold(p.scope.label))
+    last = p.scope
     printRows(p.rows)
   }
   const writes = pulls.flatMap((p) => p.writes)
@@ -410,7 +453,7 @@ function check(args: Args): void {
   for (const scope of scopesOf(config, null, args)) {
     const keysByEnv = new Map(
       all.map((name) => {
-        const files = scope.kind === 'project' ? envFiles(config, name) : filesIn(scope.folder, name)
+        const files = scope.kind === 'project' ? envFiles(config, name) : filesIn(scope.folder, name, projectDir(), environmentNames(config))
         return [name, new Set(mergeEnv(files).keys())] as const
       }),
     )

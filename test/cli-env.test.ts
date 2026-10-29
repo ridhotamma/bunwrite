@@ -56,7 +56,7 @@ describe('editEnv', () => {
 })
 
 describe('planPush', () => {
-  const file = (secret: boolean): EnvFile => ({ path: '', label: secret ? '.env.staging.local' : '.env.staging', secret, own: true })
+  const file = (secret: boolean): EnvFile => ({ path: '', label: secret ? '.env.staging.local' : '.env.staging', secret, own: true, context: '' })
   const local = (entries: [string, string, boolean][]) =>
     new Map<string, EnvValue>(entries.map(([k, value, secret]) => [k, { value, secret, file: file(secret) }]))
   const variable = (key: string, value: string, secret = false) => ({ $id: `id-${key}`, key, value, secret }) as any

@@ -3,20 +3,22 @@
  * global or per-function scopes), so the save/remove/clear/import rules live in
  * one place.
  *
- * A POST to the base path adds a variable or replaces one by name; a blank
- * value on a secret keeps what is stored, so an edit need not reveal it.
+ * A POST to the base path adds a variable or replaces one by name and deploy
+ * context (all, live or preview); a blank value on a secret keeps what is
+ * stored, so an edit need not reveal it.
  */
 import type { ConsoleContext, ConsoleRoute, ConsoleRouter } from '~/console/context'
 import { importEnvVariables } from '~/console/env-vars'
 import { checked, value } from '~/console/forms'
 import type { EnvVariable } from '~/functions/env'
+import { variableContext, type VariableContext } from '~/variables/context'
 
 /** The subset of the function and variable services this page writes to. */
 export interface VariableStore {
-  variables(scope: string): { key: string; value: string; secret: number }[]
-  setVariable(scope: string, key: string, value: string, secret: boolean): void
-  setVariables(scope: string, entries: EnvVariable[], secret: boolean): void
-  deleteVariable(scope: string, key: string): void
+  variables(scope: string): { key: string; value: string; secret: number; context: string }[]
+  setVariable(scope: string, key: string, value: string, secret: boolean, context?: VariableContext): void
+  setVariables(scope: string, entries: EnvVariable[], secret: boolean, context?: VariableContext): void
+  deleteVariable(scope: string, key: string, context?: VariableContext): void
   clearVariables(scope: string): number
 }
 
@@ -41,18 +43,19 @@ export function registerVariableRoutes(router: ConsoleRouter, options: VariableR
     const scope = options.scope(route)
     const store = options.store(ctx)
     const key = value(ctx.form, 'key')
-    const existing = store.variables(scope).find((v) => v.key === key)
+    const context = variableContext(ctx.form.context)
+    const existing = store.variables(scope).find((v) => v.key === key && v.context === context)
     // An edit that leaves a secret's value blank keeps its stored value and flag.
     const keep = Boolean(existing?.secret) && String(ctx.form.value ?? '') === ''
     const next = keep ? (existing?.value ?? '') : String(ctx.form.value ?? '')
-    store.setVariable(scope, key, next, keep || checked(ctx.form.secret))
+    store.setVariable(scope, key, next, keep || checked(ctx.form.secret), context)
     options.changed?.(ctx, scope)
     return ctx.go(options.then(route, scope), { tone: 'success', text: 'Variable saved' })
   })
 
   router.post(`${base}/delete`, (route) => {
     const scope = options.scope(route)
-    options.store(route.ctx).deleteVariable(scope, value(route.ctx.form, 'key'))
+    options.store(route.ctx).deleteVariable(scope, value(route.ctx.form, 'key'), variableContext(route.ctx.form.context))
     options.changed?.(route.ctx, scope)
     return route.ctx.go(options.then(route, scope), { tone: 'success', text: 'Variable removed' })
   })

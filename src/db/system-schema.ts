@@ -645,9 +645,11 @@ export const variables = sqliteTable(
     key: text('key').notNull(),
     value: text('value').notNull(),
     secret: integer('secret', { mode: 'boolean' }).notNull().default(false),
+    /** Which deployments see it: '' every one, 'live' or 'preview' (see variables/context.ts). */
+    context: text('context').notNull().default(''),
     ...timestamps,
   },
-  (t) => [uniqueIndex('_variables_scope_key').on(t.scope, t.key)],
+  (t) => [uniqueIndex('_variables_scope_key_context').on(t.scope, t.key, t.context)],
 )
 
 /** Function variables (Appwrite's per-function env). function_id '*' applies to every function. */
@@ -659,9 +661,11 @@ export const functionVars = sqliteTable(
     key: text('key').notNull(),
     value: text('value').notNull(),
     secret: integer('secret', { mode: 'boolean' }).notNull().default(true),
+    /** Which deployments see it: '' every one, 'live' or 'preview' (see variables/context.ts). */
+    context: text('context').notNull().default(''),
     ...timestamps,
   },
-  (t) => [uniqueIndex('_function_vars_fn_key').on(t.functionId, t.key)],
+  (t) => [uniqueIndex('_function_vars_fn_key_context').on(t.functionId, t.key, t.context)],
 )
 
 /** HTTP requests shown on the console's Request logs page; pruned by LOG_RETENTION_DAYS. */

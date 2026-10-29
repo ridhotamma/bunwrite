@@ -8,13 +8,24 @@
 import { dialog } from '~/console/dialog'
 import { envBulkDialog } from '~/console/env-vars'
 import { html, type Html } from '~/console/html'
-import { icon, menu, plural } from '~/console/ui'
+import { badge, icon, menu, plural } from '~/console/ui'
+import { CONTEXT_LABELS, VARIABLE_CONTEXTS, type VariableContext } from '~/variables/context'
 
 export interface VariableEntry {
   key: string
   value: string
   secret: number
+  /** '' for every deployment, or live / preview. */
+  context?: string
 }
+
+/** Live-only and preview-only values carry a badge; every-deployment ones do not. */
+const contextBadge = (context: string | undefined): Html =>
+  context === 'live' ? badge('Live only', 'success') : context === 'preview' ? badge('Previews only', 'attention') : html``
+
+const contextPicker = (): Html => html`<label>Deployments<select name="context">${VARIABLE_CONTEXTS.map(
+  (context) => html`<option value="${context}">${CONTEXT_LABELS[context]}</option>`,
+)}</select><small>Previews are builds that do not go live, such as Git branches other than the production one. A live-only or preview-only value wins over an all-deployments one with the same name.</small></label>`
 
 export interface VariableListOptions {
   /** Prefix for this list's dialog ids. One variable list per page today. */
@@ -44,6 +55,7 @@ function addDialog(options: VariableListOptions): Html {
     body: html`<form id="${form}" method="post" action="${options.save}">
       <label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_KEY"><small>Letters, numbers and underscores; cannot start with a number.</small></label>
       <label>Value<input name="value" placeholder="Value"></label>
+      ${contextPicker()}
       <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
     </form>`,
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Add variable</button>`,
@@ -58,7 +70,9 @@ function editDialog(v: VariableEntry, index: number, options: VariableListOption
     title: `Edit ${v.key}`,
     body: html`<form id="${form}" method="post" action="${options.save}">
       <input type="hidden" name="key" value="${v.key}">
+      <input type="hidden" name="context" value="${v.context ?? ''}">
       <label>Name<input value="${v.key}" class="mono" readonly></label>
+      <label>Deployments<input value="${CONTEXT_LABELS[(v.context ?? '') as VariableContext] ?? v.context}" readonly></label>
       <label>Value<input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'Leave blank to keep the current value' : 'Value'}"></label>
       <label class="check"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide the value</label>
       ${v.secret ? html`<p class="help">The current value is hidden. Leave it blank to keep it.</p>` : ''}
@@ -70,6 +84,7 @@ function editDialog(v: VariableEntry, index: number, options: VariableListOption
 function removeForm(v: VariableEntry, options: VariableListOptions): Html {
   return html`<form method="post" action="${options.remove}" class="inline" data-confirm="Remove ${v.key}?" data-confirm-label="Remove" data-confirm-tone="critical">
     <input type="hidden" name="key" value="${v.key}">
+    <input type="hidden" name="context" value="${v.context ?? ''}">
     <button class="critical small">Remove</button>
   </form>`
 }
@@ -93,7 +108,7 @@ export function variableList(vars: VariableEntry[], options: VariableListOptions
             : ''}</th></tr></thead>
           <tbody>${vars.map(
             (v, index) => html`<tr>
-              <td class="mono clip" title="${v.key}">${v.key}</td>
+              <td class="var-name" title="${v.key}"><span class="mono">${v.key}</span>${contextBadge(v.context)}</td>
               <td class="clip" title="${v.secret ? '' : v.value}">${valueCell(v)}</td>
               <td class="var-actions">
                 <button type="button" class="btn small" data-dialog-open="#${editId(options, index)}">Edit</button>
