@@ -2,10 +2,11 @@
  * Response compression for every route: JSON, console HTML, scripts, text
  * files and SVG. Small bodies are compressed in one go (Brotli when the client
  * accepts it, else gzip); large or streamed bodies are gzipped as they stream,
- * so big downloads never sit in memory. Already-compressed types such as
+ * chunk by chunk, so big downloads never sit in memory and streamed responses
+ * are not held back. Already-compressed types such as
  * images, video, zip and PDF are left alone.
  */
-import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
+import { brotliCompressSync, constants, createGzip, gzipSync } from 'node:zlib'
 
 export type Encoding = 'br' | 'gzip'
 
@@ -96,5 +97,26 @@ export async function compressResponse(request: Request, response: Response): Pr
   }
 
   // Unknown or large size: compress as it streams.
-  return new Response(response.body.pipeThrough(new CompressionStream('gzip')), init)
+  return new Response(response.body.pipeThrough(flushingGzip()), init)
+}
+
+/**
+ * Gzip that sends each chunk on as soon as it is compressed. CompressionStream
+ * holds small chunks back until it has a full block, which stalls streamed
+ * responses (LLM tokens, progress lines) for no reason.
+ */
+function flushingGzip(): TransformStream<Uint8Array, Uint8Array> {
+  const gzip = createGzip({ level: 6, flush: constants.Z_SYNC_FLUSH })
+  let out!: TransformStreamDefaultController<Uint8Array>
+  gzip.on('data', (chunk: Buffer) => out.enqueue(new Uint8Array(chunk)))
+  gzip.on('error', (error) => out.error(error))
+  return new TransformStream<Uint8Array, Uint8Array>({
+    start: (controller) => void (out = controller),
+    transform: (chunk) => new Promise<void>((resolve, reject) => void gzip.write(chunk, (error) => (error ? reject(error) : resolve()))),
+    flush: () =>
+      new Promise<void>((resolve) => {
+        gzip.once('end', () => resolve())
+        gzip.end()
+      }),
+  })
 }

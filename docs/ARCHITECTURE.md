@@ -167,6 +167,16 @@ Each execution is a child process: `bun src/functions/runner-node.mjs <entry>` (
 variables; with `API_COMPAT=appwrite` also the `APPWRITE_FUNCTION_*` ones that
 Appwrite gives.
 
+The runner reads the request JSON on stdin and writes the result as one
+`__BUNWRITE_EXECUTION_RESULT__` line on stdout; anything else on stdout is the
+log. A streamed response (`res.start`, `res.write*`, `res.end`) also writes
+`__BUNWRITE_EXECUTION_STREAM__` lines while it runs (`start` with the status
+and headers, `chunk` with base64 bytes, `end`). The server reads them as they
+arrive and, for an HTTP request, sends each chunk on at once
+(`src/functions/http.ts`). Such responses turn off Bun's idle timeout for their
+request (`src/lib/streaming.ts`, also used for any `text/event-stream`
+response), and streamed gzip flushes every chunk.
+
 `BUNWRITE_API_KEY` (and `APPWRITE_API_KEY`) is a per-process internal key, so
 functions need no key in env. Variables come from three places; a later one wins:
 1. the server env, minus its private keys;

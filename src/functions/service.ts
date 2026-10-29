@@ -28,6 +28,9 @@ import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
+const STREAM_MARKER = '__BUNWRITE_EXECUTION_STREAM__'
+/** How much of a response body an execution record keeps. */
+const MAX_RECORDED_BYTES = 1_000_000
 /** Request headers a function never sees: credentials. */
 const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
 const SYNC_TIMEOUT = 30
@@ -144,6 +147,24 @@ export interface ExecutionResult {
   headers: Record<string, string>
   body: string
 }
+
+/**
+ * Where a sync run sends a streamed response (`res.start`, `res.write*`,
+ * `res.end`) while the function is still running. `start` comes first, then
+ * any number of `write`s, then exactly one of `end` or `fail`.
+ */
+export interface ExecutionStream {
+  start(head: { statusCode: number; headers: Record<string, string> }): void
+  write(chunk: Uint8Array): void
+  end(): void
+  fail(reason: Error): void
+  /** Aborted when the client goes away; the run is then stopped. */
+  signal?: AbortSignal
+}
+
+type StreamFrame = { type: 'start'; statusCode: number; headers: Record<string, string> } | { type: 'chunk'; data: string } | { type: 'end' }
+
+const isBinaryType = (contentType: string | undefined) => !/json|text|xml|javascript/i.test(contentType ?? 'text')
 
 const EXECUTIONS: Collection = (() => {
   const attributes = (
@@ -538,7 +559,7 @@ export class FunctionService {
   }
 
   /** Create an execution. Async ones return at once with status `waiting`. */
-  async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async'): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
+  async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async', stream?: ExecutionStream): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
     if (!f.enabled) throw err('function_not_found')
     request = { ...request, headers: withCallerHeaders(request.headers, request.userId) }
     const id = uniqueId()
@@ -550,7 +571,7 @@ export class FunctionService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(id, f.id, request.trigger, mode === 'async' ? 'waiting' : 'processing', request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), mode === 'async' ? (request.body ?? '') : '', request.userId ?? null, stamp, stamp)
-    const run = this.run(id, f, request, mode === 'sync' ? Math.min(f.timeout, SYNC_TIMEOUT) : f.timeout)
+    const run = this.run(id, f, request, mode === 'sync' ? Math.min(f.timeout, SYNC_TIMEOUT) : f.timeout, mode === 'sync' ? stream : undefined)
     if (mode === 'async') {
       run.catch((e) => console.error('[functions] execution failed to run', e))
       return { execution: this.execution(f.id, id), result: null }
@@ -657,7 +678,7 @@ export class FunctionService {
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
   }
 
-  private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number): Promise<ExecutionResult> {
+  private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, stream?: ExecutionStream): Promise<ExecutionResult> {
     const started = performance.now()
     this.running.set(f.id, (this.running.get(f.id) ?? 0) + 1)
     this.sql.query("UPDATE _executions SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), id)
@@ -666,6 +687,8 @@ export class FunctionService {
     let body = ''
     let logs = ''
     let errors = ''
+    /** Set once the function starts a streamed response. */
+    let head: { statusCode: number; headers: Record<string, string>; ended: boolean } | null = null
     try {
       const { dir, tried, entrypoint, runtime: runtimeId } = this.codeDir(f)
       if (!dir) {
@@ -709,18 +732,93 @@ export class FunctionService {
       )
       proc.stdin.end()
       let timedOut = false
-      const timer = setTimeout(() => {
+      let disconnected = false
+      const stop = () => {
         timedOut = true
         proc.kill()
-      }, timeout * 1000)
-      const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+      }
+      let timer = setTimeout(stop, timeout * 1000)
+      const onAbort = () => {
+        disconnected = true
+        proc.kill()
+      }
+      stream?.signal?.addEventListener('abort', onAbort, { once: true })
+
+      // Stream frames go to `stream` (or into the recorded body) as they
+      // arrive; every other line is plain stdout: logs and the result line.
+      const recorded: Uint8Array[] = []
+      let recordedBytes = 0
+      const onFrame = (frame: StreamFrame) => {
+        if (frame.type === 'start') {
+          if (head) return
+          head = { statusCode: Number(frame.statusCode) || 200, headers: frame.headers ?? {}, ended: false }
+          // The caller has its answer started; from here the function's own timeout applies, not the sync wait.
+          if (stream && f.timeout > timeout) {
+            clearTimeout(timer)
+            timeout = f.timeout
+            timer = setTimeout(stop, Math.max(0, timeout * 1000 - (performance.now() - started)))
+          }
+          stream?.start({ statusCode: head.statusCode, headers: head.headers })
+        } else if (frame.type === 'chunk' && head && !head.ended) {
+          const bytes = Buffer.from(frame.data, 'base64')
+          if (recordedBytes <= MAX_RECORDED_BYTES) {
+            recorded.push(bytes)
+            recordedBytes += bytes.length
+          }
+          stream?.write(new Uint8Array(bytes))
+        } else if (frame.type === 'end' && head && !head.ended) {
+          head.ended = true
+          stream?.end()
+        }
+      }
+      const readStdout = async () => {
+        let plain = ''
+        let pending = ''
+        // Frames are written as "\n<marker>…\n"; the empty line before one is not output.
+        let heldEmpty = false
+        const line = (text: string) => {
+          if (text.startsWith(STREAM_MARKER)) {
+            heldEmpty = false
+            try {
+              onFrame(JSON.parse(text.slice(STREAM_MARKER.length)) as StreamFrame)
+            } catch {
+              // A garbled frame is dropped; the rest of the stream still goes out.
+            }
+            return
+          }
+          if (heldEmpty) plain += '\n'
+          heldEmpty = text === ''
+          if (!heldEmpty) plain += `${text}\n`
+        }
+        const decoder = new TextDecoder()
+        for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+          pending += decoder.decode(chunk, { stream: true })
+          let at: number
+          while ((at = pending.indexOf('\n')) >= 0) {
+            line(pending.slice(0, at))
+            pending = pending.slice(at + 1)
+          }
+        }
+        pending += decoder.decode()
+        if (heldEmpty) plain += '\n'
+        return plain + pending
+      }
+
+      const [stdout, stderr] = await Promise.all([readStdout(), new Response(proc.stderr).text(), proc.exited])
       clearTimeout(timer)
+      stream?.signal?.removeEventListener('abort', onAbort)
       const markerAt = stdout.lastIndexOf(RESULT_MARKER)
+      let failedMidStream = false
       if (timedOut) {
         errors = `Operation timed out after ${timeout} seconds.`
         statusCode = 500
+        failedMidStream = true
+      } else if (disconnected) {
+        errors = 'The client disconnected before the response finished.'
+        failedMidStream = true
       } else if (markerAt < 0) {
         errors = (stderr || stdout || 'The function exited without a result.').trim()
+        failedMidStream = true
       } else {
         const out = JSON.parse(stdout.slice(markerAt + RESULT_MARKER.length).split('\n')[0]!)
         statusCode = out.statusCode
@@ -728,10 +826,30 @@ export class FunctionService {
         body = out.body ?? ''
         logs = [stdout.slice(0, markerAt).trim(), out.logs].filter(Boolean).join('\n')
         errors = [out.errors, stderr.trim()].filter(Boolean).join('\n')
+        failedMidStream = Boolean(out.failed)
+      }
+      const streamed = head as { statusCode: number; headers: Record<string, string>; ended: boolean } | null
+      if (streamed) {
+        // The client already has this status; keep the record in line with it.
+        if (!timedOut) statusCode = streamed.statusCode
+        headers = streamed.headers
+        const bytes = Buffer.concat(recorded)
+        body = bytes.toString(isBinaryType(headers['content-type'] ?? headers['Content-Type']) ? 'latin1' : 'utf8')
+        if (!streamed.ended) {
+          streamed.ended = true
+          if (failedMidStream) stream?.fail(new Error('The function stopped before the response finished.'))
+          else stream?.end()
+        }
       }
     } catch (error) {
       errors = error instanceof Error ? error.message : String(error)
     } finally {
+      // Never leave a client waiting on a stream that will get no more data.
+      const open = head as { ended: boolean } | null
+      if (open && !open.ended) {
+        open.ended = true
+        stream?.fail(new Error('The function stopped before the response finished.'))
+      }
       this.running.set(f.id, (this.running.get(f.id) ?? 1) - 1)
     }
     const failed = statusCode >= 400 || statusCode === 0
@@ -741,7 +859,7 @@ export class FunctionService {
         `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', updated_at = ?
          WHERE id = ?`,
       )
-      .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, 1_000_000), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id)
+      .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id)
     return { statusCode, headers, body }
   }
 

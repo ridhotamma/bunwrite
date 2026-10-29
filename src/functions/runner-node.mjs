@@ -5,6 +5,10 @@
  * Mirrors the open-runtimes `context` (req, res, log, error) the functions
  * were written against.
  *
+ * Streamed responses (`res.start`, `res.writeText`, …, `res.end`) go out as
+ * STREAM_MARKER lines on stdout while the function runs, so the server can
+ * send each chunk to the client as soon as it is written.
+ *
  * Plain JavaScript on purpose: it runs on the server's Bun, on a downloaded
  * Bun, and on any Node.js from 18 up, none of which may run TypeScript.
  */
@@ -14,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { format } from 'node:util'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
+const STREAM_MARKER = '__BUNWRITE_EXECUTION_STREAM__'
 
 async function readStdin() {
   const chunks = []
@@ -31,7 +36,14 @@ export async function runNodeFunction(entry) {
   const logs = []
   /** @type {string[]} */
   const errors = []
-  const stdout = process.stdout.write.bind(process.stdout)
+  const write = process.stdout.write.bind(process.stdout)
+  /** Resolves once everything written so far has reached the pipe, so exiting cannot cut it off. */
+  let flushed = Promise.resolve()
+  const stdout = (text) => {
+    flushed = new Promise((done) => write(text, () => done()))
+    return flushed
+  }
+  const frame = (data) => stdout(`\n${STREAM_MARKER}${JSON.stringify(data)}\n`)
 
   // Whatever the function prints is its log, as on Appwrite.
   console.log = console.info = console.debug = (...args) => void logs.push(format(...args))
@@ -72,7 +84,34 @@ export async function runNodeFunction(entry) {
     },
   }
 
+  /** Set once the function starts a streamed response. */
+  let stream = null
+  const startStream = (statusCode = 200, headers = {}) => {
+    if (stream) throw new Error('The response has already started.')
+    stream = { statusCode, headers, ended: false }
+    void frame({ type: 'start', statusCode, headers })
+  }
+  const writeChunk = (bytes) => {
+    if (!stream) startStream()
+    if (stream.ended) throw new Error('The response has already ended.')
+    return bytes.length ? frame({ type: 'chunk', data: bytes.toString('base64') }) : flushed
+  }
+
   const res = {
+    /** Begin a streamed response; send the body with the write* calls, then end(). */
+    start: (statusCode = 200, headers = {}) => void startStream(statusCode, headers),
+    writeText: (text) => writeChunk(Buffer.from(String(text), 'utf8')),
+    writeJson: (obj) => writeChunk(Buffer.from(JSON.stringify(obj), 'utf8')),
+    writeBinary: (bytes) => writeChunk(Buffer.from(bytes)),
+    /** Finish a streamed response. Return its result from the function. */
+    end: () => {
+      if (!stream) startStream()
+      if (!stream.ended) {
+        stream.ended = true
+        void frame({ type: 'end' })
+      }
+      return { body: '', statusCode: stream.statusCode, headers: stream.headers }
+    },
     send: (body = '', statusCode = 200, headers = {}) => ({ body: String(body), statusCode, headers }),
     text: (body = '', statusCode = 200, headers = {}) => ({ body: String(body), statusCode, headers: { 'content-type': 'text/plain', ...headers } }),
     json: (obj, statusCode = 200, headers = {}) => ({ body: JSON.stringify(obj), statusCode, headers: { 'content-type': 'application/json', ...headers } }),
@@ -89,19 +128,27 @@ export async function runNodeFunction(entry) {
   }
 
   let out
+  let threw = false
   try {
     const mod = await import(pathToFileURL(entry).href)
     const fn = typeof mod.default === 'function' ? mod.default : typeof mod === 'function' ? mod : (mod.default?.default ?? mod.main)
     if (typeof fn !== 'function') throw new Error(`${entry} does not export a function`)
     const result = await fn(context)
-    out = result && typeof result === 'object' && 'statusCode' in result ? result : res.empty()
-    if (!result) errors.push('Return statement missing. return context.res.empty() if no response is expected.')
+    if (stream) out = res.end()
+    else {
+      out = result && typeof result === 'object' && 'statusCode' in result ? result : res.empty()
+      if (!result) errors.push('Return statement missing. return context.res.empty() if no response is expected.')
+    }
   } catch (error) {
+    threw = true
     errors.push(error instanceof Error ? (error.stack ?? error.message) : String(error))
     out = { body: '', statusCode: 500, headers: {} }
   }
+  // A streamed response already sent its status and body; `failed` tells the
+  // server whether it finished or broke off with an error.
+  if (stream) out = { body: '', statusCode: stream.statusCode, headers: stream.headers, streamed: true, failed: threw && !stream.ended }
 
-  stdout(`\n${RESULT_MARKER}${JSON.stringify({ ...out, logs: logs.join('\n'), errors: errors.join('\n') })}\n`)
+  await stdout(`\n${RESULT_MARKER}${JSON.stringify({ ...out, logs: logs.join('\n'), errors: errors.join('\n') })}\n`)
   process.exit(0)
 }
 

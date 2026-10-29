@@ -8,6 +8,7 @@ import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
 import { apiHeader, corsHeaderNames } from './lib/compat'
 import { addVary, compressResponse } from './lib/compress'
+import { isStreaming } from './lib/streaming'
 import { BunwriteError, err } from './lib/errors'
 import { errorResponse, json, readParams } from './lib/http'
 import { parseTrustedProxies, rememberClientIp } from './lib/client-ip'
@@ -320,6 +321,8 @@ export function createApp(source: Services | ProjectResolver) {
           status = 101
           return undefined
         }
+        // A stream may go quiet for longer than the idle timeout (an LLM thinking); keep it open.
+        if (server && isStreaming(raw)) server.timeout(request, 0)
         const response = control.config.compression ? await compressResponse(request, raw) : raw
         status = response.status
         responseBytes = Number(response.headers.get('content-length') ?? 0) || 0

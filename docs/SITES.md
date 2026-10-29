@@ -292,6 +292,45 @@ reaches it when the request carries a JWT (`X-Appwrite-JWT`, from
 `account.createJWT()`); the function then sees `x-appwrite-user-id`. Bunwrite
 drops any `x-*-user-id` a client sends itself, so the header can be trusted.
 
+### Streamed responses
+
+A function can send its response in pieces while it runs, for example LLM
+tokens as the model writes them. Call `res.start()` with the status and
+headers, write the body with `res.writeText()`, `res.writeJson()` or
+`res.writeBinary()`, and return `res.end()`:
+
+```js
+// functions/api/src/main.js
+export default async ({ req, res }) => {
+  const upstream = await fetch('https://api.example.com/v1/chat', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${process.env.LLM_API_KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ stream: true, messages: req.bodyJson.messages }),
+  })
+  res.start(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+  const decoder = new TextDecoder()
+  for await (const chunk of upstream.body) res.writeText(decoder.decode(chunk, { stream: true }))
+  return res.end()
+}
+```
+
+Python uses `context.res.start()`, `write_text()`, `write_json()`,
+`write_binary()` and `end()`.
+
+- The response goes out as soon as `res.start()` runs, and each write reaches
+  the client right away. Compression flushes every chunk, and the connection's
+  idle timeout is turned off for the stream, so long pauses between tokens are
+  fine.
+- A sync request waits at most 30 seconds for the response to *start*. After
+  `res.start()`, the function's own timeout applies.
+- If the client disconnects, the function is stopped, so an upstream LLM call
+  is not left running.
+- If the function throws or times out mid-stream, the response is cut off
+  instead of ending cleanly, so the client sees a failed read.
+- The execution record still gets the status, headers, logs and the first
+  1 MB of the body. An async or scheduled run, or a sync run through the
+  executions API, gets the whole body at once.
+
 ### The browser SDK on a site
 
 A site's own addresses are trusted origins for its server. The browser SDK on

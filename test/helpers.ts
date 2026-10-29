@@ -133,14 +133,14 @@ export function testConfig(over: Partial<Config> = {}): Config {
   }
 }
 
-export function startServer(schema: unknown = testSchema, over: Partial<Config> = {}, baseDir?: string): TestServer {
+export function startServer(schema: unknown = testSchema, over: Partial<Config> = {}, baseDir?: string, serve: { idleTimeout?: number } = {}): TestServer {
   const db = openDb(':memory:')
   pushConfig(db, schema, { baseDir })
   const mailer = new MemoryMailer()
   const config = testConfig(over)
   const services = createServices(config, db, { mailer })
   const app = createApp(services)
-  const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket })
+  const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket, ...serve })
   config.publicEndpoint = `http://localhost:${server.port}/v1`
   config.port = server.port!
   return {
