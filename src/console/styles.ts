@@ -96,8 +96,8 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .settings-section{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:24px;padding:0 0 24px;margin-bottom:24px;border-bottom:1px solid var(--border)}
 .settings-section:last-of-type{border-bottom:0;margin-bottom:0}
 .settings-section .card{margin:0;min-width:0;overflow:hidden}
-.settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child){display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
-.settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child)>.hint{margin:0 0 8px}
+.settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child:not(.stack-fields)){display:flex;flex-direction:column;justify-content:center;align-items:flex-start}
+.settings-section>.card:has(>form[data-confirm-tone="critical"]:last-child:not(.stack-fields))>.hint{margin:0 0 8px}
 .settings-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .settings-aside h2{margin:4px 0 4px;font-size:14px;line-height:20px;font-weight:650}.settings-aside p{margin:0;font-size:13px}
 .settings-badge{display:inline-flex;margin-top:4px}.settings-badge .badge+.badge{margin-left:4px}
