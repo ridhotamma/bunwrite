@@ -81,6 +81,28 @@ describe('multiple projects', () => {
     expect((await new Users(client(PROJECT, KEY)).list()).total).toBe(0)
   })
 
+  test('health checks credentials against the project in the header', async () => {
+    for (const [project, key] of [
+      [PROJECT, KEY],
+      ['project-b', projectKey],
+    ] as const) {
+      const res = await fetch(`${endpoint}/health`, { headers: { 'x-appwrite-project': project, 'x-appwrite-key': key } })
+      expect(res.status).toBe(200)
+    }
+
+    const wrong = await fetch(`${endpoint}/health`, { headers: { 'x-appwrite-project': 'project-b', 'x-appwrite-key': KEY } })
+    expect(wrong.status).toBe(401)
+
+    const unknown = await fetch(`${endpoint}/health`, { headers: { 'x-appwrite-project': 'nope' } })
+    expect(unknown.status).toBe(404)
+
+    const noProject = await fetch(`${endpoint}/health`)
+    expect(noProject.status).toBe(200)
+
+    const consoleProbe = await fetch(`${endpoint}/health/version`, { headers: { 'x-appwrite-project': 'console' } })
+    expect(consoleProbe.status).toBe(200)
+  })
+
   test('GitHub installations are server-wide, and old per-project rows are adopted', async () => {
     // The row written into project-b's database before the hub started is now
     // in the control database, under one ID both projects can use.

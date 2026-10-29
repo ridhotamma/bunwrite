@@ -165,7 +165,16 @@ export function createApp(source: Services | ProjectResolver) {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     // Browser preflights carry no custom project header.
     if (request.method === 'OPTIONS') return projects.defaultProject()
-    if (pathname === '/health' || pathname.startsWith('/health/')) return projects.defaultProject()
+    if (pathname === '/health' || pathname.startsWith('/health/')) {
+      // Health answers without a project; when one is named, its key is the one
+      // to validate, so `GET /health` can prove a second project's credentials.
+      // The Appwrite CLI sends its pseudo-project `console` while probing.
+      const projectId = projectOf(request, url)
+      if (!projectId || projectId === CONSOLE_PROJECT) return projects.defaultProject()
+      const project = projects.get(projectId)
+      if (!project) throw err('project_not_found')
+      return project
+    }
     // `appwrite push functions` reads this as the "console" project.
     if (pathname === '/console/variables') return projects.defaultProject()
 
