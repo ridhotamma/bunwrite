@@ -137,6 +137,9 @@ describe('schema through the console', () => {
     const orders = exported.tables.find((t: any) => t.$id === 'orders')
     expect(orders.columns.map((c: any) => c.key)).toEqual(['code', 'total', 'state'])
     orders.columns.push({ key: 'note', type: 'string', size: 200, required: false, array: false, default: null })
+    // Functions and buckets in the file are skipped: the import only touches collections.
+    exported.functions = [{ $id: 'skipped-fn', name: 'skipped-fn', runtime: 'node-22', entrypoint: 'index.js', path: 'functions/skipped-fn' }]
+    exported.buckets = [...(exported.buckets ?? []), { $id: 'skipped-bucket', name: 'skipped-bucket', $permissions: [] }]
 
     const body = new FormData()
     body.set('file', new File([JSON.stringify(exported)], 'appwrite.config.json', { type: 'application/json' }))
@@ -150,6 +153,8 @@ describe('schema through the console', () => {
     const applied = await form('/console/schema/apply', { config, baseDir: '' })
     expect(flash(applied).get('ok')).toBe('Applied 1 change')
     expect(server.services.registry.collection('shop', 'orders', true).attributeMap.has('note')).toBe(true)
+    expect(server.services.db.sqlite.query('SELECT 1 FROM _functions WHERE id = ?').get('skipped-fn')).toBeNull()
+    expect(server.services.db.sqlite.query('SELECT 1 FROM _buckets WHERE id = ?').get('skipped-bucket')).toBeNull()
   })
 
   test('collections can be exported and imported with a review', async () => {

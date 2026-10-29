@@ -216,16 +216,6 @@ export const DIALOG_SCRIPT = `
         hideNavTooltip()
         return
       }
-      const selectAll = target.closest("[data-select-all]")
-      if (selectAll) {
-        const form = selectAll.closest("form")
-        if (form) {
-          const checked = selectAll.getAttribute("data-select-all") !== "none"
-          for (const box of form.querySelectorAll("input[name='ids']")) box.checked = checked
-          form.requestSubmit()
-        }
-        return
-      }
       const opener = target.closest("[data-dialog-open]")
       if (opener) {
         const selector = opener.getAttribute("data-dialog-open")
@@ -273,10 +263,20 @@ export const DIALOG_SCRIPT = `
         if (source) copyValue(copy, source)
       }
     })
+    // On phones the tabs scroll sideways; bring the active one into view.
+    const showActiveTab = () => {
+      for (const tab of document.querySelectorAll(".tabs a.on")) {
+        const bar = tab.parentElement
+        if (bar && bar.scrollWidth > bar.clientWidth) bar.scrollLeft = tab.offsetLeft - bar.offsetLeft - (bar.clientWidth - tab.offsetWidth) / 2
+      }
+    }
     document.addEventListener("htmx:afterSwap", () => {
       showOpenDialogs()
       setupCharts()
+      showActiveTab()
     })
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", showActiveTab)
+    else showActiveTab()
     document.addEventListener("pointerover", showNavTooltip)
     document.addEventListener("focusin", showNavTooltip)
     document.addEventListener("pointerout", (event) => {

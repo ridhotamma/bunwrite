@@ -8,6 +8,15 @@ import { configurationView, exportView, importReviewView, importView, previewVie
 import { configFileName } from '~/lib/compat'
 import { err } from '~/lib/errors'
 
+/** Keep only databases and collections; the console import skips functions, buckets, sites and the rest. */
+function collectionsOnly(config: unknown): Record<string, unknown> {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw err('general_argument_invalid', 'The file must be a project config JSON object.')
+  const source = config as Record<string, unknown>
+  const kept: Record<string, unknown> = {}
+  for (const key of ['tablesDB', 'databases', 'tables', 'collections']) if (key in source) kept[key] = source[key]
+  return kept
+}
+
 const destructive = (changes: string[]) => changes.some((change) => change.startsWith('-') || change.includes(': - '))
 
 /** The schema in project config shape (bunwrite.config.json), merged into the existing file so its other keys survive. */
@@ -77,7 +86,7 @@ export function schemaPages(router: ConsoleRouter): void {
   // Export collections: checkbox changes re-render the list and JSON panel.
   router.get(`${SCHEMA}/export`, ({ ctx, url }) => {
     const { all, selected, explicit } = selectedCollections(ctx, url)
-    return ctx.render('Schema', 'schema', exportView({ all, selected, download: collectionsUrl(selected, explicit) }))
+    return ctx.render('Schema', 'schema', exportView({ all, selected, download: collectionsUrl(selected, explicit), databases: new Map([...ctx.services.registry.databases.values()].map((database) => [database.id, database.name])) }))
   })
 
   router.get(`${SCHEMA}/collections.json`, ({ ctx, url }) => {
@@ -141,7 +150,8 @@ export function schemaPages(router: ConsoleRouter): void {
 
   // Dry run: apply inside a savepoint, list the changes, roll back. The file goes back as a hidden field.
   router.post(`${SCHEMA}/preview`, async ({ ctx }) => {
-    const { config, baseDir, label } = await readUpload(ctx)
+    const { config: uploaded, baseDir, label } = await readUpload(ctx)
+    const config = collectionsOnly(uploaded)
     const prune = checked(ctx.form.prune)
     const changes = ctx.schema.importConfig(config, { baseDir, prune, dryRun: true })
     return ctx.render(
@@ -158,6 +168,7 @@ export function schemaPages(router: ConsoleRouter): void {
     } catch {
       throw err('general_argument_invalid', 'The import was lost. Preview it again.')
     }
+    config = collectionsOnly(config)
     const changes = ctx.schema.importConfig(config, { baseDir: String(ctx.form.baseDir || '') || undefined, prune: checked(ctx.form.prune) })
     return ctx.go(SCHEMA, { tone: 'success', text: `Applied ${changes.length} change${changes.length === 1 ? '' : 's'}` })
   })

@@ -1,6 +1,6 @@
 /** Schema page and panels markup. The page loads, validates and applies changes. */
-import { html, type Html } from '~/console/html'
-import { alert, badge, emptyState, header, settingsSection, tabs as tabList } from '~/console/ui'
+import { html, raw, type Html } from '~/console/html'
+import { alert, badge, emptyState, header, icon, settingsSection, tabs as tabList } from '~/console/ui'
 import { SCHEMA } from '~/console/schema-meta'
 
 const SCHEMA_TABS = [
@@ -20,17 +20,121 @@ function changeList(changes: string[]): Html {
 
 function exportPanel(selected: Record<string, any>[], download: string): Html {
   const json = JSON.stringify(selected, null, 2)
+  const columns = selected.reduce((sum, collection) => sum + (collection.columns?.length ?? 0), 0)
+  const indexes = selected.reduce((sum, collection) => sum + (collection.indexes?.length ?? 0), 0)
+  const bytes = new TextEncoder().encode(json).length
+  const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
   return html`<div id="export-panel">
     <div class="card">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-        <h2 style="margin:0">JSON · ${selected.length} selected</h2>
+      <div class="card-head">
+        <h2>JSON preview</h2>
         ${selected.length
-          ? html`<div style="margin-left:auto;display:flex;gap:8px"><button type="button" class="small" data-copy-target="#export-json">Copy</button><a class="btn small primary" href="${download}" hx-boost="false" download="collections.json">Download as JSON</a></div>`
+          ? html`<div class="card-head-actions"><button type="button" class="small" data-copy-target="#export-json">Copy</button><a class="btn small primary" href="${download}" hx-boost="false" download="collections.json">Download</a></div>`
           : ''}
       </div>
-      ${selected.length ? html`<pre id="export-json" style="max-height:520px">${json}</pre>` : emptyState('No collections selected', 'Pick at least one collection to export.')}
+      ${selected.length
+        ? html`<div class="export-stats">
+            <span><b>${selected.length}</b> ${selected.length === 1 ? 'collection' : 'collections'}</span>
+            <span><b>${columns}</b> ${columns === 1 ? 'column' : 'columns'}</span>
+            <span><b>${indexes}</b> ${indexes === 1 ? 'index' : 'indexes'}</span>
+            <span class="subdued">${size}</span>
+          </div>
+          <pre id="export-json" class="export-json">${json}</pre>`
+        : emptyState('No collections selected', 'Tick collections on the left to preview and download their JSON.')}
     </div>
   </div>`
+}
+
+/** Search, group checkboxes and the selected count. The form only refreshes the JSON panel. */
+const EXPORT_SCRIPT = `
+(() => {
+  const rows = (root) => [...root.querySelectorAll("[data-export-row]")]
+  const visible = (row) => !row.hidden && !row.closest("[data-export-group]").hidden
+  const sync = (form) => {
+    if (!form) return
+    let picked = 0
+    let total = 0
+    for (const group of form.querySelectorAll("[data-export-group]")) {
+      const boxes = rows(group).filter((row) => !row.hidden).map((row) => row.querySelector("input[name='ids']"))
+      const on = boxes.filter((box) => box.checked).length
+      const toggle = group.querySelector("[data-export-toggle]")
+      toggle.checked = boxes.length > 0 && on === boxes.length
+      toggle.indeterminate = on > 0 && on < boxes.length
+      const all = rows(group).map((row) => row.querySelector("input[name='ids']"))
+      group.querySelector("[data-export-count]").textContent = all.filter((box) => box.checked).length + "/" + all.length
+    }
+    for (const box of form.querySelectorAll("input[name='ids']")) {
+      total++
+      if (box.checked) picked++
+    }
+    const count = form.querySelector("[data-export-total]")
+    if (count) count.textContent = picked + " of " + total + " selected"
+  }
+  const filter = (input) => {
+    const form = input.closest("form")
+    const query = input.value.trim().toLowerCase()
+    let shown = 0
+    for (const group of form.querySelectorAll("[data-export-group]")) {
+      let any = false
+      for (const row of rows(group)) {
+        row.hidden = Boolean(query) && !row.dataset.exportRow.includes(query)
+        if (!row.hidden) any = true
+      }
+      group.hidden = !any
+      if (any) shown++
+    }
+    const none = form.querySelector("[data-export-none]")
+    if (none) none.hidden = shown > 0
+    sync(form)
+  }
+  window.__bunwriteExportSync = sync
+  if (window.__bunwriteExport) return
+  window.__bunwriteExport = true
+  // Typing in the search box filters rows; it must not refresh the panel.
+  document.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.matches("[data-export-filter]")) event.stopPropagation()
+  }, true)
+  document.addEventListener("input", (event) => {
+    if (event.target instanceof Element && event.target.matches("[data-export-filter]")) filter(event.target)
+  })
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target instanceof Element && event.target.matches("[data-export-filter]")) event.preventDefault()
+  })
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null
+    if (!target) return
+    // The checkbox has already flipped; its change event submits after this.
+    const toggle = target.closest("[data-export-toggle]")
+    if (toggle) {
+      const group = toggle.closest("[data-export-group]")
+      for (const row of rows(group)) if (!row.hidden) row.querySelector("input[name='ids']").checked = toggle.checked
+      sync(toggle.closest("form"))
+      return
+    }
+    const bulk = target.closest("[data-export-bulk]")
+    if (bulk) {
+      const form = bulk.closest("form")
+      const checked = bulk.dataset.exportBulk === "all"
+      for (const row of rows(form)) if (visible(row)) row.querySelector("input[name='ids']").checked = checked
+      sync(form)
+      form.requestSubmit()
+    }
+  })
+  document.addEventListener("change", (event) => {
+    if (event.target instanceof Element && event.target.matches("#export-form input[name='ids']")) sync(event.target.closest("form"))
+  })
+})()
+window.__bunwriteExportSync(document.getElementById("export-form"))
+`
+
+function exportGroups(all: Record<string, any>[], databases: Map<string, string>) {
+  const groups = new Map<string, Record<string, any>[]>()
+  for (const collection of all) {
+    const list = groups.get(collection.databaseId) ?? []
+    list.push(collection)
+    groups.set(collection.databaseId, list)
+  }
+  return [...groups].map(([id, collections]) => ({ id, name: databases.get(id) ?? id, collections }))
 }
 
 export function configurationView(options: { schemaPath?: string; fileName: string }): Html {
@@ -40,7 +144,7 @@ export function configurationView(options: { schemaPath?: string; fileName: stri
   ${alert('info', html`Databases, collections, buckets and functions can be described in <code>${file}</code>, the file your project keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
   ${settingsSection(
     'Import from a file',
-    'Creates and alters exactly what the file describes. Preview first; nothing changes until you apply.',
+    'Creates and alters the databases and collections the file describes. Functions, buckets and sites in the file are skipped. Preview first; nothing changes until you apply.',
     html`<form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" hx-boost="false">
       <label>File<input type="file" name="file" accept=".json,application/json"><small>${path ? html`Leave empty to use <code>${path}</code>.` : html`${file}, bunwrite.json or appwrite.config.json`}</small></label>
       <label class="check"><input type="checkbox" name="prune">Also delete collections missing from the file</label>
@@ -61,35 +165,71 @@ export interface ExportView {
   all: Record<string, any>[]
   selected: Record<string, any>[]
   download: string
+  /** Database id to display name, for the group headers. */
+  databases: Map<string, string>
 }
 
 export function exportView(options: ExportView): Html {
-  const { all, selected, download } = options
-  const selectedKeys = new Set(selected.map((collection) => `${collection.databaseId}/${collection.$id}`))
+  const { all, selected, download, databases } = options
+  const key = (collection: Record<string, any>) => `${collection.databaseId}/${collection.$id}`
+  const selectedKeys = new Set(selected.map(key))
+  const list = all.length
+    ? html`<div class="export-list">
+        ${exportGroups(all, databases).map((group) => {
+          const on = group.collections.filter((collection) => selectedKeys.has(key(collection))).length
+          return html`<section class="export-group" data-export-group>
+            <label class="export-group-head">
+              <input type="checkbox" data-export-toggle aria-label="Select every collection in ${group.name}" ${on === group.collections.length ? 'checked' : ''}>
+              ${icon('database', 14)}
+              <span class="export-group-name">${group.name}</span>
+              ${group.name !== group.id ? html`<span class="mono subdued export-clip">${group.id}</span>` : ''}
+              <span class="export-count subdued" data-export-count>${on}/${group.collections.length}</span>
+            </label>
+            ${group.collections.map((collection) => {
+              const columns = collection.columns?.length ?? 0
+              return html`<label class="export-row" data-export-row="${`${collection.name} ${collection.$id}`.toLowerCase()}">
+                <input type="checkbox" name="ids" value="${key(collection)}" ${selectedKeys.has(key(collection)) ? 'checked' : ''}>
+                <span class="export-row-text">
+                  <span class="export-row-name">${collection.name}</span>
+                  <span class="mono subdued export-clip">${collection.$id}</span>
+                </span>
+                <span class="export-count subdued">${columns} ${columns === 1 ? 'column' : 'columns'}</span>
+              </label>`
+            })}
+          </section>`
+        })}
+        <div class="empty" data-export-none hidden><h3>No matches</h3><p>No collection name or ID matches your search.</p></div>
+      </div>`
+    : emptyState('No collections', 'Create a collection first.')
   return html`${header('Schema')}${schemaTabs('export')}
-  <p class="subdued" style="margin:-8px 0 16px">Select collections to export. The JSON can be imported on another instance from <a href="${SCHEMA}/import">Import collections</a>.</p>
-  <form method="get" action="${SCHEMA}/export" hx-get="${SCHEMA}/export" hx-target="#export-page" hx-select="#export-page" hx-swap="outerHTML" hx-push-url="true" hx-trigger="change, submit">
+  <p class="subdued" style="margin:-8px 0 16px">Pick the collections to export. The JSON can be imported on another instance from <a href="${SCHEMA}/import">Import collections</a>.</p>
+  <form id="export-form" method="get" action="${SCHEMA}/export" hx-get="${SCHEMA}/export" hx-target="#export-panel" hx-select="#export-panel" hx-swap="outerHTML" hx-push-url="true" hx-trigger="change, submit">
     <input type="hidden" name="selected" value="1">
-    <div id="export-page"><div class="split-sidebar">
+    <div id="export-page" class="split-sidebar export-layout">
       <div class="card flush">
-        <div class="toolbar"><h2 style="margin:0">Collections</h2></div>
-        <div style="padding:8px 12px">
-          <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
-            <button type="button" class="plain" data-select-all="all">Select all</button>
-            <button type="button" class="plain" data-select-all="none">Clear</button>
-            <noscript><button class="small" style="margin-left:auto">Preview</button></noscript>
+        <div class="export-head">
+          <div class="export-head-title">
+            <h2>Collections</h2>
+            <span class="subdued" data-export-total>${selected.length} of ${all.length} selected</span>
           </div>
           ${all.length
-            ? all.map(
-                (collection) =>
-                  html`<label class="check" style="margin:4px 0"><input type="checkbox" name="ids" value="${collection.databaseId}/${collection.$id}" ${selectedKeys.has(`${collection.databaseId}/${collection.$id}`) ? 'checked' : ''}><span>${collection.name} <span class="subdued mono">${collection.databaseId}/${collection.$id}</span></span></label>`,
-              )
-            : emptyState('No collections', 'Create a collection first.')}
+            ? html`<div class="export-tools">
+                <div class="search-field">
+                  <span class="search-field-icon">${icon('magnifying-glass')}</span>
+                  <input type="search" data-export-filter placeholder="Search collections..." autocomplete="off" aria-label="Search collections">
+                </div>
+                <button type="button" class="small" data-export-bulk="all">Select all</button>
+                <button type="button" class="small" data-export-bulk="none">Clear</button>
+                <noscript><button class="small primary">Preview</button></noscript>
+              </div>`
+            : ''}
         </div>
+        ${list}
       </div>
       ${exportPanel(selected, download)}
-    </div></div>
-  </form>`
+    </div>
+  </form>
+  <script>${raw(EXPORT_SCRIPT)}</script>`
 }
 
 export function importView(values: { json?: string; error?: string; prune?: boolean } = {}): Html {
