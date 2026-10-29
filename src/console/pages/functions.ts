@@ -352,6 +352,7 @@ export function functionPages(router: ConsoleRouter): void {
       type: 'function',
       id: f.id,
       action: `${functionUrl(f.id)}/domains`,
+      page: `${functionUrl(f.id)}/settings`,
       sectionId: 'function-domains',
     })
     return ctx.render(

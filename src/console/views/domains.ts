@@ -16,6 +16,12 @@ export interface CustomDomainsSectionOptions {
   id: string
   /** Where the add/remove forms POST, e.g. `/console/sites/landing/domains`. */
   action: string
+  /**
+   * The settings page that renders this card, e.g. `/console/sites/landing/settings`.
+   * Its refresh control fetches that page and swaps only the status block,
+   * which re-runs the DNS checks. Without JavaScript the link opens the page.
+   */
+  page: string
   /** Anchor used by the settings search. */
   sectionId: string
   /** Extra note specific to the resource, such as the API host to avoid. */
@@ -59,19 +65,37 @@ function domainsTable(domains: DomainCheck[], action: string): Html {
   </div>`
 }
 
+/**
+ * Re-runs the DNS checks on demand: htmx fetches the settings page and swaps
+ * only the status block, so the rest of the page and the add-domain input stay
+ * as they are. Without JavaScript the link opens the page, which re-checks too.
+ */
+function refreshControl(page: string, sectionId: string, statusId: string): Html {
+  return html`<div class="domain-head">
+    <span class="subdued">Checked when this card loads.</span>
+    <a class="btn small" href="${page}#${sectionId}" hx-get="${page}" hx-select="#${statusId}" hx-target="#${statusId}" hx-swap="outerHTML" title="Check the DNS records again">Refresh status</a>
+  </div>`
+}
+
 export async function customDomainsSection(options: CustomDomainsSectionOptions): Promise<Html> {
-  const { ctx, type, id, action, sectionId, note } = options
+  const { ctx, type, id, action, page, sectionId, note } = options
   const domains = ctx.services.proxy.domainsFor(type, id)
   const target = type === 'site' ? siteHost(ctx.services.config, id) : functionHost(ctx.services.config, id)
   const overview = await checkCustomDomains(domains, { target, publicEndpoint: ctx.services.config.publicEndpoint })
   const noun = type === 'site' ? 'site' : 'function'
+  // Only this part is replaced by the refresh control, so the form below keeps
+  // whatever has been typed into it.
+  const statusId = `${sectionId}-status`
 
   return settingsSection(
     'Custom domains',
     `Point a CNAME or an A record at this server, then add the domain here. The default ${noun} URL always keeps working.`,
-    html`${dnsRecords(overview.cnameTarget, overview.ipv4)}
+    html`<div id="${statusId}">
+      ${dnsRecords(overview.cnameTarget, overview.ipv4)}
       <p class="help">Use the CNAME for a subdomain such as <code>www.example.com</code>, or the A record for a root domain such as <code>example.com</code>. Caddy gets the certificate on the first visit.${note ? html` ${note}` : ''}</p>
+      ${refreshControl(page, sectionId, statusId)}
       ${domainsTable(overview.domains, action)}
+    </div>
       <form method="post" action="${action}">
         ${overview.domains.map((entry) => hidden({ domains: entry.domain }))}
         <label>Add a domain<input name="domains" class="mono" placeholder="www.example.com" autocomplete="off" spellcheck="false"><small>Without <code>https://</code> or a path. Separate several with commas.</small></label>

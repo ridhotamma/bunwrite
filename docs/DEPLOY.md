@@ -129,6 +129,25 @@ render, SQLite and upload limits are applied inside the process. Run
 of the host's RAM for the OS and other work; set a fixed value when it shares
 the machine.
 
+### Function isolation
+
+In the Docker image each function builds and runs as its own user, so one
+function's code cannot read the database, uploads, backups or another
+function's files; the Compose file sets `FUNCTIONS_SANDBOX=on` for this. A
+manual install can opt in the same way:
+
+```bash
+sudo install -o root -g bunwrite -m 0750 /usr/bin/setpriv /usr/local/libexec/bunwrite-sandbox
+sudo setcap cap_setuid,cap_setgid+ep /usr/local/libexec/bunwrite-sandbox
+```
+
+(`setcap` comes from `libcap2-bin`.) Then set `FUNCTIONS_SANDBOX=on` in `.env`
+so the server refuses to start without isolation; `auto`, the default, only
+warns and then runs build commands as `bunwrite`. Never add
+`NoNewPrivileges=yes` to the unit: it blocks the helper. Unlike the image,
+the host keeps its setuid programs, so an isolated function user still has
+more to reach for than inside the container; run only code you trust.
+
 ### 5. Put it online
 
 Use Cloudflare Tunnel, Caddy, nginx or another reverse proxy for TLS. Keep the

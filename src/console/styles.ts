@@ -208,6 +208,9 @@ td.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowra
 .domain-table td{padding:6px 12px}
 .domain-table td.actions-col{text-align:right;white-space:nowrap}
 .domain-table .mono{font-size:13px}
+.domain-head{display:flex;align-items:center;gap:8px;margin:0 0 8px}
+.domain-head .subdued{font-size:12px;margin:0}
+.domain-head .btn{margin-left:auto}
 .row-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 .toolbar{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center}
 .toolbar input{flex:1}

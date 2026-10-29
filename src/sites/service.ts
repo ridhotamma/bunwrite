@@ -765,6 +765,7 @@ export class SiteService {
       const result = await runShell({
         command: "find . -type f | wc -l; du -sk . | cut -f1",
         wrap: (argv) => sandbox.wrap(uid, dir, argv),
+        signal: (pid, signal) => sandbox.signal(pid, signal),
         timeoutMs: 60_000,
       })
       if (result.code !== 0) return null
@@ -802,6 +803,7 @@ export class SiteService {
       command: script,
       cwd: sandboxed ? undefined : dir,
       wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
+      signal: sandboxed ? (pid, signal) => sandboxed.sandbox.signal(pid, signal) : undefined,
       env,
       timeoutMs: BUILD_TIMEOUT_MS,
     })
@@ -855,6 +857,7 @@ export class SiteService {
         command,
         cwd: sandboxed ? undefined : dir,
         wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
+        signal: sandboxed ? (pid, signal) => sandboxed.sandbox.signal(pid, signal) : undefined,
         env,
         timeoutMs: BUILD_TIMEOUT_MS,
       })

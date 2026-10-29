@@ -199,6 +199,7 @@ to dodge sign-in limits.
 | `FUNCTIONS_ENV_FILE` | unset | dotenv file with variables available to every function execution. |
 | `FUNCTIONS_DIR` | schema folder or `.` | Base folder for relative function `path`s. Can also be set in **Console → Settings → Functions**. |
 | `FUNCTIONS_BUILD_COMMANDS` | `true` | Run a function's `commands` during deployment. |
+| `FUNCTIONS_SANDBOX` | `auto` (`on` in Docker Compose) | `on` builds and runs each function as its own user and refuses to start when the helper cannot switch users; `auto` warns and runs code as the server's user instead; `off` never isolates. |
 | `PYTHON_BIN` | `python3` | Python executable for `python-*` runtimes. |
 | `FUNCTIONS_SKIP_SCHEDULES` | unset | Comma-separated function IDs whose schedules should be ignored. |
 

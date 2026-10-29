@@ -283,7 +283,9 @@ curl -X POST https://api.example.com/v1/proxy/rules/function \
 Each resource keeps its default address, so removing a custom domain never
 takes the site or function offline. Point wildcard DNS records
 (`*.sites.example.com` and `*.functions.example.com`) and every custom domain
-at the server; the bundled Caddy obtains certificates on demand.
+at the server; the bundled Caddy obtains certificates on demand. The
+**Custom domains** card in Settings checks the records when it loads, and
+**Refresh status** re-checks them without leaving the page.
 
 ## Appwrite CLI
 
@@ -694,11 +696,11 @@ cancel the real one.
   packages with prebuilt binaries work.
 - Functions share the container's CPU, memory and network; Appwrite gives each
   its own container. In the Docker image each function runs as its own user
-  and can only read and write its own folder (`FUNCTIONS_SANDBOX`: `auto` by
-  default, `on` to refuse to start without isolation, `off`). Outside Docker,
-  or with `no-new-privileges` set, functions run as the server's user, so run
-  only code you trust there. Functions that run from the code folder
-  (`FUNCTIONS_DIR`) need it readable by other users.
+  and can only read and write its own folder (`FUNCTIONS_SANDBOX`: `on` in
+  Docker Compose, `auto` by default elsewhere, `off`). Outside Docker without
+  the helper, or with `no-new-privileges` set, functions run as the server's
+  user, so run only code you trust there. Functions that run from the code
+  folder (`FUNCTIONS_DIR`) need it readable by other users.
 - Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
 - Appwrite's `studio-render` (Chromium) does not fit in 1 GB of memory.
   Bunwrite's HTML rendering is opt-in and serialized, but Chromium still needs

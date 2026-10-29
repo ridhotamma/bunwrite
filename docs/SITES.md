@@ -33,6 +33,11 @@ A site can also have any number of **custom domains**, such as
 proxy rules (`proxy.createSiteRule`). The default site address always keeps
 working when a custom domain is added or removed.
 
+The **Custom domains** card checks the DNS records when it loads and shows
+**Verified** or **Unverified**; **Refresh status** re-checks them without
+leaving the page. The badge is advisory: routing and certificates use the saved
+domains either way.
+
 A custom domain may also be a wildcard, `*.example.com`. It matches exactly one
 label under the base (`shop.example.com`, not `example.com` or
 `deep.shop.example.com`), the same depth a wildcard certificate covers. Exact

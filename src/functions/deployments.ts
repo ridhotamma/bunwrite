@@ -417,6 +417,8 @@ export class Deployments {
           command: d.commands,
           cwd: sandbox && uid !== undefined ? undefined : dir,
           wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv) : undefined,
+          // The build's group belongs to the function's user, so only the helper can signal it.
+          signal: sandbox && uid !== undefined ? (pid, signal) => sandbox.signal(pid, signal) : undefined,
           // A build that goes live sees live values; one that does not (a Git preview) sees preview values.
           env: withRuntime(this.buildEnv(f, dir, buildContext(d.activate)), runtime),
           timeoutMs: BUILD_TIMEOUT_MS,

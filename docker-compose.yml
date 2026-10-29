@@ -30,6 +30,12 @@ services:
       STORAGE_PATH: /app/data/storage
       BACKUPS_PATH: /app/data/backups
       FUNCTIONS_ENV_FILE: /app/functions/functions.env
+      # Each function builds and runs as its own user. `on` refuses to start
+      # without that isolation instead of silently running code as the server's
+      # user; the image ships the helper, so Docker uses `on`. Set `auto` or
+      # `off` to opt out, or to run with no-new-privileges (which blocks the
+      # helper, so `on` would stop the container from starting).
+      FUNCTIONS_SANDBOX: ${FUNCTIONS_SANDBOX:-on}
       # PUBLIC_ENDPOINT defaults to https://$DOMAIN/v1; override it in .env when
       # TLS is terminated somewhere else.
       DOMAIN: ${DOMAIN:-}

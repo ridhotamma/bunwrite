@@ -469,6 +469,7 @@ export function sitePages(router: ConsoleRouter): void {
       type: 'site',
       id: site.id,
       action: `${siteUrl(site.id)}/domains`,
+      page: `${siteUrl(site.id)}/settings`,
       sectionId: 'site-domain',
       note: html`Do not add <code>${apiHost}</code>; it is the API.`,
     })

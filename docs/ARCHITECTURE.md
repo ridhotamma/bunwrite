@@ -197,6 +197,9 @@ Code comes from one of two places. `appwrite push functions` uploads a
 deployment: a `.tar.gz` (in 5 MB chunks when larger) unpacked to
 `<data>/deployments/<function>/<deployment>/`, where the function's build
 command runs with `sh -c` (skipped with `FUNCTIONS_BUILD_COMMANDS=false`).
+Each build runs in its own session, so a build that hits the 15-minute limit
+takes the whole command — `npm`, `make` and anything they started in the
+background — with it instead of only the `sh`.
 The build's PATH ends with `<data>/.runtimes/bin`, which has `bun`, `bunx`,
 `npm` and `npx` backed by the server binary (`BUN_BE_BUN=1`), so `npm install`,
 `npm ci`, `npm run` and `bun install` work where neither is installed, such

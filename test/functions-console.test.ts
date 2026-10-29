@@ -170,6 +170,12 @@ describe('console function creation', () => {
     expect(page).toContain('hooks.example.org')
     expect(page).toContain('Save domains')
     expect(page).toContain('Status')
+    // The card re-runs the DNS checks on demand instead of polling, and only
+    // swaps the status block so the add-domain input keeps its text.
+    expect(page).toContain('Refresh status')
+    expect(page).toContain('hx-get="/console/functions/hello/settings"')
+    expect(page).toContain('hx-select="#function-domains-status"')
+    expect(page).toContain('id="function-domains-status"')
 
     const removed = await post('/console/functions/hello/domains/remove', { remove: 'api.example.org' })
     expect(flash(removed).get('ok')).toBe('Domain removed')
