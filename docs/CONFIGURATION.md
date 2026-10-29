@@ -148,7 +148,7 @@ terminator per host.
 | `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the default project. |
 | `STORAGE_PATH` | `./data/storage` | Uploaded files when S3 storage is off. |
 | `BACKUPS_PATH` | `./data/backups` | Local database snapshots when backup S3 storage is off. |
-| `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. |
+| `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. Console restore can take this key from the form when the server key is unset. |
 
 Additional projects live under `data/projects/<project-id>/`, each with its own
 database, storage, backups and functions folder.

@@ -8,7 +8,7 @@ import { SmtpMailer } from '~/mail/mailer'
 import type { ConsoleRouter } from '~/console/context'
 import { arrayOf, checked, lines, value } from '~/console/forms'
 import { html, page } from '~/console/html'
-import { alert } from '~/console/ui'
+import { alert, formatBytes } from '~/console/ui'
 import { inlineStatus, settingsView } from '~/console/views/settings'
 import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-meta'
 import { templatePath, templatePreview } from '~/console/views/templates'
@@ -259,6 +259,14 @@ export function settingsPages(router: ConsoleRouter): void {
   router.post(`${SETTINGS}/backups/create`, async ({ ctx }) => {
     const backup = await ctx.services.backups.create('manual')
     return ctx.go(tabPath('backups'), { tone: 'success', text: `Created ${backup.name}` })
+  })
+
+  router.post(`${SETTINGS}/backups/restore`, async ({ ctx }) => {
+    const file = ctx.form.backup
+    if (!(file instanceof Blob) || file.size === 0) throw err('general_argument_invalid', 'Choose a backup file to restore.')
+    const key = value(ctx.form, 'backupKey')
+    const restored = await ctx.services.backups.restore(file, key || undefined, (path) => ctx.projects.restore(ctx.currentProject.id, path))
+    return ctx.go(tabPath('backups'), { tone: 'success', text: `Restored ${restored.name} (${formatBytes(restored.size)}); reload any open pages.` })
   })
 
   router.post(`${SETTINGS}/backups/:name/delete`, async ({ ctx, path }) => {

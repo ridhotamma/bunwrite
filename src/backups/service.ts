@@ -4,14 +4,16 @@
  * format.ts). Stored locally or in the separate backup S3 bucket; automatic
  * backups run once a day at 02:00 UTC.
  */
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
-import { err } from '~/lib/errors'
+import { BunwriteError, err } from '~/lib/errors'
+import { uniqueId } from '~/lib/ids'
 import { s3Call, s3Client } from '~/storage/s3'
-import { COMPRESSED_EXT, contentType, ENCRYPTED_EXT, MIN_KEY_LENGTH, packBackup } from './format'
+import { checkKey, COMPRESSED_EXT, contentType, ENCRYPTED_EXT, MIN_KEY_LENGTH, packBackup, unpackBackup } from './format'
+import { databaseFile, inspectBackup } from './restore'
 
 export interface BackupFile {
   name: string
@@ -19,11 +21,19 @@ export interface BackupFile {
   modified: string
 }
 
+export interface RestoreResult {
+  name: string
+  size: number
+  projectId: string
+}
+
 const NAME_RE = /^[A-Za-z0-9._-]+\.sqlite(\.zst(\.enc)?)?$/
 const AUTO_PREFIX = 'auto-'
 
 export class BackupService {
   private active = false
+  /** A restore is being checked or applied; do not start a backup meanwhile. */
+  private restoring = false
   private timer: ReturnType<typeof setInterval> | null = null
   private lastAutoDay = ''
 
@@ -83,7 +93,7 @@ export class BackupService {
   }
 
   async create(kind: 'manual' | 'auto' = 'manual'): Promise<BackupFile> {
-    if (this.active) throw err('general_argument_invalid', 'A backup is already running.')
+    if (this.active || this.restoring) throw err('general_argument_invalid', 'A backup or restore is already running.')
     const key = this.config.backupEncryptionKey
     if (key && key.length < MIN_KEY_LENGTH) {
       throw err('general_argument_invalid', `BACKUP_ENCRYPTION_KEY must be at least ${MIN_KEY_LENGTH} characters.`)
@@ -118,6 +128,58 @@ export class BackupService {
       rmSync(snapshot, { force: true })
       rmSync(temp, { force: true })
       this.active = false
+    }
+  }
+
+  /**
+   * Decrypt and check an uploaded backup, then hand the plain SQLite file to
+   * `apply` (which swaps it into this project). Nothing is replaced unless the
+   * whole file opens, passes SQLite's integrity check, and belongs to this
+   * project.
+   */
+  async restore(file: Blob, key: string | undefined, apply: (path: string) => Promise<void> | void): Promise<RestoreResult> {
+    if (this.active || this.restoring) throw err('general_argument_invalid', 'A backup or restore is already running.')
+    const database = databaseFile(this.config)
+    if (!database) throw err('general_argument_invalid', 'Restoring a backup needs a file-backed database.')
+    const name = basename(String((file as File).name || 'backup.sqlite').replace(/\\/g, '/'))
+    if (!this.validName(name)) throw err('general_argument_invalid', 'Choose a Bunwrite backup: .sqlite, .sqlite.zst or .sqlite.zst.enc.')
+    if (!file.size) throw err('general_argument_invalid', 'The backup file is empty.')
+
+    this.restoring = true
+    const dir = dirname(database)
+    mkdirSync(dir, { recursive: true })
+    const token = uniqueId()
+    const suffix = name.endsWith(ENCRYPTED_EXT) ? ENCRYPTED_EXT : name.endsWith(COMPRESSED_EXT) ? COMPRESSED_EXT : '.sqlite'
+    const upload = join(dir, `.restore-${token}.upload${suffix}`)
+    const restored = join(dir, `.restore-${token}.sqlite`)
+    const encrypted = name.endsWith(ENCRYPTED_EXT)
+    let secret = ''
+    let ready = false
+    try {
+      if (!(await Bun.write(upload, file))) throw new Error('The backup file is empty.')
+      chmodSync(upload, 0o600)
+      if (encrypted) {
+        secret = (key ?? '').trim() || this.config.backupEncryptionKey || ''
+        if (!secret) {
+          throw err('general_argument_invalid', 'This backup is encrypted. Enter its BACKUP_ENCRYPTION_KEY, or set it on the server.')
+        }
+        checkKey(secret)
+      }
+      await unpackBackup(upload, restored, secret || undefined)
+      const projectId = inspectBackup(restored, this.config.projectId)
+      const size = statSync(restored).size
+      ready = true
+      await apply(restored)
+      return { name, size, projectId }
+    } catch (error) {
+      // Validation errors are the caller's to fix; a failure while swapping the
+      // live database is a server error and keeps its original type.
+      if (ready || error instanceof BunwriteError) throw error
+      throw err('general_argument_invalid', `${name}: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      rmSync(upload, { force: true })
+      rmSync(restored, { force: true })
+      this.restoring = false
     }
   }
 

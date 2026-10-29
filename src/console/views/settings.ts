@@ -160,6 +160,19 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
           : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
       { id: 'backups', flush: true },
     )}
+    ${settingsSection(
+      'Restore backup',
+      'Replace this project’s database with an uploaded backup. A .sqlite, .sqlite.zst or .sqlite.zst.enc file is checked before anything changes. Backups do not include uploaded files.',
+      html`<form method="post" action="${SETTINGS}/backups/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
+          data-confirm="Restore this backup? The current database will be replaced. This cannot be undone." data-confirm-label="Restore" data-confirm-tone="critical">
+        <label>Backup file<input type="file" name="backup" accept=".sqlite,.zst,.enc,application/octet-stream,application/zstd,application/x-sqlite3" required>
+          <small>Use a file downloaded from this server or the same Bunwrite version.</small></label>
+        <label>Encryption key <span class="subdued">(only for encrypted backups)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
+          <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
+        <div class="foot"><button class="critical">Restore database</button></div>
+      </form>`,
+      { id: 'backup-restore' },
+    )}
     ${card(ctx, 'backup-options', 'Backup options', 'backups', 'Choose whether automatic backups run, how many to keep, and where they are stored.', html`
       <form method="post" action="${SETTINGS}/backups">
         <label class="check"><input type="checkbox" name="backupsEnabled" ${c.backups.enabled ? 'checked' : ''}>Enable auto backups</label>

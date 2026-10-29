@@ -225,6 +225,11 @@ export class SettingsService {
     this.emit(key)
   }
 
+  /** Re-read every stored setting after the database was replaced. */
+  refreshAll(): void {
+    for (const key of SETTING_KEYS) this.refresh(key)
+  }
+
   /** Observe applied changes, including refreshes of shared defaults. */
   subscribe(listener: (key: SettingKey) => void): () => void {
     this.listeners.add(listener)

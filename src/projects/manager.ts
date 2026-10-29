@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
+import { restoreDatabase } from '~/backups/restore'
 import type { Config, SmtpConfig } from '~/config'
 import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
@@ -290,6 +291,59 @@ export class ProjectManager implements ProjectResolver {
       .query('UPDATE _projects SET name = ?, org_id = ?, updated_at = ? WHERE id = ?')
       .run(runtime.info.name, runtime.info.orgId, runtime.info.updatedAt, id)
     return runtime.info
+  }
+
+  /**
+   * Replace a project's database with a validated backup. For the control
+   * database, also re-read the project list, since the backup may be older or
+   * newer than the projects that were open in this process.
+   */
+  async restore(id: string, restoredPath: string): Promise<void> {
+    const runtime = this.runtimes.get(id)
+    if (!runtime) throw err('general_argument_invalid', 'Unknown project.')
+    const control = runtime.services === this.control
+    restoreDatabase(runtime.services, restoredPath)
+    if (!control) return
+    this.ensureDefault()
+    this.reloadProjects()
+  }
+
+  /** Reconcile the open project runtimes with the control database. */
+  private reloadProjects(): void {
+    const rows = this.db.sqlite.query<ProjectRow, []>('SELECT id, name, org_id, created_at, updated_at FROM _projects ORDER BY seq').all()
+    const seen = new Set<string>()
+    for (const row of rows) {
+      seen.add(row.id)
+      const existing = this.runtimes.get(row.id)
+      if (existing) {
+        Object.assign(existing.info, infoOf(row))
+        continue
+      }
+      try {
+        const runtime = this.open(infoOf(row))
+        this.runtimes.set(row.id, runtime)
+        this.linkServices(runtime.services)
+        runtime.services.functions.start()
+        runtime.services.backups.start()
+        runtime.services.queue.start()
+        runtime.services.render.start()
+      } catch (error) {
+        console.error(`[projects] could not open ${row.id} after restore:`, error)
+      }
+    }
+    for (const [id, runtime] of [...this.runtimes]) {
+      if (seen.has(id) || runtime.services === this.control) continue
+      runtime.services.functions.stop()
+      runtime.services.sites.stop()
+      runtime.services.backups.stop()
+      runtime.services.queue.stop()
+      runtime.services.render.stop()
+      runtime.services.render.shutdown()
+      runtime.services.requestLogs.flush()
+      runtime.services.db.sqlite.close()
+      this.runtimes.delete(id)
+    }
+    for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
   }
 
   async delete(id: string): Promise<void> {

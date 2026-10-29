@@ -88,6 +88,11 @@ export class ProxyService {
     this.byId = this.byHost = this.wildcards = null
   }
 
+  /** Drop the cached rules after the database was replaced. */
+  reload(): void {
+    this.changed()
+  }
+
   list(): ProxyRuleRow[] {
     return [...this.cache().byId.values()]
   }

@@ -388,6 +388,8 @@ export const sites = sqliteTable('_sites', {
   adapter: text('adapter').notNull().default('static'),
   /** After-build cleanup of SSR sites: auto, standalone, production or none (see sites/prune.ts). */
   pruneMode: text('prune_mode').notNull().default('auto'),
+  /** Days to keep non-live deployments before deleting them automatically; 0 keeps every deployment. */
+  deploymentRetention: integer('deployment_retention').notNull().default(0),
   ...providerSettings,
   ...timestamps,
 })

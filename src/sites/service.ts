@@ -15,7 +15,7 @@ import type { Db } from '~/db/connection'
 import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { chunkRange, chunksFor, liftSingleFolder, packFolder, unpackArchive, writeChunk } from '~/functions/deployments'
 import { removeTree } from '~/functions/sandbox'
-import { now } from '~/lib/datetime'
+import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { hostOf, siteHost, sitesDomainOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
@@ -60,6 +60,8 @@ export interface SiteRow extends ProviderColumns {
   build_runtime: string
   adapter: string
   prune_mode: string
+  /** Days to keep non-live deployments; 0 keeps every deployment. */
+  deployment_retention: number
   created_at: string
   updated_at: string
 }
@@ -99,6 +101,8 @@ export interface SiteSettings {
   adapter: string
   /** After-build cleanup for SSR sites; see prune.ts. */
   pruneMode: string
+  /** Days to keep non-live deployments; 0 keeps every deployment. */
+  deploymentRetention?: number
 }
 
 export interface SiteUpload {
@@ -181,6 +185,11 @@ export class SiteService {
 
   private changed() {
     this.byId = null
+  }
+
+  /** Drop the cached sites after the database was replaced. */
+  reload(): void {
+    this.changed()
   }
 
   // ---- Sites ----
@@ -322,11 +331,16 @@ export class SiteService {
     }
     const pruneMode = settings.pruneMode.trim() || 'auto'
     if (!isPruneMode(pruneMode)) throw err('general_argument_invalid', `Prune mode must be one of: ${PRUNE_MODES.join(', ')}.`)
+    const deploymentRetention = settings.deploymentRetention ?? 0
+    if (!Number.isInteger(deploymentRetention) || deploymentRetention < 0) {
+      throw err('general_argument_invalid', 'Deployment retention must be a whole number of days, 0 or more.')
+    }
     return {
       ...settings,
       name,
       adapter,
       pruneMode,
+      deploymentRetention,
       buildRuntime,
       installCommand: settings.installCommand.trim(),
       buildCommand: settings.buildCommand.trim(),
@@ -350,10 +364,10 @@ export class SiteService {
     this.sql.transaction(() => {
       this.sql
         .query(
-          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, prune_mode, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, prune_mode, deployment_retention, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, stamp, stamp)
+        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, stamp, stamp)
       this.proxy.set('site', id, s.domains)
     })()
     this.changed()
@@ -367,9 +381,9 @@ export class SiteService {
       this.sql
         .query(
           `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
-           install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, prune_mode = ?, updated_at = ? WHERE id = ?`,
+           install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, prune_mode = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
         )
-        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, now(), id)
+        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, now(), id)
       this.proxy.set('site', id, s.domains)
     })()
     this.changed()
@@ -405,6 +419,7 @@ export class SiteService {
       buildRuntime: site.build_runtime,
       adapter: site.adapter,
       pruneMode: site.prune_mode,
+      deploymentRetention: site.deployment_retention,
     }
   }
 
@@ -867,8 +882,35 @@ export class SiteService {
   removeDeployment(siteId: string, id: string): void {
     this.deployment(siteId, id)
     if (this.site(siteId).deployment_id === id) throw err('general_argument_invalid', 'The live deployment cannot be deleted. Make another one live first.')
+    this.removeStored(siteId, id)
+  }
+
+  /**
+   * Delete several deployments at once. The live deployment and builds that
+   * have not finished are kept. Returns what was removed and what was skipped.
+   */
+  removeDeployments(siteId: string, ids: readonly string[]): { removed: number; skipped: number } {
+    const site = this.site(siteId)
+    let removed = 0
+    let skipped = 0
+    for (const id of new Set(ids)) {
+      const deployment = this.sql.query<{ status: string }, [string, string]>('SELECT status FROM _site_deployments WHERE id = ? AND site_id = ?').get(id, site.id)
+      if (!deployment || id === site.deployment_id || SITE_IN_PROGRESS.includes(deployment.status)) {
+        skipped++
+        continue
+      }
+      this.removeStored(siteId, id)
+      removed++
+    }
+    return { removed, skipped }
+  }
+
+  /** Delete a deployment's row, preview link and files. Callers check that it may be deleted. */
+  private removeStored(siteId: string, id: string): void {
     this.ssr.stopDeployment(siteId, id)
-    this.sql.query('DELETE FROM _site_deployments WHERE id = ?').run(id)
+    this.sql.query('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?').run(id, siteId)
+    // A branch preview that pointed here has nothing left to serve.
+    this.sql.query('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?').run(siteId, id)
     removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
     rmSync(this.archivePath(siteId, id), { force: true })
   }

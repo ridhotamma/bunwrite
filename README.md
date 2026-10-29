@@ -541,6 +541,16 @@ DATABASE_PATH=./data/projects/my-project/bunwrite.sqlite bun run snapshot /var/b
 
 ### Restoring
 
+In the console, open **Settings → Backups → Restore backup** and upload the
+`.sqlite`, `.sqlite.zst` or `.sqlite.zst.enc` file. The server decrypts it,
+checks SQLite's integrity and confirms the project ID before replacing the
+current database; nothing changes if any check fails. Encrypted backups use the
+server's `BACKUP_ENCRYPTION_KEY`, or the key you enter in the form. The server
+reloads the restored database without restarting, and backups do not include
+uploaded files.
+
+You can also restore by hand:
+
 1. Turn a `.sqlite.zst` or `.sqlite.zst.enc` backup into a `.sqlite` file. This
    reads `BACKUP_ENCRYPTION_KEY` from the environment or `.env`:
 

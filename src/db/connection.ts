@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite'
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { configuredSqliteCacheMb } from '~/system/autotune'
@@ -26,7 +26,13 @@ function migrationsFolder(): string {
 
 /** Open (or create) the database file, tune it for the host, and migrate. */
 export function openDb(path: string, cacheMb = configuredSqliteCacheMb()): Db {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
+  if (path !== ':memory:' && !path.startsWith('file::memory:')) {
+    mkdirSync(dirname(path), { recursive: true })
+    // A restore moves the current database aside before putting the backup in
+    // place. If the process stopped between those renames, put it back.
+    const beforeRestore = `${path}.before-restore`
+    if (!existsSync(path) && existsSync(beforeRestore)) renameSync(beforeRestore, path)
+  }
   const sqlite = new Database(path, { create: true, strict: true })
   sqlite.run('PRAGMA journal_mode = WAL')
   sqlite.run('PRAGMA synchronous = NORMAL')

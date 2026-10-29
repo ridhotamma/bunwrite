@@ -231,9 +231,12 @@ created with, so the execution returned to the caller is the one that runs.
   existing files; that is a manual step.
 - Backups are consistent SQLite snapshots made with `VACUUM INTO` in
   `BACKUPS_PATH`, or in a separate S3 bucket when enabled in
-  **Settings → Backups**. Manual backups can be created, downloaded and
-  deleted there; automatic backups run daily at 02:00 UTC and keep the
-  configured number. Database snapshots do not include uploaded files.
+  **Settings → Backups**. Manual backups can be created, downloaded, deleted
+  and restored there; automatic backups run daily at 02:00 UTC and keep the
+  configured number. An uploaded backup is decrypted and checked (SQLite
+  integrity, project ID) before the live database file is replaced and the
+  services' caches are reloaded. Database snapshots do not include uploaded
+  files.
 
 ## Settings and schema: who wins
 

@@ -132,6 +132,11 @@ export class AccessService {
     return this.cache
   }
 
+  /** Drop the cached settings after the database was replaced. */
+  reload(): void {
+    this.cache = null
+  }
+
   private write(change: (s: Stored) => void): void {
     const next = structuredClone(this.read())
     change(next)
