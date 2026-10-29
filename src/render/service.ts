@@ -476,9 +476,11 @@ export class RenderService {
         return await attempt()
       } catch (error) {
         // Chromium can be briefly unlaunchable: it may be auto-updating, or the
-        // browser from a killed render may not have exited yet. One fresh
-        // attempt recovers without turning a transient failure into a 500.
-        if (error instanceof BunwriteError) throw error
+        // browser from a killed render may not have exited yet. The same is true
+        // of a slow first launch under load, which ends as a 500 timeout. One
+        // fresh attempt recovers without turning a transient failure into a 500.
+        const retryable = !(error instanceof BunwriteError) || (error.code >= 500 && error.type !== 'general_service_disabled')
+        if (!retryable) throw error
         console.warn(`[render] Chromium failed, retrying once: ${error instanceof Error ? error.message : String(error)}`)
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS))
         return attempt()

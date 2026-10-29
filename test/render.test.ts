@@ -88,7 +88,7 @@ describe('html rendering', () => {
     } finally {
       assets.stop(true)
     }
-  }, 60_000)
+  }, 120_000)
 
   withChrome('image: viewport, full page, selector and scale', async () => {
     on()
