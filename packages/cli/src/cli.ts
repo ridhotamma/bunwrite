@@ -5,12 +5,14 @@
  */
 import { SDK_VERSION } from '@bunwrite/sdk'
 
-import { bool, parseArgs } from './args'
+import { bool, flag, parseArgs } from './args'
 import { describe } from './clients'
 import { client, initProject, login, logout, whoami } from './commands/account'
+import { env } from './commands/env'
 import { runService, SERVICES } from './commands/services'
 import { skills } from './commands/skills'
 import { sync } from './commands/sync'
+import { chooseEnvironment } from './environments'
 import { bold, CliError, dim, fail, log } from './ui'
 
 // Set from package.json by scripts/build.ts; running from source, it is a dev version.
@@ -45,6 +47,20 @@ ${bold('Project config')} (bunwrite.config.json or bunwrite.json; an existing ap
   --prune              push: delete what is on the server but not in the config
   --force              push: delete without asking
 
+${bold('Environments')} ("environments" in the config: a server and project per name)
+  env list             Environments, their targets and .env files
+  env use <name>       Use this environment in this folder (--clear forgets it)
+  env diff             What env push would change
+  env push             Apply .env, .env.<name> and .env.<name>.local to the project's variables
+  env pull             Write the project's variables into those files
+
+  --env <name>         Any command: run against this environment (or set BUNWRITE_ENV)
+  --prune              env push/pull: also remove what the other side does not have
+  --yes                env push/pull, push: apply without asking (CI)
+
+  Values in a .local file are stored as secret. Secrets cannot be read back, so
+  pull writes them as empty placeholders, and push never sends an empty one.
+
 ${bold('AI agents')}
   skills               Install Bunwrite agent skills with the Skills CLI
   init skill           Same as skills
@@ -74,6 +90,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv)
   const [command, sub] = args.positional
   try {
+    chooseEnvironment(flag(args, 'env'))
     if (bool(args, 'version')) {
       log(VERSION)
       return 0
@@ -109,6 +126,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       case 'pull':
       case 'push':
         await sync(command, args)
+        break
+      case 'env':
+        await env(args)
         break
       default:
         await runService(args)

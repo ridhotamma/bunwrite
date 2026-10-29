@@ -9,7 +9,7 @@ import * as sdk from '@bunwrite/sdk'
 
 import { camelToKebab, flag, kebabToCamel, type Args } from '../args'
 import { consoleClient, projectClient } from '../clients'
-import { readConfig } from '../config'
+import { targetConfig } from '../environments'
 import { bold, CliError, dim, log, success } from '../ui'
 
 export const SERVICES: Record<string, new (client: sdk.Client) => object> = {
@@ -30,7 +30,7 @@ export const SERVICES: Record<string, new (client: sdk.Client) => object> = {
 }
 
 /** Flags that belong to the CLI, not the call. */
-const OWN = new Set(['json', 'output', 'help', 'console'])
+const OWN = new Set(['json', 'output', 'help', 'console', 'env'])
 
 /** Params that take a file: given a path that exists, the file is uploaded. */
 const FILE_PARAMS = new Set(['file', 'code'])
@@ -66,7 +66,7 @@ export async function runService(args: Args): Promise<void> {
   if (!command || flag(args, 'help') === 'true') return serviceHelp(name!)
 
   const method = kebabToCamel(command)
-  const config = readConfig()
+  const config = targetConfig()
   // `organization` and the console's own account live in the console project.
   const client = name === 'organization' || flag(args, 'console') === 'true' ? consoleClient(config) : projectClient(config).client
   const service = new Service(client) as Record<string, unknown>

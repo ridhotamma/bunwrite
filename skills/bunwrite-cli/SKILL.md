@@ -105,6 +105,30 @@ Options:
 Push only sends differences. A freshly pulled config pushes back with
 "no changes". Fields left out keep the server's value.
 
+## Environments
+
+`bunwrite.config.json` can name targets; each is a server and a project.
+
+```json
+"environments": {
+  "staging":    { "endpoint": "https://staging.example.com/v1", "projectId": "shop-staging" },
+  "production": { "endpoint": "https://api.example.com/v1", "projectId": "shop", "protected": true }
+}
+```
+
+- Pick one with `--env <name>` (any command), `BUNWRITE_ENV`, `bunwrite env use
+  <name>` (per folder) or `"defaultEnvironment"`, in that order.
+- Sign in per server: `bunwrite login --env <name>` or `bunwrite client --env
+  <name> --key <key>`. CI: `BUNWRITE_API_KEY` + `BUNWRITE_ENV`.
+- Project variables live in `.env` (shared), `.env.<name>`, and
+  `.env.<name>.local` (secrets; never commit). No environments: `.env` and
+  `.env.local`. `"envDir"` moves them.
+- `bunwrite env diff`, `env push`, `env pull`; `--prune` removes what the other
+  side lacks; `--yes` skips questions. Protected environments ask for their
+  name before `env push` and `push`.
+- Pulled secrets are empty placeholders in the `.local` file; push never sends
+  an empty `.local` value, so pull then push leaves secrets unchanged.
+
 ## Functions
 
 ```json
@@ -190,6 +214,8 @@ commands use the console sign-in.
 | --- | --- |
 | `No project` | Run `bunwrite init project --project-id <id>` or `bunwrite client --project-id <id>`. |
 | `Not signed in` | `bunwrite login`, or set an API key with `bunwrite client --key`. |
+| `Not signed in to ... for <env>` | Each environment's server needs its own sign-in: `bunwrite login --env <env>` or `bunwrite client --env <env> --key <key>`. |
+| `Unknown environment` | Check `"environments"` in the config, `BUNWRITE_ENV`, and `bunwrite env use --clear`. |
 | `Invalid endpoint` | Use the API address ending in `/v1`; check `GET /v1/health/version`. |
 | Pull writes the wrong file | `bunwrite.config.json` wins, then `bunwrite.json`, then `appwrite.config.json`. |
 | Function archive mixes files | Push functions one at a time with `--function-id` if the CLI bundles several in the same millisecond. |

@@ -7,11 +7,11 @@
  * bunwrite.config.json).
  */
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { BuildRuntime, Client, Databases, Framework, Functions, Sites, Storage, TablesDB, Teams } from '../packages/sdk/src'
+import { BuildRuntime, Client, Databases, Framework, Functions, Project, Sites, Storage, TablesDB, Teams } from '../packages/sdk/src'
 import { pack, unpack } from '../packages/cli/src/tar'
 import { collect } from '../packages/cli/src/files'
 import { ConsoleAuth } from '~/console/auth'
@@ -612,5 +612,162 @@ describe('service commands', () => {
     expect(unknown.code).toBe(1)
     expect(unknown.out).toContain('has no command "nope"')
     expect(await ws.ok('databases', '--help')).toContain('list-documents')
+  })
+})
+
+describe('environments', () => {
+  const project = () => new Project(admin())
+  const variables = async () => Object.fromEntries((await project().listVariables()).variables.map((v) => [v.key, v]))
+  const clearVariables = async () => {
+    for (const v of (await project().listVariables()).variables) await project().deleteVariable({ variableId: v.$id })
+  }
+  const environments = (extra: Record<string, unknown> = {}) => ({
+    endpoint: server.endpoint,
+    projectId: PROJECT,
+    environments: {
+      staging: { projectId: PROJECT },
+      production: { extends: 'staging', protected: true },
+      other: { projectId: 'other-project' },
+    },
+    ...extra,
+  })
+
+  test('list, use, --env and BUNWRITE_ENV pick the environment', async () => {
+    const ws = new Workspace('env-select')
+    await ws.withKey()
+    ws.config = environments()
+
+    const listed = await ws.ok('env')
+    expect(listed).toContain('staging')
+    expect(listed).toContain('No environment active')
+    expect(await ws.ok('env', 'use', 'staging')).toContain('Using staging')
+    expect(await ws.ok('env', 'list')).toContain('Active: staging (from env use)')
+    expect((await ws.run(['env', 'list'], '', { BUNWRITE_ENV: 'production' })).out).toContain('Active: production (from BUNWRITE_ENV)')
+    expect(await ws.ok('env', 'list', '--env', 'other')).toContain('Active: other (from --env)')
+
+    const unknown = await ws.run(['env', 'diff', '--env', 'nope'])
+    expect(unknown.code).toBe(1)
+    expect(unknown.out).toContain('Unknown environment "nope". Defined: staging, production, other.')
+
+    // The saved key belongs to PROJECT, so another environment's project does not get it.
+    const other = await ws.run(['env', 'diff', '--env', 'other'])
+    expect(other.code).toBe(1)
+    expect(other.out).toContain('bunwrite login --env other')
+    expect(await ws.ok('client', '--env', 'other', '--key', 'other-key')).toContain('API key saved for other ( other-project )')
+    expect(ws.prefs.sessions.default.keys).toEqual({ 'other-project': 'other-key' })
+
+    expect(await ws.ok('env', 'use', '--clear')).toContain('no longer has a chosen environment')
+    expect(await ws.ok('env', 'list')).toContain('No environment active')
+  })
+
+  test('push, then pull into a fresh folder, then push back with no changes', async () => {
+    await clearVariables()
+    const ws = new Workspace('env-push')
+    await ws.withKey()
+    ws.config = environments()
+    writeFileSync(join(ws.dir, '.env'), 'SHARED=everywhere\n')
+    writeFileSync(join(ws.dir, '.env.staging'), '# staging\nAPI_URL=https://staging.example.com\n')
+    writeFileSync(join(ws.dir, '.env.staging.local'), 'STRIPE_SECRET=sk_test_123\nNOT_SET_YET=\n')
+
+    const diff = await ws.ok('env', 'diff', '--env', 'staging')
+    expect(diff).toContain('→ staging')
+    expect(diff).toMatch(/\+ API_URL\s+new/)
+    expect(diff).toMatch(/\+ STRIPE_SECRET\s+new, secret/)
+    expect(diff).toMatch(/! NOT_SET_YET\s+no value: set it in \.env\.staging\.local/)
+    expect(await variables()).toEqual({})
+
+    const declined = await ws.run(['env', 'push', '--env', 'staging'], 'n\n')
+    expect(declined.out).toContain('Nothing was changed.')
+    expect(await variables()).toEqual({})
+
+    expect((await ws.run(['env', 'push', '--env', 'staging'], 'y\n')).out).toContain('Pushed 3 changes to staging')
+    const pushed = await variables()
+    expect(Object.keys(pushed).sort()).toEqual(['API_URL', 'SHARED', 'STRIPE_SECRET'])
+    expect(pushed.STRIPE_SECRET).toMatchObject({ secret: true, value: '' })
+    expect(pushed.API_URL).toMatchObject({ secret: false, value: 'https://staging.example.com' })
+
+    // A secret with a value is sent again each time: the server cannot show it to compare.
+    expect(await ws.ok('env', 'diff', '--env', 'staging')).toContain('↻ STRIPE_SECRET')
+
+    const fresh = new Workspace('env-pull')
+    await fresh.withKey()
+    fresh.config = environments()
+    const pulled = await fresh.ok('env', 'pull', '--env', 'staging')
+    expect(pulled).toContain('Pulled staging into .env.staging and .env.staging.local')
+    expect(readFileSync(join(fresh.dir, '.env.staging'), 'utf8')).toContain('API_URL=https://staging.example.com')
+    expect(readFileSync(join(fresh.dir, '.env.staging.local'), 'utf8')).toBe('STRIPE_SECRET=  # secret: set on the server\n')
+    expect(statSync(join(fresh.dir, '.env.staging.local')).mode & 0o777).toBe(0o600)
+    expect(readFileSync(join(fresh.dir, '.gitignore'), 'utf8')).toContain('.env*.local')
+
+    expect(await fresh.ok('env', 'push', '--env', 'staging')).toContain('No changes to push to staging')
+    expect(await fresh.ok('env', 'pull', '--env', 'staging')).toContain('Your files already match staging')
+    expect((await variables()).STRIPE_SECRET?.secret).toBe(true)
+  })
+
+  test('pull asks before replacing local values; --prune removes on both sides', async () => {
+    await clearVariables()
+    await project().createVariable({ variableId: 'unique()', key: 'MODE', value: 'server' })
+    await project().createVariable({ variableId: 'unique()', key: 'OLD_FLAG', value: '1' })
+    const ws = new Workspace('env-prune')
+    await ws.withKey()
+    ws.config = environments()
+    writeFileSync(join(ws.dir, '.env.staging'), '# keep this comment\nMODE=local\nLOCAL_ONLY=yes\n')
+
+    const kept = await ws.run(['env', 'pull', '--env', 'staging'], 'n\n')
+    expect(kept.out).toContain('your value in .env.staging is replaced')
+    expect(kept.out).toContain('Nothing was written.')
+    expect(readFileSync(join(ws.dir, '.env.staging'), 'utf8')).toContain('MODE=local')
+
+    await ws.run(['env', 'pull', '--env', 'staging'], 'y\n')
+    expect(readFileSync(join(ws.dir, '.env.staging'), 'utf8')).toBe('# keep this comment\nMODE=server\nLOCAL_ONLY=yes\nOLD_FLAG=1\n')
+
+    writeFileSync(join(ws.dir, '.env.staging'), 'MODE=server\nLOCAL_ONLY=yes\n')
+    const plan = await ws.ok('env', 'diff', '--env', 'staging')
+    expect(plan).toContain('only on the server (removed with --prune)')
+    expect(await ws.ok('env', 'push', '--env', 'staging', '--prune', '--yes')).toContain('Pushed 2 changes to staging')
+    expect(Object.keys(await variables()).sort()).toEqual(['LOCAL_ONLY', 'MODE'])
+
+    await project().deleteVariable({ variableId: (await variables()).LOCAL_ONLY!.$id })
+    await ws.ok('env', 'pull', '--env', 'staging', '--prune', '--yes')
+    expect(readFileSync(join(ws.dir, '.env.staging'), 'utf8')).toBe('MODE=server\n')
+  })
+
+  test('a protected environment needs its name typed before a push', async () => {
+    await clearVariables()
+    const ws = new Workspace('env-protected')
+    await ws.withKey()
+    ws.config = environments()
+    writeFileSync(join(ws.dir, '.env.production'), 'RELEASE=1\n')
+
+    const wrong = await ws.run(['env', 'push', '--env', 'production'], 'yes\n')
+    expect(wrong.code).toBe(1)
+    expect(wrong.out).toContain('production (protected)')
+    expect(wrong.out).toContain('Stopped: nothing was changed in production.')
+    expect(await variables()).toEqual({})
+
+    expect((await ws.run(['env', 'push', '--env', 'production'], 'production\n')).out).toContain('Pushed 1 change to production')
+    expect((await variables()).RELEASE?.value).toBe('1')
+
+    // Config push to a protected environment asks too.
+    ws.config = { ...environments(), buckets: [] }
+    const config = await ws.run(['push', 'buckets', '--env', 'production'], 'no\n')
+    expect(config.code).toBe(1)
+    expect(config.out).toContain('Stopped: nothing was changed in production.')
+    await clearVariables()
+  })
+
+  test('without environments, env uses .env and .env.local for the linked project', async () => {
+    await clearVariables()
+    const ws = new Workspace('env-none')
+    await ws.withKey()
+    ws.config = { projectId: PROJECT }
+    writeFileSync(join(ws.dir, '.env'), 'PLAIN=1\nAPI_TOKEN=oops\n')
+    writeFileSync(join(ws.dir, '.env.local'), 'REAL_SECRET=s\n')
+    const pushed = await ws.ok('env', 'push', '--yes')
+    expect(pushed).toContain('API_TOKEN looks like a secret but is in .env. Move it to .env.local')
+    expect(pushed).toContain('Pushed 3 changes to the project')
+    expect(pushed).not.toContain('→')
+    expect((await variables()).REAL_SECRET?.secret).toBe(true)
+    await clearVariables()
   })
 })

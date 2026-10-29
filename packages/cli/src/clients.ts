@@ -1,6 +1,7 @@
 import { BunwriteException, Client } from '@bunwrite/sdk'
 
-import { currentSession, readConfig, type ProjectConfig, type Session } from './config'
+import type { ProjectConfig, Session } from './config'
+import { activeSession, announceTarget, target, targetConfig } from './environments'
 import { CliError } from './ui'
 
 export const CONSOLE_PROJECT = 'console'
@@ -20,14 +21,32 @@ export interface ProjectClient {
   auth: 'key' | 'console'
 }
 
-/** A client for the linked project: the API key if there is one, else the console sign-in in admin mode. */
-export function projectClient(config = readConfig(), session = currentSession()): ProjectClient {
+/**
+ * The API key for a project: BUNWRITE_API_KEY, one saved for that project,
+ * or the session's key. With an environment active, the session's key is
+ * used only for the project it was saved with.
+ */
+function keyFor(session: Session, projectId: string): string | undefined {
+  if (process.env.BUNWRITE_API_KEY) return process.env.BUNWRITE_API_KEY
+  if (session.keys?.[projectId]) return session.keys[projectId]
+  if (!session.key) return undefined
+  if (target().name && session.projectId && session.projectId !== projectId) return undefined
+  return session.key
+}
+
+/**
+ * A client for the linked project (or the active environment's): the API key
+ * if there is one, else the console sign-in in admin mode.
+ */
+export function projectClient(config = targetConfig(), session = activeSession(config)): ProjectClient {
   const client = base(session, config)
   const projectId = config.projectId ?? session.projectId
   if (!projectId) throw new CliError('No project. Run `bunwrite init project --project-id <id>` here, or `bunwrite client --project-id <id>`.')
   client.setProject(projectId)
-  if (session.key) {
-    client.setKey(session.key)
+  announceTarget(projectId, config.endpoint ?? session.endpoint)
+  const key = keyFor(session, projectId)
+  if (key) {
+    client.setKey(key)
     return { client, projectId, auth: 'key' }
   }
   if (session.cookie) {
@@ -35,11 +54,16 @@ export function projectClient(config = readConfig(), session = currentSession())
     if (config.organizationId) client.setOrganization(config.organizationId)
     return { client, projectId, auth: 'console' }
   }
-  throw new CliError('Not signed in. Run `bunwrite login`, or set an API key with `bunwrite client --key <key>`.')
+  const env = target().name
+  throw new CliError(
+    env
+      ? `Not signed in to ${config.endpoint ?? 'the server'} for ${env}. Run \`bunwrite login --env ${env}\`, or \`bunwrite client --env ${env} --key <key>\`.`
+      : 'Not signed in. Run `bunwrite login`, or set an API key with `bunwrite client --key <key>`.',
+  )
 }
 
 /** A client for the console API: needs `bunwrite login`. */
-export function consoleClient(config = readConfig(), session = currentSession()): Client {
+export function consoleClient(config = targetConfig(), session = activeSession(config)): Client {
   if (!session.cookie) throw new CliError('This needs a console sign-in. Run `bunwrite login` first.')
   const client = base(session, config).setProject(CONSOLE_PROJECT).setCookie(session.cookie)
   if (config.organizationId) client.setOrganization(config.organizationId)

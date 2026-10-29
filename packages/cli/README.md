@@ -104,6 +104,74 @@ function's `ignore` list matches (gitignore patterns), or the folder's
 `.gitignore` when there is no `ignore`. A failed build prints its logs and
 leaves the active deployment in place.
 
+## Environments
+
+Name your targets (staging, production, or anything else) in
+`bunwrite.config.json`. Each is a server and a project; `extends` copies
+another environment and changes some of it:
+
+```json
+{
+    "projectId": "shop",
+    "environments": {
+        "staging":    { "endpoint": "https://staging.example.com/v1", "projectId": "shop-staging" },
+        "production": { "endpoint": "https://api.example.com/v1", "projectId": "shop", "protected": true },
+        "preview":    { "extends": "staging", "projectId": "shop-preview" }
+    },
+    "defaultEnvironment": "staging",
+    "envDir": "."
+}
+```
+
+The active environment is the first of: `--env <name>` on any command,
+`BUNWRITE_ENV`, `bunwrite env use <name>` (remembered for this folder), and
+`defaultEnvironment`. Commands then print where they go, for example
+`→ production (protected) · shop @ api.example.com`. Without environments,
+everything works as before.
+
+Sign in once per server: `bunwrite login --env production`, or save an API key
+for that environment's project with `bunwrite client --env production --key
+<key>`. In CI, set `BUNWRITE_API_KEY` and `BUNWRITE_ENV` instead.
+
+### Variables in .env files
+
+`bunwrite env` keeps the project's variables (seen by every function and site)
+in files next to the config, or in `envDir`. Later files win:
+
+| File | Holds | Commit it? |
+| --- | --- | --- |
+| `.env` | values shared by every environment | yes |
+| `.env.<name>` | this environment's values | yes |
+| `.env.<name>.local` | this environment's secrets, stored as secret on the server | no |
+
+Without environments, the files are `.env` and `.env.local`.
+
+```bash
+bunwrite env                       # list environments, their targets and files
+bunwrite env use staging           # use staging in this folder (--clear forgets it)
+bunwrite env diff                  # what a push would change
+bunwrite env push                  # shows the changes, asks, applies
+bunwrite env pull --env production # writes the server's variables into the files
+```
+
+- **Secrets stay safe.** The server never shows a secret's value, so `pull`
+  writes it to the `.local` file as an empty placeholder, and `push` never sends
+  an empty `.local` value. Pulling and pushing back changes nothing. A secret
+  with a value is sent again on every push, since it cannot be compared.
+- **Nothing is deleted unless you ask.** Variables on only one side are listed;
+  `--prune` removes them (from the server on push, from your files on pull).
+- **Pull keeps your files tidy.** Values are changed in place, so comments and
+  order stay. It asks before replacing a local value, and never writes the
+  shared `.env`. It adds `.env*.local` to `.gitignore`.
+- **Protected environments ask for their name** before `env push` or `push`.
+  `--yes` (or `--force`) skips every question, for CI.
+- A credential-looking name (`*_KEY`, `*_SECRET`, `*_TOKEN`, ...) in a committed
+  file gets a warning to move it to the `.local` file.
+
+If the config's folder already has a `.env` for something else (such as the
+Bunwrite server's own settings), set `envDir` to another folder so it is not
+pushed as project variables.
+
 ## Service commands
 
 Every SDK method is a command: the service, then the method in kebab-case,

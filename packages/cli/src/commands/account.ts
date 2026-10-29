@@ -2,7 +2,8 @@ import { Account, BunwriteException, Client, Health, Organization, Project } fro
 
 import { bool, flag, type Args } from '../args'
 import { consoleClient, CONSOLE_PROJECT, describe, projectClient } from '../clients'
-import { currentSession, readConfig, updateSession, writeConfig } from '../config'
+import { currentSession, readConfig, sessionFor, updateSession, updateSessionFor, writeConfig } from '../config'
+import { activeSession, target, targetConfig } from '../environments'
 import { ask, askHidden, bold, CliError, dim, info, log, success, warn } from '../ui'
 import { offerSkills } from './skills'
 
@@ -37,6 +38,8 @@ export async function client(args: Args): Promise<void> {
   const projectId = flag(args, 'project-id')
   const key = flag(args, 'key')
   const selfSigned = args.flags.has('self-signed') ? bool(args, 'self-signed') : undefined
+  const env = target()
+  if (env.name) return environmentClient(env.name, { endpoint, projectId, key, selfSigned })
   if (!endpoint && !projectId && !key && selfSigned === undefined) {
     const s = currentSession()
     log(`Endpoint    ${s.endpoint ?? dim('not set')}`)
@@ -55,10 +58,43 @@ export async function client(args: Args): Promise<void> {
   success('Client settings saved')
 }
 
+/**
+ * `bunwrite client` with an environment active: the key is saved for that
+ * environment's project, on its server's session, so each environment keeps
+ * its own.
+ */
+async function environmentClient(
+  name: string,
+  given: { endpoint?: string; projectId?: string; key?: string; selfSigned?: boolean },
+): Promise<void> {
+  const config = targetConfig()
+  const endpoint = given.endpoint ?? config.endpoint ?? currentSession().endpoint
+  const projectId = given.projectId ?? config.projectId
+  const session = sessionFor(endpoint)
+  if (!given.key && given.selfSigned === undefined && !given.endpoint) {
+    log(`Environment ${bold(name)}`)
+    log(`Endpoint    ${endpoint ?? dim('not set')}`)
+    log(`Project ID  ${projectId ?? dim('not set')}`)
+    const saved = projectId ? (session.keys?.[projectId] ?? (session.projectId === projectId ? session.key : undefined)) : undefined
+    log(`API key     ${process.env.BUNWRITE_API_KEY ? `${mask(process.env.BUNWRITE_API_KEY)} ${dim('(BUNWRITE_API_KEY)')}` : saved ? mask(saved) : dim('not set')}`)
+    if (session.email) log(`Signed in   ${session.email}`)
+    return
+  }
+  if (!endpoint) throw new CliError(`Environment ${name} has no endpoint. Add one to bunwrite.config.json, or pass --endpoint.`)
+  if (given.key && !projectId) throw new CliError(`Environment ${name} has no projectId. Add one to bunwrite.config.json, or pass --project-id.`)
+  await checkEndpoint(endpoint, given.selfSigned ?? session.selfSigned ?? false)
+  updateSessionFor(endpoint, (s) => {
+    s.endpoint ??= endpoint
+    if (given.key) (s.keys ??= {})[projectId!] = given.key
+    if (given.selfSigned !== undefined) s.selfSigned = given.selfSigned
+  })
+  success(given.key ? `API key saved for ${name} ( ${projectId} )` : `Client settings saved for ${name}`)
+}
+
 /** `bunwrite login`: sign in as a console admin. */
 export async function login(args: Args): Promise<void> {
-  const session = currentSession()
-  const endpoint = flag(args, 'endpoint') ?? readConfig().endpoint ?? session.endpoint
+  const env = target().name
+  const endpoint = flag(args, 'endpoint') ?? targetConfig().endpoint ?? currentSession().endpoint
   if (!endpoint) throw new CliError('Give the server with --endpoint https://your-server/v1')
   const email = flag(args, 'email') ?? (await ask('Email: ')).trim()
   const password = flag(args, 'password') ?? (await askHidden('Password: '))
@@ -78,17 +114,20 @@ export async function login(args: Args): Promise<void> {
   const cookie = raw.map((c) => c.split(';')[0]!).find((c) => /^(bw|a)_session_console=/.test(c))
   if (!cookie) throw new CliError('The server did not return a console session. Is this a Bunwrite server?')
 
-  updateSession((s) => {
+  const save = (s: { endpoint?: string; email?: string; cookie?: string }) => {
     s.endpoint = endpoint
     s.email = email
     s.cookie = cookie
-  })
-  success(`Signed in as ${email}`)
+  }
+  // With an environment, its server gets its own session; other servers stay signed in.
+  if (env) updateSessionFor(endpoint, save)
+  else updateSession(save)
+  success(`Signed in as ${email}${env ? ` for ${env}` : ''}`)
 }
 
 /** `bunwrite whoami` */
 export async function whoami(): Promise<void> {
-  const session = currentSession()
+  const session = activeSession()
   if (!session.cookie) {
     if (session.key) info(`No user is signed in; using an API key for project ${session.projectId ?? '(not set)'} at ${session.endpoint}`)
     else info('No user is signed in. Run `bunwrite login`.')
@@ -108,7 +147,7 @@ export async function whoami(): Promise<void> {
 
 /** `bunwrite logout`: end the console session here and on the server. */
 export async function logout(): Promise<void> {
-  const session = currentSession()
+  const session = activeSession()
   if (!session.cookie) {
     info('No user is signed in.')
     return
@@ -118,10 +157,12 @@ export async function logout(): Promise<void> {
   } catch (error) {
     if (!(error instanceof BunwriteException && error.code === 401)) warn(`The server did not end the session: ${describe(error)}`)
   }
-  updateSession((s) => {
+  const forget = (s: { cookie?: string; email?: string }) => {
     delete s.cookie
     delete s.email
-  })
+  }
+  if (target().name) updateSessionFor(targetConfig().endpoint, forget)
+  else updateSession(forget)
   success('Logged out')
 }
 

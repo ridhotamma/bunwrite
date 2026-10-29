@@ -23,7 +23,8 @@ import {
 
 import { bool, flagList, flag, type Args } from '../args'
 import { consoleClient, projectClient } from '../clients'
-import { currentSession, readConfig, writeConfig, type ProjectConfig } from '../config'
+import { readConfig, writeConfig, type ProjectConfig } from '../config'
+import { activeSession, confirmProtected, target, targetConfig } from '../environments'
 import { collect } from '../files'
 import { packGzip, unpackGzip } from '../tar'
 import { CliError, confirm, dim, info, log, success, warn } from '../ui'
@@ -732,9 +733,11 @@ async function pushSettings(ctx: Ctx): Promise<string> {
   const current = await readSettings(ctx)
   let changes = 0
 
-  if (ctx.config.projectName && ctx.config.projectName !== current.name) {
-    if (currentSession().cookie) {
-      await new Organization(consoleClient(ctx.config)).updateProject({ projectId: ctx.projectId, name: ctx.config.projectName })
+  // With an environment active, only its own projectName renames the project.
+  const wanted = targetConfig(ctx.config)
+  if (wanted.projectName && wanted.projectName !== current.name) {
+    if (activeSession(wanted).cookie) {
+      await new Organization(consoleClient(wanted)).updateProject({ projectId: ctx.projectId, name: wanted.projectName })
       changes++
     } else {
       warn('Renaming the project needs a console sign-in (`bunwrite login`); the name was not changed.')
@@ -824,13 +827,22 @@ function kindsOf(what: string | undefined, config: ProjectConfig, direction: 'pu
 
 export async function sync(direction: 'pull' | 'push', args: Args): Promise<void> {
   const config = readConfig()
-  const { client, projectId, auth } = projectClient(config)
+  const { client, projectId, auth } = projectClient(targetConfig(config))
   const ctx: Ctx = { client, projectId, auth, config, args }
   const kinds = kindsOf(args.positional[1], config, direction)
+  const env = target(config)
+  if (direction === 'push') await confirmProtected(bool(args, 'force') || bool(args, 'yes'), `push ${kinds.join(', ')}`)
+  const projectName = config.projectName
   for (const kind of kinds) {
     const message = await (direction === 'pull' ? PULL : PUSH)[kind](ctx)
     if (direction === 'pull') {
-      ctx.config.projectId ??= projectId
+      if (env.name) {
+        // The shared config keeps its own project; pull never copies one environment's into it.
+        if (projectName === undefined) delete ctx.config.projectName
+        else ctx.config.projectName = projectName
+      } else {
+        ctx.config.projectId ??= projectId
+      }
       writeConfig(ctx.config)
     }
     success(message)
