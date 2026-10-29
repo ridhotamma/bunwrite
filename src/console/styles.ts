@@ -228,6 +228,7 @@ input,select,textarea{font:inherit;color:var(--text);background:#fdfdfd;border:1
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
 input[type=checkbox],input[type=radio]{accent-color:var(--primary)}
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+@media(max-width:768px),(pointer:coarse){input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select,textarea{font-size:16px!important}}
 button:focus-visible,.btn:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 select:not([multiple]),.combobox-input{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' stroke='%23616161' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center;background-size:12px 8px;padding-right:34px;cursor:pointer}
 select:not([multiple]):disabled,.combobox-input:disabled{color:var(--disabled);cursor:not-allowed;opacity:.65}
