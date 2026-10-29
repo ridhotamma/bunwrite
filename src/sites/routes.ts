@@ -11,7 +11,7 @@ import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
 import { apiHeader } from '~/lib/compat'
 import { err } from '~/lib/errors'
-import { bool, json, list, noContent, str, type Params } from '~/lib/http'
+import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { resolveId, uniqueId } from '~/lib/ids'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
@@ -66,7 +66,7 @@ export function siteModel(ctx: AppContext, s: SiteRow) {
     live: Boolean(s.deployment_id),
     logging: true,
     framework: s.framework,
-    deploymentRetention: 0,
+    deploymentRetention: s.deployment_retention,
     deploymentId: s.deployment_id,
     deploymentCreatedAt: live?.created_at ?? '',
     deploymentScreenshotLight: '',
@@ -116,6 +116,7 @@ function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSetti
     buildRuntime: str(p.buildRuntime) ?? base.buildRuntime,
     adapter: str(p.adapter) || base.adapter,
     pruneMode: str(p.pruneMode) || base.pruneMode,
+    deploymentRetention: num(p.deploymentRetention, base.deploymentRetention) ?? base.deploymentRetention ?? 0,
   }
 }
 
@@ -146,6 +147,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       buildRuntime: '',
       adapter: framework.adapter,
       pruneMode: 'auto',
+      deploymentRetention: 0,
     })
     const created = ctx.sites.create(id, settings)
     try {

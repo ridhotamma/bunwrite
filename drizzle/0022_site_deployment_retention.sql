@@ -1,0 +1,1 @@
+ALTER TABLE `_sites` ADD `deployment_retention` integer DEFAULT 0 NOT NULL;

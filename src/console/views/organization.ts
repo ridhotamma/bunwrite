@@ -135,6 +135,8 @@ export interface InviteAcceptOptions {
   email: string
   token: string
   existing?: boolean
+  /** What the visitor typed before a failed submit. */
+  name?: string
   error?: string
 }
 
@@ -154,7 +156,7 @@ export function inviteAcceptContent(options: InviteAcceptOptions): Html {
         ${options.existing
           ? html`<label>Password<input type="password" name="password" autocomplete="current-password" required autofocus></label>
               <button class="primary" style="width:100%;justify-content:center">Sign in and join</button>`
-          : html`<label>Name<input name="name" autocomplete="name" required autofocus></label>
+          : html`<label>Name<input name="name" value="${options.name ?? ''}" autocomplete="name" required autofocus></label>
               <label>Password<input type="password" name="password" autocomplete="new-password" minlength="8" required></label>
               <button class="primary" style="width:100%;justify-content:center">Join organization</button>`}
       </form>

@@ -465,8 +465,8 @@ phone.
 | Users | Search; edit profile, labels, verification and prefs; block; set a password; end sessions; delete |
 | Teams | Create teams; add members by email or ID; edit roles; prefs |
 | Storage | Buckets and their rules; upload, open and delete files; local or S3-compatible storage |
-| Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs |
-| Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download; output folder, single-page fallback, API function, multiple custom domains |
+| Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs; deployment retention and bulk delete |
+| Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Backups | Database snapshots; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |

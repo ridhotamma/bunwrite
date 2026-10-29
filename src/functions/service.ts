@@ -22,7 +22,7 @@ import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
-import { deploymentDir, functionHome } from './deployments'
+import { Deployments, deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
 import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
@@ -368,15 +368,19 @@ export class FunctionService {
       schedule: string
       timeout: number
       execute: string[]
+      deploymentRetention?: number
     },
   ): FunctionRow {
-    this.fn(id)
+    const current = this.fn(id)
     this.check(fields)
-    this.sql.query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, updated_at = ? WHERE id = ?').run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), now(), id)
+    const retention = fields.deploymentRetention ?? current.deployment_retention
+    this.sql
+      .query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, deployment_retention = ?, updated_at = ? WHERE id = ?')
+      .run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), retention, now(), id)
     return this.fn(id)
   }
 
-  private check(fields: { schedule: string; timeout: number; runtime?: string }): void {
+  private check(fields: { schedule: string; timeout: number; runtime?: string; deploymentRetention?: number }): void {
     if (fields.schedule) {
       try {
         parseCron(fields.schedule)
@@ -387,9 +391,17 @@ export class FunctionService {
     if (!Number.isInteger(fields.timeout) || fields.timeout < 1 || fields.timeout > 900) {
       throw err('general_argument_invalid', 'Timeout must be between 1 and 900 seconds.')
     }
+    if (fields.deploymentRetention !== undefined && (!Number.isInteger(fields.deploymentRetention) || fields.deploymentRetention < 0)) {
+      throw err('general_argument_invalid', 'Deployment retention must be a whole number of days, 0 or more.')
+    }
     if (fields.runtime !== undefined && !SUPPORTED_RUNTIME.test(fields.runtime)) {
       throw err('function_runtime_unsupported', `Runtime "${fields.runtime}" is not supported here. Use a node-*, bun-* or python-* runtime.`)
     }
+  }
+
+  /** Delete non-active deployments older than each function's retention setting. */
+  pruneDeployments(): number {
+    return new Deployments(this.db, this.config, this).pruneDeployments()
   }
 
   /** A new function (functions.create). Its code arrives later as a deployment. */

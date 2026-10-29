@@ -84,6 +84,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         }
         const existing = auth.find(member.email)
         if (request.method === 'POST') {
+          const form = await readForm(request)
+          const name = String(form.name ?? '')
           try {
             limiter.hit(`console-invite:${ip}`, 10, 900)
           } catch {
@@ -95,13 +97,13 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
                   email: member.email,
                   token,
                   existing: Boolean(existing),
+                  name,
                   error: 'Too many attempts. Try again in 15 minutes.',
                 }),
                 control.config.projectName,
               ),
             )
           }
-          const form = await readForm(request)
           const password = String(form.password ?? '')
           try {
             let secret: string | null
@@ -127,6 +129,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
                   email: member.email,
                   token,
                   existing: Boolean(existing),
+                  name,
                   error: error instanceof Error ? error.message : String(error),
                 }),
                 control.config.projectName,

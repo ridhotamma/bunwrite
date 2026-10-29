@@ -20,7 +20,7 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
-import { now } from '~/lib/datetime'
+import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import { ensureRuntime, withRuntime } from '~/runtimes/install'
@@ -40,6 +40,8 @@ const MAX_LOG = 1_000_000
 const KEEP_PREVIOUS = 2
 /** Ready Git builds of other branches kept on disk. */
 const KEEP_PREVIEWS = 5
+/** A deployment that is still uploading or building is never deleted by retention. */
+const UNSETTLED = ['waiting', 'processing', 'building']
 /** macOS tar would add `._name` metadata files to archives; other tars ignore this. */
 const TAR_ENV = { ...process.env, COPYFILE_DISABLE: '1' }
 
@@ -467,15 +469,61 @@ export class Deployments {
   remove(functionId: string, id: string): void {
     this.get(functionId, id)
     if (this.functions.fn(functionId).deployment_id === id) throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
-    this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
+    this.removeStored(functionId, id)
+  }
+
+  /**
+   * Delete several deployments at once. The active deployment and builds that
+   * have not finished are kept. Returns what was removed and what was skipped.
+   */
+  removeMany(functionId: string, ids: readonly string[]): { removed: number; skipped: number } {
+    const active = this.functions.fn(functionId).deployment_id
+    let removed = 0
+    let skipped = 0
+    for (const id of new Set(ids)) {
+      const deployment = this.sql.query<{ status: string }, [string, string]>('SELECT status FROM _deployments WHERE id = ? AND function_id = ?').get(id, functionId)
+      if (!deployment || id === active || UNSETTLED.includes(deployment.status)) {
+        skipped++
+        continue
+      }
+      this.removeStored(functionId, id)
+      removed++
+    }
+    return { removed, skipped }
+  }
+
+  /** Delete a deployment's row, code and source archive. Callers check that it may be deleted. */
+  private removeStored(functionId: string, id: string): void {
+    this.sql.query('DELETE FROM _deployments WHERE id = ? AND function_id = ?').run(id, functionId)
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     rmSync(this.archivePath(functionId, id), { force: true })
     rmSync(this.sourcePath(functionId, id), { force: true })
   }
 
-  /** Keep disk use flat: drop the code of all but the active and the last few ready deployments. */
+  /** Delete non-active deployments older than each function's retention setting. */
+  pruneDeployments(): number {
+    let removed = 0
+    for (const f of this.functions.list()) removed += this.pruneFunctionRetention(f)
+    return removed
+  }
+
+  /** Apply one function's retention setting. */
+  private pruneFunctionRetention(f: FunctionRow): number {
+    if (f.deployment_retention <= 0) return 0
+    const cutoff = addSeconds(-f.deployment_retention * 86400)
+    const old = this.sql
+      .query<{ id: string }, [string, string, string]>(
+        "SELECT id FROM _deployments WHERE function_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
+      )
+      .all(f.id, f.deployment_id, cutoff)
+    for (const { id } of old) this.removeStored(f.id, id)
+    return old.length
+  }
+
+  /** Keep disk use flat: drop the code of all but the active and the last few ready deployments, then apply retention. */
   prune(functionId: string): void {
-    const active = this.functions.fn(functionId).deployment_id
+    const f = this.functions.fn(functionId)
+    const active = f.deployment_id
     // Git builds of other branches (never made active) are pruned on their own, so they do not push out rollbacks.
     const preview = "type = 'vcs' AND activate = 0"
     const ready = this.sql
@@ -484,13 +532,10 @@ export class Deployments {
     const previews = this.sql
       .query<{ id: string }, [string, string]>(`SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND ${preview} ORDER BY seq DESC`)
       .all(functionId, active)
-    for (const { id } of [...ready.slice(KEEP_PREVIOUS), ...previews.slice(KEEP_PREVIEWS)]) {
-      this.sql.query('DELETE FROM _deployments WHERE id = ?').run(id)
-      removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
-      rmSync(this.sourcePath(functionId, id), { force: true })
-    }
+    for (const { id } of [...ready.slice(KEEP_PREVIOUS), ...previews.slice(KEEP_PREVIEWS)]) this.removeStored(functionId, id)
     // Failed builds keep their source so it can be pulled and fixed; only the latest few.
     const failed = this.sql.query<{ id: string }, [string]>("SELECT id FROM _deployments WHERE function_id = ? AND status = 'failed' ORDER BY seq DESC").all(functionId)
     for (const { id } of failed.slice(KEEP_PREVIOUS)) rmSync(this.sourcePath(functionId, id), { force: true })
+    this.pruneFunctionRetention(f)
   }
 }

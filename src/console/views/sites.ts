@@ -1,7 +1,7 @@
 /** Console views for static sites: create, deploy, deployments and settings. */
 import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
-import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
+import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
 import { DEFAULT_RUNTIME, SERVER_BUN, SITE_RUNTIMES } from '~/runtimes/catalog'
 import { FRAMEWORKS, frameworkForSite, frameworkOf } from '~/sites/frameworks'
@@ -255,14 +255,22 @@ export function deploySiteForm(site: SiteRow, git: GitDeploySource | null = null
 export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRow[]): Html {
   const busy = deployments.some((d) => SITE_IN_PROGRESS.includes(d.status))
   const base = siteUrl(site.id)
+  const bulkId = `bulk-site-deployments-${site.id}`
+  const deletable = deployments.filter((d) => d.id !== site.deployment_id && !SITE_IN_PROGRESS.includes(d.status))
   return html`<div class="card flush" id="deployments" ${busy ? poll(`${base}`, 'deployments', 2) : ''}>
-    <div class="toolbar"><h2 style="margin:0">Deployments</h2></div>
+    <div class="toolbar"><h2 style="margin:0">Deployments</h2>
+      ${deployments.length
+        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.' })
+        : ''}
+    </div>
     ${deployments.length
-      ? html`<div class="scroll"><table><thead><tr><th>Created</th><th>Status</th><th class="hide-sm">Source</th><th class="num hide-sm">Files</th><th class="num hide-sm">Size</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
+      ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId, !deletable.length)}</th><th>Created</th><th>Status</th><th class="hide-sm">Source</th><th class="num hide-sm">Files</th><th class="num hide-sm">Size</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
         ${deployments.map((d) => {
           const href = `${base}/deployments/${d.id}`
           const live = d.id === site.deployment_id
+          const canDelete = !live && !SITE_IN_PROGRESS.includes(d.status)
           return html`<tr>
+            <td class="select-col">${bulkSelectRow(bulkId, d.id, `Select the deployment from ${when(d.created_at)}`, !canDelete)}</td>
             <td><a href="${href}">${when(d.created_at)}</a></td>
             <td>${siteDeploymentBadge(d, site.deployment_id)}</td>
             <td class="clip hide-sm">${sourceCell(d)}</td>
@@ -272,7 +280,7 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
               html`<a class="menu-item" href="${href}">Details</a>
                 ${d.status === 'ready' && !live ? html`<form method="post" action="${href}/activate"><button type="submit">Make live</button></form>` : ''}
                 ${d.status === 'ready' ? html`<a class="menu-item" href="${href}/download">Download</a>` : ''}
-                ${live ? '' : html`<hr>${destroy(`${href}/delete`, 'Delete deployment', 'Delete this deployment and its files?')}`}`,
+                ${canDelete ? html`<hr>${destroy(`${href}/delete`, 'Delete deployment', 'Delete this deployment and its files?')}` : ''}`,
               { label: `Actions for the deployment from ${when(d.created_at)}` },
             )}</td>
           </tr>`

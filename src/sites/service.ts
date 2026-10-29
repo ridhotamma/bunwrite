@@ -933,7 +933,27 @@ export class SiteService {
     return new Blob([bytes], { type: 'application/gzip' })
   }
 
-  /** Keep disk use flat: the live deployment plus the last few ready ones. */
+  /** Delete non-live deployments older than each site's retention setting. Returns how many were deleted. */
+  pruneDeployments(): number {
+    let removed = 0
+    for (const site of this.list()) removed += this.pruneSiteRetention(site)
+    return removed
+  }
+
+  /** Apply one site's retention setting. */
+  private pruneSiteRetention(site: SiteRow): number {
+    if (site.deployment_retention <= 0) return 0
+    const cutoff = addSeconds(-site.deployment_retention * 86400)
+    const old = this.sql
+      .query<{ id: string }, [string, string, string]>(
+        "SELECT id FROM _site_deployments WHERE site_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
+      )
+      .all(site.id, site.deployment_id, cutoff)
+    for (const { id } of old) this.removeStored(site.id, id)
+    return old.length
+  }
+
+  /** Keep disk use flat: the live deployment plus the last few ready ones, then apply retention. */
   private prune(siteId: string): void {
     const site = this.site(siteId)
     const keep = site.adapter === 'ssr' ? this.config.sitesSsrKeepPrevious : KEEP_PREVIOUS
@@ -944,15 +964,9 @@ export class SiteService {
         "SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? AND NOT (type = 'vcs' AND activate = 0) ORDER BY seq DESC",
       )
       .all(siteId, live)
-    for (const { id } of ready.slice(keep)) {
-      this.ssr.stopDeployment(siteId, id)
-      this.sql.query('DELETE FROM _site_deployments WHERE id = ?').run(id)
-      removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
-    }
+    for (const { id } of ready.slice(keep)) this.removeStored(siteId, id)
     const failed = this.sql.query<{ id: string }, [string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'failed' ORDER BY seq DESC").all(siteId)
-    for (const { id } of failed.slice(keep)) {
-      this.sql.query('DELETE FROM _site_deployments WHERE id = ?').run(id)
-      removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
-    }
+    for (const { id } of failed.slice(keep)) this.removeStored(siteId, id)
+    this.pruneSiteRetention(site)
   }
 }

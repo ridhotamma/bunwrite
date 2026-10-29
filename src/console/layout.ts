@@ -6,6 +6,7 @@
 import { COMBOBOX_SCRIPT } from './combobox'
 import { confirmDialog, DIALOG_SCRIPT } from './dialog'
 import { FORM_SCRIPT } from './form-script'
+import { FORM_STATE_SCRIPT } from './form-state'
 import { PERMISSIONS_SCRIPT } from './permissions'
 import { html, raw, type Html } from './html'
 import { MENU_SCRIPT } from './menu'
@@ -71,7 +72,10 @@ function projectSwitcher(nav: Nav): Html {
   })
 }
 
-const clearFlashScript = html`<script>{const u=new URL(location.href);u.searchParams.delete('ok');u.searchParams.delete('err');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}</script>`
+// `err` means a form just came back: mark it on <html> so the form-state script
+// (which runs later) knows to put the submitted values back before the URL is
+// cleaned up here.
+const clearFlashScript = html`<script>{const u=new URL(location.href);if(u.searchParams.has('err'))document.documentElement.dataset.formError='1';u.searchParams.delete('ok');u.searchParams.delete('err');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}</script>`
 
 function flashParts(flash?: Flash) {
   return {
@@ -124,6 +128,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <div id="nav-tooltip" class="nav-tooltip" role="tooltip" hidden></div>
 ${confirmDialog()}
 <script>${raw(DIALOG_SCRIPT)}</script>
+<script>${raw(FORM_STATE_SCRIPT)}</script>
 <script>${raw(PERMISSIONS_SCRIPT)}</script>
 <script>${raw(FORM_SCRIPT)}</script>
 <script>${raw(COMBOBOX_SCRIPT)}</script>
@@ -164,6 +169,7 @@ export function projectShell(title: string, nav: { admin: string }, body: Html, 
 </main>
 ${confirmDialog()}
 <script>${raw(DIALOG_SCRIPT)}</script>
+<script>${raw(FORM_STATE_SCRIPT)}</script>
 <script>${raw(FORM_SCRIPT)}</script>
 <script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
@@ -174,5 +180,5 @@ ${confirmDialog()}
 export function bare(title: string, body: Html, projectName = 'Bunwrite'): Html {
   return html`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="any">
-<title>${title} · ${projectName}</title><style>${raw(CONSOLE_CSS)}</style><script>${raw(PROGRESS_SCRIPT)}</script></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script><script>${raw(FORM_SCRIPT)}</script></body></html>`
+<title>${title} · ${projectName}</title><style>${raw(CONSOLE_CSS)}</style><script>${raw(PROGRESS_SCRIPT)}</script></head><body>${body}<script>${raw(DIALOG_SCRIPT)}</script><script>${raw(FORM_STATE_SCRIPT)}</script><script>${raw(FORM_SCRIPT)}</script></body></html>`
 }

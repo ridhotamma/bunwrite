@@ -41,6 +41,12 @@ export function numberOrUndefined(v: unknown): number | undefined {
   return String(v ?? '').trim() === '' ? undefined : Number(v)
 }
 
+/** A whole, non-negative number for settings such as retention days; invalid input becomes 0. */
+export function wholeNumber(v: unknown): number {
+  const n = Math.round(Number(v ?? 0))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 /** Parse a JSON object from a textarea, with a page-friendly error. */
 export function parseJsonObject(raw: unknown, message: string): Record<string, unknown> {
   let parsed: unknown

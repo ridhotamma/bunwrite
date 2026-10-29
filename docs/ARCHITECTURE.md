@@ -63,6 +63,9 @@ The console keeps the same boundaries as the API:
   origin checks, admin auth, routing and error rendering.
 - `context.ts` defines the handler context. `ctx.go()` and `ctx.back()` choose
   between an htmx `HX-Location` swap and a plain 303 redirect.
+- A failed POST goes back to its page with an `err` flash. `form-state.ts`
+  keeps the submitted values in sessionStorage for that return, so the form
+  comes back filled in (passwords and file inputs excepted).
 - `forms.ts`, `query.ts` and `ui.ts` hold shared form parsing, paging/query
   builders and UI pieces (list cards, live search, pagers, badges, polling).
 - `pages/` has one module per console area. `pages/databases/` splits databases,
@@ -214,7 +217,9 @@ with no-new-privs and no capabilities. The server creates files with umask 077
 and tightens the data folder at start, so only the folders on the way to code
 allow passing through. Function users own their files, so the server deletes,
 downloads and reads code for the console through the helper too. The
-active deployment runs; older ready ones are kept two deep, then deleted.
+active deployment runs; older ready ones are kept two deep, then deleted. A
+function's `deploymentRetention` setting also deletes non-active deployments
+older than that many days (0 keeps them). The same applies to sites.
 Without one, the code is read from the function's `path` under the code
 folder, as `schema:push` sets it.
 

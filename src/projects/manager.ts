@@ -397,6 +397,8 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.transactions.prune()
       runtime.services.auth.pruneExpired()
       runtime.services.functions.prune()
+      runtime.services.functions.pruneDeployments()
+      runtime.services.sites.pruneDeployments()
       runtime.services.queue.prune()
       runtime.services.requestLogs.prune()
       runtime.services.storage.prunePreviews()

@@ -71,11 +71,13 @@ afterAll(() => {
 
 describe('sites API', () => {
   test('creates a site with Appwrite fields plus its URL', async () => {
-    const site: any = await sites.create({ siteId: 'blog', name: 'Blog', framework: 'other' as any, buildRuntime: 'static-1' as any })
+    const site: any = await sites.create({ siteId: 'blog', name: 'Blog', framework: 'other' as any, buildRuntime: 'static-1' as any, deploymentRetention: 3 })
     expect(site.$id).toBe('blog')
     expect(site.live).toBe(false)
+    expect(site.deploymentRetention).toBe(3)
     expect(site.url).toBe(`http://blog.sites.localhost:${server.config.port}`)
     expect((await sites.list()).total).toBe(1)
+    expect((await sites.update({ siteId: 'blog', name: 'Blog', framework: 'other' as any, deploymentRetention: 7 })).deploymentRetention).toBe(7)
     const frameworks = await sites.listFrameworks()
     expect(frameworks.frameworks.some((f) => f.key === 'vite')).toBe(true)
   })

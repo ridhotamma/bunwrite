@@ -194,6 +194,12 @@ td.clip{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowra
 .row-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 .toolbar{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center}
 .toolbar input{flex:1}
+.bulk-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.bulk-actions .subdued{font-size:12px;white-space:nowrap}
+.bulk-actions button{padding:4px 10px;min-height:26px;font-size:12px}
+th.select-col,td.select-col{width:36px;padding-left:12px;padding-right:0;text-align:left}
+.select-col input[type=checkbox]{width:16px;min-height:16px;margin:0;cursor:pointer}
+.select-col input[type=checkbox]:disabled{cursor:not-allowed;opacity:.35}
 .tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:16px}
 .tabs a{padding:6px 12px;border-radius:8px;color:var(--subdued);font-weight:550}
 .tabs a:hover{background:#e3e3e3;text-decoration:none}.tabs a.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}

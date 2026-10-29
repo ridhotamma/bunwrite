@@ -76,6 +76,21 @@ describe('console access', () => {
     expect(res.status).toBe(204)
     expect(JSON.parse(res.headers.get('hx-location')!).path).toStartWith('/console/databases/hx')
   })
+
+  test('a failed form comes back to its page marked so the values can be put back', async () => {
+    const referer = `${base}/console/databases/new`
+    expect((await form('/console/databases', { id: 'restore-me', name: 'Restore me' }, { referer })).status).toBe(303)
+    const failed = await form('/console/databases', { id: 'restore-me', name: 'Restore me' }, { referer })
+    expect(flash(failed).get('err')).toContain('already exists')
+    const location = new URL(failed.headers.get('location')!, base)
+    const page = await (await get(location.pathname + location.search)).text()
+    // The flash script marks the page before it removes `err`; the form-state
+    // script picks the mark up and restores the form.
+    expect(page).toContain("document.documentElement.dataset.formError='1'")
+    expect(page).toContain('__bunwriteFormState')
+    expect(page).toContain('action="/console/databases"')
+    await form('/console/databases/restore-me/delete', {})
+  })
 })
 
 describe('schema through the console', () => {

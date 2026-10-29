@@ -212,6 +212,38 @@ export function listCard(id: string, parts: ListCardParts): Html {
   return html`<div class="card flush" id="${id}">${parts.toolbar ?? ''}${parts.body}${parts.footer ?? ''}</div>`
 }
 
+export interface BulkDeleteOptions {
+  /** Form ID, also used by the checkboxes' `form` attribute. */
+  id: string
+  action: string
+  /** Button label. */
+  label?: string
+  confirm: string
+}
+
+/**
+ * A small form for deleting selected table rows. The checkboxes live in the
+ * table and point at it with `form="<id>"`, so row menus and their own forms
+ * stay valid HTML (form elements cannot be nested).
+ */
+export function bulkDeleteForm(options: BulkDeleteOptions): Html {
+  const label = options.label ?? 'Delete selected'
+  return html`<form id="${options.id}" method="post" action="${options.action}" class="bulk-actions" data-bulk-form data-confirm="${options.confirm}" data-confirm-label="${label}" data-confirm-tone="critical">
+    <span class="subdued" data-bulk-count>0 selected</span>
+    <button type="submit" class="critical" data-bulk-submit disabled>${label}</button>
+  </form>`
+}
+
+/** A header checkbox that selects every enabled row checkbox in `formId`. */
+export function bulkSelectAll(formId: string, disabled = false): Html {
+  return html`<input type="checkbox" form="${formId}" data-bulk-select-all aria-label="Select all" ${disabled ? 'disabled' : ''}>`
+}
+
+/** A row checkbox, associated with the bulk form in `formId`. */
+export function bulkSelectRow(formId: string, value: string, label: string, disabled = false): Html {
+  return html`<input type="checkbox" form="${formId}" name="ids" value="${value}" data-bulk-id aria-label="${label}" ${disabled ? 'disabled' : ''}>`
+}
+
 /**
  * Attributes that make an element refresh itself on an interval. A polling
  * card holds links and forms of its own, so `hx-disinherit` keeps this

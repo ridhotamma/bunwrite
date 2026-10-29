@@ -1,7 +1,7 @@
 /** Console views for creating functions and deploying their code. */
 import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
-import { badge, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
+import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
 import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
@@ -149,15 +149,23 @@ export function deployForm(f: FunctionRow, current: string | undefined, buildCom
 export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): Html {
   const live = deployments.some((d) => IN_PROGRESS.includes(d.status))
   const base = `${FN}/${f.id}`
+  const bulkId = `bulk-function-deployments-${f.id}`
+  const deletable = deployments.filter((d) => d.id !== f.deployment_id && !IN_PROGRESS.includes(d.status))
   // While a build runs, refresh this card so its status and actions stay current.
   return html`<div class="card flush" id="deployments" ${live ? poll(`${base}/deployments`, 'deployments', 2) : ''}>
-    <div class="toolbar"><h2 style="margin:0">Deployments</h2></div>
+    <div class="toolbar"><h2 style="margin:0">Deployments</h2>
+      ${deployments.length
+        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.' })
+        : ''}
+    </div>
     ${deployments.length
-      ? html`<div class="scroll"><table><thead><tr><th>Created</th><th>Status</th><th class="hide-sm">Source</th><th class="num hide-sm">Size</th><th class="num hide-sm">Build</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
+      ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId, !deletable.length)}</th><th>Created</th><th>Status</th><th class="hide-sm">Source</th><th class="num hide-sm">Size</th><th class="num hide-sm">Build</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
         ${deployments.map((d) => {
           const href = `${base}/deployments/${d.id}`
           const active = d.id === f.deployment_id
+          const canDelete = !active && !IN_PROGRESS.includes(d.status)
           return html`<tr>
+            <td class="select-col">${bulkSelectRow(bulkId, d.id, `Select the deployment from ${when(d.created_at)}`, !canDelete)}</td>
             <td><a href="${href}">${when(d.created_at)}</a></td>
             <td>${deploymentBadge(d, f.deployment_id)}</td>
             <td class="clip hide-sm">${sourceCell(d)}</td>
@@ -166,7 +174,7 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
             <td class="num">${menu(
               html`<a class="menu-item" href="${href}">Build logs</a>
                 ${d.status === 'ready' && !active ? html`<form method="post" action="${href}/activate"><button type="submit">Make live</button></form>` : ''}
-                ${active ? '' : html`<hr>${destroy(`${href}/delete`, 'Delete deployment', 'Delete this deployment and its files?')}`}`,
+                ${canDelete ? html`<hr>${destroy(`${href}/delete`, 'Delete deployment', 'Delete this deployment and its files?')}` : ''}`,
               { label: `Actions for the deployment from ${when(d.created_at)}` },
             )}</td>
           </tr>`

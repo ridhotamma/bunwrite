@@ -7,9 +7,9 @@ import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { gitDeploySource } from '~/console/git-deploy'
-import { checked, lines, value } from '~/console/forms'
+import { arrayOf, checked, lines, value, wholeNumber } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
+import { alert, badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
 import { deployForm, functionCreateView, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
@@ -195,6 +195,7 @@ export function functionPages(router: ConsoleRouter): void {
     // Functions with no code folder and nothing deployed: the code folder setting is likely wrong.
     const missing = fns.filter((f) => !ctx.services.functions.codeDir(f).dir && !latest.get(f.id)).length
     const create = html`<a class="btn primary" href="${FN}/new">${icon('plus')}<span>Create function</span></a>`
+    const bulkId = 'bulk-functions'
     return ctx.render(
       'Functions',
       'functions',
@@ -203,11 +204,15 @@ export function functionPages(router: ConsoleRouter): void {
       })}
       ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with the project config file (bunwrite.config.json or appwrite.config.json).`) : ''}
       ${listCard('functions', {
+        toolbar: fns.length
+          ? html`<div class="toolbar"><span class="subdued">Select functions to delete</span>${bulkDeleteForm({ id: bulkId, action: `${FN}/bulk-delete`, confirm: 'Delete the selected functions? Their deployments, runs and variables are removed too. This cannot be undone.' })}</div>`
+          : undefined,
         body: fns.length
-          ? html`<div class="scroll"><table><thead><tr><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
+          ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId)}</th><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
             ${fns.map((f) => {
               const run = last.get(f.id)
-              return html`<tr class="row-link" onclick="location='${functionUrl(f.id)}'"><td><a href="${functionUrl(f.id)}">${f.name}</a><div class="mono subdued cell-sub">${f.id}</div>${f.enabled ? '' : html`${badge('Disabled')}`}${codeBadge(ctx, f, latest.get(f.id) ?? null)}</td>
+              return html`<tr class="row-link" onclick="location='${functionUrl(f.id)}'"><td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, f.id, `Select ${f.name}`)}</td>
+                <td><a href="${functionUrl(f.id)}">${f.name}</a><div class="mono subdued cell-sub">${f.id}</div>${f.enabled ? '' : html`${badge('Disabled')}`}${codeBadge(ctx, f, latest.get(f.id) ?? null)}</td>
                 <td class="hide-sm subdued">${f.runtime}</td>
                 <td class="mono">${f.schedule ? html`${f.schedule}${skipped.includes(f.id) ? html` ${badge('Paused')}` : ''}` : html`<span class="subdued">—</span>`}</td>
                 <td>${run ? html`${statusBadge(run.status)} <span class="subdued hide-sm">${when(run.created_at)}</span>` : html`<span class="subdued">Never</span>`}</td></tr>`
@@ -267,6 +272,20 @@ export function functionPages(router: ConsoleRouter): void {
       return ctx.go(functionUrl(f.id), { tone: 'critical', text: `Function created, but its code could not be deployed: ${message}` })
     }
     return ctx.go(functionUrl(f.id), { tone: 'success', text: 'Function created' })
+  })
+
+  // Before /:id, which would otherwise read "bulk-delete" as a function ID.
+  router.post(`${FN}/bulk-delete`, ({ ctx }) => {
+    const ids = [...new Set(arrayOf(ctx.form.ids))]
+    let removed = 0
+    for (const id of ids) {
+      if (!ctx.services.functions.has(id)) continue
+      ctx.services.functions.remove(id)
+      ctx.hub.forget(ctx.currentProject.id, 'function', id)
+      removed++
+    }
+    if (!removed) return ctx.go(FN, { tone: 'warning', text: 'No functions were deleted.' })
+    return ctx.go(FN, { tone: 'success', text: `${plural(removed, 'function')} deleted` })
   })
 
   router.get(`${FN}/:id`, ({ ctx, path }) => {
@@ -349,6 +368,7 @@ export function functionPages(router: ConsoleRouter): void {
             <label>Schedule<input name="schedule" class="mono" value="${f.schedule}" placeholder="0 * * * *"><small>Cron, in UTC. Empty for none.</small></label>
             <div class="fields"><label>Timeout (seconds)<input name="timeout" type="number" min="1" max="900" value="${f.timeout}"></label>
               <label>Who may run it<input name="execute" value="${JSON.parse(f.execute).join(', ')}" placeholder="any, users, team:ID"><small>Roles, comma-separated. <code>any</code> lets everyone call it, <code>users</code> only signed-in users. Empty means API keys only; API keys always may.</small></label></div>
+            <label>Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${f.deployment_retention}"><small>Days. Older non-active deployments are deleted automatically; 0 keeps every deployment.</small></label>
             <label class="check"><input type="checkbox" name="enabled" ${f.enabled ? 'checked' : ''}>Enabled</label>
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
@@ -381,13 +401,17 @@ export function functionPages(router: ConsoleRouter): void {
   })
 
   router.post(`${FN}/:id`, ({ ctx, path }) => {
-    ctx.services.functions.update(path.id!, {
+    const f = ctx.services.functions.fn(path.id!)
+    const retention = ctx.form.deployment_retention === undefined ? f.deployment_retention : wholeNumber(ctx.form.deployment_retention)
+    ctx.services.functions.update(f.id, {
       enabled: checked(ctx.form.enabled),
       schedule: value(ctx.form, 'schedule'),
       timeout: Number(ctx.form.timeout),
       execute: lines(ctx.form.execute),
+      deploymentRetention: retention,
     })
-    return ctx.go(`${functionUrl(path.id!)}/settings`, { tone: 'success', text: 'Saved' })
+    if (retention !== f.deployment_retention) ctx.services.functions.pruneDeployments()
+    return ctx.go(`${functionUrl(f.id)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
   registerDomainRoutes(router, {
@@ -439,6 +463,15 @@ export function functionPages(router: ConsoleRouter): void {
   router.post(`${FN}/:id/deployments/:did/delete`, ({ ctx, path }) => {
     deploymentsOf(ctx).remove(path.id!, path.did!)
     return ctx.go(`${functionUrl(path.id!)}/deployments`, { tone: 'success', text: 'Deployment deleted' })
+  })
+
+  router.post(`${FN}/:id/deployments/bulk-delete`, ({ ctx, path }) => {
+    const { removed, skipped } = deploymentsOf(ctx).removeMany(path.id!, arrayOf(ctx.form.ids))
+    if (!removed) return ctx.go(`${functionUrl(path.id!)}/deployments`, { tone: 'warning', text: 'No deployments were deleted.' })
+    return ctx.go(`${functionUrl(path.id!)}/deployments`, {
+      tone: 'success',
+      text: `${plural(removed, 'deployment')} deleted${skipped ? `, ${skipped} kept` : ''}`,
+    })
   })
 
   router.get(`${FN}/:id/executions/:eid`, ({ ctx, path }) => {

@@ -5,9 +5,11 @@
  * - `data-show-for`: show a block only for some values of a `data-show-by` select
  * - `data-disable-when`: disable an input while a checkbox is ticked
  * - `data-follow`: a field takes its value from another field's choice until edited by hand
- * - submit once: every POST form disables its submit buttons (with a spinner) from the first
- *   submit until the response, so a second click cannot send it again. `data-busy-label`
- *   also swaps the button text; `data-busy="off"` opts a form out
+ * - submit once: every changing form (method="post" or an htmx verb) disables its
+ *   submit buttons (with a spinner) from the first submit until the response, so a
+ *   second click cannot send it again. `data-busy-label` also swaps the button text;
+ *   `data-busy="off"` opts a form out. Buttons that send their own htmx request
+ *   (send a test email, preview a template) get the same busy state.
  */
 export const FORM_SCRIPT = `
 (() => {
@@ -97,6 +99,31 @@ export const FORM_SCRIPT = `
     }
   }
 
+  // ---- Bulk selection ----
+  // Row checkboxes live in the table but submit with a form elsewhere in the
+  // page (HTML does not allow nested forms); their form="" attribute ties them
+  // together. Keep the header checkbox, count and submit button in step.
+  function bulkBoxes(form) {
+    return [...document.querySelectorAll('input[name="ids"][data-bulk-id]')].filter((box) => box.form === form)
+  }
+  function updateBulk(form) {
+    if (!form) return
+    const boxes = bulkBoxes(form).filter((box) => !box.disabled)
+    const checked = boxes.filter((box) => box.checked)
+    const selectAll = [...document.querySelectorAll("[data-bulk-select-all]")].find((box) => box.form === form)
+    if (selectAll) {
+      selectAll.checked = boxes.length > 0 && checked.length === boxes.length
+      selectAll.indeterminate = checked.length > 0 && checked.length < boxes.length
+    }
+    const count = form.querySelector("[data-bulk-count]")
+    if (count) count.textContent = checked.length + " selected"
+    const submit = form.querySelector("[data-bulk-submit]")
+    if (submit) submit.disabled = checked.length === 0
+  }
+  function setupBulk() {
+    for (const form of document.querySelectorAll("form[data-bulk-form]")) updateBulk(form)
+  }
+
   document.addEventListener("input", (e) => {
     const t = e.target
     const doc = t.closest && t.closest("[data-docform]")
@@ -129,6 +156,18 @@ export const FORM_SCRIPT = `
   }
   document.addEventListener("change", (e) => {
     const t = e.target
+    if (t.matches && t.matches("[data-bulk-select-all]")) {
+      const form = t.form
+      if (form) {
+        for (const box of bulkBoxes(form)) if (!box.disabled) box.checked = t.checked
+        updateBulk(form)
+      }
+      return
+    }
+    if (t.matches && t.matches("[data-bulk-id]")) {
+      updateBulk(t.form)
+      return
+    }
     const doc = t.closest && t.closest("[data-docform]")
     if (doc && t.name && t.name.startsWith("field:")) fieldsToJson(doc)
     if (t.matches && t.matches("[data-show-by]")) { showFor(t.form || document); disableWhen(t.form || document) }
@@ -164,17 +203,29 @@ export const FORM_SCRIPT = `
     }
   })
   document.addEventListener("submit", (e) => {
-    const doc = e.target.querySelector && e.target.querySelector("[data-docform]")
+    const form = e.target
+    // An empty bulk form is a no-op; do not send a request with no ids.
+    if (form.matches && form.matches("form[data-bulk-form]") && !bulkBoxes(form).some((box) => box.checked)) {
+      e.preventDefault()
+      return
+    }
+    const doc = form.querySelector && form.querySelector("[data-docform]")
     if (doc && !doc.querySelector(".doc-fields").hidden) fieldsToJson(doc)
   }, true)
 
   // ---- Submit once ----
-  // Every POST form: from the first submit until the response, its submit buttons are
-  // disabled and show a spinner (and data-busy-label, when set), and further submits
-  // are dropped. data-busy="off" opts a form out. GET forms (filters, search) are live
-  // and left alone.
+  // Every form that changes something (method="post" or an htmx verb): from the
+  // first submit until the response, its submit buttons are disabled and show a
+  // spinner (and data-busy-label, when set), and further submits are dropped.
+  // data-busy="off" opts a form out. GET forms (filters, search) are live and
+  // left alone.
+  const VERBS = ["hx-post", "hx-put", "hx-patch", "hx-delete"]
+  const sendsItself = (el) =>
+    el instanceof HTMLElement && el.matches("button,input") && VERBS.some((name) => el.hasAttribute(name))
   const guarded = (form) =>
-    form instanceof HTMLFormElement && (form.getAttribute("method") || "").toLowerCase() === "post" && form.dataset.busy !== "off"
+    form instanceof HTMLFormElement &&
+    (VERBS.some((name) => form.hasAttribute(name)) || (form.getAttribute("method") || "").toLowerCase() === "post") &&
+    form.dataset.busy !== "off"
   const submitButtons = (form) => {
     // getAttribute, not form.id: a field named "id" shadows the property.
     const id = form.getAttribute("id")
@@ -189,16 +240,38 @@ export const FORM_SCRIPT = `
     clearTimeout(form.__busyTimer)
     for (const button of submitButtons(form)) {
       const label = form.dataset.busyLabel
-      if (busy && label && button.tagName === "BUTTON") {
-        if (button.__label == null) button.__label = button.textContent
-        button.textContent = label
-      } else if (!busy && button.__label != null) {
-        button.textContent = button.__label
-        button.__label = null
+      if (busy) {
+        // Keep a button that was already disabled (a bulk action with nothing
+        // selected, a setting the server turned off) disabled after the response.
+        if (button.__idleDisabled === undefined) button.__idleDisabled = button.disabled
+        if (label && button.tagName === "BUTTON") {
+          if (button.__label == null) button.__label = button.textContent
+          button.textContent = label
+        }
+        button.disabled = true
+        button.setAttribute("aria-busy", "true")
+      } else {
+        if (button.__label != null) {
+          button.textContent = button.__label
+          button.__label = null
+        }
+        button.disabled = Boolean(button.__idleDisabled)
+        button.__idleDisabled = undefined
+        button.removeAttribute("aria-busy")
       }
-      button.disabled = busy
-      if (busy) button.setAttribute("aria-busy", "true")
-      else button.removeAttribute("aria-busy")
+    }
+  }
+  // A button that triggers an htmx request without submitting a form.
+  function setElementBusy(el, busy) {
+    el.__busy = busy
+    if (busy) {
+      if (el.__idleDisabled === undefined) el.__idleDisabled = el.disabled
+      el.disabled = true
+      el.setAttribute("aria-busy", "true")
+    } else {
+      el.disabled = Boolean(el.__idleDisabled)
+      el.__idleDisabled = undefined
+      el.removeAttribute("aria-busy")
     }
   }
   // The form a request is for: the form itself, or the submit button that sent it.
@@ -212,16 +285,29 @@ export const FORM_SCRIPT = `
 
   // Forms htmx sends (boosted or hx-post): busy while the request is out.
   document.addEventListener("htmx:beforeRequest", (e) => {
-    const form = formOf(e.detail && e.detail.elt)
-    if (!guarded(form)) return
-    if (form.__busy) { e.preventDefault(); return }
-    // htmx has already read the form's values, so disabling now keeps the submitter's value.
-    setBusy(form, true)
-    if (e.detail.xhr) e.detail.xhr.__busyForm = form
+    const elt = e.detail && e.detail.elt
+    const form = formOf(elt)
+    if (guarded(form)) {
+      if (form.__busy) { e.preventDefault(); return }
+      // htmx has already read the form's values, so disabling now keeps the submitter's value.
+      setBusy(form, true)
+      if (e.detail.xhr) e.detail.xhr.__busyForm = form
+      return
+    }
+    // A button that sends a request of its own: busy until its response.
+    if (!sendsItself(elt) || !e.detail.xhr) return
+    if (elt.__busy) { e.preventDefault(); return }
+    setElementBusy(elt, true)
+    e.detail.xhr.__busyElement = elt
   })
   const release = (e) => {
     const xhr = e.detail && e.detail.xhr
-    const form = xhr && xhr.__busyForm
+    if (!xhr) return
+    if (xhr.__busyElement) {
+      setElementBusy(xhr.__busyElement, false)
+      xhr.__busyElement = null
+    }
+    const form = xhr.__busyForm
     if (!form) return
     xhr.__busyForm = null
     // Saved, and the console is moving on to the next page: stay disabled until it arrives.
@@ -248,7 +334,7 @@ export const FORM_SCRIPT = `
     if (e.persisted) for (const form of document.querySelectorAll("form")) if (form.__busy) setBusy(form, false)
   })
 
-  function setup() { showFor(document); disableWhen(document) }
+  function setup() { showFor(document); disableWhen(document); setupBulk() }
   document.addEventListener("htmx:afterSwap", setup)
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", setup)
   else setup()
