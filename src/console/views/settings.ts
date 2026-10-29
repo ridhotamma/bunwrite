@@ -130,8 +130,12 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
   } catch (problem) {
     error = problem instanceof Error ? problem.message : String(problem)
   }
+  const encryption = c.backupEncryptionKey
+    ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Open one with <code>bunwrite backup:open &lt;file&gt;</code>.`)
+    : alert('warning', html`Backups are compressed but not encrypted, and they include stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
   return html`
     ${error ? alert('critical', html`${error}`) : ''}
+    ${encryption}
     ${settingsSection(
       'Backups',
       'Database snapshots you can download. Automatic backups run once a day at 02:00 UTC.',

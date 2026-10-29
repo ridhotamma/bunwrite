@@ -7,9 +7,7 @@
 import { buildToolsDir } from '~/functions/runtime'
 import type { Config } from '~/config'
 import { siteHome } from './paths'
-
-/** Server-only settings a site's build or app never needs to see. */
-const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'FACEBOOK_CLIENT_SECRET', 'GITHUB_CLIENT_SECRET', 'APPLE_PRIVATE_KEY', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
+import { PRIVATE_ENV } from '~/lib/private-env'
 
 /**
  * The base environment for building and running a site. `HOME` and `TMPDIR`

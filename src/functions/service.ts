@@ -26,6 +26,7 @@ import { deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
 import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
+import { PRIVATE_ENV } from '~/lib/private-env'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 const STREAM_MARKER = '__BUNWRITE_EXECUTION_STREAM__'
@@ -35,8 +36,6 @@ const MAX_RECORDED_BYTES = 1_000_000
 const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
 const SYNC_TIMEOUT = 30
 const NODE_RUNNER_MODE = '__bunwrite-runner-node'
-/** Server-only settings a function never needs to see. */
-const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'FACEBOOK_CLIENT_SECRET', 'GITHUB_CLIENT_SECRET', 'APPLE_PRIVATE_KEY', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
 
 export interface FunctionRow extends ProviderColumns {
   id: string

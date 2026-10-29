@@ -519,6 +519,8 @@ describe('settings through the console', () => {
       expect(backups).toHaveLength(1)
       const page = await (await get('/console/settings/backups')).text()
       expect(page).toContain(backups[0]!.name)
+      expect(backups[0]!.name).toEndWith('.sqlite.zst')
+      expect(page).toContain('compressed but not encrypted')
       const download = await get(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
       expect(download.status).toBe(200)
       expect(download.headers.get('content-disposition')).toContain('.sqlite')

@@ -16,6 +16,7 @@ Usage:
   bunwrite serve               Start the server
   bunwrite console:admin ...   Create, reset or remove a console admin
   bunwrite snapshot [dir]      Copy the database consistently
+  bunwrite backup:open <file>  Decrypt/decompress a backup into a .sqlite file
   bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
   bunwrite autotune [--json]   Show the auto-tuned resource limits
@@ -51,6 +52,10 @@ switch (command) {
   case 'snapshot':
     runCli(...args)
     await import('./cli/snapshot')
+    break
+  case 'backup:open':
+    runCli(...args)
+    await import('./cli/backup-open')
     break
   case 'schema:push':
     runCli(...args)

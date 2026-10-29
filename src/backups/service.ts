@@ -1,7 +1,8 @@
 /**
- * Database backups with SQLite `VACUUM INTO` for a consistent live snapshot.
- * Stored locally or in the separate backup S3 bucket; automatic backups run
- * once a day at 02:00 UTC.
+ * Database backups with SQLite `VACUUM INTO` for a consistent live snapshot,
+ * compressed with zstd and encrypted when BACKUP_ENCRYPTION_KEY is set (see
+ * format.ts). Stored locally or in the separate backup S3 bucket; automatic
+ * backups run once a day at 02:00 UTC.
  */
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -10,6 +11,7 @@ import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import { err } from '~/lib/errors'
 import { s3Call, s3Client } from '~/storage/s3'
+import { COMPRESSED_EXT, contentType, ENCRYPTED_EXT, MIN_KEY_LENGTH, packBackup } from './format'
 
 export interface BackupFile {
   name: string
@@ -17,7 +19,7 @@ export interface BackupFile {
   modified: string
 }
 
-const NAME_RE = /^[A-Za-z0-9._-]+\.sqlite$/
+const NAME_RE = /^[A-Za-z0-9._-]+\.sqlite(\.zst(\.enc)?)?$/
 const AUTO_PREFIX = 'auto-'
 
 export class BackupService {
@@ -57,7 +59,6 @@ export class BackupService {
         do {
           const page = await client.list({ maxKeys: 1000, continuationToken: token })
           for (const object of page.contents ?? []) {
-            if (!object.key.endsWith('.sqlite')) continue
             if (prefix && !object.key.startsWith(prefix)) continue
             const name = prefix ? object.key.slice(prefix.length) : object.key
             if (!this.validName(name)) continue
@@ -73,7 +74,7 @@ export class BackupService {
     const dir = this.config.backupsPath
     if (!existsSync(dir)) return []
     return readdirSync(dir)
-      .filter((name) => name.endsWith('.sqlite'))
+      .filter((name) => this.validName(name))
       .map((name) => {
         const stat = statSync(join(dir, name))
         return { name, size: stat.size, modified: stat.mtime.toISOString() }
@@ -83,17 +84,25 @@ export class BackupService {
 
   async create(kind: 'manual' | 'auto' = 'manual'): Promise<BackupFile> {
     if (this.active) throw err('general_argument_invalid', 'A backup is already running.')
+    const key = this.config.backupEncryptionKey
+    if (key && key.length < MIN_KEY_LENGTH) {
+      throw err('general_argument_invalid', `BACKUP_ENCRYPTION_KEY must be at least ${MIN_KEY_LENGTH} characters.`)
+    }
     this.active = true
     const dir = this.config.backupsPath
     mkdirSync(dir, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const name = `${kind === 'auto' ? AUTO_PREFIX : 'backup-'}${stamp}.sqlite`
+    const name = `${kind === 'auto' ? AUTO_PREFIX : 'backup-'}${stamp}${key ? ENCRYPTED_EXT : COMPRESSED_EXT}`
+    // The raw snapshot is plain text; it only lives here until it is packed.
+    const snapshot = join(dir, `.${name}.snapshot.tmp`)
     const temp = join(dir, `.${name}.tmp`)
     try {
-      this.db.sqlite.run(`VACUUM INTO '${temp.replace(/'/g, "''")}'`)
+      this.db.sqlite.run(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`)
+      await packBackup(snapshot, temp, key)
+      rmSync(snapshot, { force: true })
       const size = statSync(temp).size
       if (this.s3.enabled) {
-        await s3Call(this.s3, () => s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: 'application/x-sqlite3' }))
+        await s3Call(this.s3, () => s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: contentType(name) }))
       } else {
         renameSync(temp, join(dir, name))
       }
@@ -106,6 +115,7 @@ export class BackupService {
       }
       return { name, size, modified: new Date().toISOString() }
     } finally {
+      rmSync(snapshot, { force: true })
       rmSync(temp, { force: true })
       this.active = false
     }
@@ -120,7 +130,7 @@ export class BackupService {
   async serve(name: string): Promise<Response> {
     if (!this.validName(name)) throw err('general_argument_invalid', 'Invalid backup name.')
     const headers = {
-      'content-type': 'application/x-sqlite3',
+      'content-type': contentType(name),
       'content-disposition': `attachment; filename="${encodeURIComponent(name)}"`,
       'cache-control': 'no-store',
     }

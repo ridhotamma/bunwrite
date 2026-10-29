@@ -508,6 +508,18 @@ is a SQLite file, and Bunwrite can snapshot it while the server is running.
 Snapshots use SQLite's `VACUUM INTO`, so they are consistent even while requests
 are being handled. Each project has its own database and backup folder.
 
+Backups are compressed with zstd (`.sqlite.zst`). A backup is a full copy of the
+database, including stored secrets such as the GitHub App key and secret
+variables, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
+(`.sqlite.zst.enc`):
+
+```bash
+openssl rand -base64 32   # put the result in BACKUP_ENCRYPTION_KEY
+```
+
+Keep a copy of the key somewhere other than the server. Without it an encrypted
+backup cannot be opened, and anyone who has it can open every backup.
+
 ### From cron
 
 `bun run snapshot [dir]` writes a consistent copy of the default project
@@ -526,12 +538,21 @@ DATABASE_PATH=./data/projects/my-project/bunwrite.sqlite bun run snapshot /var/b
 
 ### Restoring
 
-1. Stop Bunwrite.
-2. Replace `data/bunwrite.sqlite` (or the project's
-   `data/projects/<project-id>/bunwrite.sqlite`) with the backup file.
-3. Remove the old `-wal` and `-shm` files that belonged to the replaced
+1. Turn a `.sqlite.zst` or `.sqlite.zst.enc` backup into a `.sqlite` file. This
+   reads `BACKUP_ENCRYPTION_KEY` from the environment or `.env`:
+
+   ```bash
+   bun run backup:open backup-2026-10-29T02-00-00-000Z.sqlite.zst.enc
+   ```
+
+   (`bunwrite backup:open <file>` with the compiled binary; a `.sqlite.zst`
+   backup also opens with `zstd -d`.)
+2. Stop Bunwrite.
+3. Replace `data/bunwrite.sqlite` (or the project's
+   `data/projects/<project-id>/bunwrite.sqlite`) with the `.sqlite` file.
+4. Remove the old `-wal` and `-shm` files that belonged to the replaced
    database.
-4. Start Bunwrite and check the console and API.
+5. Start Bunwrite and check the console and API.
 
 Backups contain the database only. Uploaded files live under `STORAGE_PATH` or
 in your S3 bucket, so back those up separately. Test a restore before you need

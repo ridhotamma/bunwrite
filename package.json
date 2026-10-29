@@ -26,6 +26,7 @@
     "test": "bun test",
     "migrate": "bun src/cli/migrate.ts",
     "snapshot": "bun src/cli/snapshot.ts",
+    "backup:open": "bun src/cli/backup-open.ts",
     "console:admin": "bun src/cli/console-admin.ts",
     "autotune": "bun src/main.ts autotune",
     "stress": "bun scripts/stress/index.ts",
