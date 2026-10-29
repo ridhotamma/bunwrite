@@ -118,9 +118,10 @@ bunwrite env add staging
 ```
 
 It checks the server and, when you are signed in to that server's console,
-creates the project if it is missing (`--create` without asking) and labels it
-`staging` so the console shows the badge. `production` suggests this folder's
-current project and protection. `--endpoint`, `--project-id`, `--protected`
+creates the project if it is missing (`--create` without asking). Name the
+projects so they are easy to tell apart in the console, such as "Shop
+(staging)"; a project it creates gets that kind of name. `production` suggests
+this folder's current project and protection. `--endpoint`, `--project-id`, `--protected`
 and `--yes` answer the questions up front, for scripts.
 
 Or name your targets (staging, production, or anything else) in
@@ -218,14 +219,6 @@ site's own, over your shell's environment. It uses live values; `--preview`
 uses what a Git preview build would see. A secret pulled as an empty
 placeholder stays unset; put a value in the `.local` file to use it locally.
 The command's exit code is passed on.
-
-### Labels in the console
-
-A project can carry an environment label (Settings → General → Environment,
-or `bunwrite env add`). The console shows it as a badge next to the project's
-name in the sidebar, the project switcher and the projects page; `production`
-is red and adds a red line along the top of every page, staging-like names are
-amber.
 
 ### Checking environments
 

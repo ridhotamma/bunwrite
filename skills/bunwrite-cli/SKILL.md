@@ -140,7 +140,7 @@ Push only sends differences. A freshly pulled config pushes back with
 - `.env.local` and `.env.*.local` are never uploaded with function code or
   site files.
 - `bunwrite env add <name>` writes the environment, creates its files, and
-  (with a console sign-in) creates/labels the project; `--endpoint`,
+  (with a console sign-in) creates the project if missing; `--endpoint`,
   `--project-id`, `--protected`, `--create`, `--yes` skip questions.
 - `bunwrite run --env <name> [--function-id <id>] -- <command>` runs a local
   command with the merged variables; empty secret placeholders stay unset.

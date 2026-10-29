@@ -39,7 +39,6 @@ export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   backups: 'backups',
   render: 'render',
   cache: 'cache',
-  environment: 'general',
 }
 
 export const tabPath = (tab: SettingsTab) => `${SETTINGS}/${tab}`

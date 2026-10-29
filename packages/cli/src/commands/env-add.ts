@@ -1,7 +1,7 @@
 /**
  * `bunwrite env add <name>`: add an environment in one step. Asks for the
- * server and project (with sensible defaults), checks the server, creates or
- * labels the project when you are signed in to its console, writes the
+ * server and project (with sensible defaults), checks the server, creates the
+ * project when it is missing and you are signed in to its console, writes the
  * config, and creates the environment's .env files.
  *
  *   --endpoint <url>  --project-id <id>  --protected / --no-protected
@@ -13,10 +13,10 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { BunwriteException, Organization } from '@bunwrite/sdk'
 
 import { bool, flag, type Args } from '../args'
-import { consoleClient, describe } from '../clients'
+import { consoleClient } from '../clients'
 import { currentSession, readConfig, sessionFor, writeConfig, type Environment } from '../config'
 import { envFiles, ignoreLocalFiles, writeEnvFile } from '../envfiles'
-import { ask, bold, CliError, confirm, dim, info, log, success, warn } from '../ui'
+import { ask, bold, CliError, confirm, dim, info, log, success } from '../ui'
 import { checkEndpoint } from './account'
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
@@ -60,8 +60,7 @@ export async function envAdd(args: Args): Promise<void> {
       ? production
       : await confirm(`Protect ${name}? Pushes then ask you to type its name.`, production)
 
-  // With a console sign-in for this server, make sure the project is there and label it.
-  let labelled = false
+  // With a console sign-in for this server, make sure the project is there.
   if (session.cookie) {
     const client = consoleClient({ ...config, endpoint }, session)
     const organization = new Organization(client)
@@ -79,13 +78,6 @@ export async function envAdd(args: Args): Promise<void> {
       await organization.createProject({ projectId, name: projectName } as any)
       success(`Created project ${projectName} ( ${projectId} )`)
     }
-    try {
-      const url = new URL(`${client.config.endpoint}/organization/projects/${encodeURIComponent(projectId)}`)
-      await client.call('patch', url, { 'content-type': 'application/json' }, { environment: name })
-      labelled = true
-    } catch (error) {
-      warn(`The project was not labelled ${name} in the console: ${describe(error)}`)
-    }
   }
 
   const entry: Environment = {}
@@ -93,7 +85,7 @@ export async function envAdd(args: Args): Promise<void> {
   entry.projectId = projectId
   if (protect) entry.protected = true
   writeConfig({ ...config, environments: { ...config.environments, [name]: entry } })
-  success(`Added ${bold(name)} → ${projectId} @ ${hostOf(endpoint)}${protect ? ' (protected)' : ''}${labelled ? `, labelled ${name} in the console` : ''}`)
+  success(`Added ${bold(name)} → ${projectId} @ ${hostOf(endpoint)}${protect ? ' (protected)' : ''}`)
 
   // The live/preview files are optional; only the everyday pair is made.
   const files = envFiles(config, name).filter((f) => f.own && f.context === '')

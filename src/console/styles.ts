@@ -247,8 +247,6 @@ dialog.dialog-closing::backdrop{opacity:0}
 .badge.success{background:var(--success-bg);color:var(--success)}.badge.critical{background:var(--critical-bg);color:var(--critical)}
 .badge.attention{background:var(--attention-bg);color:var(--attention)}.badge.info{background:var(--info-bg);color:var(--info)}
 td .badge+.badge{margin-left:6px}
-.env-badge{text-transform:lowercase;flex:none}.switcher-org{display:flex;align-items:center;gap:6px}.switcher-org-name{overflow:hidden;text-overflow:ellipsis;min-width:0}.switcher-env{font-size:10px;line-height:15px;padding:0 6px;border-radius:6px}.menu-item .env-badge{margin-left:auto}.project-card-badges .badge+.badge{margin-left:6px}.brand .env-badge{margin-left:6px}
-body[data-env=critical]{box-shadow:inset 0 3px 0 var(--critical)}
 .banner{display:flex;align-items:flex-start;gap:12px;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-weight:450;background:var(--info-bg);color:var(--info);transition:opacity .18s ease,transform .18s ease}
 .banner.success{background:var(--success-bg);color:var(--success)}
 .banner.critical{background:var(--critical-bg);color:var(--critical)}
@@ -302,7 +300,7 @@ dialog.dialog-wide{max-width:min(760px,calc(100vw - 32px))}
   html.nav-collapsed .nav-head{flex-direction:column;gap:6px}
   html.nav-collapsed .switcher{flex:none}
   html.nav-collapsed .switcher-btn{padding:6px}
-  html.nav-collapsed .switcher-text,html.nav-collapsed .switcher-caret,html.nav-collapsed .switcher-env{display:none}
+  html.nav-collapsed .switcher-text,html.nav-collapsed .switcher-caret{display:none}
   html.nav-collapsed .nav>a{justify-content:center;padding:8px 0}
   html.nav-collapsed .nav>a span{display:none}
   html.nav-collapsed .nav .group{display:none}

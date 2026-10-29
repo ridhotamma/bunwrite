@@ -827,38 +827,33 @@ describe('environments', () => {
     }
   })
 
-  test('env add writes the environment, its files, and labels the project', async () => {
+  test('env add writes the environment and its files, and checks the project', async () => {
     const ws = new Workspace('env-add')
     await ws.signedIn()
-    try {
-      const added = await ws.ok('env', 'add', 'production', '--yes')
-      expect(added).toContain(`Added production → ${PROJECT} @ ${new URL(server.endpoint).host} (protected), labelled production in the console`)
-      expect(added).toContain('Created .env.production and .env.production.local')
-      expect(ws.config.environments.production).toEqual({ endpoint: server.endpoint, projectId: PROJECT, protected: true })
-      expect(server.services.config.environmentLabel).toBe('production')
-      expect(statSync(join(ws.dir, '.env.production.local')).mode & 0o777).toBe(0o600)
-      expect(readFileSync(join(ws.dir, '.gitignore'), 'utf8')).toContain('.env*.local')
+    const added = await ws.ok('env', 'add', 'production', '--yes')
+    expect(added).toContain(`Added production → ${PROJECT} @ ${new URL(server.endpoint).host} (protected)`)
+    expect(added).not.toContain('labelled')
+    expect(added).toContain('Created .env.production and .env.production.local')
+    expect(ws.config.environments.production).toEqual({ endpoint: server.endpoint, projectId: PROJECT, protected: true })
+    expect(statSync(join(ws.dir, '.env.production.local')).mode & 0o777).toBe(0o600)
+    expect(readFileSync(join(ws.dir, '.gitignore'), 'utf8')).toContain('.env*.local')
 
-      const again = await ws.run(['env', 'add', 'production', '--yes'])
-      expect(again.code).toBe(1)
-      expect(again.out).toContain('production is already in bunwrite.config.json')
+    const again = await ws.run(['env', 'add', 'production', '--yes'])
+    expect(again.code).toBe(1)
+    expect(again.out).toContain('production is already in bunwrite.config.json')
 
-      // Answers come from stdin: endpoint (default), project, protect.
-      const asked = await ws.run(['env', 'add', 'qa'], `\n${PROJECT}\nn\n`)
-      expect(asked.code).toBe(0)
-      expect(ws.config.environments.qa).toEqual({ endpoint: server.endpoint, projectId: PROJECT })
-      expect(server.services.config.environmentLabel).toBe('qa')
+    // Answers come from stdin: endpoint (default), project, protect.
+    const asked = await ws.run(['env', 'add', 'qa'], `\n${PROJECT}\nn\n`)
+    expect(asked.code).toBe(0)
+    expect(ws.config.environments.qa).toEqual({ endpoint: server.endpoint, projectId: PROJECT })
 
-      const missing = await ws.run(['env', 'add', 'staging', '--yes'])
-      expect(missing.code).toBe(1)
-      expect(missing.out).toContain(`Project ${PROJECT}-staging does not exist`)
-      expect(ws.config.environments.staging).toBeUndefined()
+    const missing = await ws.run(['env', 'add', 'staging', '--yes'])
+    expect(missing.code).toBe(1)
+    expect(missing.out).toContain(`Project ${PROJECT}-staging does not exist`)
+    expect(ws.config.environments.staging).toBeUndefined()
 
-      const bad = await ws.run(['env', 'add', 'Bad Name', '--yes'])
-      expect(bad.out).toContain('is not a valid environment name')
-    } finally {
-      server.services.settings.reset('environment')
-    }
+    const bad = await ws.run(['env', 'add', 'Bad Name', '--yes'])
+    expect(bad.out).toContain('is not a valid environment name')
   })
 
   test('run starts a command with the merged variables and passes its exit code on', async () => {

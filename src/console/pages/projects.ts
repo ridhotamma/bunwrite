@@ -35,7 +35,7 @@ function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
     org.name,
     'projects',
     html`${organizationHeader(org, { projects: all.length, members }, 'projects', manager, create)}${projectsView({
-      projects: filtered.map((project) => ({ ...project.info, environment: project.services.config.environmentLabel })),
+      projects: filtered.map((project) => project.info),
       currentId: ctx.selectedProjectId ?? '',
       defaultId: ctx.projects.defaultProject().info.id,
       query,

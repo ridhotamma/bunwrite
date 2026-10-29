@@ -1,6 +1,6 @@
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { badge, day, destroy, emptyState, environmentBadge, header, icon, menu, tile } from '~/console/ui'
+import { badge, day, destroy, emptyState, header, icon, menu, tile } from '~/console/ui'
 import type { ProjectInfo } from '~/projects/types'
 
 export interface CreatedProject {
@@ -15,8 +15,7 @@ export interface ProjectStats {
 }
 
 export interface ProjectsViewOptions {
-  /** With each project's environment label, when it has one. */
-  projects: (ProjectInfo & { environment?: string })[]
+  projects: ProjectInfo[]
   currentId: string
   defaultId: string
   query: string
@@ -52,8 +51,8 @@ function sparkline(values: number[]): Html {
   return html`<svg class="project-spark ${idle ? 'idle' : ''}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`
 }
 
-function badges(project: ProjectInfo & { environment?: string }, currentId: string, defaultId: string): Html {
-  return html`${environmentBadge(project.environment)}${project.id === currentId ? badge('Current', 'info') : ''}${project.id === defaultId ? badge('Default') : ''}`
+function badges(project: ProjectInfo, currentId: string, defaultId: string): Html {
+  return html`${project.id === currentId ? badge('Current', 'info') : ''}${project.id === defaultId ? badge('Default') : ''}`
 }
 
 /** Dialog IDs must be valid CSS selectors, and project IDs may contain dots. */

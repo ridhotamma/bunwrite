@@ -5,8 +5,7 @@ import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type OAuthProviderId, type S3Confi
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { SETTINGS, SETTING_GROUPS, TABS, type SettingsTab } from '~/console/settings-meta'
-import { alert, badge, destroy, emptyState, environmentBadge, formatBytes, header, icon, settingsSection, when } from '~/console/ui'
-import { SUGGESTED_ENVIRONMENTS } from '~/projects/environment'
+import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, when } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
 import type { TemplateFields, TemplateId } from '~/mail/templates'
@@ -42,16 +41,6 @@ function projectCard(ctx: ConsoleContext): Html {
       <label>Project ID<div class="copy-row"><input id="project-id" class="mono" readonly value="${c.projectId}">${copy('project-id')}</div><small>Set when the project was created. Apps send this in X-Bunwrite-Project (or X-Appwrite-Project).</small></label>
       <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
-      <div class="foot"><button class="primary">Save</button></div>
-    </form>`)
-}
-
-function environmentCard(ctx: ConsoleContext): Html {
-  const label = ctx.services.config.environmentLabel ?? ''
-  return card(ctx, 'environment', 'Environment', 'environment', 'Label this project, for example production or staging. The label shows next to its name everywhere in the console, and production turns the top edge red.', html`
-    <form method="post" action="${SETTINGS}/environment">
-      <label>Environment<input name="environment" class="mono" value="${label}" list="environment-suggestions" maxlength="32" placeholder="none" pattern="[A-Za-z0-9][A-Za-z0-9_\-]*"><small>Letters, digits, - and _. Leave empty for no label. ${label ? html`Now: ${environmentBadge(label)}` : ''} <code>bunwrite env add</code> sets it from the CLI.</small></label>
-      <datalist id="environment-suggestions">${SUGGESTED_ENVIRONMENTS.map((name) => html`<option value="${name}"></option>`)}</datalist>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`)
 }
@@ -325,7 +314,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
   let body: Html
   switch (tab) {
     case 'general':
-      body = html`${projectCard(ctx)}${environmentCard(ctx)}`
+      body = projectCard(ctx)
       break
     case 'email':
       body = emailCards(ctx)
