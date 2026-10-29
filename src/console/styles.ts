@@ -109,7 +109,7 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .role-form{margin:0}.role-form select{min-height:28px;padding:2px 30px 2px 10px;font-size:13px;background-color:var(--surface);border-color:var(--border)}
 .role-form select:hover{border-color:var(--border-strong)}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-.stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}.stack-fields .fields{row-gap:14px}
+.stack-fields{display:flex;flex-direction:column;gap:14px}.stack-fields label{margin:0}.stack-fields>div:empty{display:none}.stack-fields .fields{row-gap:14px}
 .card.narrow{max-width:520px}
 .code-source{border:0;padding:0;margin:0;min-width:0}.code-source legend{padding:0;margin-bottom:6px;font-weight:450}
 .code-source .choice{grid-template-columns:repeat(3,minmax(0,1fr));margin:0}

@@ -52,7 +52,7 @@ function addDialog(options: VariableListOptions): Html {
   return dialog({
     id,
     title: options.addLabel ?? 'Add variable',
-    body: html`<form id="${form}" method="post" action="${options.save}">
+    body: html`<form id="${form}" method="post" action="${options.save}" class="stack-fields">
       <label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_KEY"><small>Letters, numbers and underscores; cannot start with a number.</small></label>
       <label>Value<input name="value" placeholder="Value"></label>
       ${contextPicker()}
@@ -68,14 +68,13 @@ function editDialog(v: VariableEntry, index: number, options: VariableListOption
   return dialog({
     id,
     title: `Edit ${v.key}`,
-    body: html`<form id="${form}" method="post" action="${options.save}">
+    body: html`<form id="${form}" method="post" action="${options.save}" class="stack-fields">
       <input type="hidden" name="key" value="${v.key}">
       <input type="hidden" name="context" value="${v.context ?? ''}">
       <label>Name<input value="${v.key}" class="mono" readonly></label>
       <label>Deployments<input value="${CONTEXT_LABELS[(v.context ?? '') as VariableContext] ?? v.context}" readonly></label>
-      <label>Value<input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'Leave blank to keep the current value' : 'Value'}"></label>
+      <label>Value<input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'Leave blank to keep the current value' : 'Value'}">${v.secret ? html`<small>The current value is hidden. Leave it blank to keep it.</small>` : ''}</label>
       <label class="check"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide the value</label>
-      ${v.secret ? html`<p class="help">The current value is hidden. Leave it blank to keep it.</p>` : ''}
     </form>`,
     actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Save</button>`,
   })

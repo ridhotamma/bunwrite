@@ -12,8 +12,8 @@ export function envBulkDialog(options: { id: string; title: string; action: stri
   return dialog({
     id,
     title,
-    body: html`<form id="${formId}" method="post" action="${action}" hx-post="${action}" hx-target="#${id}-error" hx-swap="innerHTML">
-      <label style="margin-bottom:12px">Variables<textarea name="env" class="mono" rows="10" style="min-height:220px" spellcheck="false" autocomplete="off" required placeholder="${'KEY=value\nANOTHER_KEY=value'}"></textarea><small>One KEY=value per line. Blank lines and lines starting with # are ignored; quotes are stripped from fully quoted values.</small></label>
+    body: html`<form id="${formId}" method="post" action="${action}" hx-post="${action}" hx-target="#${id}-error" hx-swap="innerHTML" class="stack-fields">
+      <label>Variables<textarea name="env" class="mono" rows="10" style="min-height:220px" spellcheck="false" autocomplete="off" required placeholder="${'KEY=value\nANOTHER_KEY=value'}"></textarea><small>One KEY=value per line. Blank lines and lines starting with # are ignored; quotes are stripped from fully quoted values.</small></label>
       <div id="${id}-error"></div>
       <label class="check"><input type="checkbox" name="secret" checked>Hide values</label>
     </form>`,
