@@ -51,15 +51,20 @@ ${bold('Environments')} ("environments" in the config: a server and project per 
   env list             Environments, their targets and .env files
   env use <name>       Use this environment in this folder (--clear forgets it)
   env diff             What env push would change
-  env push             Apply .env, .env.<name> and .env.<name>.local to the project's variables
-  env pull             Write the project's variables into those files
+  env push             Apply .env, .env.<name> and .env.<name>.local to the variables
+  env pull             Write the variables on the server into those files
+  env check            List variables one environment sets and another misses
 
   --env <name>         Any command: run against this environment (or set BUNWRITE_ENV)
+  --scope <kind>       env diff/push/pull/check: project, functions or sites (default: all)
+  --function-id <id>   env diff/push/pull/check: only these functions (--site-id for sites)
   --prune              env push/pull: also remove what the other side does not have
   --yes                env push/pull, push: apply without asking (CI)
 
-  Values in a .local file are stored as secret. Secrets cannot be read back, so
-  pull writes them as empty placeholders, and push never sends an empty one.
+  The project's files are next to the config (or in "envDir"); a function's or
+  site's are in its path and set its own variables. Values in a .local file
+  are stored as secret and never uploaded with code. Secrets cannot be read
+  back, so pull writes them as empty placeholders, and push never sends one.
 
 ${bold('AI agents')}
   skills               Install Bunwrite agent skills with the Skills CLI

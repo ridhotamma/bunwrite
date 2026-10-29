@@ -135,8 +135,9 @@ for that environment's project with `bunwrite client --env production --key
 
 ### Variables in .env files
 
-`bunwrite env` keeps the project's variables (seen by every function and site)
-in files next to the config, or in `envDir`. Later files win:
+`bunwrite env` keeps variables in .env files. The project's variables (seen by
+every function and site) are in files next to the config, or in `envDir`.
+Later files win:
 
 | File | Holds | Commit it? |
 | --- | --- | --- |
@@ -146,13 +147,36 @@ in files next to the config, or in `envDir`. Later files win:
 
 Without environments, the files are `.env` and `.env.local`.
 
+A function or site from the config has the same files in its own `path`, and
+they set that function's or site's variables. The server applies them over the
+project's, so put shared values in the project files and only overrides here:
+
+```
+.env.production                    project: every function and site
+functions/billing/.env.production  only the billing function
+sites/web/.env.production.local    only the web site, secret
+```
+
+`env diff`, `env push` and `env pull` cover the project and every function and
+site in the config. `--scope project` (or `functions`, `sites`) narrows that,
+as do `--function-id` and `--site-id`. A function or site that is not on the
+server yet is skipped until you `bunwrite push` it. `.env.local` and
+`.env.*.local` files are never uploaded with a function's code or a site's
+files.
+
 ```bash
 bunwrite env                       # list environments, their targets and files
 bunwrite env use staging           # use staging in this folder (--clear forgets it)
 bunwrite env diff                  # what a push would change
 bunwrite env push                  # shows the changes, asks, applies
 bunwrite env pull --env production # writes the server's variables into the files
+bunwrite env check                 # variables one environment sets and another misses
 ```
+
+`env check` compares the files only, so it fits in CI before a deploy: it exits
+with 1 when an environment is missing a variable another one sets, and names
+it, for example `✗ production is missing SENTRY_DSN, STRIPE_KEY (function
+billing)`. With `--env <name>` it checks just that environment.
 
 - **Secrets stay safe.** The server never shows a secret's value, so `pull`
   writes it to the `.local` file as an empty placeholder, and `push` never sends
@@ -170,7 +194,9 @@ bunwrite env pull --env production # writes the server's variables into the file
 
 If the config's folder already has a `.env` for something else (such as the
 Bunwrite server's own settings), set `envDir` to another folder so it is not
-pushed as project variables.
+pushed as project variables. The same goes for a function folder whose `.env`
+is only for local runs: `env diff` shows what would be sent, and
+`--scope project` leaves functions and sites alone.
 
 ## Service commands
 

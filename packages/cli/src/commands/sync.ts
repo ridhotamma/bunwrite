@@ -415,7 +415,7 @@ async function pushSchema(ctx: Ctx, f: Flavor): Promise<string> {
 
 const FUNCTION_FIELDS = ['name', 'runtime', 'execute', 'events', 'schedule', 'timeout', 'enabled', 'logging', 'entrypoint', 'commands', 'scopes', 'domains']
 
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'function'
+export const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'function'
 
 async function pullFunctions(ctx: Ctx): Promise<string> {
   const functions = new Functions(ctx.client)
@@ -457,11 +457,17 @@ async function pullFunctions(ctx: Ctx): Promise<string> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+/** Secrets for `bunwrite env`: never uploaded with code. */
+const LOCAL_ENV_FILES = ['.env.local', '.env.*.local']
+
+const gitignoreOf = (folder: string) =>
+  existsSync(join(folder, '.gitignore')) ? readFileSync(join(folder, '.gitignore'), 'utf8').split('\n') : []
+
 async function deploy(ctx: Ctx, fn: Item): Promise<void> {
   const functions = new Functions(ctx.client)
   const folder = resolve(fn.path ?? `functions/${slug(fn.name ?? fn.$id)}`)
   if (!existsSync(folder)) throw new CliError(`The code folder of ${fn.$id} does not exist: ${folder}`)
-  const files = collect(folder, fn.ignore)
+  const files = collect(folder, [...(fn.ignore ?? gitignoreOf(folder)), ...LOCAL_ENV_FILES])
   if (!files.length) throw new CliError(`No files to deploy in ${folder}`)
   const code = packGzip(files)
   const activate = bool(ctx.args, 'activate', true)
@@ -633,6 +639,7 @@ async function deploySite(ctx: Ctx, site: Item): Promise<void> {
     ...(ssr ? ['node_modules'] : []),
     ...(withVariables ? ['.env'] : []),
     ...(site.ignore ?? []),
+    ...LOCAL_ENV_FILES,
   ]
   const files = collect(folder, ignore).map((f) => (!ssr && out ? { ...f, path: `${out}/${f.path}` } : f))
   if (!files.length) throw new CliError(`No files to deploy in ${folder}`)

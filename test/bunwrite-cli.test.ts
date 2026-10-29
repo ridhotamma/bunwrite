@@ -385,6 +385,9 @@ describe('functions', () => {
     mkdirSync(join(ws.dir, 'functions', 'hello', 'src'), { recursive: true })
     writeFileSync(join(ws.dir, 'functions', 'hello', 'src', 'main.js'), MAIN)
     writeFileSync(join(ws.dir, 'functions', 'hello', 'package.json'), '{"name":"hello"}')
+    // Secrets for `bunwrite env` stay on this machine.
+    writeFileSync(join(ws.dir, 'functions', 'hello', '.env.production.local'), 'SECRET=never-uploaded\n')
+    writeFileSync(join(ws.dir, 'functions', 'hello', '.env.local'), 'SECRET=never-uploaded\n')
     ws.config = {
       projectId: PROJECT,
       functions: [
@@ -416,6 +419,9 @@ describe('functions', () => {
     expect(pulled).toMatchObject({ $id: 'hello', name: 'Hello', entrypoint: 'src/main.js', execute: ['any'], timeout: 15, path: 'functions/hello' })
     expect(readFileSync(join(fresh.dir, 'functions/hello/src/main.js'), 'utf8')).toBe(MAIN)
     expect(existsSync(join(fresh.dir, 'functions/hello/built.txt'))).toBe(false)
+    expect(existsSync(join(fresh.dir, 'functions/hello/package.json'))).toBe(true)
+    expect(existsSync(join(fresh.dir, 'functions/hello/.env.production.local'))).toBe(false)
+    expect(existsSync(join(fresh.dir, 'functions/hello/.env.local'))).toBe(false)
   })
 
   test('a failing build is reported with its logs and keeps the active code', async () => {
@@ -754,6 +760,71 @@ describe('environments', () => {
     expect(config.code).toBe(1)
     expect(config.out).toContain('Stopped: nothing was changed in production.')
     await clearVariables()
+  })
+
+  test('functions and sites keep their own files; check finds what an environment misses', async () => {
+    await clearVariables()
+    const functions = new Functions(admin())
+    const sites = new Sites(admin())
+    await functions.create({ functionId: 'env-fn', name: 'Env fn', runtime: 'node-22' as any })
+    await sites.create({ siteId: 'env-site', name: 'Env site', framework: Framework.Other, buildRuntime: BuildRuntime.Static1 })
+    try {
+      const ws = new Workspace('env-scopes')
+      await ws.withKey()
+      const config = environments({
+        functions: [
+          { $id: 'env-fn', name: 'Env fn', path: 'functions/env-fn' },
+          { $id: 'ghost', name: 'Ghost', path: 'functions/ghost' },
+        ],
+        sites: [{ $id: 'env-site', name: 'Env site', path: 'sites/env-site' }],
+      })
+      ws.config = config
+      for (const dir of ['functions/env-fn', 'functions/ghost', 'sites/env-site']) mkdirSync(join(ws.dir, dir), { recursive: true })
+      writeFileSync(join(ws.dir, '.env.staging'), 'ROOT=1\n')
+      writeFileSync(join(ws.dir, 'functions/env-fn/.env.staging'), 'FN_ONLY=1\n')
+      writeFileSync(join(ws.dir, 'functions/env-fn/.env.staging.local'), 'FN_SECRET=s3cret\n')
+      writeFileSync(join(ws.dir, 'functions/ghost/.env.staging'), 'GHOST=1\n')
+      writeFileSync(join(ws.dir, 'sites/env-site/.env.staging'), 'SITE_URL=https://web.example.com\n')
+
+      const plan = await ws.ok('env', 'diff', '--env', 'staging')
+      expect(plan).toContain('function ghost is not on the server yet')
+      expect(plan).toMatch(/project\n\s+\+ ROOT/)
+      expect(plan).toMatch(/function env-fn\n\s+\+ FN_ONLY\s+new\n\s+\+ FN_SECRET\s+new, secret/)
+      expect(plan).toMatch(/site env-site\n\s+\+ SITE_URL/)
+      const onlySites = await ws.ok('env', 'diff', '--env', 'staging', '--scope', 'sites')
+      expect(onlySites).toContain('SITE_URL')
+      expect(onlySites).not.toContain('FN_ONLY')
+      expect(onlySites).not.toContain('ROOT')
+
+      expect(await ws.ok('env', 'push', '--env', 'staging', '--yes')).toContain('Pushed 4 changes to staging')
+      const fnVars = (await functions.listVariables({ functionId: 'env-fn' })).variables
+      expect(fnVars.map((v) => [v.key, v.secret]).sort()).toEqual([['FN_ONLY', false], ['FN_SECRET', true]])
+      expect((await sites.listVariables({ siteId: 'env-site' })).variables.map((v) => v.key)).toEqual(['SITE_URL'])
+      expect(Object.keys(await variables())).toEqual(['ROOT'])
+
+      const fresh = new Workspace('env-scopes-pull')
+      await fresh.withKey()
+      fresh.config = config
+      for (const dir of ['functions/env-fn', 'sites/env-site']) mkdirSync(join(fresh.dir, dir), { recursive: true })
+      expect(await fresh.ok('env', 'pull', '--env', 'staging')).toContain(
+        'Pulled staging into .env.staging, functions/env-fn/.env.staging, functions/env-fn/.env.staging.local and sites/env-site/.env.staging',
+      )
+      expect(readFileSync(join(fresh.dir, 'functions/env-fn/.env.staging'), 'utf8')).toBe('FN_ONLY=1\n')
+      expect(readFileSync(join(fresh.dir, 'functions/env-fn/.env.staging.local'), 'utf8')).toBe('FN_SECRET=  # secret: set on the server\n')
+      expect(await fresh.ok('env', 'push', '--env', 'staging')).toContain('No changes to push to staging')
+
+      writeFileSync(join(ws.dir, '.env.production'), 'ROOT=2\n')
+      const checked = await ws.run(['env', 'check'])
+      expect(checked.code).toBe(1)
+      expect(checked.out).toContain('✓ staging sets every variable')
+      expect(checked.out).toContain('✗ production is missing FN_ONLY (function env-fn), FN_SECRET (function env-fn), GHOST (function ghost), SITE_URL (site env-site)')
+      expect(checked.out).toContain('2 environments are missing variables')
+      expect(await ws.ok('env', 'check', '--env', 'staging')).toContain('✓ staging sets every variable')
+    } finally {
+      await functions.delete({ functionId: 'env-fn' })
+      await sites.delete({ siteId: 'env-site' })
+      await clearVariables()
+    }
   })
 
   test('without environments, env uses .env and .env.local for the linked project', async () => {

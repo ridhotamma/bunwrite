@@ -10,6 +10,9 @@
  *
  * Without an environment: `.env`, then `.env.local`. A variable from a
  * `.local` file is stored as secret on the server.
+ *
+ * The project's files are in `envDir` (default: the config's folder); a
+ * function's or site's are in its `path` and set its own variables.
  */
 import { appendFileSync, chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
@@ -132,9 +135,8 @@ export function envDir(config: ProjectConfig, dir = process.cwd()): string {
   return config.envDir ? resolve(root, config.envDir) : root
 }
 
-/** The files for an environment (or none), in the order they apply. */
-export function envFiles(config: ProjectConfig, name: string | null, dir = process.cwd()): EnvFile[] {
-  const folder = envDir(config, dir)
+/** The files in one folder for an environment (or none), in the order they apply. */
+export function filesIn(folder: string, name: string | null, dir = process.cwd()): EnvFile[] {
   const root = projectDir(dir)
   const file = (base: string, secret: boolean, own: boolean): EnvFile => {
     const path = join(folder, base)
@@ -142,6 +144,11 @@ export function envFiles(config: ProjectConfig, name: string | null, dir = proce
   }
   if (!name) return [file('.env', false, true), file('.env.local', true, true)]
   return [file('.env', false, false), file(`.env.${name}`, false, true), file(`.env.${name}.local`, true, true)]
+}
+
+/** The project's files for an environment (or none), in `envDir`. */
+export function envFiles(config: ProjectConfig, name: string | null, dir = process.cwd()): EnvFile[] {
+  return filesIn(envDir(config, dir), name, dir)
 }
 
 /** Every variable the files set, with the last file winning. */

@@ -123,9 +123,17 @@ Push only sends differences. A freshly pulled config pushes back with
 - Project variables live in `.env` (shared), `.env.<name>`, and
   `.env.<name>.local` (secrets; never commit). No environments: `.env` and
   `.env.local`. `"envDir"` moves them.
-- `bunwrite env diff`, `env push`, `env pull`; `--prune` removes what the other
+- A function's or site's own variables use the same file names inside its
+  `path`; the server applies them over the project's.
+- `bunwrite env diff`, `env push`, `env pull` cover the project and every
+  function and site in the config (`--scope project|functions|sites`,
+  `--function-id`, `--site-id` narrow it); `--prune` removes what the other
   side lacks; `--yes` skips questions. Protected environments ask for their
   name before `env push` and `push`.
+- `bunwrite env check` (files only, CI-friendly) exits 1 when one environment
+  is missing a variable another sets.
+- `.env.local` and `.env.*.local` are never uploaded with function code or
+  site files.
 - Pulled secrets are empty placeholders in the `.local` file; push never sends
   an empty `.local` value, so pull then push leaves secrets unchanged.
 
