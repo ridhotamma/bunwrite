@@ -7,7 +7,7 @@
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
-import type { Config } from '~/config'
+import type { Config, SmtpConfig } from '~/config'
 import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
@@ -63,6 +63,9 @@ export class ProjectManager implements ProjectResolver {
   private readonly db: Db
   private readonly dataDir: string
   private readonly runtimes = new Map<string, ProjectRuntime>()
+  /** The default project's current SMTP; other projects use it unless they store their own. */
+  private readonly serverSmtp = (): SmtpConfig | null =>
+    this.control.config.smtp ? { ...this.control.config.smtp } : null
 
   constructor(options: ProjectManagerOptions) {
     this.control = options.services
@@ -72,6 +75,12 @@ export class ProjectManager implements ProjectResolver {
     this.ensureDefault()
     this.load()
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
+    this.control.settings.subscribe((key) => {
+      if (key !== 'smtp') return
+      for (const runtime of this.runtimes.values()) {
+        if (runtime.services !== this.control) runtime.services.settings.refresh('smtp')
+      }
+    })
   }
 
   private ensureDefault(): void {
@@ -140,7 +149,7 @@ export class ProjectManager implements ProjectResolver {
       backupsPrefix: info.id,
       render: { ...base.render },
       cache: { ...base.cache },
-      smtp: base.smtp ? { ...base.smtp } : null,
+      smtp: null,
       oauth: Object.fromEntries(Object.entries(base.oauth).map(([id, config]) => [id, config ? { ...config } : config])),
       allowedOrigins: [...base.allowedOrigins],
     }
@@ -164,7 +173,7 @@ export class ProjectManager implements ProjectResolver {
       this.db.sqlite.query('UPDATE _projects SET org_id = ?, updated_at = ? WHERE id = ?').run(info.orgId, info.updatedAt, info.id)
     }
     const config = this.configFor(info, paths, instance)
-    const services = createServices(config, db)
+    const services = createServices(config, db, {}, { smtpDefault: this.serverSmtp })
     if (services.config.projectName !== info.name) {
       info.name = services.config.projectName
       info.updatedAt = now()
@@ -245,7 +254,7 @@ export class ProjectManager implements ProjectResolver {
       )
       const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now() }
       const config = this.configFor(info, paths, instance)
-      const services = createServices(config, db)
+      const services = createServices(config, db, {}, { smtpDefault: this.serverSmtp })
       this.db.sqlite
         .query('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
         .run(info.id, info.name, info.orgId, info.createdAt, info.updatedAt)

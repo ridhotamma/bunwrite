@@ -1,6 +1,6 @@
 /**
- * One variable manager for every scope: global project variables, global
- * function variables, a function's own variables and a site's variables.
+ * One variable manager for every scope: global project variables, a
+ * function's own variables and a site's variables.
  *
  * The list is a table with Edit and Remove inline on each row; adding or
  * editing opens a dialog. Bulk import uses the env-file dialog.

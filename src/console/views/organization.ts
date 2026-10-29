@@ -118,6 +118,18 @@ function inviteLinksDialog(results: InviteResult[]): Html {
   })
 }
 
+/** The link for one pending invitation, minted on demand. The previous link stops working. */
+function invitationLinkDialog(result: InviteResult): Html {
+  return dialog({
+    id: 'invitation-link',
+    title: 'Invitation link',
+    open: true,
+    body: html`<p class="dialog-message">Send this link to ${result.member.email}. It replaces the previous link, which stops working.</p>
+      <label>Invitation link<div class="copy-row"><input id="invitation-link-value" class="mono" readonly value="${result.link}"><button type="button" data-copy-target="#invitation-link-value">${icon('copy')}<span data-copy-label>Copy</span></button></div></label>`,
+    actions: html`<button type="button" class="primary" data-dialog-close>Done</button>`,
+  })
+}
+
 export interface InviteAcceptOptions {
   orgName: string
   email: string
@@ -170,6 +182,8 @@ export interface MembersViewOptions {
   query: string
   inviteOpen: boolean
   inviteResults?: InviteResult[]
+  /** A freshly minted link for the console to show, with no email sent. */
+  copiedLink?: InviteResult
 }
 
 function membersTable(options: MembersViewOptions, active: OrganizationMember[]): Html {
@@ -198,7 +212,8 @@ function invitationsTable(options: MembersViewOptions, invited: OrganizationMemb
         <td class="subdued hide-sm">${day(member.invitedAt)}</td>
         ${options.canManage
           ? html`<td class="num">${menu(
-              html`<form method="post" action="/console/organization/members/${id}/resend"><button type="submit">Resend invitation</button></form>
+              html`<form method="post" action="/console/organization/members/${id}/invite-link"><button type="submit">Copy invitation link</button></form>
+                <form method="post" action="/console/organization/members/${id}/resend"><button type="submit">Resend invitation</button></form>
                 <hr>
                 ${destroy(`/console/organization/members/${id}/delete`, 'Revoke invitation', `Revoke the invitation for ${member.email}? The link stops working.`)}`,
               { label: `Actions for ${member.email}` },
@@ -246,5 +261,6 @@ export function membersView(options: MembersViewOptions): Html {
     <p class="page-note subdued"><b>Owners</b> manage members, settings and every project. <b>Developers</b> work in every project.</p>
     <div id="members-list">${body}</div>
     ${canManage ? inviteDialog(options.inviteOpen && !unsent.length) : ''}
-    ${unsent.length ? inviteLinksDialog(unsent) : ''}`
+    ${unsent.length ? inviteLinksDialog(unsent) : ''}
+    ${options.copiedLink ? invitationLinkDialog(options.copiedLink) : ''}`
 }

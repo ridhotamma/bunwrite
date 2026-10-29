@@ -652,7 +652,7 @@ export const variables = sqliteTable(
   (t) => [uniqueIndex('_variables_scope_key_context').on(t.scope, t.key, t.context)],
 )
 
-/** Function variables (Appwrite's per-function env). function_id '*' applies to every function. */
+/** Function variables (Appwrite's per-function env). */
 export const functionVars = sqliteTable(
   '_function_vars',
   {

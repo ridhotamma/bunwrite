@@ -179,15 +179,16 @@ request (`src/lib/streaming.ts`, also used for any `text/event-stream`
 response), and streamed gzip flushes every chunk.
 
 `BUNWRITE_API_KEY` (and `APPWRITE_API_KEY`) is a per-process internal key, so
-functions need no key in env. Variables come from three places; a later one wins:
+functions need no key in env. Variables come from four places; a later one wins:
 1. the server env, minus its private keys;
-2. `FUNCTIONS_ENV_FILE`;
-3. the console's function variables.
+2. project variables (**Settings → Variables**);
+3. `FUNCTIONS_ENV_FILE`;
+4. the function's own variables in the console.
 
-Console variables can be global (Settings → Functions) or set on one function.
-A function-specific value overrides a global one with the same name. Both
-places can bulk import pasted `KEY=value` lines; malformed lines are reported
-with line numbers before anything is written.
+Project variables are available to every site and function. A function-specific
+value overrides a project one with the same name. Both the project variables
+page and a function's Variables tab can bulk import pasted `KEY=value` lines;
+malformed lines are reported with line numbers before anything is written.
 
 Code comes from one of two places. `appwrite push functions` uploads a
 deployment: a `.tar.gz` (in 5 MB chunks when larger) unpacked to

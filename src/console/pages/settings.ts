@@ -202,13 +202,6 @@ export function settingsPages(router: ConsoleRouter): void {
     then: () => tabPath('variables'),
   })
 
-  registerVariableRoutes(router, {
-    base: `${SETTINGS}/functions/variables`,
-    scope: () => '*',
-    store: (ctx) => ctx.services.functions,
-    then: () => tabPath('functions'),
-  })
-
   router.post(`${SETTINGS}/logs`, ({ ctx }) => {
     const days = Number(ctx.form.retentionDays)
     if (!Number.isFinite(days) || days < 0) throw err('general_argument_invalid', 'Retention must be zero or more days.')

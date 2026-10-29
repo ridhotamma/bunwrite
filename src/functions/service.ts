@@ -470,17 +470,13 @@ export class FunctionService {
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, id))
   }
 
-  /** Every variable scope is a `function_id`: `*` holds the global ones. */
+  /** A function's own variables, each with its deploy context. */
   variables(functionId: string): { key: string; value: string; secret: number; function_id: string; context: string }[] {
     return this.sql
       .query<{ key: string; value: string; secret: number; function_id: string; context: string }, [string]>(
         'SELECT key, value, secret, function_id, context FROM _function_vars WHERE function_id = ? ORDER BY key, context',
       )
       .all(functionId)
-  }
-
-  globalVariables() {
-    return this.variables('*')
   }
 
   setVariable(functionId: string, key: string, value: string, secret: boolean, context: VariableContext = ''): void {
@@ -735,8 +731,8 @@ export class FunctionService {
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
     const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
-    // Global ('*') values first, then the function's own; each for this deploy context.
-    const vars = { ...resolveContext(this.variables('*'), context), ...resolveContext(this.variables(f.id), context) }
+    // The function's own values for this deploy context; they win over project variables.
+    const vars = resolveContext(this.variables(f.id), context)
     const projectVars = this.options.projectVariables?.(context) ?? {}
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
     const own = { ...projectVars, ...this.options.functionEnv, ...vars }

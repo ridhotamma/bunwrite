@@ -60,6 +60,11 @@ export interface ApiKeyRow {
   created_at: string
 }
 
+export interface SettingsOptions {
+  /** A value inherited when this project has no stored setting: the default project's live SMTP. */
+  smtpDefault?: () => SmtpConfig | null
+}
+
 export class SettingsService {
   /** Env values, kept so a console setting can be cleared back to them. */
   private readonly defaults: Pick<
@@ -79,11 +84,13 @@ export class SettingsService {
     | 'render'
     | 'cache'
   >
+  private readonly listeners = new Set<(key: SettingKey) => void>()
 
   constructor(
     private db: Db,
     private config: Config,
     private onChange: (key: SettingKey) => void = () => {},
+    private readonly options: SettingsOptions = {},
   ) {
     this.defaults = {
       projectName: config.projectName,
@@ -127,7 +134,7 @@ export class SettingsService {
       }
       case 'smtp': {
         const v = this.read<SmtpConfig | { disabled: true }>('smtp')
-        c.smtp = v === null ? this.defaults.smtp : 'disabled' in v ? null : v
+        c.smtp = v === null ? this.defaultSmtp() : 'disabled' in v ? null : v
         break
       }
       case 'google':
@@ -171,6 +178,10 @@ export class SettingsService {
     }
   }
 
+  private defaultSmtp(): SmtpConfig | null {
+    return this.options.smtpDefault ? this.options.smtpDefault() : this.defaults.smtp
+  }
+
   /**
    * OAuth provider credentials: stored values win, provider defaults fill
    * URLs, and a `disabled` marker turns the provider off even if env set it.
@@ -198,14 +209,31 @@ export class SettingsService {
       .query('INSERT INTO _settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
       .run(key, JSON.stringify(value), now())
     this.apply(key)
-    this.onChange(key)
+    this.emit(key)
   }
 
   /** Forget the console value and go back to env. */
   reset(key: SettingKey): void {
     this.db.sqlite.query('DELETE FROM _settings WHERE key = ?').run(key)
     this.apply(key)
+    this.emit(key)
+  }
+
+  /** Re-apply a setting without touching the stored value, after a shared default changed. */
+  refresh(key: SettingKey): void {
+    this.apply(key)
+    this.emit(key)
+  }
+
+  /** Observe applied changes, including refreshes of shared defaults. */
+  subscribe(listener: (key: SettingKey) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private emit(key: SettingKey): void {
     this.onChange(key)
+    for (const listener of this.listeners) listener(key)
   }
 
   // ---------------------------------------------------------- API keys

@@ -202,8 +202,9 @@ to dodge sign-in limits.
 | `PYTHON_BIN` | `python3` | Python executable for `python-*` runtimes. |
 | `FUNCTIONS_SKIP_SCHEDULES` | unset | Comma-separated function IDs whose schedules should be ignored. |
 
-Function-specific variables can also be set in the console. Console values win
-over the env file, and a function's own variable wins over a global one.
+Function-specific variables can also be set in the console; they win over the
+env file. Variables for every function and site are edited in
+**Settings → Variables**, and a function's own variable wins over a global one.
 
 ## Sites
 
@@ -346,7 +347,7 @@ openssl rand -hex 32
 
 ### Email
 
-SMTP can also be configured in **Console → Settings → Email & sign-in**.
+SMTP can also be configured in **Console → Settings → Email & sign-in**. Each project can set its own SMTP there; a project without one uses the default project's current SMTP settings.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

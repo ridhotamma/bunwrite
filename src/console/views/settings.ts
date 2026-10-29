@@ -186,24 +186,13 @@ function projectVariablesCard(ctx: ConsoleContext): Html {
 function functionCards(ctx: ConsoleContext): Html {
   const c = ctx.services.config
   const fns = ctx.services.functions.list().filter((f) => f.schedule)
-  const globals = ctx.services.functions.globalVariables()
-  return html`
-    ${card(ctx, 'schedules', 'Functions', 'functions', 'Where function code lives, and which schedules are paused.', html`
-      <form method="post" action="${SETTINGS}/functions">
-        <label>Code folder<input name="functionsDir" class="mono" value="${c.functionsDir}"><small>The folder with the project config file (bunwrite.config.json or appwrite.config.json); function paths are read from it. ${codeFound(ctx)}</small></label>
-        <div class="subdued" style="margin:4px 0 8px">Paused schedules do not fire. Running a function by hand still works.</div>
-        ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''}>Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
-        <div class="foot"><button>Save</button></div>
-      </form>`)}
-    ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', variableList(globals, {
-      id: 'global-vars',
-      save: `${SETTINGS}/functions/variables`,
-      remove: `${SETTINGS}/functions/variables/delete`,
-      addLabel: 'Add global variable',
-      bulk: { id: 'bulk-global-vars', title: 'Import global variables', action: `${SETTINGS}/functions/variables/bulk` },
-      clear: { action: `${SETTINGS}/functions/variables/clear`, confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
-      empty: html`<p class="hint" style="margin:0">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`,
-    }))}`
+  return card(ctx, 'schedules', 'Functions', 'functions', 'Where function code lives, and which schedules are paused.', html`
+    <form method="post" action="${SETTINGS}/functions">
+      <label>Code folder<input name="functionsDir" class="mono" value="${c.functionsDir}"><small>The folder with the project config file (bunwrite.config.json or appwrite.config.json); function paths are read from it. ${codeFound(ctx)}</small></label>
+      <div class="subdued" style="margin:4px 0 8px">Paused schedules do not fire. Running a function by hand still works.</div>
+      ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''}>Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
+      <div class="foot"><button>Save</button></div>
+    </form>`)
 }
 
 /** Browser cache choices; a value set in env that is not listed shows as its own option. */

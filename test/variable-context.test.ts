@@ -109,7 +109,7 @@ describe('function variables', () => {
       expect((await api('GET', '/functions/ctx-fn/variables/STRIPE_KEY')).status).toBe(404)
       expect((await api('PUT', '/functions/ctx-fn/variables/STRIPE_KEY.preview', { value: 'sk_test_2' })).body.$id).toBe('STRIPE_KEY.preview')
 
-      server.services.functions.setVariable('*', 'GLOBAL', 'preview global', false, 'preview')
+      server.services.variables.setVariable('project', 'GLOBAL', 'preview global', false, 'preview')
       const fn = server.services.functions.fn('ctx-fn')
       const live = server.services.functions.env(fn, 'http')
       const build = server.services.functions.env(fn, 'build', 'preview')
@@ -120,8 +120,30 @@ describe('function variables', () => {
       expect(server.services.functions.env(fn, 'build', 'preview').STRIPE_KEY).toBeUndefined()
       expect(server.services.functions.env(fn, 'http').STRIPE_KEY).toBe('sk_live')
     } finally {
-      server.services.functions.clearVariables('*')
+      server.services.variables.clearVariables('project')
       await api('DELETE', '/functions/ctx-fn')
+    }
+  })
+
+  test('global function variables from older versions become project variables', () => {
+    const stamp = new Date().toISOString()
+    const addGlobal = (key: string, value: string) =>
+      server.db.sqlite
+        .query("INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES ('*', ?, ?, 0, '', ?, ?)")
+        .run(key, value, stamp, stamp)
+
+    server.services.variables.setVariable('project', 'SHARED', 'project value', false)
+    addGlobal('LEGACY_GLOBAL', 'kept')
+    addGlobal('SHARED', 'function value')
+    try {
+      server.services.variables.adoptFunctionGlobals()
+      expect(server.services.variables.list('project')).toMatchObject([
+        { key: 'LEGACY_GLOBAL', value: 'kept' },
+        { key: 'SHARED', value: 'project value' },
+      ])
+      expect(server.services.functions.variables('*')).toEqual([])
+    } finally {
+      server.services.variables.clearVariables('project')
     }
   })
 })

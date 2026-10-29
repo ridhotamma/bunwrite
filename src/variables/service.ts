@@ -7,7 +7,7 @@
  * are the base; a variable saved here overrides one from the host.
  *
  * Function variables live in `_function_vars` (see functions/service.ts) and
- * keep their own precedence: project < global function (`'*'`) < function.
+ * keep their own precedence: project < function.
  *
  * Every variable also has a deploy context ('' for every deployment, `live`
  * or `preview`); see context.ts.
@@ -74,6 +74,31 @@ export class VariablesService {
 
   projectEnvironment(context: DeployContext = 'live'): Record<string, string> {
     return this.environment(PROJECT_SCOPE, context)
+  }
+
+  /**
+   * Global function variables (`function_id = '*'`) used to be a separate
+   * scope. Move them to project variables, which every function already reads,
+   * and drop them. Safe to run on every start; a project value with the same
+   * name and context wins.
+   */
+  adoptFunctionGlobals(): void {
+    const rows = this.sql
+      .query<{ key: string; value: string; secret: number; context: string; created_at: string; updated_at: string }, []>(
+        "SELECT key, value, secret, context, created_at, updated_at FROM _function_vars WHERE function_id = '*'",
+      )
+      .all()
+    if (!rows.length) return
+    this.sql.transaction(() => {
+      const insert = this.sql.prepare(
+        `INSERT INTO _variables (id, scope, key, value, secret, context, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scope, key, context) DO NOTHING`,
+      )
+      for (const row of rows) {
+        insert.run(uniqueId(), PROJECT_SCOPE, row.key, row.value, row.secret, row.context, row.created_at, row.updated_at)
+      }
+      this.sql.query("DELETE FROM _function_vars WHERE function_id = '*'").run()
+    })()
   }
 
   /** Project values first, then the site's own — the site wins. */

@@ -8,7 +8,7 @@
  *   false`) and SSR previews of those builds.
  *
  * A context's own value wins over the every-deployment one. Scopes keep their
- * order on top: project < (global function) < function or site.
+ * order on top: project < function or site.
  */
 import { err } from '~/lib/errors'
 

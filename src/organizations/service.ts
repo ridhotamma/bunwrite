@@ -45,6 +45,8 @@ export interface InviteOptions {
   orgName: string
   inviter: string
   mailer: Mailer
+  /** Email the invitation. `false` mints a link to show in the console instead. */
+  notify?: boolean
 }
 
 interface OrgRow {
@@ -235,7 +237,7 @@ export class OrganizationService {
 
       const link = `${options.baseUrl.replace(/\/$/, '')}/console/invite/${token}`
       let sent = false
-      if (options.mailer.enabled) {
+      if (options.notify !== false && options.mailer.enabled) {
         try {
           await options.mailer.send(organizationInviteMail(options.orgName, options.inviter, email, link))
           sent = true

@@ -85,6 +85,33 @@ export function organizationPages(router: ConsoleRouter): void {
     )
   })
 
+  router.post('/console/organization/members/:id/invite-link', async ({ ctx, path }) => {
+    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can copy invitation links.')
+    const member = ctx.organizations.findMember(orgId(ctx), path.id!)
+    if (member.status !== 'invited') throw err('general_argument_invalid', 'That member has already accepted the invitation.')
+    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
+    const [result] = await ctx.organizations.invite(org.id, [{ email: member.email, role: member.role }], {
+      baseUrl: consoleBaseUrl(ctx),
+      orgName: org.name,
+      inviter: ctx.admin.email,
+      mailer: ctx.projects.control.mailer,
+      notify: false,
+    })
+    return ctx.render(
+      org.name,
+      'organization',
+      html`${header}${membersView({
+        members: ctx.organizations.members(org.id),
+        ownerCount: ownerCount(members),
+        canManage: true,
+        currentEmail: ctx.admin.email,
+        query: '',
+        inviteOpen: false,
+        copiedLink: result,
+      })}`,
+    )
+  })
+
   router.post('/console/organization/members/:id/resend', async ({ ctx, path }) => {
     if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can resend invitations.')
     const member = ctx.organizations.findMember(orgId(ctx), path.id!)

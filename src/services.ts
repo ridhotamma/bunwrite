@@ -14,7 +14,7 @@ import { ProxyService } from './proxy/service'
 import { QueueService } from './queue/service'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
-import { SettingsService } from './settings/service'
+import { SettingsService, type SettingsOptions } from './settings/service'
 import { SiteService } from './sites/service'
 import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
@@ -59,7 +59,7 @@ export interface Services {
   queue: QueueService
 }
 
-export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}): Services {
+export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
   config.internalKey ??= `internal_${randomSecret(32)}`
   const registry = new Registry(db)
   const store = new DocumentStore(db)
@@ -68,6 +68,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const teams = new TeamService(db, store, auth)
   const proxy = new ProxyService(db, config)
   const variables = new VariablesService(db)
+  variables.adoptFunctionGlobals()
   const sites = new SiteService(db, config, proxy, variables)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
@@ -89,15 +90,20 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
-  services.settings = new SettingsService(db, config, (key) => {
-    if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
-    // Turning HTML rendering off frees Chromium's memory right away; turning
-    // it on runs the jobs that waited meanwhile.
-    if (key === 'render') {
-      if (config.render.enabled) services.render.drain()
-      else services.render.shutdown()
-    }
-  })
+  services.settings = new SettingsService(
+    db,
+    config,
+    (key) => {
+      if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
+      // Turning HTML rendering off frees Chromium's memory right away; turning
+      // it on runs the jobs that waited meanwhile.
+      if (key === 'render') {
+        if (config.render.enabled) services.render.drain()
+        else services.render.shutdown()
+      }
+    },
+    settingsOptions,
+  )
   if (!overrides.mailer) services.mailer = makeMailer()
   return Object.assign(services, overrides)
 }

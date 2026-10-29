@@ -15,6 +15,7 @@
 
 ## Code quality & refactoring
 - Values maintainability over minimal-diff churn: asks for code to be made "cleaner, scalable" and welcomes refactors that deduplicate shared logic into one place, split oversized modules, and separate pure rendering from data loading. Confidence: 0.55
+- Dislikes duplicated functionality: when two surfaces manage the same concept (e.g. globals editable in two settings pages), calls it redundant and wants one canonical source of truth, with the duplicate removed and existing data migrated — not two parallel systems kept in sync. Confidence: 0.5
 - Wants new capabilities opt-in and "minimal footprint": env-flag/config-gated, zero added packages, processes, or image size when disabled, rather than new heavyweight dependencies baked into the default deployment. Confidence: 0.55
 
 ## Feature scope & compatibility

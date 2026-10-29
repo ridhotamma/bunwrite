@@ -1,7 +1,6 @@
 /**
- * The console routes shared by every variable scope (project, a site, and the
- * global or per-function scopes), so the save/remove/clear/import rules live in
- * one place.
+ * The console routes shared by every variable scope (project, a site and a
+ * function), so the save/remove/clear/import rules live in one place.
  *
  * A POST to the base path adds a variable or replaces one by name and deploy
  * context (all, live or preview); a blank value on a secret keeps what is
@@ -25,7 +24,7 @@ export interface VariableStore {
 export interface VariableRouteOptions {
   /** Where variables are saved, e.g. `/console/functions/:id/variables`. */
   base: string
-  /** The scope a request acts on: `'*'` for global function variables, `project`, or `site:<id>`. */
+  /** The scope a request acts on: `project`, `site:<id>`, or a function ID. */
   scope: (route: ConsoleRoute) => string
   /** The service that owns the scope; functions and project/site variables share the same shape. */
   store: (ctx: ConsoleContext) => VariableStore

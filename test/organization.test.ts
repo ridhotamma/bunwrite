@@ -83,6 +83,7 @@ describe('organizations', () => {
     const pending = page.slice(page.indexOf('Pending invitations'))
     expect(page.indexOf('Pending invitations')).toBeGreaterThan(-1)
     expect(pending).toContain('dev@example.com')
+    expect(pending).toContain('Copy invitation link')
     expect(pending).toContain('Resend invitation')
     expect(pending).toContain('Revoke invitation')
 
@@ -154,6 +155,28 @@ describe('organizations', () => {
     expect(resent.status).toBe(200)
     const second = /https?:\/\/\S+\/console\/invite\/[a-f0-9]+/.exec(server.mailer.last('resend@example.com')!.text)![0]!
     expect(second).not.toBe(first)
+    expect(await (await fetch(first)).text()).toContain('Invitation unavailable')
+    expect(await (await fetch(second)).text()).toContain('Join Acme')
+  })
+
+  test('an invitation link can be copied without sending another email', async () => {
+    const invited = await form('/console/organization/members/invite', [
+      ['email', 'copy@example.com'],
+      ['role', 'developer'],
+    ])
+    expect(invited.status).toBe(200)
+    const first = /https?:\/\/\S+\/console\/invite\/[a-f0-9]+/.exec(server.mailer.last('copy@example.com')!.text)![0]!
+    const member = organizations.findByEmail('org_test', 'copy@example.com')!
+    const sentBefore = server.mailer.sent.length
+
+    const copied = await form(`/console/organization/members/${member.id}/invite-link`, [])
+    expect(copied.status).toBe(200)
+    const page = await copied.text()
+    expect(page).toContain('id="invitation-link"')
+    const second = /id="invitation-link-value"[^>]*value="([^"]+)"/.exec(page)![1]!
+
+    expect(second).not.toBe(first)
+    expect(server.mailer.sent.length).toBe(sentBefore)
     expect(await (await fetch(first)).text()).toContain('Invitation unavailable')
     expect(await (await fetch(second)).text()).toContain('Join Acme')
   })

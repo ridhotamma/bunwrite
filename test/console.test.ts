@@ -398,8 +398,9 @@ describe('settings through the console', () => {
     expect(general).not.toContain('Global function variables')
     expect(general).not.toContain('/console/settings/access')
     const functions = await (await get('/console/settings/functions')).text()
-    expect(functions).toContain('Global function variables')
+    expect(functions).not.toContain('Global function variables')
     expect(functions).not.toContain('id="keys"')
+    expect(await (await get('/console/settings/variables')).text()).toContain('Global variables')
     // Access moved to the dedicated API page.
     const access = await get('/console/settings/access')
     expect(access.status).toBe(303)
@@ -450,37 +451,35 @@ describe('settings through the console', () => {
     expect(server.config.render).toEqual({ enabled: false, allowRemote: false })
   })
 
-  test('global function variables can be added, edited and removed', async () => {
-    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
-    expect(server.services.functions.globalVariables()).toMatchObject([
-      { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1, function_id: '*' },
-    ])
-    const page = await (await get('/console/settings/functions')).text()
+  test('global variables can be added, edited and removed', async () => {
+    await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
+    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
+    const page = await (await get('/console/settings/variables')).text()
     expect(page).toContain('BUNWRITE_GLOBAL_TEST')
     expect(page).toContain('Delete all')
-    expect(page).toContain('data-dialog-open="#bulk-global-vars"')
-    expect(page).toContain('id="bulk-global-vars"')
-    expect(page).toContain('hx-post="/console/settings/functions/variables/bulk"')
+    expect(page).toContain('data-dialog-open="#bulk-project-vars"')
+    expect(page).toContain('id="bulk-project-vars"')
+    expect(page).toContain('hx-post="/console/settings/variables/bulk"')
     // Editing keeps the stored value when the secret field is left blank.
-    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: '' })
-    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
-    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 'on' })
-    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 1 }])
+    await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: '' })
+    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
+    await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 'on' })
+    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 1 }])
     // Unhiding a secret clears the flag.
-    await form('/console/settings/functions/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'shown' })
-    expect(server.services.functions.globalVariables()).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'shown', secret: 0 }])
-    await form('/console/settings/functions/variables/delete', { key: 'BUNWRITE_GLOBAL_TEST' })
-    expect(server.services.functions.globalVariables()).toEqual([])
+    await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'shown' })
+    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'shown', secret: 0 }])
+    await form('/console/settings/variables/delete', { key: 'BUNWRITE_GLOBAL_TEST' })
+    expect(server.services.variables.list('project')).toEqual([])
   })
 
   test('global variables can all be deleted at once', async () => {
-    await form('/console/settings/functions/variables', { key: 'WIPE_A', value: 'one' })
-    await form('/console/settings/functions/variables', { key: 'WIPE_B', value: 'two' })
-    expect(server.services.functions.globalVariables()).toHaveLength(2)
-    const cleared = await form('/console/settings/functions/variables/clear', {})
+    await form('/console/settings/variables', { key: 'WIPE_A', value: 'one' })
+    await form('/console/settings/variables', { key: 'WIPE_B', value: 'two' })
+    expect(server.services.variables.list('project')).toHaveLength(2)
+    const cleared = await form('/console/settings/variables/clear', {})
     expect(flash(cleared).get('ok')).toBe('Removed 2 variables')
-    expect(server.services.functions.globalVariables()).toEqual([])
-    const empty = await form('/console/settings/functions/variables/clear', {})
+    expect(server.services.variables.list('project')).toEqual([])
+    const empty = await form('/console/settings/variables/clear', {})
     expect(flash(empty).get('ok')).toBe('No variables to remove')
   })
 
@@ -551,21 +550,21 @@ describe('settings through the console', () => {
   })
 
   test('global variables can be bulk imported, with validation errors in the dialog', async () => {
-    const ok = await form('/console/settings/functions/variables/bulk', { env: 'BULK_A=one\nBULK_B="two words"\n# comment', secret: 'on' })
+    const ok = await form('/console/settings/variables/bulk', { env: 'BULK_A=one\nBULK_B="two words"\n# comment', secret: 'on' })
     expect(flash(ok).get('ok')).toBe('Imported 2 variables')
-    expect(server.services.functions.globalVariables().map(({ key, value, secret, function_id }) => ({ key, value, secret, function_id }))).toEqual([
-      { key: 'BULK_A', value: 'one', secret: 1, function_id: '*' },
-      { key: 'BULK_B', value: 'two words', secret: 1, function_id: '*' },
+    expect(server.services.variables.list('project').map(({ key, value, secret }) => ({ key, value, secret }))).toEqual([
+      { key: 'BULK_A', value: 'one', secret: 1 },
+      { key: 'BULK_B', value: 'two words', secret: 1 },
     ])
 
-    const bad = await form('/console/settings/functions/variables/bulk', { env: 'BULK_A=one\nBAD LINE' })
+    const bad = await form('/console/settings/variables/bulk', { env: 'BULK_A=one\nBAD LINE' })
     expect(flash(bad).get('err')).toContain('Line 2')
-    const inline = await form('/console/settings/functions/variables/bulk', { env: 'BAD LINE' }, { 'hx-request': 'true' })
+    const inline = await form('/console/settings/variables/bulk', { env: 'BAD LINE' }, { 'hx-request': 'true' })
     expect(inline.status).toBe(200)
     expect(await inline.text()).toContain('Line 1')
 
-    server.services.functions.deleteVariable('*', 'BULK_A')
-    server.services.functions.deleteVariable('*', 'BULK_B')
+    server.services.variables.deleteVariable('project', 'BULK_A')
+    server.services.variables.deleteVariable('project', 'BULK_B')
   })
 
   test('Google sign-in can be set up from the console', async () => {

@@ -193,4 +193,36 @@ describe('multiple projects', () => {
     expect(manager.get('project-c')).toBeNull()
     await expect(manager.delete(PROJECT)).rejects.toThrow('default project')
   })
+
+  test('projects inherit the server SMTP live, and their own setting wins', () => {
+    const server = manager.defaultProject().services
+    const other = manager.get('project-b')!.services
+    const smtp = (host: string) => ({
+      host,
+      port: 587,
+      user: 'mailer',
+      password: 'secret',
+      secure: false,
+      senderEmail: `hi@${host}`,
+      senderName: 'Mailer',
+    })
+
+    expect(other.config.smtp).toBeNull()
+    expect(other.mailer.enabled).toBe(false)
+
+    server.settings.set('smtp', smtp('smtp.server.test'))
+    expect(other.config.smtp).toMatchObject({ host: 'smtp.server.test' })
+    expect(other.mailer.enabled).toBe(true)
+
+    other.settings.set('smtp', smtp('smtp.project.test'))
+    server.settings.set('smtp', smtp('smtp.server2.test'))
+    expect(other.config.smtp).toMatchObject({ host: 'smtp.project.test' })
+
+    other.settings.reset('smtp')
+    expect(other.config.smtp).toMatchObject({ host: 'smtp.server2.test' })
+
+    server.settings.reset('smtp')
+    expect(other.config.smtp).toBeNull()
+    expect(other.mailer.enabled).toBe(false)
+  })
 })
