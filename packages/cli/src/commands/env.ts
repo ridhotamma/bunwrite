@@ -29,6 +29,7 @@ import { changeCount, planPush, type Plan, type Variable } from '../envplan'
 import { confirmProtected, environment, environmentNames, projectDir, target, targetConfig } from '../environments'
 import { bold, CliError, confirm, dim, green, info, log, red, success, table, warn, yellow } from '../ui'
 import { envAdd } from './env-add'
+import { environmentView } from '../overrides'
 import { slug } from './sync'
 
 // ---- Scopes ----
@@ -220,9 +221,15 @@ interface EnvContext {
 function context(args: Args): EnvContext {
   const config = readConfig()
   const t = target(config)
+  // Functions and sites by the IDs this environment uses on the server (idSuffix, overrides).
+  const view = environmentView(config, t.name ? t : null)
+  for (const [flag, kind] of [['function-id', 'functions'], ['site-id', 'sites']] as const) {
+    const ids = flagList(args, flag)
+    if (ids.length) args.flags.set(flag, ids.map((id) => view.envId(kind, id)))
+  }
   const { client } = projectClient(targetConfig(config))
   const clients = { client, project: new Project(client), functions: new Functions(client), sites: new Sites(client) }
-  return { config, name: t.name, scopes: scopesOf(config, t.name, args, clients), skip: bool(args, 'yes') || bool(args, 'force'), prune: bool(args, 'prune') }
+  return { config, name: t.name, scopes: scopesOf(view.config, t.name, args, clients), skip: bool(args, 'yes') || bool(args, 'force'), prune: bool(args, 'prune') }
 }
 
 const where = (ctx: EnvContext) => ctx.name ?? 'the project'

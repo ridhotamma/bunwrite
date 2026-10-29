@@ -925,6 +925,39 @@ describe('environments', () => {
     await clearVariables()
   })
 
+  test('idSuffix and overrides give an environment its own site IDs and domains; pull keeps the shared config', async () => {
+    const ws = new Workspace('env-suffix')
+    await ws.withKey()
+    mkdirSync(join(ws.dir, 'sites', 'shop', 'dist'), { recursive: true })
+    writeFileSync(join(ws.dir, 'sites', 'shop', 'dist', 'index.html'), '<h1>Shop</h1>')
+    const shared = {
+      ...environments(),
+      sites: [{ $id: 'shop', name: 'Shop', framework: 'other', path: 'sites/shop', outputDirectory: 'dist', domains: ['shop.example.com'] }],
+    }
+    shared.environments.staging = { projectId: PROJECT, idSuffix: '-staging', overrides: { sites: { shop: { domains: ['shop.staging.example.com'] } } } } as any
+    ws.config = shared
+    const sites = new Sites(admin())
+    try {
+      await ws.ok('push', 'sites', '--env', 'staging', '--site-id', 'shop')
+      const site = (await sites.get({ siteId: 'shop-staging' })) as any
+      expect(site.domains).toEqual(['shop.staging.example.com'])
+      await expect(sites.get({ siteId: 'shop' })).rejects.toThrow()
+
+      // Site variables go to the staging site too.
+      writeFileSync(join(ws.dir, 'sites', 'shop', '.env.staging'), 'SHOP_MODE=staging\n')
+      expect(await ws.ok('env', 'push', '--env', 'staging', '--site-id', 'shop', '--yes')).toContain('Pushed 1 change to staging')
+      expect((await sites.listVariables({ siteId: 'shop-staging' })).variables.map((v) => v.key)).toEqual(['SHOP_MODE'])
+
+      await ws.ok('pull', 'sites', '--env', 'staging', '--no-code')
+      const pulled = ws.config.sites.find((s: any) => s.$id === 'shop')
+      expect(pulled).toMatchObject({ $id: 'shop', domains: ['shop.example.com'], path: 'sites/shop' })
+      expect(ws.config.sites.some((s: any) => s.$id === 'shop-staging')).toBe(false)
+      expect(ws.config.environments.staging.idSuffix).toBe('-staging')
+    } finally {
+      await sites.delete({ siteId: 'shop-staging' }).catch(() => {})
+    }
+  })
+
   test('without environments, env uses .env and .env.local for the linked project', async () => {
     await clearVariables()
     const ws = new Workspace('env-none')

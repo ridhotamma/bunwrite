@@ -151,6 +151,32 @@ Sign in once per server: `bunwrite login --env production`, or save an API key
 for that environment's project with `bunwrite client --env production --key
 <key>`. In CI, set `BUNWRITE_API_KEY` and `BUNWRITE_ENV` instead.
 
+### Several environments on one server
+
+Site and function IDs are addresses (`<id>.<SITES_DOMAIN>`), so they are
+unique across every project on a server. When staging and production share a
+server, give staging an `idSuffix`, and change what must differ with
+`overrides`, keyed by kind and the shared `$id`:
+
+```json
+"staging": {
+    "projectId": "shop-staging",
+    "idSuffix": "-staging",
+    "overrides": {
+        "sites": { "web": { "domains": ["staging.example.com"] } },
+        "functions": { "backup": { "schedule": "" } }
+    }
+}
+```
+
+In staging, every site and function gets the suffix (`web` → `web-staging`,
+and `apiFunctionId` follows), and `web` has its own domains. Commands still take
+the shared IDs (`--site-id web`). A pull maps the server's IDs back and keeps
+the shared values of overridden fields, so `bunwrite.config.json` reads the
+same whichever environment it came from. App code that calls a function by ID
+needs the suffixed ID in that environment. `overrides` also takes `settings`
+and any other list in the config, such as `buckets`.
+
 ### Variables in .env files
 
 `bunwrite env` keeps variables in .env files. The project's variables (seen by

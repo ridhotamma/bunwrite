@@ -116,6 +116,10 @@ Push only sends differences. A freshly pulled config pushes back with
 }
 ```
 
+- Site and function IDs are unique across a server. Environments sharing one
+  server use `"idSuffix": "-staging"` (applied to every site and function
+  ID) and `"overrides": { "sites": { "<id>": { "domains": [...] } } }`;
+  commands still take shared IDs, and pulls map back to them.
 - Pick one with `--env <name>` (any command), `BUNWRITE_ENV`, `bunwrite env use
   <name>` (per folder) or `"defaultEnvironment"`, in that order.
 - Sign in per server: `bunwrite login --env <name>` or `bunwrite client --env

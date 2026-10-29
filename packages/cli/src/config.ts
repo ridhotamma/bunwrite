@@ -130,6 +130,10 @@ export interface Environment {
   organizationId?: string
   /** Push asks you to type the environment's name first. */
   protected?: boolean
+  /** Added to every site and function ID in this environment, e.g. `-staging` (see overrides.ts). */
+  idSuffix?: string
+  /** Fields of entries changed for this environment, by kind and shared `$id` (see overrides.ts). */
+  overrides?: Record<string, any>
 }
 
 /** Looked for in this order; a new file is bunwrite.config.json. */

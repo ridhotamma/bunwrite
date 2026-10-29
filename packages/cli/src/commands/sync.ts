@@ -25,6 +25,7 @@ import { bool, flagList, flag, type Args } from '../args'
 import { consoleClient, projectClient } from '../clients'
 import { readConfig, writeConfig, type ProjectConfig } from '../config'
 import { activeSession, confirmProtected, target, targetConfig } from '../environments'
+import { environmentView } from '../overrides'
 import { collect } from '../files'
 import { packGzip, unpackGzip } from '../tar'
 import { CliError, confirm, dim, info, log, success, warn } from '../ui'
@@ -833,11 +834,18 @@ function kindsOf(what: string | undefined, config: ProjectConfig, direction: 'pu
 }
 
 export async function sync(direction: 'pull' | 'push', args: Args): Promise<void> {
-  const config = readConfig()
-  const { client, projectId, auth } = projectClient(targetConfig(config))
+  const shared = readConfig()
+  const env = target(shared)
+  // The environment's view: suffixed site and function IDs and its overrides.
+  const view = environmentView(shared, env.name ? env : null)
+  const config = view.config
+  for (const [flag, kind] of [['function-id', 'functions'], ['site-id', 'sites']] as const) {
+    const ids = flagList(args, flag)
+    if (ids.length) args.flags.set(flag, ids.map((id) => view.envId(kind, id)))
+  }
+  const { client, projectId, auth } = projectClient(targetConfig(shared))
   const ctx: Ctx = { client, projectId, auth, config, args }
   const kinds = kindsOf(args.positional[1], config, direction)
-  const env = target(config)
   if (direction === 'push') await confirmProtected(bool(args, 'force') || bool(args, 'yes'), `push ${kinds.join(', ')}`)
   const projectName = config.projectName
   for (const kind of kinds) {
@@ -850,7 +858,7 @@ export async function sync(direction: 'pull' | 'push', args: Args): Promise<void
       } else {
         ctx.config.projectId ??= projectId
       }
-      writeConfig(ctx.config)
+      writeConfig(view.restore(ctx.config))
     }
     success(message)
   }
