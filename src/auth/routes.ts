@@ -252,11 +252,15 @@ export function accountRoutes(router: Router<AppContext>): void {
     return new Response(null, { status: 301, headers: { location, 'cache-control': 'no-store' } })
   })
 
-  router.get('/account/sessions/oauth2/callback/:provider/:projectId', async ({ ctx, url, path }) => {
+  const oauthCallback = async ({ ctx, params, path }: RouteContext<AppContext>) => {
     if (path.projectId !== ctx.config.projectId) throw err('project_not_found')
-    const location = await ctx.oauth.callback(path.provider!, url)
+    const location = await ctx.oauth.callback(path.provider!, params)
     return new Response(null, { status: 301, headers: { location, 'cache-control': 'no-store' } })
-  })
+  }
+
+  router.get('/account/sessions/oauth2/callback/:provider/:projectId', oauthCallback)
+  // Apple posts the callback (response_mode=form_post); the state is signed either way.
+  router.post('/account/sessions/oauth2/callback/:provider/:projectId', oauthCallback)
 
   router.post('/account/jwts', async ({ ctx, params }) => {
     method(ctx, 'jwt')

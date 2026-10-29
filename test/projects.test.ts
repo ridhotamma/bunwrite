@@ -18,6 +18,7 @@ describe('multiple projects', () => {
   let endpoint: string
   let base: string
   let server: ReturnType<typeof Bun.serve>
+  let app: ReturnType<typeof createApp>
   let projectKey = ''
 
   const client = (projectId: string, key: string) =>
@@ -33,8 +34,16 @@ describe('multiple projects', () => {
     projectKey = created.apiKey!
     pushConfig(created.project.services.db, testSchema, { baseDir: dir })
     created.project.services.registry.reload()
+    // An installation from before installations moved to the control database.
+    const stamp = new Date().toISOString()
+    created.project.services.db.sqlite
+      .query(
+        `INSERT INTO _vcs_installations (id, provider, provider_installation_id, organization, account_type, created_at, updated_at)
+         VALUES ('legacy-installation', 'github', '999', 'legacy-org', 'Organization', ?, ?)`,
+      )
+      .run(stamp, stamp)
 
-    const app = createApp(manager)
+    app = createApp(manager)
     server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket })
     endpoint = `http://localhost:${server.port}/v1`
     base = `http://localhost:${server.port}`
@@ -70,6 +79,27 @@ describe('multiple projects', () => {
     await users.create({ userId: 'b-user', email: 'b@example.com' })
     expect((await users.list()).total).toBe(1)
     expect((await new Users(client(PROJECT, KEY)).list()).total).toBe(0)
+  })
+
+  test('GitHub installations are server-wide, and old per-project rows are adopted', async () => {
+    // The row written into project-b's database before the hub started is now
+    // in the control database, under one ID both projects can use.
+    const adopted = app.hub.installations.byProvider('999')
+    expect(adopted).toMatchObject({ organization: 'legacy-org', account_type: 'Organization' })
+    const count = db.sqlite
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _vcs_installations WHERE provider_installation_id = '999'")
+      .get()!
+    expect(count.n).toBe(1)
+
+    for (const [project, key] of [
+      [PROJECT, KEY],
+      ['project-b', projectKey],
+    ] as const) {
+      const res = await fetch(`${endpoint}/vcs/installations`, { headers: { 'x-appwrite-project': project, 'x-appwrite-key': key } })
+      expect(res.status).toBe(200)
+      const list = (await res.json()) as any
+      expect(list.installations.map((i: any) => i.$id)).toContain(adopted!.id)
+    }
   })
 
   test('request logs are shared but filtered by project', async () => {

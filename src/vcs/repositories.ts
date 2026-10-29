@@ -102,10 +102,23 @@ export class RepositoryLinks {
     this.sql.query('DELETE FROM _vcs_repositories WHERE project_id = ? AND resource_type = ? AND resource_id = ?').run(projectId, type, resourceId)
   }
 
-  removeForInstallation(projectId: string, installationId: string): RepositoryRow[] {
-    const rows = this.sql.query<RepositoryRow, [string, string]>('SELECT * FROM _vcs_repositories WHERE project_id = ? AND installation_id = ?').all(projectId, installationId)
-    this.sql.query('DELETE FROM _vcs_repositories WHERE project_id = ? AND installation_id = ?').run(projectId, installationId)
+  /** Every link that uses an installation, across all projects. */
+  removeForInstallation(installationId: string): RepositoryRow[] {
+    const rows = this.sql.query<RepositoryRow, [string]>('SELECT * FROM _vcs_repositories WHERE installation_id = ?').all(installationId)
+    this.sql.query('DELETE FROM _vcs_repositories WHERE installation_id = ?').run(installationId)
     return rows
+  }
+
+  /**
+   * Point links that still reference a project-local installation ID at the
+   * server-wide row. Used once when installations move out of project
+   * databases.
+   */
+  reassignInstallation(projectId: string, fromId: string, toId: string): void {
+    if (fromId === toId) return
+    this.sql
+      .query('UPDATE _vcs_repositories SET installation_id = ? WHERE project_id = ? AND installation_id = ?')
+      .run(toId, projectId, fromId)
   }
 
   removeForProject(projectId: string): void {

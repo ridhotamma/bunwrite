@@ -1,12 +1,11 @@
 /** Settings tab markup. The page loads data and validates writes; this module renders it. */
 import { gitTabView } from '~/console/views/vcs'
 import type { BackupFile } from '~/backups/service'
-import type { S3Config } from '~/config'
-import { envBulkDialog } from '~/console/env-vars'
+import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type OAuthProviderId, type S3Config } from '~/config'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
-import { SETTINGS, TABS, type SettingsTab } from '~/console/settings-meta'
-import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, tabs, when } from '~/console/ui'
+import { SETTINGS, SETTING_GROUPS, TABS, type SettingsTab } from '~/console/settings-meta'
+import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, when } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
 import type { TemplateFields, TemplateId } from '~/mail/templates'
@@ -34,19 +33,53 @@ function card(ctx: ConsoleContext, id: string, title: string, key: SettingKey | 
 
 function projectCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
+  const copy = (id: string) => html`<button type="button" data-copy-target="#${id}">${icon('copy')}<span data-copy-label>Copy</span></button>`
   return card(ctx, 'project', 'Project', 'project', 'Name in emails, allowed web origins and how long sign-ins last.', html`
     <form method="post" action="${SETTINGS}/project">
-      <div class="fields"><label>Name<input name="projectName" value="${c.projectName}" required></label><label>Organization ID<input value="${c.orgId || '—'}" class="mono" readonly><small>Generated on first start and stored in the database.</small></label><label>Project ID<input value="${c.projectId}" class="mono" readonly><small>Set when the project was created. Apps send this in X-Bunwrite-Project (or X-Appwrite-Project).</small></label></div>
+      <label>Name<div class="copy-row"><input id="project-name" name="projectName" value="${c.projectName}" required>${copy('project-name')}</div></label>
+      <label>Organization ID<div class="copy-row"><input id="project-org-id" class="mono" readonly value="${c.orgId || '—'}">${copy('project-org-id')}</div><small>Generated on first start and stored in the database.</small></label>
+      <label>Project ID<div class="copy-row"><input id="project-id" class="mono" readonly value="${c.projectId}">${copy('project-id')}</div><small>Set when the project was created. Apps send this in X-Bunwrite-Project (or X-Appwrite-Project).</small></label>
       <label>Allowed origins<textarea name="allowedOrigins" class="mono">${c.allowedOrigins.join('\n')}</textarea><small>One per line. <code>*.example.com</code> covers subdomains. Used for CORS and redirect links.</small></label>
       <div class="fields"><label>Session length (days)<input name="sessionDays" type="number" min="1" value="${Math.round(c.sessionDuration / 86400)}"></label><label>Sessions per user<input name="sessionsLimit" type="number" min="1" max="100" value="${c.sessionsLimit}"></label></div>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`)
 }
 
-function emailCards(ctx: ConsoleContext): Html {
+const OAUTH_HINTS: Record<OAuthProviderId, string> = {
+  apple: 'Sign in with Apple service from the Apple Developer portal. Add the redirect URI below to it.',
+  facebook: 'Facebook app from Meta for Developers. Add the redirect URI below to it.',
+  github: 'GitHub OAuth App from Developer settings. Add the redirect URI below to it.',
+  google: 'OAuth client from Google Cloud. Add the redirect URI below to it.',
+}
+
+function oauthCard(ctx: ConsoleContext, id: OAuthProviderId): Html {
   const c = ctx.services.config
-  const smtp = c.smtp
-  const google = c.google
+  const meta = OAUTH_PROVIDERS[id]
+  const config = c.oauth[id] ?? null
+  const redirect = `${c.publicEndpoint}/account/sessions/oauth2/callback/${id}/${c.projectId}`
+  const credentials = id === 'apple'
+    ? html`
+        <div class="fields">
+          <label>Client ID (Service ID)<input name="clientId" value="${config?.clientId ?? ''}" class="mono"></label>
+          <label>Team ID<input name="teamId" value="${config?.teamId ?? ''}" class="mono"></label>
+          <label>Key ID<input name="keyId" value="${config?.keyId ?? ''}" class="mono"></label>
+        </div>
+        <label>Private key (.p8)<textarea name="privateKey" class="mono" rows="4" autocomplete="off" placeholder="${config?.privateKey ? 'Unchanged' : '-----BEGIN PRIVATE KEY-----'}"></textarea><small>Signs the client secret Apple requires. Downloaded from the Apple Developer portal.</small></label>`
+    : html`
+        <div class="fields">
+          <label>Client ID<input name="clientId" value="${config?.clientId ?? ''}" class="mono"></label>
+          <label>Client secret<input name="clientSecret" type="password" placeholder="${config?.clientSecret ? 'Unchanged' : ''}" autocomplete="new-password"></label>
+        </div>`
+  return card(ctx, id, `${meta.name} sign-in`, id, OAUTH_HINTS[id], html`
+    <form method="post" action="${SETTINGS}/${id}">
+      <label>Redirect URI<input class="mono" readonly value="${redirect}"></label>
+      ${credentials}
+      <div class="foot">${config ? html`<button type="submit" name="disable" value="1" class="critical">Turn off</button>` : ''}<button class="primary">Save</button></div>
+    </form>`)
+}
+
+function emailCards(ctx: ConsoleContext): Html {
+  const smtp = ctx.services.config.smtp
   return html`
     ${card(ctx, 'email', 'Email (SMTP)', 'smtp', 'Sends sign-in codes, password resets and team invitations.', html`
       <form method="post" action="${SETTINGS}/smtp">
@@ -58,19 +91,14 @@ function emailCards(ctx: ConsoleContext): Html {
           <button type="button" hx-post="${SETTINGS}/smtp/test" hx-target="#smtp-test" hx-swap="innerHTML" title="Send a test email to ${ctx.admin.email}" ${smtp ? '' : 'disabled'}>Send test email</button>
           ${smtp ? html`<button type="submit" name="disable" value="1" class="critical">Turn off</button>` : ''}<button class="primary">Save</button></div>
       </form>`)}
-    ${card(ctx, 'google', 'Google sign-in', 'google', 'OAuth client from Google Cloud. Add the redirect URI below to it.', html`
-      <form method="post" action="${SETTINGS}/google">
-        <label>Redirect URI<input class="mono" readonly value="${c.publicEndpoint}/account/sessions/oauth2/callback/google/${c.projectId}"></label>
-        <div class="fields"><label>Client ID<input name="clientId" value="${google?.clientId ?? ''}" class="mono"></label><label>Client secret<input name="clientSecret" type="password" placeholder="${google?.clientSecret ? 'Unchanged' : ''}" autocomplete="new-password"></label></div>
-        <div class="foot">${google ? html`<button type="submit" name="disable" value="1" class="critical">Turn off</button>` : ''}<button class="primary">Save</button></div>
-      </form>`)}`
+    ${OAUTH_PROVIDER_IDS.map((id) => oauthCard(ctx, id))}`
 }
 
 function s3Fields(prefix: string, s3: S3Config): Html {
   const field = (label: string, input: Html) => html`<label>${label}${input}</label>`
   return html`
+    <label>Endpoint<input name="${prefix}Endpoint" class="mono" value="${s3.endpoint}" placeholder="https://s3.example.com"></label>
     <div class="fields">
-      ${field('Endpoint', html`<input name="${prefix}Endpoint" class="mono" value="${s3.endpoint}" placeholder="https://s3.example.com">`)}
       ${field('Bucket', html`<input name="${prefix}Bucket" value="${s3.bucket}">`)}
       ${field('Region', html`<input name="${prefix}Region" value="${s3.region}">`)}
     </div>
@@ -111,11 +139,20 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
           <form method="post" action="${SETTINGS}/backups/create" class="inline" style="margin-left:auto"><button class="primary">Create backup</button></form>
         </div>
         ${backups.length
-          ? html`<div class="scroll"><table><thead><tr><th>Backup</th><th class="num">Size</th><th class="hide-sm">Created</th><th></th></tr></thead><tbody>
-            ${backups.map((b) => html`<tr><td class="mono clip">${b.name}</td><td class="num">${formatBytes(b.size)}</td><td class="hide-sm subdued">${when(b.modified)}</td>
-              <td class="num"><a class="btn small" href="${SETTINGS}/backups/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
-                ${destroy(`${SETTINGS}/backups/${encodeURIComponent(b.name)}/delete`, 'Delete', `Delete ${b.name}?`)}</td></tr>`)}
-            </tbody></table></div>`
+          ? html`<ul class="list backup-list">${backups.map(
+              (b) => html`<li>
+                <div class="backup-meta">
+                  <span class="mono clip" title="${b.name}">${b.name}</span>
+                  <span class="subdued cell-sub">${formatBytes(b.size)} · Created ${when(b.modified)}</span>
+                </div>
+                <div class="backup-actions">
+                  <a class="btn small" href="${SETTINGS}/backups/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
+                  <form method="post" action="${SETTINGS}/backups/${encodeURIComponent(b.name)}/delete" class="inline" data-confirm="Delete ${b.name}?" data-confirm-label="Delete" data-confirm-tone="critical">
+                    <button class="critical small">Delete</button>
+                  </form>
+                </div>
+              </li>`,
+            )}</ul>`
           : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
       { id: 'backups', flush: true },
     )}
@@ -131,21 +168,15 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
 
 function projectVariablesCard(ctx: ConsoleContext): Html {
   const projectVars = ctx.services.variables.list(PROJECT_SCOPE)
-  return html`
-    ${card(ctx, 'project-vars', 'Global variables', null, 'Available to every site and function. A site or function variable with the same name wins.', html`
-      ${projectVars.length
-        ? variableList(projectVars, {
-            save: `${SETTINGS}/variables`,
-            remove: `${SETTINGS}/variables/delete`,
-            clear: { action: `${SETTINGS}/variables/clear`, confirm: `Delete all ${projectVars.length} global variables? This cannot be undone.` },
-          })
-        : html`<p class="hint" style="margin:0 0 12px">None set. Values from the server environment still apply.</p>`}
-      <form method="post" action="${SETTINGS}/variables" style="margin-top:12px">
-        <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
-        <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
-        <div class="foot"><button type="button" data-dialog-open="#bulk-project-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add global variable</button></div>
-      </form>`)}
-    ${envBulkDialog({ id: 'bulk-project-vars', title: 'Import global variables', action: `${SETTINGS}/variables/bulk` })}`
+  return card(ctx, 'project-vars', 'Global variables', null, 'Available to every site and function. A site or function variable with the same name wins.', variableList(projectVars, {
+    id: 'project-vars',
+    save: `${SETTINGS}/variables`,
+    remove: `${SETTINGS}/variables/delete`,
+    addLabel: 'Add variable',
+    bulk: { id: 'bulk-project-vars', title: 'Import global variables', action: `${SETTINGS}/variables/bulk` },
+    clear: { action: `${SETTINGS}/variables/clear`, confirm: `Delete all ${projectVars.length} global variables? This cannot be undone.` },
+    empty: html`<p class="hint" style="margin:0">None set. Values from the server environment still apply.</p>`,
+  }))
 }
 
 function functionCards(ctx: ConsoleContext): Html {
@@ -160,20 +191,15 @@ function functionCards(ctx: ConsoleContext): Html {
         ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''}>Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
         <div class="foot"><button>Save</button></div>
       </form>`)}
-    ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', html`
-      ${globals.length
-        ? variableList(globals, {
-            save: `${SETTINGS}/functions/variables`,
-            remove: `${SETTINGS}/functions/variables/delete`,
-            clear: { action: `${SETTINGS}/functions/variables/clear`, confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
-          })
-        : html`<p class="hint" style="margin:0 0 12px">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`}
-      <form method="post" action="${SETTINGS}/functions/variables" style="margin-top:12px">
-        <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
-        <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
-        <div class="foot"><button type="button" data-dialog-open="#bulk-global-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add global variable</button></div>
-      </form>`)}
-    ${envBulkDialog({ id: 'bulk-global-vars', title: 'Import global variables', action: `${SETTINGS}/functions/variables/bulk` })}`
+    ${card(ctx, 'global-vars', 'Global function variables', null, 'Available to every function. A variable set on one function with the same name wins.', variableList(globals, {
+      id: 'global-vars',
+      save: `${SETTINGS}/functions/variables`,
+      remove: `${SETTINGS}/functions/variables/delete`,
+      addLabel: 'Add global variable',
+      bulk: { id: 'bulk-global-vars', title: 'Import global variables', action: `${SETTINGS}/functions/variables/bulk` },
+      clear: { action: `${SETTINGS}/functions/variables/clear`, confirm: `Delete all ${globals.length} global variables? This cannot be undone.` },
+      empty: html`<p class="hint" style="margin:0">None set. Values from FUNCTIONS_ENV_FILE still apply.</p>`,
+    }))}`
 }
 
 /** Browser cache choices; a value set in env that is not listed shows as its own option. */
@@ -264,6 +290,22 @@ export function inlineStatus(message: string, tone: 'success' | 'critical'): Htm
   return html`<span style="color:var(--${tone})">${message}</span>`
 }
 
+const TAB_BY_KEY = Object.fromEntries(TABS.map((tab) => [tab.key, tab])) as Record<SettingsTab, (typeof TABS)[number]>
+
+function settingsNav(active: SettingsTab): Html {
+  return html`<nav class="settings-nav" aria-label="Settings sections">
+    ${SETTING_GROUPS.map(
+      (group) => html`<div class="settings-nav-group">
+        <div class="settings-nav-label">${group.label}</div>
+        ${group.tabs.map((key) => {
+          const tab = TAB_BY_KEY[key]
+          return html`<a href="${tab.href}" class="${key === active ? 'on' : ''}" ${key === active ? html`aria-current="page"` : ''}>${tab.label}</a>`
+        })}
+      </div>`,
+    )}
+  </nav>`
+}
+
 export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, options: { template?: TemplateId; fields?: TemplateFields } = {}): Promise<Html> {
   let body: Html
   switch (tab) {
@@ -302,6 +344,8 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
   }
   return html`${header('Settings')}
-    ${tabs(TABS, tab)}
-    ${body}`
+    <div class="settings-layout">
+      ${settingsNav(tab)}
+      <div class="settings-content">${body}</div>
+    </div>`
 }

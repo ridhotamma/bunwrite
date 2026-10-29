@@ -3,7 +3,7 @@ import { Account, BunwriteException, Client, Health, Organization, Project } fro
 import { bool, flag, type Args } from '../args'
 import { consoleClient, CONSOLE_PROJECT, describe, projectClient } from '../clients'
 import { currentSession, readConfig, updateSession, writeConfig } from '../config'
-import { ask, bold, CliError, dim, info, log, success, warn } from '../ui'
+import { ask, askHidden, bold, CliError, dim, info, log, success, warn } from '../ui'
 import { offerSkills } from './skills'
 
 const mask = (key: string) => (key.length > 12 ? `${key.slice(0, 8)}…${key.slice(-4)}` : '••••')
@@ -61,7 +61,7 @@ export async function login(args: Args): Promise<void> {
   const endpoint = flag(args, 'endpoint') ?? readConfig().endpoint ?? session.endpoint
   if (!endpoint) throw new CliError('Give the server with --endpoint https://your-server/v1')
   const email = flag(args, 'email') ?? (await ask('Email: ')).trim()
-  const password = flag(args, 'password') ?? (await ask('Password: '))
+  const password = flag(args, 'password') ?? (await askHidden('Password: '))
   if (!email || !password) throw new CliError('Email and password are required.')
 
   // The SDK returns the session, not its cookie; sign in with fetch to keep it.

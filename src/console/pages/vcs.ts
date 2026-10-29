@@ -26,6 +26,11 @@ function projectOf(ctx: ConsoleContext): ProjectRuntime {
 
 const redirect = (location: string) => new Response(null, { status: 303, headers: { location } })
 
+/** After GitHub, return to a console page; anything else falls back to Settings → Git. */
+function returnTo(path: string | null): string {
+  return path && path.startsWith('/console') && !path.startsWith('//') && !/[\r\n]/.test(path) ? path : '/console/settings/git'
+}
+
 /** The provider settings a resource's Git form posts. */
 function providerFromForm(ctx: ConsoleContext): ProviderSettings {
   return {
@@ -56,22 +61,22 @@ export function vcsPages(router: ConsoleRouter): void {
 
   // ---- Installations ----
 
-  router.get('/console/vcs/install', ({ ctx, request }) => {
-    const url = ctx.hub.installUrl(ctx.currentProject.id, '/console/settings/git')
+  router.get('/console/vcs/install', ({ ctx, request, url }) => {
+    const target = ctx.hub.installUrl(returnTo(url.searchParams.get('next')))
     // An htmx request would fetch GitHub in the background and fail; tell htmx to leave the page instead.
-    if (request.headers.get('hx-request')) return new Response(null, { status: 200, headers: { 'hx-redirect': url } })
-    return redirect(url)
+    if (request.headers.get('hx-request')) return new Response(null, { status: 200, headers: { 'hx-redirect': target } })
+    return redirect(target)
   })
 
   router.post('/console/vcs/installations/:id/delete', ({ ctx, path }) => {
-    const installation = ctx.services.vcs.get(path.id!)
-    ctx.hub.removeInstallation(projectOf(ctx), installation.id)
-    return ctx.go('/console/settings/git', { tone: 'success', text: `${installation.organization || 'Installation'} removed` })
+    const installation = ctx.hub.installations.get(path.id!)
+    ctx.hub.removeInstallation(installation.id)
+    return ctx.go('/console/settings/git', { tone: 'success', text: `${installation.organization || 'Installation'} removed from this server` })
   })
 
   /** htmx partial: the repository select for an installation. */
   router.get('/console/vcs/repositories', async ({ ctx, url }) => {
-    const installation = ctx.services.vcs.find(url.searchParams.get('installation_id') ?? '')
+    const installation = ctx.hub.installations.find(url.searchParams.get('installation_id') ?? '')
     // The picker names the branch field its repositories load into.
     const wanted = url.searchParams.get('branch_target') ?? ''
     const branchTarget = /^[a-zA-Z0-9_-]+$/.test(wanted) ? wanted : ''
@@ -89,7 +94,7 @@ export function vcsPages(router: ConsoleRouter): void {
   /** htmx partial: the production branch select for a repository. */
   router.get('/console/vcs/branches', async ({ ctx, url }) => {
     const q = url.searchParams
-    const installation = ctx.services.vcs.find(q.get('installation_id') ?? '')
+    const installation = ctx.hub.installations.find(q.get('installation_id') ?? '')
     const repositoryId = q.get('provider_repository_id') ?? ''
     const selected = q.get('selected') ?? ''
     if (!installation || !/^\d+$/.test(repositoryId)) return page(branchOptions([], selected, '', 'Pick a repository first.'))
@@ -106,7 +111,7 @@ export function vcsPages(router: ConsoleRouter): void {
   /** htmx partial: a site's build settings, detected from the picked repository, branch and folder. */
   router.get('/console/vcs/detect-site', async ({ ctx, url }) => {
     const q = url.searchParams
-    const installation = ctx.services.vcs.find(q.get('installation_id') ?? '')
+    const installation = ctx.hub.installations.find(q.get('installation_id') ?? '')
     const repositoryId = q.get('provider_repository_id') ?? ''
     if (!installation || !/^\d+$/.test(repositoryId)) return page(buildFields('git', presetValues('other'), 'git_framework'))
     const root = (q.get('provider_root_directory') ?? '').replace(/^\.?\/+|\/+$/g, '')

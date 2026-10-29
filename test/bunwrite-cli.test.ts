@@ -174,6 +174,14 @@ describe('login, whoami, logout', () => {
     expect(consoleSessions()).toBe(before)
     expect(await ws.ok('whoami')).toContain('No user is signed in')
   })
+
+  test('reads the password from stdin without echoing it', async () => {
+    const ws = new Workspace('login-stdin')
+    const result = await ws.run(['login', '--endpoint', server.endpoint, '--email', ADMIN.email], `${ADMIN.password}\n`)
+    expect(result.code).toBe(0)
+    expect(result.out).toContain(`Signed in as ${ADMIN.email}`)
+    expect(result.out).not.toContain(ADMIN.password)
+  })
 })
 
 describe('init project', () => {

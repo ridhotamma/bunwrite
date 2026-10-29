@@ -47,6 +47,72 @@ export async function ask(question: string): Promise<string> {
   return next.done ? '' : next.value
 }
 
+/**
+ * Ask for a secret. In a terminal every key is shown as `*`, so the value is
+ * never echoed; Backspace, Ctrl-C and Ctrl-D behave as usual. Without a
+ * terminal (piped input) it reads the next line like `ask`.
+ */
+export async function askHidden(question: string): Promise<string> {
+  if (!process.stdin.isTTY) return ask(question)
+  closeAsk()
+  process.stdout.write(question)
+  process.stdin.setEncoding('utf8')
+  process.stdin.setRawMode(true)
+  process.stdin.resume()
+
+  return new Promise((resolve) => {
+    let answer = ''
+    let escape = 0
+
+    const finish = (value: string) => {
+      process.stdin.off('data', onData)
+      process.stdin.setRawMode(false)
+      process.stdin.pause()
+      process.stdout.write('\n')
+      resolve(value)
+    }
+
+    const onData = (chunk: string) => {
+      for (const char of chunk) {
+        // Skip escape sequences (arrow keys, function keys) instead of typing them.
+        if (escape === 1) {
+          escape = char === '[' || char === 'O' ? 2 : 0
+          continue
+        }
+        if (escape === 2) {
+          if (char >= '@' && char <= '~') escape = 0
+          continue
+        }
+        if (char === '\x1b') {
+          escape = 1
+          continue
+        }
+        if (char === '\r' || char === '\n' || char === '\x04') {
+          finish(answer)
+          return
+        }
+        if (char === '\x03') {
+          process.stdin.setRawMode(false)
+          process.stdin.pause()
+          process.stdout.write('\n')
+          process.exit(130)
+        }
+        if (char === '\x7f' || char === '\b') {
+          if (!answer) continue
+          answer = answer.slice(0, -1)
+          process.stdout.write('\b \b')
+          continue
+        }
+        if (char < ' ') continue
+        answer += char
+        process.stdout.write('*')
+      }
+    }
+
+    process.stdin.on('data', onData)
+  })
+}
+
 /** A plain table for lists. */
 export function table(rows: Record<string, unknown>[], columns: string[]): string {
   const cell = (v: unknown) => (v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))

@@ -24,10 +24,30 @@ export interface ProxyRuleRow {
 
 const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 
-/** A user-entered domain as a host: lowercase, no scheme, path, port or trailing dot. */
+/** The suffix a wildcard rule matches, `''` for an exact domain. */
+const wildcardSuffix = (domain: string): string => (domain.startsWith('*.') ? domain.slice(1) : '')
+
+/** Does `host` sit exactly one label under `domain`'s wildcard base? */
+export function matchesWildcard(host: string, domain: string): boolean {
+  const suffix = wildcardSuffix(domain)
+  if (!suffix || !host.endsWith(suffix)) return false
+  const label = host.slice(0, -suffix.length)
+  return label.length > 0 && !label.includes('.')
+}
+
+/**
+ * A user-entered domain as a host: lowercase, no scheme, path, port or trailing
+ * dot. `*.example.com` is allowed and matches exactly one label under the base,
+ * the same depth a wildcard certificate covers.
+ */
 export function normalizeDomain(value: string): string {
   const domain = hostOf(value)
   if (!domain) return ''
+  if (domain.startsWith('*.')) {
+    const base = domain.slice(2)
+    if (!DOMAIN.test(base)) throw err('general_argument_invalid', `"${value}" is not a valid wildcard domain.`)
+    return `*.${base}`
+  }
   if (!DOMAIN.test(domain)) throw err('general_argument_invalid', `"${value}" is not a valid domain.`)
   return domain
 }
@@ -39,6 +59,8 @@ export class ProxyService {
   reservedHosts: () => string[] = () => []
   private byId: Map<string, ProxyRuleRow> | null = null
   private byHost: Map<string, ProxyRuleRow> | null = null
+  /** Wildcard rules, longest base first, then exact hosts win over them. */
+  private wildcards: { suffix: string; rule: ProxyRuleRow }[] | null = null
 
   constructor(
     private db: Db,
@@ -50,16 +72,20 @@ export class ProxyService {
   }
 
   private cache() {
-    if (!this.byId || !this.byHost) {
+    if (!this.byId || !this.byHost || !this.wildcards) {
       const rows = this.sql.query<ProxyRuleRow, []>('SELECT * FROM _proxy_rules ORDER BY seq').all()
       this.byId = new Map(rows.map((row) => [row.id, row]))
       this.byHost = new Map(rows.map((row) => [row.domain, row]))
+      this.wildcards = rows
+        .filter((row) => row.domain.startsWith('*.'))
+        .map((row) => ({ suffix: row.domain.slice(1), rule: row }))
+        .sort((a, b) => b.suffix.length - a.suffix.length)
     }
     return { byId: this.byId, byHost: this.byHost }
   }
 
   private changed() {
-    this.byId = this.byHost = null
+    this.byId = this.byHost = this.wildcards = null
   }
 
   list(): ProxyRuleRow[] {
@@ -81,7 +107,17 @@ export class ProxyService {
   }
 
   byDomain(host: string): ProxyRuleRow | null {
-    return this.cache().byHost.get(hostOf(host)) ?? null
+    const name = hostOf(host)
+    if (!name) return null
+    const exact = this.cache().byHost.get(name)
+    if (exact) return exact
+    for (const { suffix, rule } of this.wildcards ?? []) {
+      if (!name.endsWith(suffix)) continue
+      const label = name.slice(0, -suffix.length)
+      // `*.example.com` covers one label, never the apex or a deeper name.
+      if (label && !label.includes('.')) return rule
+    }
+    return null
   }
 
   /** The normalized, de-duplicated domains a resource should have, checked for conflicts. */
@@ -150,6 +186,20 @@ export class ProxyService {
     const reserved = new Set([server, sitesDomainOf(this.config), functionsDomainOf(this.config)])
     if (reserved.has(domain)) throw err('general_argument_invalid', `${domain} is this server's own domain.`)
 
+    if (domain.startsWith('*.')) {
+      const suffix = domain.slice(1)
+      // A wildcard that covers the API host would route API calls to a site.
+      if (server.endsWith(suffix)) {
+        throw err('general_argument_invalid', `${domain} would match this server's API host (${server}).`)
+      }
+      // Default site/function addresses are not proxy rows, so a wildcard
+      // must not be allowed to shadow them.
+      const baseDomain = [sitesDomainOf(this.config), functionsDomainOf(this.config)].find((base) => `.${base}`.endsWith(suffix))
+      if (baseDomain) throw err('general_argument_invalid', `${domain} would match the ${baseDomain} base domain.`)
+      const shadowed = this.reservedHosts().find((host) => matchesWildcard(host, domain))
+      if (shadowed) throw err('general_argument_invalid', `${domain} would match ${shadowed}, a default site or function address.`)
+    }
+
     const own = self ? (self.type === 'site' ? siteHost(this.config, self.id) : functionHost(this.config, self.id)) : ''
     if (domain !== own && this.reservedHosts().includes(domain)) {
       throw err('general_argument_invalid', `${domain} is already the default address of another site or function.`)
@@ -165,7 +215,11 @@ export class ProxyService {
   assertDefaultHost(type: ProxyResourceType, id: string): void {
     const host = type === 'site' ? `${id}.${sitesDomainOf(this.config)}` : `${id}.${functionsDomainOf(this.config)}`
     const everyone = [this, ...this.peers().filter((peer) => peer !== this)]
-    if (everyone.some((peer) => peer.list().some((row) => row.domain === host))) {
+    if (
+      everyone.some((peer) =>
+        peer.list().some((row) => row.domain === host || (matchesWildcard(host, row.domain) && row.resource_type === type)),
+      )
+    ) {
       throw err('general_argument_invalid', `${host} is already used by a custom domain.`)
     }
   }

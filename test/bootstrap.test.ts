@@ -34,12 +34,12 @@ describe('instance bootstrap', () => {
       FUNCTIONS_SKIP_SCHEDULES: 'cron',
     })
     expect([config.projectId, config.orgId, config.projectName, config.apiKeys, config.secret]).toEqual(['', '', 'Bunwrite', [], ''])
-    expect([config.allowedOrigins, config.sessionDuration, config.sessionsLimit, config.smtp, config.google, config.skipSchedules]).toEqual([
+    expect([config.allowedOrigins, config.sessionDuration, config.sessionsLimit, config.smtp, config.oauth, config.skipSchedules]).toEqual([
       [],
       31536000,
       10,
       null,
-      null,
+      {},
       [],
     ])
   })
@@ -211,6 +211,14 @@ describe('instance bootstrap', () => {
         SMTP_SENDER_EMAIL: 'shop@example.com',
         GOOGLE_CLIENT_ID: 'google-id',
         GOOGLE_CLIENT_SECRET: 'google-secret',
+        FACEBOOK_CLIENT_ID: 'facebook-id',
+        FACEBOOK_CLIENT_SECRET: 'facebook-secret',
+        GITHUB_CLIENT_ID: 'github-id',
+        GITHUB_CLIENT_SECRET: 'github-secret',
+        APPLE_CLIENT_ID: 'apple-id',
+        APPLE_TEAM_ID: 'team-id',
+        APPLE_KEY_ID: 'key-id',
+        APPLE_PRIVATE_KEY: 'p8-key',
         FUNCTIONS_SKIP_SCHEDULES: 'cron,digest',
       })
       expect(first.projectName).toBe('Toko Saya')
@@ -229,6 +237,14 @@ describe('instance bootstrap', () => {
         senderEmail: 'shop@example.com',
       })
       expect(setting<Record<string, unknown>>(db, 'google')).toMatchObject({ clientId: 'google-id', clientSecret: 'google-secret' })
+      expect(setting<Record<string, unknown>>(db, 'facebook')).toMatchObject({ clientId: 'facebook-id', clientSecret: 'facebook-secret' })
+      expect(setting<Record<string, unknown>>(db, 'github')).toMatchObject({ clientId: 'github-id', clientSecret: 'github-secret' })
+      expect(setting<Record<string, unknown>>(db, 'apple')).toMatchObject({
+        clientId: 'apple-id',
+        teamId: 'team-id',
+        keyId: 'key-id',
+        privateKey: 'p8-key',
+      })
       expect(setting(db, 'functions')).toEqual({ skipSchedules: ['cron', 'digest'] })
 
       // A later environment change does not rewrite console-managed settings.
@@ -240,11 +256,22 @@ describe('instance bootstrap', () => {
         SMTP_HOST: 'other.example.com',
         GOOGLE_CLIENT_ID: 'other-id',
         GOOGLE_CLIENT_SECRET: 'other-secret',
+        FACEBOOK_CLIENT_ID: 'other-facebook',
+        FACEBOOK_CLIENT_SECRET: 'other-facebook-secret',
+        GITHUB_CLIENT_ID: 'other-github',
+        GITHUB_CLIENT_SECRET: 'other-github-secret',
+        APPLE_CLIENT_ID: 'other-apple',
+        APPLE_TEAM_ID: 'other-team',
+        APPLE_KEY_ID: 'other-key',
+        APPLE_PRIVATE_KEY: 'other-p8',
       })
       expect(again.projectName).toBe('Toko Saya')
-      expect(again.ignoredEnv).toEqual(expect.arrayContaining(['PROJECT_NAME', 'ALLOWED_ORIGINS', 'SESSION_DURATION', 'SESSIONS_LIMIT', 'SMTP_*', 'GOOGLE_*']))
+      expect(again.ignoredEnv).toEqual(
+        expect.arrayContaining(['PROJECT_NAME', 'ALLOWED_ORIGINS', 'SESSION_DURATION', 'SESSIONS_LIMIT', 'SMTP_*', 'GOOGLE_*', 'FACEBOOK_*', 'GITHUB_*', 'APPLE_*']),
+      )
       expect(setting<Record<string, unknown>>(db, 'project')).toMatchObject({ projectName: 'Toko Saya', allowedOrigins: ['shop.example.com', 'localhost'] })
       expect(setting<Record<string, unknown>>(db, 'smtp')).toMatchObject({ host: 'smtp.example.com' })
+      expect(setting<Record<string, unknown>>(db, 'github')).toMatchObject({ clientId: 'github-id' })
     } finally {
       db.sqlite.close()
     }

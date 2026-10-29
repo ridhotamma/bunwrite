@@ -8,6 +8,7 @@ const resolver: DomainResolver = {
   addresses: async (host) => {
     if (host === 'landing.sites.example.com' || host === 'appwrite.example.com') return [serverIp]
     if (host === 'apex.example.org') return [serverIp]
+    if (host === 'wildcard-check.example.org') return [serverIp]
     if (host === 'stale.example.org') return ['198.51.100.9']
     throw new Error('ENOTFOUND')
   },
@@ -32,6 +33,16 @@ describe('custom-domain verification', () => {
       { domain: 'www.example.org', status: 'verified' },
       { domain: 'apex.example.org', status: 'verified' },
     ])
+  })
+
+  test('verifies a wildcard by probing a label it covers', async () => {
+    const overview = await checkCustomDomains(['*.example.org'], {
+      target: 'landing.sites.example.com',
+      publicEndpoint: 'https://appwrite.example.com/v1',
+      resolver,
+    })
+
+    expect(overview.domains).toEqual([{ domain: '*.example.org', status: 'verified' }])
   })
 
   test('marks a different record as unverified', async () => {

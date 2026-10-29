@@ -8,3 +8,6 @@ data/
 !.env.example
 functions.env
 .functions.env
+
+# TLS certificates for TLS_MODE=external
+/certs/

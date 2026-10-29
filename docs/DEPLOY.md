@@ -106,7 +106,7 @@ in the startup log until the first admin exists. If you create the admin with
 the command above before the first start, create an API key later in
 **Console → API**.
 
-Email, Google sign-in, storage, backups, functions and request-log settings can
+Email, OAuth sign-in, storage, backups, functions and request-log settings can
 be changed later in the console.
 
 ### 4. Run with systemd
@@ -175,6 +175,27 @@ automatically. It is opt-in through a Compose profile stored in `.env`:
 COMPOSE_PROFILES=caddy   # Bunwrite + Caddy (automatic HTTPS)
 # COMPOSE_PROFILES=      # Bunwrite only (bring your own reverse proxy)
 ```
+
+`TLS_MODE` decides who owns the certificate:
+
+```env
+TLS_MODE=acme            # Caddy obtains and renews certificates (default)
+# TLS_MODE=external      # Caddy serves the files below, e.g. a Cloudflare Origin Certificate
+# TLS_MODE=off           # Cloudflare Tunnel / ALB / nginx terminates TLS
+```
+
+For `external`, put the PEM files in `./certs` (or set `TLS_CERT_DIR`) and name
+them inside the container:
+
+```env
+TLS_MODE=external
+TLS_CERT_FILE=/certs/origin.pem
+TLS_KEY_FILE=/certs/origin.key
+```
+
+The loaded certificate covers every host it names; any other host (such as a
+seller custom domain) still falls through to on-demand ACME. With `off`, Caddy
+stops doing TLS entirely and listens on port 80 for the provider.
 
 `docker compose up -d` reads this value from `.env`, so no extra flag is needed.
 Without the profile, `caddy` is not created at all — nothing is installed,
@@ -265,8 +286,9 @@ Notes:
   intentionally want the app exposed directly.
 - Caddy proxies WebSockets (`/v1/realtime`) and passes `X-Forwarded-*`; keep the
   `/v1` prefix (no path rewriting), or the API routes stop matching.
-- To use Cloudflare in front, set SSL/TLS mode to **Full (strict)** after Caddy
-  has a certificate, or keep the record DNS-only.
+- To use Cloudflare in front, choose one origin setup: `TLS_MODE=acme` and
+  **Full (strict)** once Caddy has a certificate; `TLS_MODE=external` with a
+  Cloudflare Origin Certificate; or `TLS_MODE=off` behind a Cloudflare Tunnel.
 - Functions: mount the folder holding `bunwrite.config.json` (or
   `appwrite.config.json`) at
   `/app/functions` (see the commented volume) and set

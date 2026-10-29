@@ -23,8 +23,8 @@ or `ngrok` and point `PUBLIC_ENDPOINT` at it.
 **One click:** in the console, open **Organization → Settings → GitHub App**,
 choose your personal account or an organization, and click **Create GitHub
 App**. GitHub asks you to confirm the name, creates the app with the right
-permissions and webhook, and sends you back. The app's keys are stored in
-the database.
+permissions and webhook, then takes you straight to installing it. The app's
+keys are stored in the database.
 
 **By hand**, as on Appwrite: register a GitHub App and set:
 
@@ -50,18 +50,26 @@ For GitHub Enterprise Server, set `VCS_GITHUB_URL` (for example
 `https://github.example.com`) and `VCS_GITHUB_API_URL`
 (`https://github.example.com/api/v3`).
 
-## 2. Install it on a project
+## 2. Install it once for the server
 
-In the project, open **Settings → Git → Add installation** and pick the
-accounts and repositories the app may see. After GitHub sends you back, the
-server checks that your GitHub account can access that installation before
-adding it, so nobody can connect someone else's installation.
+In any project, open **Settings → Git → Add installation** (or the **Connect
+GitHub** button on a create page) and pick the accounts and repositories the
+app may see. Installations belong to the server, not to one project: once an
+account is installed, every project on the server can deploy from its
+repositories without another GitHub round trip.
+
+After GitHub sends you back, the server checks that your GitHub account can
+access that installation before adding it, so nobody can connect someone
+else's installation. Removing it in **Settings → Git** disconnects every site
+and function on the server that deployed from it; the app stays installed on
+GitHub.
 
 ## 3. Connect a site or function
 
 - **New:** in **Create site** or **Create function**, choose **GitHub
   repository**, then pick the account, repository, branch and (for monorepos)
-  root directory. For a site, picking the repository fills in the framework, runtime and
+  root directory. If no account is installed yet, the same choice shows
+  **Connect GitHub** and returns to the create page afterwards. For a site, picking the repository fills in the framework, runtime and
   commands from its `package.json`, lockfile, `.nvmrc` or `engines.node`; change
   anything before creating it. For a function, "Detect" reads its runtime,
   entry file and build command the same way (or from `requirements.txt`).
@@ -119,7 +127,7 @@ Appwrite's VCS routes, with an API key:
 
 | Route | Does |
 | --- | --- |
-| `GET /v1/vcs/installations`, `GET`/`DELETE /v1/vcs/installations/{id}` | List, read or remove installations (GitHub keeps the app installed) |
+| `GET /v1/vcs/installations`, `GET`/`DELETE /v1/vcs/installations/{id}` | List, read or remove server-wide installations (GitHub keeps the app installed) |
 | `GET /v1/vcs/github/installations/{id}/providerRepositories` | Repositories, newest push first; `search`, and `type=framework` or `runtime` to add detection |
 | `GET …/providerRepositories/{repositoryId}`, `…/branches`, `…/contents` | One repository, its branches, a folder's contents |
 | `POST /v1/vcs/github/installations/{id}/detections` | Detect a folder's framework (`type: framework`) or runtime (`type: runtime`) |

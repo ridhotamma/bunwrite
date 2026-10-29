@@ -106,7 +106,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,
-    google: null,
+    oauth: {},
     storagePath: '',
     skipSchedules: [],
     functionsDir: process.cwd(),

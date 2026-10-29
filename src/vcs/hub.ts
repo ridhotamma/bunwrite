@@ -25,6 +25,7 @@ import { sitesDir } from '~/sites/paths'
 import type { SiteDeploymentRow, SiteRow } from '~/sites/service'
 import { GithubAppStore } from './credentials'
 import { GithubClient, GithubError, verifyWebhookSignature, type GithubCommit, type GithubPull } from './github'
+import { VcsInstallations, type InstallationRow } from './installations'
 import { approvedPulls, RepositoryLinks, type RepositoryRow, type ResourceType } from './repositories'
 import { firstLine, NO_PROVIDER, providerOf, type DeploymentSource, type ProviderSettings } from './source'
 import { readState, signState } from './state'
@@ -73,6 +74,8 @@ export class VcsHub {
   readonly apps: GithubAppStore
   readonly github: GithubClient
   readonly links: RepositoryLinks
+  /** Server-wide installations: one account install serves every project. */
+  readonly installations: VcsInstallations
   /** Milliseconds a PR comment waits for more changes before it is written. */
   commentDelayMs = 1500
   private readonly queues = new Map<string, Promise<void>>()
@@ -87,6 +90,33 @@ export class VcsHub {
       () => ({ apiUrl: control.config.vcsGithub.apiUrl, url: control.config.vcsGithub.url }),
     )
     this.links = new RepositoryLinks(control.db)
+    this.installations = new VcsInstallations(control.db)
+    this.importLegacyInstallations()
+  }
+
+  /**
+   * Installations used to live in each project's database. Copy them into the
+   * control database and repoint their links, so upgrading does not ask an
+   * admin to install the same account again. Safe to run on every start.
+   */
+  private importLegacyInstallations(): void {
+    for (const project of this.projects.list()) {
+      if (project.services.db === this.projects.control.db) continue
+      let rows: InstallationRow[]
+      try {
+        rows = project.services.db.sqlite.query<InstallationRow, []>('SELECT * FROM _vcs_installations ORDER BY seq').all()
+      } catch {
+        continue
+      }
+      for (const row of rows) {
+        const shared = this.installations.add({
+          providerInstallationId: row.provider_installation_id,
+          organization: row.organization,
+          accountType: row.account_type,
+        })
+        this.links.reassignInstallation(project.info.id, row.id, shared.id)
+      }
+    }
   }
 
   private get secret(): string {
@@ -158,27 +188,30 @@ export class VcsHub {
     return { action: `${this.github.webUrl}${path}?state=${encodeURIComponent(state)}`, manifest: JSON.stringify(manifest) }
   }
 
-  /** GitHub made the app: store its keys and go back to the console. */
+  /**
+   * GitHub made the app: store its keys and continue straight into the
+   * install screen. The app is useless until it is installed, so asking for
+   * one more click on the console in between only adds friction.
+   */
   async completeManifest(url: URL): Promise<Response> {
     const state = readState<{ kind: string; returnTo: string }>(this.secret, url.searchParams.get('state'))
     if (state?.kind !== 'manifest') return new Response('This link has expired. Start the GitHub App setup again from the console.', { status: 400 })
-    const back = (key: 'ok' | 'err', text: string) => redirect(withFlash(state.returnTo, key, text))
     const code = url.searchParams.get('code')
-    if (!code) return back('err', 'GitHub did not create the app.')
+    if (!code) return redirect(withFlash(state.returnTo, 'err', 'GitHub did not create the app.'))
     try {
       const app = await this.github.convertManifest(code)
       this.apps.save(app)
-      return back('ok', `GitHub App ${app.slug} is ready. Install it on a project from the project's Settings → Git.`)
+      return redirect(this.installUrl(state.returnTo))
     } catch (error) {
-      return back('err', error instanceof Error ? error.message : String(error))
+      return redirect(withFlash(state.returnTo, 'err', error instanceof Error ? error.message : String(error)))
     }
   }
 
-  /** Where to send an admin to install the app for a project. */
-  installUrl(projectId: string, returnTo: string): string {
+  /** Where to send an admin to install the app; the installation serves every project. */
+  installUrl(returnTo: string): string {
     const app = this.apps.get()
     if (!app?.slug) throw err('general_argument_invalid', 'Set up the GitHub App first (Organization → GitHub App).')
-    const state = signState(this.secret, { kind: 'install', projectId, returnTo })
+    const state = signState(this.secret, { kind: 'install', returnTo })
     return `${this.github.webUrl}/apps/${encodeURIComponent(app.slug)}/installations/new?state=${encodeURIComponent(state)}`
   }
 
@@ -188,11 +221,9 @@ export class VcsHub {
    * connect someone else's installation by changing `installation_id`.
    */
   async completeInstall(url: URL): Promise<Response> {
-    const state = readState<{ kind: string; projectId: string; returnTo: string; installationId?: string }>(this.secret, url.searchParams.get('state'))
+    const state = readState<{ kind: string; returnTo: string; installationId?: string }>(this.secret, url.searchParams.get('state'))
     if (state?.kind !== 'install') return new Response('This link has expired. Start the installation again from the console.', { status: 400 })
     const back = (key: 'ok' | 'err', text: string) => redirect(withFlash(state.returnTo, key, text))
-    const project = this.projects.get(state.projectId)
-    if (!project) return back('err', 'The project no longer exists.')
     if (url.searchParams.get('setup_action') === 'request') return back('ok', 'GitHub asked an organization owner to approve the installation. Add it again once they have.')
     const installationId = url.searchParams.get('installation_id') || state.installationId || ''
     if (!/^\d+$/.test(installationId)) return back('err', 'GitHub did not say which installation to add.')
@@ -202,7 +233,7 @@ export class VcsHub {
     if (!code) {
       if (!app.clientId) return back('err', 'The GitHub App has no client ID, so this server cannot check who installed it. Set VCS_GITHUB_CLIENT_ID and VCS_GITHUB_CLIENT_SECRET.')
       // Ask GitHub who is signed in, then come back here with the installation in the state.
-      const next = signState(this.secret, { kind: 'install', projectId: state.projectId, returnTo: state.returnTo, installationId }, 600)
+      const next = signState(this.secret, { kind: 'install', returnTo: state.returnTo, installationId }, 600)
       const authorize = `${this.github.webUrl}/login/oauth/authorize?client_id=${encodeURIComponent(app.clientId)}&state=${encodeURIComponent(next)}&redirect_uri=${encodeURIComponent(`${this.publicBase}/v1/vcs/github/callback`)}`
       return redirect(authorize)
     }
@@ -211,22 +242,28 @@ export class VcsHub {
       const mine = await this.github.userInstallationIds(token)
       if (!mine.includes(installationId)) return back('err', 'Your GitHub account cannot access that installation.')
       const installation = await this.github.installation(installationId)
-      project.services.vcs.add({
+      this.installations.add({
         providerInstallationId: installationId,
         organization: installation.account?.login ?? '',
         accountType: installation.account?.type ?? '',
       })
-      return back('ok', `Connected GitHub ${installation.account?.login ?? 'installation'}.`)
+      return back('ok', `Connected GitHub ${installation.account?.login ?? 'installation'}. Every project can use it now.`)
     } catch (error) {
       return back('err', error instanceof Error ? error.message : String(error))
     }
   }
 
-  /** Remove an installation from a project, and disconnect what used it. GitHub keeps the app installed. */
-  removeInstallation(project: ProjectRuntime, installationId: string): void {
-    const installation = project.services.vcs.get(installationId)
-    for (const link of this.links.removeForInstallation(project.info.id, installation.id)) this.clearProvider(project, link.resource_type, link.resource_id)
-    project.services.vcs.remove(installation.id)
+  /**
+   * Remove a server-wide installation and disconnect every site and function
+   * that deployed from it. GitHub keeps the app installed.
+   */
+  removeInstallation(installationId: string): void {
+    const installation = this.installations.get(installationId)
+    for (const link of this.links.removeForInstallation(installation.id)) {
+      const project = this.projects.get(link.project_id)
+      if (project) this.clearProvider(project, link.resource_type, link.resource_id)
+    }
+    this.installations.remove(installation.id)
     this.github.forget(installation.provider_installation_id)
   }
 
@@ -242,7 +279,7 @@ export class VcsHub {
       this.unlink(project, type, id)
       return
     }
-    const installation = project.services.vcs.get(provider.installationId)
+    const installation = this.installations.get(provider.installationId)
     let repo
     try {
       repo = await this.github.repository(installation.provider_installation_id, provider.providerRepositoryId)
@@ -594,11 +631,9 @@ export class VcsHub {
   }
 
   private onInstallationGone(providerInstallationId: string): void {
+    const installation = this.installations.byProvider(providerInstallationId)
+    if (installation) this.removeInstallation(installation.id)
     this.github.forget(providerInstallationId)
-    for (const project of this.projects.list()) {
-      const installation = project.services.vcs.byProvider(providerInstallationId)
-      if (installation) this.removeInstallation(project, installation.id)
-    }
   }
 
   // ---- Pull request comment ----

@@ -386,12 +386,15 @@ describe('webhooks through the console', () => {
 })
 
 describe('settings through the console', () => {
-  test('settings are grouped into tabs, with the old URL redirecting', async () => {
+  test('settings use a grouped section nav, with the old URL redirecting', async () => {
     const root = await get('/console/settings')
     expect(root.status).toBe(303)
     expect(root.headers.get('location')).toBe('/console/settings/general')
     const general = await (await get('/console/settings/general')).text()
     expect(general).toContain('Project')
+    expect(general).toContain('class="settings-nav"')
+    expect(general).toContain('Infrastructure')
+    expect(general).toContain('Platform')
     expect(general).not.toContain('Global function variables')
     expect(general).not.toContain('/console/settings/access')
     const functions = await (await get('/console/settings/functions')).text()
@@ -568,6 +571,20 @@ describe('settings through the console', () => {
     const res = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
     expect(res.status).toBe(301)
     expect(new URL(res.headers.get('location')!).searchParams.get('client_id')).toBe('gid')
+  })
+
+  test('Facebook, GitHub and Apple sign-in can be set up from the console', async () => {
+    await form('/console/settings/github', { clientId: 'ghid', clientSecret: 'ghsecret' })
+    let res = await fetch(`${server.endpoint}/account/tokens/oauth2/github?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
+    expect(res.status).toBe(301)
+    expect(new URL(res.headers.get('location')!).searchParams.get('client_id')).toBe('ghid')
+
+    await form('/console/settings/apple', { clientId: 'aid', teamId: 'team-id', keyId: 'key-id', privateKey: 'p8-key' })
+    res = await fetch(`${server.endpoint}/account/tokens/oauth2/apple?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
+    expect(res.status).toBe(301)
+    const location = new URL(res.headers.get('location')!)
+    expect(location.searchParams.get('client_id')).toBe('aid')
+    expect(location.searchParams.get('response_mode')).toBe('form_post')
   })
 
   test('API keys: shown once, work with the SDK, stop working when revoked', async () => {

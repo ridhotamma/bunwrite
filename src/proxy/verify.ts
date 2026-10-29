@@ -78,9 +78,11 @@ export async function checkCustomDomains(
   const checks = await Promise.all(
     domains.map(async (domain): Promise<DomainCheck> => {
       const host = hostOf(domain)
+      // `*.example.com` is not a name DNS can resolve; probe a label it covers.
+      const probe = host.startsWith('*.') ? `wildcard-check.${host.slice(2)}` : host
       const [cnames, addresses] = await Promise.all([
-        settle(resolver.cnames(host), []),
-        settle(resolver.addresses(host), []),
+        settle(resolver.cnames(probe), []),
+        settle(resolver.addresses(probe), []),
       ])
       const verified = cnames.includes(target) || addresses.some((address) => serverAddresses.has(address))
       return { domain: host, status: verified ? 'verified' : 'unverified' }

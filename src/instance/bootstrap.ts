@@ -9,7 +9,7 @@
  * truth and later changes belong in the console.
  */
 import type { Config } from '~/config'
-import { googleFromEnv, list, smtpFromEnv } from '~/config'
+import { list, OAUTH_PROVIDER_IDS, oauthFromEnv, smtpFromEnv } from '~/config'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
@@ -162,8 +162,11 @@ function seedProjectSettings(db: Db, env: Record<string, string | undefined>, pr
   const smtp = smtpFromEnv(env)
   if (smtp && !readSetting<Config['smtp']>(db, 'smtp')) writeSetting(db, 'smtp', smtp)
 
-  const google = googleFromEnv(env)
-  if (google && !readSetting<Config['google']>(db, 'google')) writeSetting(db, 'google', google)
+  const providers = oauthFromEnv(env)
+  for (const id of OAUTH_PROVIDER_IDS) {
+    const provider = providers[id]
+    if (provider && !readSetting(db, id)) writeSetting(db, id, provider)
+  }
 
   if (env.FUNCTIONS_SKIP_SCHEDULES !== undefined) {
     const functions = readSetting<{ skipSchedules?: string[]; functionsDir?: string }>(db, 'functions')
@@ -191,8 +194,11 @@ function ignoredEnvironment(
   if (env.SESSION_DURATION?.trim()) ignored.push('SESSION_DURATION')
   if (env.SESSIONS_LIMIT?.trim()) ignored.push('SESSIONS_LIMIT')
   if (env.SMTP_HOST) ignored.push('SMTP_*')
-  if (env.GOOGLE_CLIENT_ID || env.GOOGLE_CLIENT_SECRET || env.GOOGLE_AUTH_URL || env.GOOGLE_TOKEN_URL || env.GOOGLE_USERINFO_URL) {
-    ignored.push('GOOGLE_*')
+  for (const id of OAUTH_PROVIDER_IDS) {
+    const prefix = id.toUpperCase()
+    const names = [`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`, `${prefix}_AUTH_URL`, `${prefix}_TOKEN_URL`, `${prefix}_USERINFO_URL`]
+    if (id === 'apple') names.push('APPLE_TEAM_ID', 'APPLE_KEY_ID', 'APPLE_PRIVATE_KEY')
+    if (names.some((name) => env[name])) ignored.push(`${prefix}_*`)
   }
   if (env.FUNCTIONS_SKIP_SCHEDULES !== undefined && list(env.FUNCTIONS_SKIP_SCHEDULES).length) ignored.push('FUNCTIONS_SKIP_SCHEDULES')
   return ignored

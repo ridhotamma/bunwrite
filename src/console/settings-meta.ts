@@ -19,10 +19,20 @@ export const TABS = [
 
 export type SettingsTab = (typeof TABS)[number]['key']
 
+/** The settings sub-navigation, grouped so the list stays scannable. */
+export const SETTING_GROUPS: { label: string; tabs: SettingsTab[] }[] = [
+  { label: 'Project', tabs: ['general', 'email', 'templates'] },
+  { label: 'Infrastructure', tabs: ['storage', 'backups', 'cache', 'render'] },
+  { label: 'Platform', tabs: ['functions', 'variables', 'git', 'logs'] },
+]
+
 export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   project: 'general',
   smtp: 'email',
   google: 'email',
+  facebook: 'email',
+  github: 'email',
+  apple: 'email',
   functions: 'functions',
   logs: 'logs',
   s3: 'storage',

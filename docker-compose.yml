@@ -3,6 +3,7 @@
 # larger machine.
 #
 #   cp .env.example .env    # set DOMAIN; COMPOSE_PROFILES controls the bundled Caddy
+#                           # and TLS_MODE=acme|external|off picks who owns TLS
 #   docker compose up -d --build
 #
 # See docs/DEPLOY.md ("Docker Compose") for admin setup, functions and backups.
@@ -78,7 +79,12 @@ services:
     entrypoint: ["/bin/sh", "/usr/local/bin/caddy-entrypoint.sh"]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
-      CADDY_WAIT_DNS: ${CADDY_WAIT_DNS:-true}
+      # acme (Caddy obtains certificates), external (TLS_CERT_FILE/TLS_KEY_FILE)
+      # or off (an upstream proxy/tunnel terminates TLS).
+      TLS_MODE: ${TLS_MODE:-acme}
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-}
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-}
+      CADDY_WAIT_DNS: ${CADDY_WAIT_DNS:-}
       CADDY_WAIT_IP: ${CADDY_WAIT_IP:-}
       CADDY_WAIT_INTERVAL: ${CADDY_WAIT_INTERVAL:-10}
     ports:
@@ -87,7 +93,11 @@ services:
       - "443:443/udp" # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.external:/etc/caddy/Caddyfile.external:ro
+      - ./Caddyfile.off:/etc/caddy/Caddyfile.off:ro
       - ./scripts/caddy-entrypoint.sh:/usr/local/bin/caddy-entrypoint.sh:ro
+      # Certificates for TLS_MODE=external; ignored in the other modes.
+      - ${TLS_CERT_DIR:-./certs}:/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     logging:

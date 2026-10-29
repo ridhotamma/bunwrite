@@ -33,6 +33,13 @@ A site can also have any number of **custom domains**, such as
 proxy rules (`proxy.createSiteRule`). The default site address always keeps
 working when a custom domain is added or removed.
 
+A custom domain may also be a wildcard, `*.example.com`. It matches exactly one
+label under the base (`shop.example.com`, not `example.com` or
+`deep.shop.example.com`), the same depth a wildcard certificate covers. Exact
+domains still win over a wildcard, and a wildcard cannot shadow the API host or
+a default `<id>.<SITES_DOMAIN>` address. This is how a multi-tenant app serves
+arbitrary customer subdomains from one site.
+
 Functions use the same model: `<function-id>.<FUNCTIONS_DOMAIN>` by default
 (`<function-id>.functions.example.com`), plus any number of custom domains.
 

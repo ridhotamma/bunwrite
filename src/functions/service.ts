@@ -36,7 +36,7 @@ const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies',
 const SYNC_TIMEOUT = 30
 const NODE_RUNNER_MODE = '__bunwrite-runner-node'
 /** Server-only settings a function never needs to see. */
-const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
+const PRIVATE_ENV = ['SECRET', 'API_KEYS', 'GOOGLE_CLIENT_SECRET', 'FACEBOOK_CLIENT_SECRET', 'GITHUB_CLIENT_SECRET', 'APPLE_PRIVATE_KEY', 'SMTP_PASSWORD', 'CONSOLE_ADMIN_PASSWORD']
 
 export interface FunctionRow extends ProviderColumns {
   id: string

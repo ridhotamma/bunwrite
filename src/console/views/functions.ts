@@ -34,6 +34,10 @@ interface CodeFieldsOptions {
   buildCommands: boolean
   /** GitHub installations, for a new function's "GitHub repository" choice. */
   installations?: { id: string; organization: string }[]
+  /** The GitHub App exists, so offer the repository choice even before an install. */
+  githubApp?: boolean
+  /** Select this source on first paint, such as `github` after connecting. */
+  preferredSource?: string
   /** The section title already says "Code". */
   hideLegend?: boolean
 }
@@ -50,15 +54,16 @@ function codeFields(options: CodeFieldsOptions): Html {
   const existing = options.runtime !== null
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
-  const template = choice('template', existing ? 'Start over from the template' : 'Starter template', existing ? 'Replace the code with a hello world.' : 'A small hello world to edit later.', !existing)
+  const preferredGithub = !existing && Boolean(options.githubApp) && options.preferredSource === 'github'
+  const template = choice('template', existing ? 'Start over from the template' : 'Starter template', existing ? 'Replace the code with a hello world.' : 'A small hello world to edit later.', !existing && !preferredGithub)
   const upload = choice('upload', 'Upload a folder', 'A .zip or .tar.gz of the function folder.', existing && !options.current)
   const paste = choice('paste', options.current ? 'Edit code' : 'Write code', options.current ? 'Change the entry file here.' : 'One file, typed or pasted here.', existing && Boolean(options.current))
   const installations = options.installations ?? []
-  const github = installations.length ? [choice('github', 'GitHub repository', 'Build on every push to the production branch.', false)] : []
+  const github = options.githubApp ? [choice('github', 'GitHub repository', 'Build on every push to the production branch.', preferredGithub)] : []
   const choices = existing ? (options.current ? [paste, upload, template] : [upload, paste, template]) : [template, upload, paste, ...github]
   // Render the same visibility the script would apply, so the first paint is
   // the final layout and the selected block does not pop in after the swap.
-  const selected = existing ? (options.current ? 'paste' : 'upload') : 'template'
+  const selected = existing ? (options.current ? 'paste' : 'upload') : preferredGithub ? 'github' : 'template'
   const shown = (...keys: string[]) => (keys.includes(selected) ? '' : 'hidden')
   return html`<fieldset class="code-source">
       <legend class="${options.hideLegend ? 'visually-hidden' : ''}">Code</legend>
@@ -71,14 +76,25 @@ function codeFields(options: CodeFieldsOptions): Html {
     <div data-show-for="paste" data-for-select="source" ${shown('paste')}>
       <label>Entry file code<textarea name="code_text" class="mono tall code-editor" spellcheck="false" required ${followCode}>${pasteDefault}</textarea></label>
     </div>
-    ${github.length ? gitSourceFields(installations, 'create-function', { detectLabel: 'Detect the runtime, entry file and build command from the repository' }) : ''}
+    ${github.length
+      ? gitSourceFields(installations, 'create-function', {
+          detectLabel: 'Detect the runtime, entry file and build command from the repository',
+          connectTo: '/console/functions/new?source=github',
+          open: selected === 'github',
+        })
+      : ''}
     <div data-show-for="upload paste github" data-for-select="source" ${shown('upload', 'paste', 'github')}>
       <label>Build command<input name="commands" class="mono" value="${options.commands}" placeholder="${options.runtime ? (python ? 'pip install -r requirements.txt' : 'npm install') : 'npm install'}">${buildHint(options.buildCommands)}</label>
     </div>`
 }
 
 /** The Create function page: general settings and code in sections, like the other create pages. */
-export function functionCreateView(buildCommands: boolean, installations: { id: string; organization: string }[] = []): Html {
+export function functionCreateView(
+  buildCommands: boolean,
+  installations: { id: string; organization: string }[] = [],
+  githubApp = false,
+  preferredSource = '',
+): Html {
   return html`${header('Create function', { back: FN })}
     <form method="post" action="${FN}" enctype="multipart/form-data" hx-boost="false">
       ${settingsSection(
@@ -96,10 +112,18 @@ export function functionCreateView(buildCommands: boolean, installations: { id: 
       )}
       ${settingsSection(
         'Code',
-        installations.length
+        githubApp
           ? 'Start from the template, upload a folder, write the code, or build a GitHub repository on every push.'
-          : 'Start from the template, upload a folder, or write the code. Add a GitHub installation in Settings → Git to deploy from a repository.',
-        html`<div class="stack-fields">${codeFields({ runtime: null, commands: '', buildCommands, installations, hideLegend: true })}</div>`,
+          : 'Start from the template, upload a folder, or write the code. Set up the GitHub App once in Organization → GitHub App to deploy from a repository.',
+        html`<div class="stack-fields">${codeFields({
+          runtime: null,
+          commands: '',
+          buildCommands,
+          installations,
+          githubApp,
+          preferredSource,
+          hideLegend: true,
+        })}</div>`,
       )}
       ${pageFooter(FN, 'Create function')}
     </form>`

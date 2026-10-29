@@ -6,7 +6,6 @@ import { deploymentDir, Deployments, type DeploymentRow } from '~/functions/depl
 import type { ExecutionRow, FunctionRow } from '~/functions/service'
 import { starterFiles, SUPPORTED_RUNTIME_IDS } from '~/functions/templates'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { envBulkDialog } from '~/console/env-vars'
 import { checked, lines, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, badge, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
@@ -57,7 +56,7 @@ async function createFromGit(ctx: ConsoleContext, id: string, name: string, runt
   const installationId = value(ctx.form, 'installation_id')
   const repositoryId = value(ctx.form, 'provider_repository_id')
   if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
-  const installation = ctx.services.vcs.get(installationId)
+  const installation = ctx.hub.installations.get(installationId)
   const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
   const branch = value(ctx.form, 'provider_branch')
   let found = { runtime, entrypoint: entrypointFrom(ctx), commands: value(ctx.form, 'commands') }
@@ -218,8 +217,17 @@ export function functionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${FN}/new`, ({ ctx }) =>
-    ctx.render('Create function', 'functions', functionCreateView(ctx.services.config.functionsBuildCommands, ctx.hub.apps.get() ? ctx.services.vcs.list() : [])),
+  router.get(`${FN}/new`, ({ ctx, url }) =>
+    ctx.render(
+      'Create function',
+      'functions',
+      functionCreateView(
+        ctx.services.config.functionsBuildCommands,
+        ctx.hub.installations.list(),
+        Boolean(ctx.hub.apps.get()),
+        url.searchParams.get('source') ?? '',
+      ),
+    ),
   )
 
   router.post(FN, async ({ ctx }) => {
@@ -297,20 +305,16 @@ export function functionPages(router: ConsoleRouter): void {
         settingsSection(
           'Function variables',
           'Available only to this function. A variable here wins over a global variable with the same name.',
-          html`${vars.length
-            ? variableList(vars, {
-                save: `${functionUrl(f.id)}/variables`,
-                remove: `${functionUrl(f.id)}/variables/delete`,
-                clear: { action: `${functionUrl(f.id)}/variables/clear`, confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
-              })
-            : html`<p class="hint" style="margin:0 0 12px">None set here. Values from the functions env file still apply.</p>`}
-          <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>
-          <form method="post" action="${functionUrl(f.id)}/variables" style="margin-top:12px">
-            <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
-            <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
-            <div class="foot"><button type="button" data-dialog-open="#bulk-fn-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button class="primary">Add variable</button></div>
-          </form>
-          ${envBulkDialog({ id: 'bulk-fn-vars', title: `Import variables for ${f.name}`, action: `${functionUrl(f.id)}/variables/bulk` })}`,
+          html`${variableList(vars, {
+              id: 'function-vars',
+              save: `${functionUrl(f.id)}/variables`,
+              remove: `${functionUrl(f.id)}/variables/delete`,
+              addLabel: 'Add variable',
+              bulk: { id: 'bulk-fn-vars', title: `Import variables for ${f.name}`, action: `${functionUrl(f.id)}/variables/bulk` },
+              clear: { action: `${functionUrl(f.id)}/variables/clear`, confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
+              empty: html`<p class="hint" style="margin:0">None set here. Values from the functions env file still apply.</p>`,
+            })}
+          <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>`,
           { id: 'function-variables' },
         ),
       ),

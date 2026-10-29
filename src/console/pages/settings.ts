@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 
-import type { S3Config } from '~/config'
+import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type S3Config } from '~/config'
 import { SETTING_KEYS, type SettingKey } from '~/settings/service'
 import type { ImageOutput } from '~/render/service'
 import { err } from '~/lib/errors'
@@ -159,18 +159,31 @@ export function settingsPages(router: ConsoleRouter): void {
     }
   })
 
-  router.post(`${SETTINGS}/google`, ({ ctx }) => {
-    const f = ctx.form
-    if (f.disable) {
-      ctx.services.settings.set('google', { disabled: true })
-      return ctx.go(tabPath('email'), { tone: 'success', text: 'Google sign-in turned off' })
-    }
-    const clientId = value(f, 'clientId')
-    const clientSecret = String(f.clientSecret ?? '') || ctx.services.config.google?.clientSecret || ''
-    if (!clientId || !clientSecret) throw err('general_argument_invalid', 'Enter both the client ID and secret.')
-    ctx.services.settings.set('google', { clientId, clientSecret })
-    return ctx.go(tabPath('email'), { tone: 'success', text: 'Google sign-in saved' })
-  })
+  for (const id of OAUTH_PROVIDER_IDS) {
+    router.post(`${SETTINGS}/${id}`, ({ ctx }) => {
+      const meta = OAUTH_PROVIDERS[id]
+      if (ctx.form.disable) {
+        ctx.services.settings.set(id, { disabled: true })
+        return ctx.go(tabPath('email'), { tone: 'success', text: `${meta.name} sign-in turned off` })
+      }
+      const f = ctx.form
+      const current = ctx.services.config.oauth[id] ?? null
+      const clientId = value(f, 'clientId')
+      if (!clientId) throw err('general_argument_invalid', `Enter the ${meta.name} client ID.`)
+      if (id === 'apple') {
+        const teamId = value(f, 'teamId') || current?.teamId || ''
+        const keyId = value(f, 'keyId') || current?.keyId || ''
+        const privateKey = String(f.privateKey ?? '').trim() || current?.privateKey || ''
+        if (!teamId || !keyId || !privateKey) throw err('general_argument_invalid', 'Enter the Apple team ID, key ID and .p8 private key.')
+        ctx.services.settings.set(id, { clientId, clientSecret: '', teamId, keyId, privateKey })
+      } else {
+        const clientSecret = String(f.clientSecret ?? '') || current?.clientSecret || ''
+        if (!clientSecret) throw err('general_argument_invalid', 'Enter both the client ID and secret.')
+        ctx.services.settings.set(id, { clientId, clientSecret })
+      }
+      return ctx.go(tabPath('email'), { tone: 'success', text: `${meta.name} sign-in saved` })
+    })
+  }
 
   router.post(`${SETTINGS}/functions`, ({ ctx }) => {
     const functionsDir = value(ctx.form, 'functionsDir')

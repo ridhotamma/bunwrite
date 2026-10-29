@@ -1,4 +1,8 @@
-/** GitHub App installations connected to one project (Appwrite's `installations`). */
+/**
+ * GitHub App installations connected to the server (Appwrite's
+ * `installations`). They live in the control database, so installing an
+ * account once makes its repositories available to every project.
+ */
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'

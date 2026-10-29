@@ -4,7 +4,8 @@
  * use the defaults captured when the service starts; API keys live in
  * `_api_keys`.
  */
-import type { BackupsConfig, CacheConfig, Config, GoogleConfig, S3Config, SmtpConfig } from '~/config'
+import type { BackupsConfig, CacheConfig, Config, OAuthConfig, OAuthProviderId, S3Config, SmtpConfig } from '~/config'
+import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
 import type { RenderConfig } from '~/render/service'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
@@ -18,9 +19,37 @@ export interface ProjectSettings {
   sessionsLimit: number
 }
 
-export type SettingKey = 'project' | 'smtp' | 'google' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache'
+export type SettingKey =
+  | 'project'
+  | 'smtp'
+  | 'google'
+  | 'facebook'
+  | 'github'
+  | 'apple'
+  | 'functions'
+  | 'logs'
+  | 's3'
+  | 'backups'
+  | 'render'
+  | 'cache'
 
-export const SETTING_KEYS: SettingKey[] = ['project', 'smtp', 'google', 'functions', 'logs', 's3', 'backups', 'render', 'cache']
+export const SETTING_KEYS: SettingKey[] = [
+  'project',
+  'smtp',
+  'google',
+  'facebook',
+  'github',
+  'apple',
+  'functions',
+  'logs',
+  's3',
+  'backups',
+  'render',
+  'cache',
+]
+
+const cloneOAuth = (oauth: Config['oauth']): Config['oauth'] =>
+  Object.fromEntries(Object.entries(oauth).map(([id, config]) => [id, config ? { ...config } : config])) as Config['oauth']
 
 export interface ApiKeyRow {
   id: string
@@ -40,7 +69,7 @@ export class SettingsService {
     | 'sessionDuration'
     | 'sessionsLimit'
     | 'smtp'
-    | 'google'
+    | 'oauth'
     | 'skipSchedules'
     | 'functionsDir'
     | 'logRetentionDays'
@@ -62,7 +91,7 @@ export class SettingsService {
       sessionDuration: config.sessionDuration,
       sessionsLimit: config.sessionsLimit,
       smtp: config.smtp ? { ...config.smtp } : null,
-      google: config.google ? { ...config.google } : null,
+      oauth: cloneOAuth(config.oauth),
       skipSchedules: [...config.skipSchedules],
       functionsDir: config.functionsDir,
       logRetentionDays: config.logRetentionDays,
@@ -101,19 +130,12 @@ export class SettingsService {
         c.smtp = v === null ? this.defaults.smtp : 'disabled' in v ? null : v
         break
       }
-      case 'google': {
-        const v = this.read<Partial<GoogleConfig> | { disabled: true }>('google')
-        if (v === null) c.google = this.defaults.google
-        else if ('disabled' in v) c.google = null
-        else
-          c.google = {
-            authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-            tokenUrl: 'https://oauth2.googleapis.com/token',
-            userinfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
-            ...v,
-          } as GoogleConfig
+      case 'google':
+      case 'facebook':
+      case 'github':
+      case 'apple':
+        this.applyOAuth(key)
         break
-      }
       case 'functions': {
         const v = this.read<{ skipSchedules?: string[]; functionsDir?: string }>('functions')
         c.skipSchedules = v?.skipSchedules ?? [...this.defaults.skipSchedules]
@@ -147,6 +169,28 @@ export class SettingsService {
         break
       }
     }
+  }
+
+  /**
+   * OAuth provider credentials: stored values win, provider defaults fill
+   * URLs, and a `disabled` marker turns the provider off even if env set it.
+   */
+  private applyOAuth(id: OAuthProviderId): void {
+    const meta = OAUTH_PROVIDERS[id]
+    const stored = this.read<Partial<OAuthConfig> | { disabled: true }>(id)
+    if (stored && 'disabled' in stored) {
+      this.config.oauth[id] = null
+      return
+    }
+    const fallback = this.defaults.oauth[id] ?? null
+    if (!stored) {
+      this.config.oauth[id] = fallback ? { ...fallback } : null
+      return
+    }
+    const merged = { authUrl: meta.authUrl, tokenUrl: meta.tokenUrl, ...(meta.userinfoUrl ? { userinfoUrl: meta.userinfoUrl } : {}), ...fallback, ...stored } as OAuthConfig
+    merged.clientId ??= ''
+    merged.clientSecret ??= ''
+    this.config.oauth[id] = merged
   }
 
   set(key: SettingKey, value: unknown): void {

@@ -27,7 +27,9 @@ The only value most deployments need is `DOMAIN`. Everything else has a default.
 | `API_COMPAT` | `bunwrite` | Names Bunwrite sends: `bunwrite` or `appwrite`. Both naming families are always accepted. |
 | `COMPOSE_PROFILES` | `caddy` in `.env.example` | `caddy` starts the bundled Caddy container in Docker Compose. Remove it for your own proxy or a Cloudflare Tunnel. |
 
-`API_COMPAT` only changes what the server sends, not what it reads:
+`API_COMPAT` only changes what the server sends, not what it reads. A request
+may mix the two header families; the same header in both must carry the same
+value, and an empty header counts as absent:
 
 | | `bunwrite` | `appwrite` |
 | --- | --- | --- |
@@ -48,7 +50,11 @@ functions keep working unchanged.
 | `FUNCTIONS_PREFIX` | `functions` | Function host prefix: `<function-id>.<prefix>.<DOMAIN>`. |
 | `SITES_DOMAIN` | `sites.<DOMAIN>` or `sites.localhost` | Overrides the whole site base domain. |
 | `FUNCTIONS_DOMAIN` | `functions.<DOMAIN>` or `functions.localhost` | Overrides the whole function base domain. |
-| `CADDY_WAIT_DNS` | `true` | With the bundled Caddy, wait for `DOMAIN` to resolve before starting. |
+| `TLS_MODE` | `acme` | `acme` lets the bundled Caddy obtain certificates; `external` serves `TLS_CERT_FILE`/`TLS_KEY_FILE` (a Cloudflare Origin Certificate, certbot, a private CA) and still uses on-demand ACME for hosts the certificate does not cover; `off` leaves TLS to an upstream proxy or tunnel and serves HTTP only. |
+| `TLS_CERT_FILE` | unset | PEM certificate chain for `TLS_MODE=external`, inside the Caddy container (for example `/certs/origin.pem`). |
+| `TLS_KEY_FILE` | unset | Private key for `TLS_MODE=external`, inside the Caddy container. |
+| `TLS_CERT_DIR` | `./certs` | Host directory mounted at `/certs` in the Caddy container. |
+| `CADDY_WAIT_DNS` | `true` in `acme`, `false` otherwise | With the bundled Caddy, wait for `DOMAIN` to resolve before starting. |
 | `CADDY_WAIT_IP` | unset | Address `DOMAIN` should resolve to while Caddy waits. |
 | `TRUSTED_PROXIES` | `private` | Which peers may supply `X-Forwarded-For` / `CF-Connecting-IP`. See [request logs](#request-logs-and-client-ip). |
 
@@ -63,8 +69,17 @@ the API, or through Appwrite's proxy rules.
 
 ### Caddy
 
-The bundled Caddy container terminates TLS and asks Bunwrite
-(`/.well-known/bunwrite/host`) before issuing a certificate for a host. It needs:
+The bundled Caddy container can terminate TLS itself or sit behind a provider.
+`TLS_MODE` selects which:
+
+| `TLS_MODE` | TLS terminates at | Certificates |
+| --- | --- | --- |
+| `acme` (default) | Caddy | Caddy obtains and renews them from an ACME CA |
+| `external` | Caddy | The files in `TLS_CERT_FILE` / `TLS_KEY_FILE`; on-demand ACME covers hosts they do not include |
+| `off` | An upstream proxy or tunnel | The provider's; Caddy listens on port 80 and forwards |
+
+In `acme` mode Caddy asks Bunwrite (`/.well-known/bunwrite/host`) before issuing
+a certificate for a host. It needs:
 
 - A DNS A/AAAA record for `DOMAIN`
 - Wildcard A/AAAA records for `*.sites.<DOMAIN>` and `*.functions.<DOMAIN>`
@@ -74,19 +89,54 @@ Custom domains need their own CNAME (to `<site-id>.<SITES_DOMAIN>` or the
 function's default host) or A record, plus a certificate through Caddy's
 on-demand TLS.
 
+In `external` mode, put the PEM files in `TLS_CERT_DIR` (default `./certs`) and
+point `TLS_CERT_FILE` / `TLS_KEY_FILE` at their paths inside the container:
+
+```env
+TLS_MODE=external
+TLS_CERT_DIR=./certs
+TLS_CERT_FILE=/certs/origin.pem
+TLS_KEY_FILE=/certs/origin.key
+```
+
+The certificate is used for every host it covers; anything else still falls
+through to on-demand ACME. This is the mode for a Cloudflare Origin Certificate
+or any certificate managed outside Caddy. If you do not want Caddy to request
+public certificates at all, include every host in the certificate or use
+`TLS_MODE=off` with the provider terminating TLS.
+
+In `off` mode, leave `PUBLIC_ENDPOINT` at its `https://` value and point the
+provider at this container's port 80 (or at Bunwrite's `127.0.0.1:8080` and skip
+the `caddy` profile entirely).
+
 ### Cloudflare Tunnel
 
 When a hostname is routed through Cloudflare Tunnel, Cloudflare terminates TLS.
 Do not also run Caddy's automatic HTTPS for that hostname:
 
-- Remove the `caddy` profile, or run Caddy HTTP-only with `auto_https off`.
-- Point `cloudflared` at `http://bunwrite:8080` or `http://127.0.0.1:8080`.
+- Set `TLS_MODE=off`, or remove the `caddy` profile and point `cloudflared`
+  directly at Bunwrite.
+- Point `cloudflared` at `http://caddy:80`, `http://bunwrite:8080` or
+  `http://127.0.0.1:8080`.
 - Let Cloudflare manage certificates. Universal SSL covers `example.com` and
   `*.example.com`, not `*.sites.example.com`; use Total TLS / Advanced
   Certificate Manager or a certificate that covers the deeper wildcard.
 - For arbitrary customer-owned domains, use Cloudflare for SaaS custom
   hostnames, or point those domains directly at the server and let Caddy issue
   their certificates.
+
+### Cloudflare proxy (orange cloud)
+
+When Cloudflare is proxied instead of Tunnel, it terminates TLS at its edge but
+still connects to your origin. Two origin setups work:
+
+- **Caddy obtains the origin certificate:** keep `TLS_MODE=acme` and set
+  Cloudflare SSL/TLS mode to **Full (strict)** once Caddy has a certificate.
+  The ACME HTTP challenge must reach port 80 through Cloudflare.
+- **Cloudflare Origin Certificate:** set `TLS_MODE=external` and mount the
+  certificate as `origin.pem` / `origin.key` under `TLS_CERT_DIR`. This avoids
+  origin ACME entirely for the hosts it covers; seller domains outside the zone
+  still use on-demand ACME unless Cloudflare for SaaS terminates them.
 
 Do not send the same hostname through both Caddy and the tunnel. Choose one TLS
 terminator per host.
@@ -307,17 +357,43 @@ SMTP can also be configured in **Console → Settings → Email & sign-in**.
 | `SMTP_SENDER_EMAIL` | `no-reply@example.com` | From address. |
 | `SMTP_SENDER_NAME` | `<PROJECT_NAME> Team` | From name. |
 
-### Google sign-in
+### OAuth sign-in
 
-Can also be configured in the console.
+Google, Facebook, GitHub and Apple can each be configured in the console
+(**Settings → Email & sign-in**) or seeded from the environment. Register this
+redirect URI with the provider:
+
+```
+<PUBLIC_ENDPOINT>/account/sessions/oauth2/callback/<provider>/<PROJECT_ID>
+```
+
+Apple uses `response_mode=form_post`, so its callback arrives as a POST. Its
+client secret is an ES256 JWT signed with the `.p8` key on each token exchange.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GOOGLE_CLIENT_ID` | unset | Google OAuth client ID. |
 | `GOOGLE_CLIENT_SECRET` | unset | Google OAuth client secret. |
-| `GOOGLE_AUTH_URL` | Google default | Override for a compatible provider. |
-| `GOOGLE_TOKEN_URL` | Google default | Override for a compatible provider. |
-| `GOOGLE_USERINFO_URL` | Google default | Override for a compatible provider. |
+| `FACEBOOK_CLIENT_ID` | unset | Facebook app ID. |
+| `FACEBOOK_CLIENT_SECRET` | unset | Facebook app secret. |
+| `GITHUB_CLIENT_ID` | unset | GitHub OAuth App client ID. |
+| `GITHUB_CLIENT_SECRET` | unset | GitHub OAuth App client secret. |
+| `APPLE_CLIENT_ID` | unset | Apple service ID (the OAuth client ID). |
+| `APPLE_TEAM_ID` | unset | Apple developer team ID. |
+| `APPLE_KEY_ID` | unset | ID of the Sign in with Apple key. |
+| `APPLE_PRIVATE_KEY` | unset | The key's `.p8` contents, base64, or with `\n` escapes. |
+
+Each provider also accepts `<NAME>_AUTH_URL`, `<NAME>_TOKEN_URL` and
+(`GOOGLE`, `FACEBOOK`, `GITHUB` only) `<NAME>_USERINFO_URL` to point at a
+compatible endpoint.
+
+### OAuth endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/account/tokens/oauth2/:provider` | Redirects to the provider with a signed `state`. |
+| `GET` | `/account/sessions/oauth2/callback/:provider/:projectId` | Provider callback (token flow). |
+| `POST` | `/account/sessions/oauth2/callback/:provider/:projectId` | Same, for Apple's form-post callback. |
 
 ## Other references
 

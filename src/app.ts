@@ -6,7 +6,7 @@ import { accountRoutes, userRoutes } from './auth/routes'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
-import { apiHeader, corsHeaderNames } from './lib/compat'
+import { apiHeader, assertCompatHeaders, corsHeaderNames } from './lib/compat'
 import { addVary, compressResponse } from './lib/compress'
 import { isStreaming } from './lib/streaming'
 import { BunwriteError, err } from './lib/errors'
@@ -107,6 +107,15 @@ export function createApp(source: Services | ProjectResolver) {
       'access-control-max-age': '86400',
       vary: 'Origin',
     }
+  }
+
+  /** Apply CORS to a response; keep a handler's Vary (for example Accept-Encoding) and add Origin beside it. */
+  const corsResponse = (request: Request, response: Response, allowedOrigins: string[]): Response => {
+    for (const [k, v] of Object.entries(cors(request, allowedOrigins))) {
+      if (k === 'vary') addVary(response.headers, v)
+      else response.headers.set(k, v)
+    }
+    return response
   }
 
   const siteOfOrigin = (origin: string) => {
@@ -235,6 +244,12 @@ export function createApp(source: Services | ProjectResolver) {
 
   async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
     const url = new URL(request.url)
+    try {
+      assertCompatHeaders(request)
+    } catch (error) {
+      meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
+      return corsResponse(request, errorResponse(error), control.config.allowedOrigins)
+    }
     const hosted = siteFor(request)
     if (hosted) {
       meta.project = hosted.project.info.id
@@ -298,12 +313,7 @@ export function createApp(source: Services | ProjectResolver) {
       response = errorResponse(error)
       if (!(error instanceof BunwriteError)) console.error(error)
     }
-    for (const [k, v] of Object.entries(cors(request, runtime.services.config.allowedOrigins))) {
-      // Keep a handler's Vary (for example Accept-Encoding) and add Origin beside it.
-      if (k === 'vary') addVary(response.headers, v)
-      else response.headers.set(k, v)
-    }
-    return response
+    return corsResponse(request, response, runtime.services.config.allowedOrigins)
   }
 
   return {

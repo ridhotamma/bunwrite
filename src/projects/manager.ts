@@ -141,7 +141,7 @@ export class ProjectManager implements ProjectResolver {
       render: { ...base.render },
       cache: { ...base.cache },
       smtp: base.smtp ? { ...base.smtp } : null,
-      google: base.google ? { ...base.google } : null,
+      oauth: Object.fromEntries(Object.entries(base.oauth).map(([id, config]) => [id, config ? { ...config } : config])),
       allowedOrigins: [...base.allowedOrigins],
     }
   }

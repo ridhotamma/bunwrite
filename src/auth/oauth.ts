@@ -1,27 +1,30 @@
 /**
- * Google sign-in, Appwrite's token flow:
+ * OAuth sign-in, Appwrite's token flow:
  *
- * 1. `GET /account/tokens/oauth2/google?success&failure` redirects (301) to
- *    Google with a signed `state`.
- * 2. Google calls `/account/sessions/oauth2/callback/google/<projectId>`; the
- *    user is found by Google identity, then by email, or created.
+ * 1. `GET /account/tokens/oauth2/:provider?success&failure` redirects (301) to
+ *    the provider with a signed `state`.
+ * 2. The provider calls `/account/sessions/oauth2/callback/:provider/:projectId`;
+ *    the user is found by provider identity, by verified email, or created.
+ *    Apple posts this callback as a form (`response_mode=form_post`).
  * 3. The browser is sent to `success?userId=..&secret=..`, which the app
  *    exchanges for a session with `account.createSession`.
  *
- * The callback URL is the same as Appwrite's, so the redirect URI registered
- * in Google Cloud keeps working when this server takes over the hostname.
+ * The callback URL is the same as Appwrite's, so redirect URIs registered with
+ * each provider keep working when this server takes over the hostname.
  */
-import type { Config, GoogleConfig } from '~/config'
+import type { Config, OAuthConfig, OAuthProviderId } from '~/config'
+import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
 import type { Db } from '~/db/connection'
+import type { Params } from '~/lib/http'
 import { now } from '~/lib/datetime'
 import { BunwriteError, err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import { assertRedirect, withQuery } from '~/lib/origins'
+import { OAUTH_PROVIDERS_BY_ID, type OAuthIdentity, type OAuthProvider, type OAuthTokens } from './providers'
 import type { AuthService } from './service'
 
 const OAUTH2_TOKEN_TTL = 15 * 60
 const STATE_TTL = 15 * 60
-const SCOPES = ['https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile', 'openid']
 
 interface State {
   success: string
@@ -36,6 +39,19 @@ async function sign(secret: string, data: string): Promise<string> {
   return Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))).toString('base64url')
 }
 
+/** Apple posts `user` as JSON on the first authorization. */
+function jsonParam(value: unknown): unknown {
+  if (value && typeof value === 'object') return value
+  if (typeof value !== 'string' || !value) return undefined
+  try {
+    return JSON.parse(value)
+  } catch {
+    return undefined
+  }
+}
+
+const isProvider = (value: string): value is OAuthProviderId => (OAUTH_PROVIDER_IDS as readonly string[]).includes(value)
+
 export class OAuthService {
   constructor(
     private db: Db,
@@ -45,10 +61,18 @@ export class OAuthService {
     private origins: () => string[] = () => config.allowedOrigins,
   ) {}
 
-  private google(provider: string): GoogleConfig {
-    if (provider !== 'google') throw err('project_provider_unsupported', `The chosen OAuth provider is unsupported: ${provider}`)
-    if (!this.config.google) throw err('project_provider_disabled', 'This provider is disabled. Please enable the provider from your project settings.')
-    return this.config.google
+  private provider(provider: string): { id: OAuthProviderId; config: OAuthConfig; definition: OAuthProvider } {
+    if (!isProvider(provider)) throw err('project_provider_unsupported', `The chosen OAuth provider is unsupported: ${provider}`)
+    const stored = this.config.oauth[provider] ?? null
+    if (!stored) throw err('project_provider_disabled', 'This provider is disabled. Please enable the provider from your project settings.')
+    const meta = OAUTH_PROVIDERS[provider]
+    const config: OAuthConfig = {
+      authUrl: meta.authUrl,
+      tokenUrl: meta.tokenUrl,
+      ...(meta.userinfoUrl ? { userinfoUrl: meta.userinfoUrl } : {}),
+      ...stored,
+    }
+    return { id: provider, config, definition: OAUTH_PROVIDERS_BY_ID[provider] }
   }
 
   callbackUrl(provider: string): string {
@@ -57,7 +81,8 @@ export class OAuthService {
 
   /** Step 1: where to send the browser. */
   async authorizeUrl(provider: string, success: unknown, failure: unknown, scopes: unknown): Promise<string> {
-    const google = this.google(provider)
+    const { id, config, definition } = this.provider(provider)
+    const meta = OAUTH_PROVIDERS[id]
     const state: State = {
       success: assertRedirect(success, this.origins(), 'success'),
       failure: assertRedirect(failure ?? success, this.origins(), 'failure'),
@@ -67,14 +92,13 @@ export class OAuthService {
     }
     const payload = Buffer.from(JSON.stringify(state)).toString('base64url')
     const extra = Array.isArray(scopes) ? scopes.map(String) : []
-    const url = new URL(google.authUrl)
-    url.searchParams.set('client_id', google.clientId)
-    url.searchParams.set('redirect_uri', this.callbackUrl(provider))
-    url.searchParams.set('scope', [...new Set([...SCOPES, ...extra])].join(' '))
+    const url = new URL(config.authUrl ?? meta.authUrl)
+    url.searchParams.set('client_id', config.clientId)
+    url.searchParams.set('redirect_uri', this.callbackUrl(id))
+    url.searchParams.set('scope', [...new Set([...meta.scopes, ...extra])].join(' '))
     url.searchParams.set('state', `${payload}.${await sign(this.config.secret, payload)}`)
     url.searchParams.set('response_type', 'code')
-    url.searchParams.set('access_type', 'offline')
-    url.searchParams.set('prompt', 'consent')
+    definition.authorize?.(url)
     return url.toString()
   }
 
@@ -91,37 +115,20 @@ export class OAuthService {
   }
 
   /** Steps 2–3: returns the URL to redirect the browser to. */
-  async callback(provider: string, url: URL): Promise<string> {
-    const state = await this.readState(url.searchParams.get('state'))
+  async callback(provider: string, params: Params): Promise<string> {
+    const state = await this.readState(typeof params.state === 'string' ? params.state : null)
     if (!state) throw err('general_argument_invalid', 'Invalid `state` param.')
     try {
-      const google = this.google(provider)
-      const code = url.searchParams.get('code')
-      if (!code) throw err('user_oauth2_bad_request', url.searchParams.get('error') ?? 'Missing OAuth2 code.')
+      const { id, config, definition } = this.provider(provider)
+      const code = typeof params.code === 'string' ? params.code : ''
+      if (!code) throw err('user_oauth2_bad_request', typeof params.error === 'string' ? params.error : 'Missing OAuth2 code.')
 
-      const tokenRes = await fetch(google.tokenUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code,
-          client_id: google.clientId,
-          client_secret: google.clientSecret,
-          redirect_uri: this.callbackUrl(provider),
-          grant_type: 'authorization_code',
-        }),
-      })
-      const tokens = (await tokenRes.json().catch(() => ({}))) as Record<string, any>
-      if (!tokenRes.ok || !tokens.access_token) throw err('user_oauth2_provider_error', 'Failed to obtain access token.')
+      const tokens = await definition.exchange(config, code, this.callbackUrl(id))
+      const identity = await definition.identity(config, tokens, jsonParam(params.user))
+      if (!identity.uid) throw err('user_missing_id')
 
-      const infoRes = await fetch(`${google.userinfoUrl}?access_token=${encodeURIComponent(tokens.access_token)}`)
-      const info = (await infoRes.json().catch(() => ({}))) as Record<string, any>
-      const uid = String(info.sub ?? '')
-      const email = typeof info.email === 'string' ? info.email.toLowerCase() : ''
-      if (!uid || !email) throw err('user_oauth2_provider_error', 'Missing ID or email from OAuth2 provider.')
-      if (info.email_verified === false) throw err('user_oauth2_provider_error', 'The OAuth2 provider email is not verified.')
-
-      const userId = await this.resolveUser(provider, uid, email, String(info.name ?? ''), tokens)
-      const { secret } = this.auth.createToken(userId, 'oauth2', { ttl: OAUTH2_TOKEN_TTL, provider })
+      const userId = await this.resolveUser(id, identity, tokens)
+      const { secret } = this.auth.createToken(userId, 'oauth2', { ttl: OAUTH2_TOKEN_TTL, provider: id })
       return withQuery(state.success, { userId, secret })
     } catch (error) {
       const e = error instanceof BunwriteError ? error : err('general_unknown', 'Server Error')
@@ -130,30 +137,48 @@ export class OAuthService {
     }
   }
 
-  private async resolveUser(provider: string, uid: string, email: string, name: string, tokens: Record<string, any>): Promise<string> {
+  /** Link by identity, then by verified email, otherwise create — Appwrite's order. */
+  private async resolveUser(provider: OAuthProviderId, identity: OAuthIdentity, tokens: OAuthTokens): Promise<string> {
     const sql = this.db.sqlite
     const stamp = now()
     const expiry = tokens.expires_in ? new Date(Date.now() + Number(tokens.expires_in) * 1000).toISOString().replace('Z', '+00:00') : ''
-    const identity = sql.query<{ user_id: string }, [string, string]>('SELECT user_id FROM _identities WHERE provider = ? AND provider_uid = ?').get(provider, uid)
-    let userId = identity?.user_id ?? this.auth.userByEmail(email)?.id
-    if (!userId) userId = (await this.auth.createUser({ email, name, emailVerification: true })).id
-    const user = this.auth.user(userId)
-    if (!user.status) throw err('user_blocked')
-    if (!user.email_verification && user.email === email) this.auth.updateUser(userId, { email_verification: 1 })
+    const linked = sql
+      .query<{ user_id: string }, [string, string]>('SELECT user_id FROM _identities WHERE provider = ? AND provider_uid = ?')
+      .get(provider, identity.uid)
 
-    if (identity) {
+    let userId = linked?.user_id ?? ''
+    if (!userId && identity.email) {
+      const existing = this.auth.userByEmail(identity.email)
+      if (existing) {
+        // Appwrite refuses to attach an unverified provider email to an existing account.
+        if (!identity.emailVerified) throw err('general_bad_request')
+        userId = existing.id
+      }
+    }
+    if (!userId) {
+      userId = (await this.auth.createUser({ email: identity.email || undefined, name: identity.name, emailVerification: identity.emailVerified })).id
+    }
+
+    let user = this.auth.user(userId)
+    if (!user.status) throw err('user_blocked')
+    if (identity.emailVerified && user.email === identity.email && !user.email_verification) {
+      user = this.auth.updateUser(userId, { email_verification: 1 })
+    }
+    if (!user.name && identity.name) this.auth.updateUser(userId, { name: identity.name })
+
+    if (linked) {
       sql
         .query(
           'UPDATE _identities SET provider_email = ?, provider_access_token = ?, provider_refresh_token = ?, provider_access_token_expiry = ?, updated_at = ? WHERE provider = ? AND provider_uid = ?',
         )
-        .run(email, tokens.access_token ?? '', tokens.refresh_token ?? '', expiry, stamp, provider, uid)
+        .run(identity.email, tokens.access_token, tokens.refresh_token ?? '', expiry, stamp, provider, identity.uid)
     } else {
       sql
         .query(
           `INSERT INTO _identities (id, user_id, provider, provider_uid, provider_email, provider_access_token, provider_access_token_expiry, provider_refresh_token, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(uniqueId(), userId, provider, uid, email, tokens.access_token ?? '', expiry, tokens.refresh_token ?? '', stamp, stamp)
+        .run(uniqueId(), userId, provider, identity.uid, identity.email, tokens.access_token, expiry, tokens.refresh_token ?? '', stamp, stamp)
     }
     return userId
   }

@@ -53,7 +53,7 @@ export function githubAppSection(ctx: ConsoleContext): Html {
         <li><span class="subdued">Webhook URL</span>${copyableId(webhook, 'github-webhook-url', 'Copy webhook URL')}</li>
         ${app.webhookSecret ? '' : html`<li>${badge('No webhook secret', 'critical')}<span class="subdued">Set VCS_GITHUB_WEBHOOK_SECRET, or pushes cannot be verified.</span></li>`}
       </ul>
-      <p class="help">Install it on a project from that project's <a href="/console/settings/git">Settings → Git</a>.</p>`
+      <p class="help">Install it from any project's <a href="/console/settings/git">Settings → Git</a>. One installation serves every project on this server.</p>`
     : html`${local ? alert('warning', html`This server's address is <code>${base}</code>. GitHub must reach <code>${webhook}</code> to send pushes, so set <code>PUBLIC_ENDPOINT</code> (or <code>DOMAIN</code>) to a public address first, or use a tunnel.`) : ''}
       <form method="post" action="/console/organization/github-app" hx-boost="false" class="stack-fields">
         <fieldset class="code-source"><legend>Owner</legend>
@@ -92,9 +92,9 @@ export function manifestRedirect(action: string, manifest: string): Html {
 
 export function gitTabView(ctx: ConsoleContext): Html {
   const app = ctx.hub.apps.get()
-  const installations = ctx.services.vcs.list()
+  const installations = ctx.hub.installations.list()
   const title = 'GitHub installations'
-  const hint = 'Accounts and organizations where the GitHub App is installed for this project. Sites and functions pick a repository from these.'
+  const hint = 'Accounts and organizations where the GitHub App is installed. Install an account once and every project on this server can deploy from its repositories.'
   if (!app) {
     return settingsSection(
       title,
@@ -167,12 +167,22 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
     )
     return html`${card}${disconnect}`
   }
-  const installations = ctx.services.vcs.list()
-  if (!ctx.hub.apps.get() || !installations.length) {
+  const installations = ctx.hub.installations.list()
+  if (!ctx.hub.apps.get()) {
     return settingsSection(
       'Git repository',
       hint,
-      html`<p class="subdued" style="margin:0">Add a GitHub installation in <a href="/console/settings/git">Settings → Git</a> first.</p>`,
+      html`<p class="subdued" style="margin:0">Set up the GitHub App once in <a href="/console/organization#github-app">Organization → GitHub App</a>, then connect this ${target.type} to a repository.</p>`,
+      { id: 'git-repository' },
+    )
+  }
+  if (!installations.length) {
+    const next = encodeURIComponent(`${base}/settings`)
+    return settingsSection(
+      'Git repository',
+      hint,
+      html`<p class="subdued" style="margin:0">Connect a GitHub account once; every project can then deploy from its repositories.</p>
+        <div class="foot"><a class="btn primary" href="/console/vcs/install?next=${next}" hx-boost="false">Connect GitHub</a></div>`,
       { id: 'git-repository' },
     )
   }
@@ -232,13 +242,27 @@ function branchField(current: string, idBase: string, options: { installationId?
  * the server to detect the build settings and swaps them into that element.
  * Otherwise a checkbox says whether the server detects them on create.
  */
-export function gitSourceFields(installations: { id: string; organization: string }[], idBase: string, options: { detectInto?: string; detectLabel?: string } = {}): Html {
+export function gitSourceFields(
+  installations: { id: string; organization: string }[],
+  idBase: string,
+  options: { detectInto?: string; detectLabel?: string; connectTo?: string; open?: boolean } = {},
+): Html {
+  const hidden = options.open ? '' : 'hidden'
+  // The app is set up but no account is installed yet: keep the GitHub choice
+  // visible and take the user through the one GitHub step.
+  if (!installations.length) {
+    const next = encodeURIComponent(options.connectTo ?? '/console/settings/git')
+    return html`<div class="stack-fields" data-show-for="github" data-for-select="source" ${hidden}>
+      <p class="subdued" style="margin:0">Connect a GitHub account once; every project on this server can then deploy from its repositories.</p>
+      <div class="foot"><a class="btn primary" href="/console/vcs/install?next=${next}" hx-boost="false">Connect GitHub</a></div>
+    </div>`
+  }
   // hx-disinherit: the detect target belongs to the build fields, not to the
   // repository and branch requests below, whose responses swap into themselves.
   const detect = options.detectInto
     ? html`hx-get="/console/vcs/detect-site" hx-trigger="change delay:300ms, repos-loaded" hx-include="this" hx-target="#${options.detectInto}" hx-swap="innerHTML" hx-sync="this:replace" hx-disinherit="*"`
     : html``
-  return html`<div class="stack-fields" data-show-for="github" data-for-select="source" hidden ${detect}>
+  return html`<div class="stack-fields" data-show-for="github" data-for-select="source" ${hidden} ${detect}>
     ${repositoryPicker(installations, idBase)}
     <div class="fields">
       <label>Production branch${branchField('', idBase)}</label>

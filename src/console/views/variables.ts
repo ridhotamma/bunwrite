@@ -1,10 +1,14 @@
 /**
- * The variable list used by global and per-function variables: each row shows
- * the key and value with an inline editor and a remove button, and the whole
- * list can be emptied at once.
+ * One variable manager for every scope: global project variables, global
+ * function variables, a function's own variables and a site's variables.
+ *
+ * The list is a table with Edit and Remove inline on each row; adding or
+ * editing opens a dialog. Bulk import uses the env-file dialog.
  */
+import { dialog } from '~/console/dialog'
+import { envBulkDialog } from '~/console/env-vars'
 import { html, type Html } from '~/console/html'
-import { destroy } from '~/console/ui'
+import { icon, menu, plural } from '~/console/ui'
 
 export interface VariableEntry {
   key: string
@@ -13,36 +17,93 @@ export interface VariableEntry {
 }
 
 export interface VariableListOptions {
+  /** Prefix for this list's dialog ids. One variable list per page today. */
+  id: string
   /** POST route that saves one variable (receives `key`, `value`, `secret`); it upserts. */
   save: string
   /** POST route that deletes one variable (receives `key`). */
   remove: string
-  /** Delete-all button, with the question it asks first. */
+  addLabel?: string
+  bulk?: { id: string; title: string; action: string }
   clear?: { action: string; confirm: string }
+  empty?: Html
 }
 
-/** A hidden value is shown as dots and edited through a blank field, so it is never revealed. */
-const valueCell = (v: VariableEntry): Html => (v.secret ? html`<span class="subdued">••••••</span>` : html`<span class="mono clip">${v.value}</span>`)
+const editId = (options: VariableListOptions, index: number) => `${options.id}-edit-${index}`
+const addId = (options: VariableListOptions) => `${options.id}-add`
 
-function editor(v: VariableEntry, save: string): Html {
-  return html`<details class="var-edit"><summary>Edit</summary>
-    <form method="post" action="${save}" class="var-edit-form">
+const valueCell = (v: VariableEntry): Html =>
+  v.secret ? html`<span class="subdued">••••••</span>` : v.value ? html`<span class="mono">${v.value}</span>` : html`<span class="subdued">(empty)</span>`
+
+function addDialog(options: VariableListOptions): Html {
+  const id = addId(options)
+  const form = `${id}-form`
+  return dialog({
+    id,
+    title: options.addLabel ?? 'Add variable',
+    body: html`<form id="${form}" method="post" action="${options.save}">
+      <label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*" placeholder="API_KEY"><small>Letters, numbers and underscores; cannot start with a number.</small></label>
+      <label>Value<input name="value" placeholder="Value"></label>
+      <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
+    </form>`,
+    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Add variable</button>`,
+  })
+}
+
+function editDialog(v: VariableEntry, index: number, options: VariableListOptions): Html {
+  const id = editId(options, index)
+  const form = `${id}-form`
+  return dialog({
+    id,
+    title: `Edit ${v.key}`,
+    body: html`<form id="${form}" method="post" action="${options.save}">
       <input type="hidden" name="key" value="${v.key}">
-      <input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'New value, blank to keep' : 'Value'}">
-      <label class="check"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide</label>
-      <button class="small">Save</button>
-    </form>
-  </details>`
+      <label>Name<input value="${v.key}" class="mono" readonly></label>
+      <label>Value<input name="value" value="${v.secret ? '' : v.value}" placeholder="${v.secret ? 'Leave blank to keep the current value' : 'Value'}"></label>
+      <label class="check"><input type="checkbox" name="secret" ${v.secret ? 'checked' : ''}>Hide the value</label>
+      ${v.secret ? html`<p class="help">The current value is hidden. Leave it blank to keep it.</p>` : ''}
+    </form>`,
+    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Save</button>`,
+  })
+}
+
+function removeForm(v: VariableEntry, options: VariableListOptions): Html {
+  return html`<form method="post" action="${options.remove}" class="inline" data-confirm="Remove ${v.key}?" data-confirm-label="Remove" data-confirm-tone="critical">
+    <input type="hidden" name="key" value="${v.key}">
+    <button class="critical small">Remove</button>
+  </form>`
 }
 
 export function variableList(vars: VariableEntry[], options: VariableListOptions): Html {
-  return html`${options.clear
-      ? html`<form method="post" action="${options.clear.action}" class="var-toolbar" data-confirm="${options.clear.confirm}" data-confirm-label="Delete all" data-confirm-tone="critical"><button class="critical plain" ${vars.length ? '' : 'disabled'}>Delete all</button></form>`
-      : ''}
-    <ul class="list">${vars.map(
-      (v) => html`<li class="var-row">
-        <span class="mono">${v.key}</span>
-        <span>${valueCell(v)}${editor(v, options.save)}${destroy(options.remove, 'Remove', `Remove ${v.key}?`, { key: v.key })}</span>
-      </li>`,
-    )}</ul>`
+  return html`
+    <div class="var-toolbar">
+      <span class="var-count">${plural(vars.length, 'variable')}</span>
+      <div class="var-toolbar-actions">
+        ${options.bulk ? html`<button type="button" class="btn" data-dialog-open="#${options.bulk.id}">${icon('upload-simple')}<span>Bulk upload</span></button>` : ''}
+        <button type="button" class="btn primary" data-dialog-open="#${addId(options)}">${icon('plus')}<span>${options.addLabel ?? 'Add variable'}</span></button>
+      </div>
+    </div>
+    ${vars.length
+      ? html`<div class="scroll"><table class="var-table">
+          <thead><tr><th>Name</th><th>Value</th><th class="var-actions-col">${options.clear
+            ? menu(
+                html`<form method="post" action="${options.clear.action}" data-confirm="${options.clear.confirm}" data-confirm-label="Delete all" data-confirm-tone="critical"><button class="critical">Delete all</button></form>`,
+                { label: 'Variable actions', align: 'end' },
+              )
+            : ''}</th></tr></thead>
+          <tbody>${vars.map(
+            (v, index) => html`<tr>
+              <td class="mono clip" title="${v.key}">${v.key}</td>
+              <td class="clip" title="${v.secret ? '' : v.value}">${valueCell(v)}</td>
+              <td class="var-actions">
+                <button type="button" class="btn small" data-dialog-open="#${editId(options, index)}">Edit</button>
+                ${removeForm(v, options)}
+              </td>
+            </tr>`,
+          )}</tbody>
+        </table></div>`
+      : options.empty ?? html`<p class="hint">No variables yet.</p>`}
+    ${addDialog(options)}
+    ${vars.map((v, index) => editDialog(v, index, options))}
+    ${options.bulk ? envBulkDialog(options.bulk) : ''}`
 }

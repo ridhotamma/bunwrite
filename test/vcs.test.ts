@@ -276,7 +276,9 @@ describe('Git: GitHub App and installations', () => {
     const state = signState(server.config.secret, { kind: 'manifest', returnTo: '/console/organization' })
     const res = await fetch(`${server.endpoint}/vcs/github/manifest?code=good-code&state=${encodeURIComponent(state)}`, { redirect: 'manual' })
     expect(res.status).toBe(302)
-    expect(res.headers.get('location')).toStartWith('/console/organization?ok=')
+    // The app is useless before it is installed, so creation goes straight to
+    // the install screen instead of another console page.
+    expect(res.headers.get('location')).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
     expect(server.hub.apps.stored()).toBe(true)
     const app = server.hub.apps.get()!
     expect(app.appId).toBe('123')
@@ -287,10 +289,10 @@ describe('Git: GitHub App and installations', () => {
   })
 
   test('the install callback adds only installations the GitHub user can access', async () => {
-    const state = (installation?: string) => encodeURIComponent(signState(server.config.secret, { kind: 'install', projectId: PROJECT, returnTo: '/console/settings/git', installationId: installation }))
+    const state = (installation?: string) => encodeURIComponent(signState(server.config.secret, { kind: 'install', returnTo: '/console/settings/git', installationId: installation }))
     const denied = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=77&setup_action=install&code=c&state=${state()}`, { redirect: 'manual' })
     expect(denied.headers.get('location')).toContain('err=')
-    expect(server.services.vcs.list()).toHaveLength(0)
+    expect(server.hub.installations.list()).toHaveLength(0)
 
     // Without a code the server asks GitHub who is signed in first.
     const noCode = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&state=${state()}`, { redirect: 'manual' })
@@ -302,6 +304,9 @@ describe('Git: GitHub App and installations', () => {
     expect(list.total).toBe(1)
     expect(list.installations[0]).toMatchObject({ provider: 'github', organization: 'acme', providerInstallationId: String(INSTALLATION) })
     installationId = list.installations[0].$id
+    // Server-wide: the row lives in the control database, not a project one.
+    const row = server.db.sqlite.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM _vcs_installations').get()!
+    expect(row.n).toBe(1)
   })
 
   test('repositories, branches, contents and detection are browsable', async () => {
@@ -321,7 +326,7 @@ describe('Git: GitHub App and installations', () => {
   test('repository and branch lists are cached, not fetched on every visit', async () => {
     const repoCalls = () => calls.filter((c) => c.path.startsWith('/installation/repositories')).length
     const branchCalls = () => calls.filter((c) => c.path.startsWith('/repos/acme/web/branches')).length
-    const installation = server.services.vcs.get(installationId)
+    const installation = server.hub.installations.get(installationId)
 
     await server.hub.github.repositories(installation.provider_installation_id)
     const afterRepos = repoCalls()
@@ -603,5 +608,47 @@ describe('Git: deployments', () => {
     // Disconnecting keeps what was deployed.
     expect(existsSync(sitesDir(server.config, 'web'))).toBe(true)
     expect(await (await visit('web')).text()).toBe('<h1>v2</h1>')
+  })
+
+  test('without an installation, create pages offer Connect GitHub and return there afterwards', async () => {
+    const auth = new ConsoleAuth(server.db)
+    const cookie = `bunwrite_console=${(await auth.login('git-admin@example.com', 'console-password'))!}; console_project=${PROJECT}`
+    const get = (path: string) => fetch(`${base()}${path}`, { headers: { cookie }, redirect: 'manual' })
+
+    // The app exists but no account is installed: the repository choice stays
+    // visible and leads to the one GitHub step instead of hiding the feature.
+    const sites = await get('/console/sites/new')
+    const sitesHtml = await sites.text()
+    expect(sitesHtml).toContain('value="github"')
+    expect(sitesHtml).toContain('Connect GitHub')
+    expect(sitesHtml).toContain(`/console/vcs/install?next=${encodeURIComponent('/console/sites/new?source=github')}`)
+
+    const functions = await get('/console/functions/new')
+    const functionsHtml = await functions.text()
+    expect(functionsHtml).toContain('value="github"')
+    expect(functionsHtml).toContain('Connect GitHub')
+    expect(functionsHtml).toContain(`/console/vcs/install?next=${encodeURIComponent('/console/functions/new?source=github')}`)
+    expect(await (await get('/console/functions/new?source=github')).text()).toMatch(/value="github"[^>]*checked/)
+
+    // Coming back with ?source=github selects the repository flow, so the
+    // user does not have to click GitHub a second time.
+    const preferred = await get('/console/sites/new?source=github')
+    const preferredHtml = await preferred.text()
+    expect(preferredHtml).toMatch(/value="github"[^>]*checked/)
+    expect(preferredHtml).not.toMatch(/value="starter"[^>]*checked/)
+
+    // The return address survives the GitHub round trip, so the user lands
+    // back on the page they were filling in.
+    const install = await get(`/console/vcs/install?next=${encodeURIComponent('/console/sites/new?source=github')}`)
+    expect(install.status).toBe(303)
+    const location = install.headers.get('location')!
+    expect(location).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    const state = new URL(location).searchParams.get('state')!
+    const done = await fetch(
+      `${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&code=c&state=${encodeURIComponent(state)}`,
+      { redirect: 'manual' },
+    )
+    expect(done.headers.get('location')).toStartWith('/console/sites/new?source=github&ok=')
+    expect(server.hub.installations.list()).toHaveLength(1)
   })
 })

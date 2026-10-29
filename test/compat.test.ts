@@ -114,6 +114,37 @@ for (const mode of ['bunwrite', 'appwrite'] as ApiCompat[]) {
       expect(response.status).toBe(200)
     })
 
+    test('an empty header in one family falls through to the other, or to ?project=', async () => {
+      const viaHeader = await fetch(`${server.endpoint}/databases/${DB}/collections/notes/documents`, {
+        headers: { 'x-bunwrite-project': '', 'x-bunwrite-key': '', 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY },
+      })
+      expect(viaHeader.status).toBe(200)
+      const viaQuery = await fetch(`${server.endpoint}/databases/${DB}/collections/notes/documents?project=${PROJECT}`, {
+        headers: { 'x-bunwrite-project': '', 'x-appwrite-key': KEY },
+      })
+      expect(viaQuery.status).toBe(200)
+    })
+
+    test('the same header with two different values is refused', async () => {
+      const projects = await fetch(`${server.endpoint}/databases/${DB}/collections/notes/documents`, {
+        headers: { origin: 'http://localhost:3000', 'x-bunwrite-project': PROJECT, 'x-appwrite-project': 'other', 'x-appwrite-key': KEY },
+      })
+      expect(projects.status).toBe(400)
+      expect(projects.headers.get('access-control-allow-origin')).toBe('http://localhost:3000')
+      expect(((await projects.json()) as any).type).toBe('general_bad_request')
+
+      const keys = await fetch(`${server.endpoint}/databases/${DB}/collections/notes/documents`, {
+        headers: { 'x-bunwrite-project': PROJECT, 'x-bunwrite-key': KEY, 'x-appwrite-key': 'wrong' },
+      })
+      expect(keys.status).toBe(400)
+
+      // The same value in both families is fine: they agree, so nothing is ambiguous.
+      const same = await fetch(`${server.endpoint}/databases/${DB}/collections/notes/documents`, {
+        headers: { 'x-bunwrite-project': PROJECT, 'x-appwrite-project': PROJECT, 'x-bunwrite-key': KEY, 'x-appwrite-key': KEY },
+      })
+      expect(same.status).toBe(200)
+    })
+
     test(`webhooks are delivered with X-${mode === 'bunwrite' ? 'Bunwrite' : 'Appwrite'}-Webhook-* headers`, async () => {
       await new Webhooks(admin()).create({ webhookId: 'hook', name: 'Hook', url: `http://localhost:${receiver.port}/`, events: [`databases.${DB}.collections.notes.documents.*.create`] })
       deliveries.length = 0

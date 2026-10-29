@@ -1,0 +1,26 @@
+# Caddy without TLS: an upstream proxy or tunnel terminates HTTPS.
+#
+# Use this when Cloudflare (proxied or Tunnel), an ALB, nginx, or another
+# provider already owns the public certificate and forwards plain HTTP here.
+# Caddy keeps listening on port 80 and forwards every host to Bunwrite; it
+# obtains no certificates and redirects nothing.
+#
+#   TLS_MODE=off
+#
+# Set PUBLIC_ENDPOINT to the public https:// address so OAuth callbacks and
+# file links are correct even though this hop is HTTP.
+#
+# If the provider connects to this container directly, or you do not need
+# Caddy's forwarding at all, leave COMPOSE_PROFILES empty and point the
+# provider at 127.0.0.1:8080 instead.
+{
+	auto_https off
+}
+
+:80 {
+	encode zstd gzip
+	reverse_proxy bunwrite:8080 {
+		# The public request arrived over the provider's HTTPS; this hop is HTTP.
+		header_up X-Forwarded-Proto https
+	}
+}

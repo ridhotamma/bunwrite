@@ -1,16 +1,67 @@
 #!/bin/sh
-# Start Caddy only once DOMAIN points at this server.
+# Pick the Caddy configuration for the requested TLS mode, then start Caddy
+# only once DOMAIN points at this server (ACME mode only).
 #
 # A fresh install often runs `docker compose up` before the DNS record has
 # propagated. Caddy would then fail its first ACME attempt and back off (up to
 # a day between tries), even though a retry minutes later would succeed. Waiting
 # here means the certificate is issued on the first attempt after propagation,
 # without restarting the container.
+#
+# TLS_MODE:
+#   acme      Caddy obtains certificates from an ACME CA (default)
+#   external  Caddy serves TLS_CERT_FILE / TLS_KEY_FILE, with on-demand ACME for
+#             hosts the certificate does not cover
+#   off       an upstream proxy or tunnel terminates TLS; Caddy serves HTTP
 set -eu
 
 domain="${DOMAIN:-localhost}"
-if [ "$domain" = "localhost" ] || [ "${CADDY_WAIT_DNS:-true}" = "false" ]; then
-	exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+mode=$(printf '%s' "${TLS_MODE:-acme}" | tr '[:upper:]' '[:lower:]')
+
+case "$mode" in
+	acme|caddy|letsencrypt)
+		mode=acme
+		config=/etc/caddy/Caddyfile
+		;;
+	external|files|file|cert|origin)
+		mode=external
+		config=/etc/caddy/Caddyfile.external
+		cert="${TLS_CERT_FILE:-}"
+		key="${TLS_KEY_FILE:-}"
+		if [ -z "$cert" ] || [ -z "$key" ]; then
+			echo "[caddy] TLS_MODE=external needs TLS_CERT_FILE and TLS_KEY_FILE" >&2
+			exit 1
+		fi
+		if [ ! -r "$cert" ] || [ ! -r "$key" ]; then
+			echo "[caddy] certificate or key is not readable: $cert / $key" >&2
+			exit 1
+		fi
+		;;
+	off|proxy|tunnel|none)
+		mode=off
+		config=/etc/caddy/Caddyfile.off
+		;;
+	*)
+		echo "[caddy] unknown TLS_MODE=\"${TLS_MODE}\" — expected acme, external or off" >&2
+		exit 1
+		;;
+esac
+
+echo "[caddy] TLS_MODE=$mode ($config)" >&2
+
+run() {
+	exec caddy run --config "$config" --adapter caddyfile
+}
+
+# External and off modes have nothing to issue, so they never wait for DNS.
+# ACME mode waits unless CADDY_WAIT_DNS explicitly says otherwise.
+wait_dns="${CADDY_WAIT_DNS:-}"
+if [ -z "$wait_dns" ]; then
+	if [ "$mode" = "acme" ]; then wait_dns=true; else wait_dns=false; fi
+fi
+
+if [ "$mode" = "off" ] || [ "$domain" = "localhost" ] || [ "$wait_dns" = "false" ]; then
+	run
 fi
 
 # Accept a pasted URL as well as a bare hostname.
@@ -49,7 +100,7 @@ while :; do
 	for address in $(addresses); do
 		if [ -z "$expected" ] || [ "$address" = "$expected" ]; then
 			echo "[caddy] $host -> $address; starting" >&2
-			exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+			run
 		fi
 	done
 	checks=$((checks + 1))

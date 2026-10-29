@@ -329,6 +329,31 @@ describe('custom domains', () => {
     expect((await call('/hello', 'api.example.org')).status).not.toBe(200)
   })
 
+  test('a wildcard rule serves one label under its base', async () => {
+    const rule = await proxy.createSiteRule({ domain: '*.shops.example.org', siteId: 'blog' })
+    expect(rule.domain).toBe('*.shops.example.org')
+
+    expect(await (await visit('/', { host: 'kedai.shops.example.org' })).text()).toContain('Built')
+    // One label only: neither the apex nor a deeper name belongs to the rule.
+    expect((await visit('/', { host: 'shops.example.org' })).status).not.toBe(200)
+    expect((await visit('/', { host: 'deep.kedai.shops.example.org' })).status).not.toBe(200)
+
+    // Caddy's on-demand TLS ask approves a host the wildcard covers.
+    const ask = await fetch(`http://127.0.0.1:${server.config.port}/.well-known/bunwrite/host?domain=kedai.shops.example.org`)
+    expect(ask.status).toBe(200)
+    const denied = await fetch(`http://127.0.0.1:${server.config.port}/.well-known/bunwrite/host?domain=other.example.org`)
+    expect(denied.status).toBe(404)
+
+    await proxy.deleteRule({ ruleId: rule.$id })
+    expect((await visit('/', { host: 'kedai.shops.example.org' })).status).not.toBe(200)
+  })
+
+  test('a wildcard cannot shadow a default site or function address', async () => {
+    expect((await failure(proxy.createSiteRule({ domain: '*.sites.localhost', siteId: 'blog' }))).code).toBe(400)
+    expect((await failure(proxy.createSiteRule({ domain: '*.functions.localhost', siteId: 'blog' }))).code).toBe(400)
+    expect((await failure(proxy.createSiteRule({ domain: '*', siteId: 'blog' }))).code).toBe(400)
+  })
+
   test('a domain belongs to one site', async () => {
     await sites.create({ siteId: 'shop', name: 'Shop', framework: 'other' as any, buildRuntime: 'static-1' as any })
     expect((await failure(proxy.createSiteRule({ domain: 'www.example.org', siteId: 'shop' }))).code).toBe(409)

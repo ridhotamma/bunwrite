@@ -28,9 +28,22 @@ export function siteStatus(site: SiteRow, latest: SiteDeploymentRow | null): Htm
   return latest?.status === 'failed' ? badge('Deploy failed', 'critical') : badge('No deployment')
 }
 
-/** Where the files come from: a GitHub repository (new sites), an uploaded folder, a starter page, or one HTML file. */
-function sourceFields(existing: boolean, installations: { id: string; organization: string }[] = [], hideLegend = false): Html {
-  const github = installations.length > 0
+/**
+ * Where the files come from: a GitHub repository (new sites), an uploaded
+ * folder, a starter page, or one HTML file. `githubApp` keeps the repository
+ * choice visible while no account is installed yet, with a Connect button.
+ */
+function sourceFields(
+  existing: boolean,
+  installations: { id: string; organization: string }[] = [],
+  hideLegend = false,
+  githubApp = false,
+  preferredSource = '',
+): Html {
+  const github = githubApp
+  // Coming back from Connect GitHub: select the repository flow instead of
+  // making the user pick it again.
+  const preferredGithub = !existing && github && preferredSource === 'github'
   const choice = (key: string, title: string, text: string, on: boolean) =>
     html`<label><input type="radio" name="source" value="${key}" data-show-by ${on ? 'checked' : ''}><div><b>${title}</b><span>${text}</span></div></label>`
   // Like Create function: start from the starter, and a repository is the last
@@ -42,20 +55,26 @@ function sourceFields(existing: boolean, installations: { id: string; organizati
         choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
       ]
     : [
-        choice('starter', 'htmx starter', 'A ready-made page. Plain files, nothing to build.', true),
+        choice('starter', 'htmx starter', 'A ready-made page. Plain files, nothing to build.', !preferredGithub),
         choice('upload', 'Upload a folder', 'A .zip or .tar.gz: built output, or source for a server app.', false),
         choice('paste', 'Write HTML', 'One index.html, typed or pasted here.', false),
-        ...(github ? [choice('github', 'GitHub repository', 'Builds here on every push; other branches get previews.', false)] : []),
+        ...(github ? [choice('github', 'GitHub repository', 'Builds here on every push; other branches get previews.', preferredGithub)] : []),
       ]
   // Render the same visibility the script would apply, so the first paint is
   // the final layout and the selected block does not pop in after a swap.
-  const selected = existing ? 'upload' : 'starter'
+  const selected = existing ? 'upload' : preferredGithub ? 'github' : 'starter'
   const shown = (...keys: string[]) => (keys.includes(selected) ? '' : 'hidden')
   return html`<fieldset class="code-source">
       <legend class="${hideLegend ? 'visually-hidden' : ''}">Source</legend>
       <div class="choice">${choices}</div>
     </fieldset>
-    ${github ? gitSourceFields(installations, 'create-site', { detectInto: 'git-build-fields' }) : ''}
+    ${github
+      ? gitSourceFields(installations, 'create-site', {
+          detectInto: 'git-build-fields',
+          connectTo: '/console/sites/new?source=github',
+          open: selected === 'github',
+        })
+      : ''}
     <div data-show-for="upload" data-for-select="source" ${shown('upload')}>
       <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
         <small>For a static site, upload what the build made. For a server app, upload the source: it is installed, built and started here. For large sites use <code>bunwrite push sites</code>.</small></label>
@@ -176,8 +195,13 @@ function pruneField(current: string): Html {
  * The Create site page. The source comes first and decides what follows:
  * GitHub and uploads get build settings, the starter and Write HTML none.
  */
-export function siteCreateView(sitesDomain: string, installations: { id: string; organization: string }[] = []): Html {
-  const github = installations.length > 0
+export function siteCreateView(
+  sitesDomain: string,
+  installations: { id: string; organization: string }[] = [],
+  githubApp = false,
+  preferredSource = '',
+): Html {
+  const github = githubApp
   return html`${header('Create site', { back: SITES })}
     <form method="post" action="${SITES}" enctype="multipart/form-data" hx-boost="false">
       ${settingsSection(
@@ -192,10 +216,10 @@ export function siteCreateView(sitesDomain: string, installations: { id: string;
         'Source',
         github
           ? 'Where the code comes from. A repository builds on every push; the starter and Write HTML are plain files.'
-          : 'Where the code comes from. To deploy from a repository, add a GitHub installation in Settings → Git.',
-        html`<div class="stack-fields">${sourceFields(false, installations, true)}</div>`,
+          : 'Where the code comes from. Set up the GitHub App once in Organization → GitHub App to deploy from a repository.',
+        html`<div class="stack-fields">${sourceFields(false, installations, true, githubApp, preferredSource)}</div>`,
       )}
-      ${github
+      ${github && installations.length
         ? settingsSection(
             'Build and run',
             'Filled in from the repository when you pick it. Change anything that is not right.',

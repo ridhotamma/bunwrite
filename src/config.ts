@@ -17,13 +17,70 @@ export interface SmtpConfig {
   senderName: string
 }
 
-export interface GoogleConfig {
+export type OAuthProviderId = 'apple' | 'facebook' | 'github' | 'google'
+
+/** A project's OAuth client. Apple uses teamId, keyId and privateKey instead of clientSecret. */
+export interface OAuthConfig {
   clientId: string
   clientSecret: string
+  authUrl?: string
+  tokenUrl?: string
+  userinfoUrl?: string
+  teamId?: string
+  keyId?: string
+  privateKey?: string
+}
+
+export interface OAuthProviderMeta {
+  id: OAuthProviderId
+  name: string
   authUrl: string
   tokenUrl: string
+  /** Also the API base for GitHub: its verified emails live at `${userinfoUrl}/emails`. */
   userinfoUrl: string
+  scopes: string[]
+  /** Apple signs its client secret with a .p8 key instead of storing one. */
+  key?: boolean
 }
+
+/** Appwrite's provider behavior: endpoints, default scopes and how each one identifies a user. */
+export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderMeta> = {
+  apple: {
+    id: 'apple',
+    name: 'Apple',
+    authUrl: 'https://appleid.apple.com/auth/authorize',
+    tokenUrl: 'https://appleid.apple.com/auth/token',
+    userinfoUrl: '',
+    scopes: ['name', 'email'],
+    key: true,
+  },
+  facebook: {
+    id: 'facebook',
+    name: 'Facebook',
+    authUrl: 'https://www.facebook.com/v24.0/dialog/oauth',
+    tokenUrl: 'https://graph.facebook.com/v24.0/oauth/access_token',
+    userinfoUrl: 'https://graph.facebook.com/v24.0/me?fields=email,name,picture',
+    scopes: ['email'],
+  },
+  github: {
+    id: 'github',
+    name: 'GitHub',
+    authUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    userinfoUrl: 'https://api.github.com/user',
+    scopes: ['user:email'],
+  },
+  google: {
+    id: 'google',
+    name: 'Google',
+    authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    userinfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
+    scopes: ['https://www.googleapis.com/auth/userinfo.email', 'https://www.googleapis.com/auth/userinfo.profile', 'openid'],
+  },
+}
+
+export const OAUTH_PROVIDER_IDS = Object.keys(OAUTH_PROVIDERS) as OAuthProviderId[]
 
 /** S3-compatible storage settings, used for uploads and optionally for backups. */
 export interface S3Config {
@@ -151,7 +208,8 @@ export interface Config {
   /** Most sessions a user keeps; the oldest is removed beyond this. */
   sessionsLimit: number
   smtp: SmtpConfig | null
-  google: GoogleConfig | null
+  /** Enabled OAuth providers; a missing entry is a provider that is turned off. */
+  oauth: Partial<Record<OAuthProviderId, OAuthConfig | null>>
   /** Directory for uploaded files. */
   storagePath: string
   /** dotenv file with variables for function executions (Appwrite "function variables"). */
@@ -270,16 +328,39 @@ export function smtpFromEnv(env: Record<string, string | undefined>): SmtpConfig
   }
 }
 
-/** Google OAuth settings from the environment. Used once to seed a new instance. */
-export function googleFromEnv(env: Record<string, string | undefined>): GoogleConfig | null {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return null
-  return {
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    authUrl: env.GOOGLE_AUTH_URL ?? 'https://accounts.google.com/o/oauth2/v2/auth',
-    tokenUrl: env.GOOGLE_TOKEN_URL ?? 'https://oauth2.googleapis.com/token',
-    userinfoUrl: env.GOOGLE_USERINFO_URL ?? 'https://www.googleapis.com/oauth2/v3/userinfo',
+/**
+ * OAuth clients from the environment, by provider. Used once to seed a new
+ * instance. Apple needs the team, key and .p8 that sign its client secret.
+ * Every provider also accepts <NAME>_AUTH_URL, <NAME>_TOKEN_URL and (except
+ * Apple) <NAME>_USERINFO_URL overrides, mostly for tests.
+ */
+export function oauthFromEnv(env: Record<string, string | undefined>): Partial<Record<OAuthProviderId, OAuthConfig>> {
+  const urls = (prefix: string, userinfo = true) => ({
+    ...(env[`${prefix}_AUTH_URL`] ? { authUrl: env[`${prefix}_AUTH_URL`] } : {}),
+    ...(env[`${prefix}_TOKEN_URL`] ? { tokenUrl: env[`${prefix}_TOKEN_URL`] } : {}),
+    ...(userinfo && env[`${prefix}_USERINFO_URL`] ? { userinfoUrl: env[`${prefix}_USERINFO_URL`] } : {}),
+  })
+  const providers: Partial<Record<OAuthProviderId, OAuthConfig>> = {}
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    providers.google = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, ...urls('GOOGLE') }
   }
+  if (env.FACEBOOK_CLIENT_ID && env.FACEBOOK_CLIENT_SECRET) {
+    providers.facebook = { clientId: env.FACEBOOK_CLIENT_ID, clientSecret: env.FACEBOOK_CLIENT_SECRET, ...urls('FACEBOOK') }
+  }
+  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
+    providers.github = { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET, ...urls('GITHUB') }
+  }
+  if (env.APPLE_CLIENT_ID && env.APPLE_TEAM_ID && env.APPLE_KEY_ID && env.APPLE_PRIVATE_KEY) {
+    providers.apple = {
+      clientId: env.APPLE_CLIENT_ID,
+      clientSecret: '',
+      teamId: env.APPLE_TEAM_ID,
+      keyId: env.APPLE_KEY_ID,
+      privateKey: pemFrom(env.APPLE_PRIVATE_KEY),
+      ...urls('APPLE', false),
+    }
+  }
+  return providers
 }
 
 /**
@@ -319,7 +400,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,
-    google: null,
+    oauth: {},
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
     skipSchedules: [],

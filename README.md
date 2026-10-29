@@ -136,7 +136,7 @@ bun run console:admin you@example.com
 ```
 
 After the first start, the database is the source of truth. Manage the project,
-API keys, allowed origins, email, Google sign-in and other application settings
+API keys, allowed origins, email, OAuth sign-in and other application settings
 in the console. The optional "First start only" values at the end of
 `.env.example` can seed an empty database, then are ignored.
 
@@ -426,6 +426,9 @@ The server reads both naming families, so the Bunwrite SDK and CLI and the
 Appwrite SDKs and CLI all work whatever the setting: `X-Bunwrite-*` and
 `X-Appwrite-*` headers, `bw_session_<project>` and `a_session_<project>`
 cookies, and `bunwrite.config.json`, `bunwrite.json` or `appwrite.config.json`.
+A request may mix the families; the same header in both must carry the same
+value (different values are refused with a 400), and an empty header counts as
+absent.
 
 A session cookie follows the request: a sign-in made with `X-Appwrite-Project`
 (the Appwrite SDKs and CLI) gets `a_session_<project>`, one made with
@@ -614,14 +617,14 @@ assets, saving to S3 and the HTTP examples.
 | Area | Endpoints |
 | --- | --- |
 | Databases | document CRUD, bulk create/upsert/update/delete, increment/decrement, queries, row permissions, transactions with conflict detection, database/collection metadata |
-| Account | email + password, email OTP, token sessions, Google OAuth2 token flow, recovery, email verification, JWT, sessions, prefs |
+| Account | email + password, email OTP, token sessions, OAuth2 token flow (Google, Facebook, GitHub, Apple), recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
 | Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` with streamed responses (`res.start`/`res.write*`/`res.end`, for LLM tokens and SSE); deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
 | Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files, or `adapter: ssr` built and run on this server, see [docs/SITES.md](docs/SITES.md) |
-| Git deployments | GitHub App (one-click setup or `VCS_GITHUB_*`), installations, repository browsing and detection, `createVcsDeployment`; pushes deploy sites and functions, other branches get preview URLs, commit statuses and one PR comment, fork PRs need approval. See [docs/GIT.md](docs/GIT.md) |
+| Git deployments | GitHub App (one-click setup or `VCS_GITHUB_*`), one server-wide installation shared by every project, repository browsing and detection, `createVcsDeployment`; pushes deploy sites and functions, other branches get preview URLs, commit statuses and one PR comment, fork PRs need approval. See [docs/GIT.md](docs/GIT.md) |
 | Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
 | Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
@@ -701,7 +704,7 @@ Or run it with Docker Compose. It auto-tunes to the host's CPU and RAM; set
 cgroup limits in `docker-compose.yml` if you share the host with other services:
 
 ```bash
-cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy for automatic HTTPS, seeds
+cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy, TLS_MODE=acme|external|off, seeds
 docker compose up -d --build
 ```
 

@@ -3,14 +3,17 @@
  *
  * The server always reads both families: `X-Bunwrite-*` and `X-Appwrite-*`
  * headers, `bw_session_<project>` and `a_session_<project>` cookies, so the
- * Bunwrite SDK and CLI and the Appwrite SDKs and CLI all work. A session
- * cookie is named after the request's own naming (its project header).
+ * Bunwrite SDK and CLI and the Appwrite SDKs and CLI all work. The families may
+ * be mixed in one request; the same header in both must carry the same value,
+ * and an empty one counts as absent. A session cookie is named after the
+ * request's own naming (its project header).
  * `API_COMPAT` picks the rest: webhook headers, the variables functions get,
  * and cookies for requests without a project header. Bunwrite's names are the
  * default; `appwrite` sends Appwrite's (and gives functions both sets of
  * variables).
  */
 import type { Config } from '~/config'
+import { err } from '~/lib/errors'
 
 export type ApiCompat = 'bunwrite' | 'appwrite'
 
@@ -27,9 +30,23 @@ const compatOf = (config: Pick<Config, 'apiCompat'>): ApiCompat => config.apiCom
 
 // ---- Requests: both families ----
 
-/** A request header by its short name (`project`, `key`, ...): `X-Bunwrite-<name>`, else `X-Appwrite-<name>`. */
+/** A request header by its short name (`project`, `key`, ...): `X-Bunwrite-<name>`, else `X-Appwrite-<name>`; empty counts as absent. */
 export function apiHeader(request: Request, name: string): string | null {
-  return request.headers.get(`x-bunwrite-${name}`) ?? request.headers.get(`x-appwrite-${name}`)
+  return request.headers.get(`x-bunwrite-${name}`) || request.headers.get(`x-appwrite-${name}`)
+}
+
+/** Short names read through `apiHeader` that both families may carry. */
+const COMPAT_HEADER_NAMES = ['project', 'key', 'session', 'jwt', 'organization', 'mode', 'id']
+
+/** Refuse a request that gives one header two different values, so it cannot mean two things at once. */
+export function assertCompatHeaders(request: Request): void {
+  for (const name of COMPAT_HEADER_NAMES) {
+    const bunwrite = request.headers.get(`x-bunwrite-${name}`) || null
+    const appwrite = request.headers.get(`x-appwrite-${name}`) || null
+    if (bunwrite && appwrite && bunwrite !== appwrite) {
+      throw err('general_bad_request', `X-Bunwrite-${name} and X-Appwrite-${name} carry different values. Send one family, or the same value in both.`)
+    }
+  }
 }
 
 /** Headers carrying credentials, in both families; never handed on (function requests, logs). */
@@ -61,8 +78,8 @@ export function sessionFromCookies(cookies: Record<string, string>, fallbackHead
 
 /** The naming a request uses, from its project header; null when it sends none (e.g. `?project=`). */
 export function requestNaming(request: Request): ApiCompat | null {
-  if (request.headers.has('x-bunwrite-project')) return 'bunwrite'
-  if (request.headers.has('x-appwrite-project')) return 'appwrite'
+  if (request.headers.get('x-bunwrite-project')) return 'bunwrite'
+  if (request.headers.get('x-appwrite-project')) return 'appwrite'
   return null
 }
 

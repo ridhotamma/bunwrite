@@ -5,7 +5,6 @@ import { readFileSync } from 'node:fs'
 
 import { htmxPath } from '~/console/assets'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { envBulkDialog } from '~/console/env-vars'
 import { checked, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { alert, copyableId, destroy, emptyState, header, icon, listCard, menu, settingsSection, tabs, when } from '~/console/ui'
@@ -144,7 +143,7 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   const installationId = value(ctx.form, 'installation_id')
   const repositoryId = value(ctx.form, 'provider_repository_id')
   if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
-  const installation = ctx.services.vcs.get(installationId)
+  const installation = ctx.hub.installations.get(installationId)
   const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
   const branch = value(ctx.form, 'provider_branch')
   let fields = buildFromForm(ctx, 'git_framework', true)
@@ -309,8 +308,17 @@ export function sitePages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${SITES}/new`, ({ ctx }) =>
-    ctx.render('Create site', 'sites', siteCreateView(sitesDomainOf(ctx.services.config), ctx.hub.apps.get() ? ctx.services.vcs.list() : [])),
+  router.get(`${SITES}/new`, ({ ctx, url }) =>
+    ctx.render(
+      'Create site',
+      'sites',
+      siteCreateView(
+        sitesDomainOf(ctx.services.config),
+        ctx.hub.installations.list(),
+        Boolean(ctx.hub.apps.get()),
+        url.searchParams.get('source') ?? '',
+      ),
+    ),
   )
 
   router.post(SITES, async ({ ctx }) => {
@@ -394,22 +402,18 @@ export function sitePages(router: ConsoleRouter): void {
           'Site variables',
           'Available only to this site. A variable here wins over a global variable with the same name. Changes apply the next time the app starts; redeploy to bake them into a build.',
           html`
-            ${vars.length
-              ? variableList(vars, {
-                  save: `${siteUrl(site.id)}/variables`,
-                  remove: `${siteUrl(site.id)}/variables/delete`,
-                  clear: {
-                    action: `${siteUrl(site.id)}/variables/clear`,
-                    confirm: `Delete all ${vars.length} variables for ${site.name}? This cannot be undone.`,
-                  },
-                })
-              : html`<p class="hint" style="margin:0 0 12px">None set. Global variables from Settings also apply.</p>`}
-            <form method="post" action="${siteUrl(site.id)}/variables" style="margin-top:12px">
-              <div class="fields"><label>Name<input name="key" class="mono" required pattern="[A-Za-z_][A-Za-z0-9_]*"></label><label>Value<input name="value"></label></div>
-              <label class="check"><input type="checkbox" name="secret" checked>Hide the value</label>
-              <div class="foot"><button type="button" data-dialog-open="#bulk-site-vars">${icon('upload-simple')}<span>Bulk upload</span></button><button>Add variable</button></div>
-            </form>
-            ${envBulkDialog({ id: 'bulk-site-vars', title: `Import variables for ${site.name}`, action: `${siteUrl(site.id)}/variables/bulk` })}`,
+            ${variableList(vars, {
+              id: 'site-vars',
+              save: `${siteUrl(site.id)}/variables`,
+              remove: `${siteUrl(site.id)}/variables/delete`,
+              addLabel: 'Add variable',
+              bulk: { id: 'bulk-site-vars', title: `Import variables for ${site.name}`, action: `${siteUrl(site.id)}/variables/bulk` },
+              clear: {
+                action: `${siteUrl(site.id)}/variables/clear`,
+                confirm: `Delete all ${vars.length} variables for ${site.name}? This cannot be undone.`,
+              },
+              empty: html`<p class="hint" style="margin:0">None set. Global variables from Settings also apply.</p>`,
+            })}`,
           { id: 'site-variables' },
         ),
       ),
