@@ -51,7 +51,7 @@ await new Storage(client).createFile({ bucketId: 'invoices', fileId: ID.unique()
 Without a bundler, load `dist/bunwrite.iife.js` and use `window.Bunwrite`:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.2.0/dist/bunwrite.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.3.0/dist/bunwrite.iife.js"></script>
 <script>
   const client = new Bunwrite.Client().setEndpoint('https://api.example.com/v1').setProject('your-project-id')
 </script>

@@ -1,6 +1,6 @@
 {
   "name": "@bunwrite/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "SDK for Bunwrite: one client for browsers, Bun, Node.js and edge runtimes, with the API of Appwrite's SDKs.",
   "license": "MIT AND BSD-3-Clause",
   "keywords": [
