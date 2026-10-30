@@ -369,7 +369,7 @@ export class SiteService {
         )
         .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, stamp, stamp)
       this.proxy.set('site', id, s.domains)
-    })()
+    }).immediate()
     this.changed()
     return this.site(id)
   }
@@ -385,7 +385,7 @@ export class SiteService {
         )
         .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, now(), id)
       this.proxy.set('site', id, s.domains)
-    })()
+    }).immediate()
     this.changed()
     // A different adapter, folder or on/off state changes how the live app runs.
     // Start commands are snapshotted per deployment, so changing one alone does
@@ -431,7 +431,7 @@ export class SiteService {
       this.sql.query('DELETE FROM _site_deployments WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _site_branches WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
-    })()
+    }).immediate()
     this.variables.removeSite(id)
     this.changed()
     // A request could have started the old app between the first stop and here.

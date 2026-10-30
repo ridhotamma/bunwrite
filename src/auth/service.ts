@@ -194,7 +194,7 @@ export class AuthService {
       this.sql.query('DELETE FROM _memberships WHERE user_id = ?').run(id)
       this.sql.query('DELETE FROM _identities WHERE user_id = ?').run(id)
       this.sql.query('DELETE FROM _users WHERE id = ?').run(id)
-    })()
+    }).immediate()
   }
 
   listUsers(queries: unknown[], search?: string, includeTotal = true): { total: number; users: UserRowFull[] } {
@@ -255,7 +255,7 @@ export class AuthService {
           .run(userId, userId, this.config.sessionsLimit)
       }
       this.sql.query('UPDATE _users SET accessed_at = ? WHERE id = ?').run(stamp, userId)
-    })()
+    }).immediate()
     return { session: this.session(id)!, secret }
   }
 

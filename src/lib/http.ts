@@ -1,4 +1,5 @@
 import { BunwriteError, err } from './errors'
+import { sha256 } from './ids'
 
 export type Params = Record<string, unknown>
 
@@ -68,6 +69,23 @@ export function json(data: unknown, status = 200, headers: Record<string, string
     status,
     headers: { 'content-type': 'application/json; charset=UTF-8', 'content-length': String(Buffer.byteLength(body)), ...headers },
   })
+}
+
+/** A weak validator: the tag names the collection version, caller and query that produced the body. */
+export const etagFor = (tag: string): string => `W/"${sha256(tag)}"`
+
+const opaqueTag = (value: string) => value.trim().replace(/^W\//, '')
+
+/** Does the request's If-None-Match accept this ETag? `*` is ignored: a point read may not exist. */
+export function ifNoneMatch(request: Request, etag: string): boolean {
+  const header = request.headers.get('if-none-match')
+  if (!header) return false
+  const wanted = opaqueTag(etag)
+  return header.split(',').some((part) => opaqueTag(part) === wanted)
+}
+
+export function notModified(etag: string, headers: Record<string, string> = {}): Response {
+  return new Response(null, { status: 304, headers: { ...headers, etag } })
 }
 
 export function noContent(): Response {

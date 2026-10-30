@@ -90,15 +90,92 @@ export function parseCookies(header: string): Record<string, string> {
 }
 
 export function findSessionUser(db: Db, secret: string): { user: UserRow; sessionId: string } | null {
+  const found = cachedSession(db, secret)
+  return found ? { user: found.user, sessionId: found.sessionId } : null
+}
+
+const SESSION_TTL_MS = 30_000
+const SESSION_CACHE_MAX = 10_000
+
+interface CachedSession {
+  user: UserRow
+  sessionId: string
+  expire: string
+  roles: string[]
+  at: number
+}
+
+interface SessionCache {
+  version: number
+  entries: Map<string, CachedSession>
+}
+
+/**
+ * One cache per SQLite connection (one per project runtime). The first request
+ * reads the session and its roles; later requests in the next 30 seconds use
+ * the cache. `_meta.auth` is bumped by triggers on sessions, users,
+ * memberships and teams, so a logout, block, label change or team change is
+ * visible in every worker on the next request, not after the TTL.
+ */
+const sessionCaches = new WeakMap<object, SessionCache>()
+
+function authVersion(db: Db): number {
+  try {
+    const row = db.sqlite.query<{ value: number }, [string]>('SELECT value FROM _meta WHERE key = ?').get('auth')
+    return Number(row?.value ?? 0)
+  } catch {
+    return 0
+  }
+}
+
+function sessionCache(db: Db): SessionCache {
+  const version = authVersion(db)
+  let cache = sessionCaches.get(db.sqlite)
+  if (!cache) {
+    cache = { version, entries: new Map() }
+    sessionCaches.set(db.sqlite, cache)
+  }
+  if (cache.version !== version) {
+    cache.entries.clear()
+    cache.version = version
+  }
+  return cache
+}
+
+function cachedSession(db: Db, secret: string): CachedSession | null {
+  const hash = sha256(secret)
+  const cache = sessionCache(db)
+  const hit = cache.entries.get(hash)
+  if (hit && hit.expire > now() && Date.now() - hit.at < SESSION_TTL_MS) return hit
+
   const row = db.sqlite
     .query<any, [string, string]>(
-      `SELECT s.id AS session_id, u.* FROM _sessions s JOIN _users u ON u.id = s.user_id
+      `SELECT s.id AS session_id, s.expire AS session_expire, u.* FROM _sessions s JOIN _users u ON u.id = s.user_id
        WHERE s.secret_hash = ? AND s.expire > ?`,
     )
-    .get(sha256(secret), now())
-  if (!row) return null
-  const { session_id, ...user } = row
-  return { user: user as UserRow, sessionId: session_id }
+    .get(hash, now())
+  if (!row) {
+    cache.entries.delete(hash)
+    return null
+  }
+  const { session_id, session_expire, ...user } = row
+  const entry: CachedSession = {
+    user: user as UserRow,
+    sessionId: session_id,
+    expire: session_expire,
+    roles: [...rolesForUser(db, user as UserRow)],
+    at: Date.now(),
+  }
+  if (cache.entries.size >= SESSION_CACHE_MAX) cache.entries.clear()
+  cache.entries.set(hash, entry)
+  return entry
+}
+
+/** A session as a caller, including the roles computed when the session was cached. */
+export function sessionCaller(db: Db, secret: string): Caller | null {
+  const found = cachedSession(db, secret)
+  if (!found) return null
+  return { kind: 'user', privileged: false, user: found.user, sessionId: found.sessionId, roles: new Set(found.roles) }
 }
 
 function findUser(db: Db, id: string): UserRow | null {
@@ -139,11 +216,11 @@ export async function resolveCaller(db: Db, config: Config, request: Request): P
 
   const secret = sessionSecret(request, config.projectId)
   if (secret) {
-    const found = findSessionUser(db, secret)
+    const caller = sessionCaller(db, secret)
     // An unknown or expired session is treated as a guest, like Appwrite.
-    if (found) {
-      if (!found.user.status) throw err('user_blocked')
-      return userCaller(db, found.user, found.sessionId)
+    if (caller) {
+      if (!caller.user!.status) throw err('user_blocked')
+      return caller
     }
   }
   return guestCaller()

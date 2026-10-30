@@ -126,7 +126,7 @@ export class TeamService {
           )
           .run(uniqueId(), id, caller.user.id, JSON.stringify(roles), stamp, stamp, stamp, stamp)
       }
-    })()
+    }).immediate()
     return this.team(id)
   }
 
@@ -142,7 +142,7 @@ export class TeamService {
     this.sql.transaction(() => {
       this.sql.query('DELETE FROM _memberships WHERE team_id = ?').run(id)
       this.sql.query('DELETE FROM _teams WHERE id = ?').run(id)
-    })()
+    }).immediate()
   }
 
   listMemberships(scope: { teamId?: string; userId?: string }, queries: unknown[], search?: string, includeTotal = true) {
@@ -228,7 +228,7 @@ export class TeamService {
     this.sql.transaction(() => {
       this.sql.query('UPDATE _memberships SET confirm = 1, joined = ?, secret_hash = NULL, updated_at = ? WHERE id = ?').run(stamp, stamp, membershipId)
       this.sql.query('UPDATE _users SET email_verification = 1, updated_at = ? WHERE id = ?').run(stamp, membership.user_id)
-    })()
+    }).immediate()
     return this.membership(teamId, membershipId)
   }
 }

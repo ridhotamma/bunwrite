@@ -82,7 +82,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     port: 0,
     workers: 1,
     workerIndex: 0,
-    cacheCheckMs: 250,
+    cacheCheckMs: 0,
     realtimeBusPollMs: 100,
     // The suite checks Appwrite compatibility through Appwrite's SDKs; test/compat.test.ts covers Bunwrite's names.
     apiCompat: 'appwrite',
@@ -134,8 +134,9 @@ export function testConfig(over: Partial<Config> = {}): Config {
     },
     backupsPath: './data/test-backups',
     render: { enabled: false, allowRemote: false },
-    cache: { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 },
+    cache: { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30, publicMaxAge: 0 },
     compression: true,
+    websocketCompression: true,
     ...over,
   }
 }

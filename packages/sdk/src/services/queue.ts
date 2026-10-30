@@ -60,6 +60,8 @@ export type ClaimQueueMessagesParams = {
 export type QueueMessageParams = {
     queue: string;
     messageId: string;
+    /** The claimed message's `attempts` value: the claim token. Required for ack, fail and heartbeat. */
+    attempt: number;
     /** Lease length in seconds, for `heartbeatMessage`. */
     lease?: number;
     /** The handler's return value, stored on the message, for `ackMessage`. */
@@ -110,19 +112,19 @@ export class Queue {
         return this.call('get', `/queue/${encodeURIComponent(params.queue)}/messages`, query);
     }
 
-    /** Mark a claimed message done. */
+    /** Mark a claimed message done. Send the claim's `attempt`; a stale claim gets 409. */
     ackMessage(params: QueueMessageParams): Promise<QueueMessage> {
-        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/ack`, clean({ result: params.result }));
+        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/ack`, clean({ attempt: params.attempt, result: params.result }));
     }
 
     /** Report a failure. The message is retried with backoff until `maxAttempts`. */
     failMessage(params: QueueMessageParams): Promise<QueueMessage> {
-        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/fail`, clean({ error: params.error, delay: params.delay }));
+        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/fail`, clean({ attempt: params.attempt, error: params.error, delay: params.delay }));
     }
 
     /** Extend a running message's lease. */
     heartbeatMessage(params: QueueMessageParams): Promise<QueueMessage> {
-        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/heartbeat`, clean({ lease: params.lease }));
+        return this.call('post', `/queue/${encodeURIComponent(params.queue)}/messages/${encodeURIComponent(params.messageId)}/heartbeat`, clean({ attempt: params.attempt, lease: params.lease }));
     }
 
     /** Delete a message, whatever its status. */
@@ -187,6 +189,11 @@ export type QueueWorker = {
     readonly running: number;
 };
 
+/** A 409 from ack/fail/heartbeat means another worker owns the message now. */
+function isLeaseConflict(error: unknown): boolean {
+    return error instanceof BunwriteException && (error.type === 'queue_message_conflict' || error.code === 409);
+}
+
 /**
  * A polling worker for the built-in queue. It claims messages, heartbeats the
  * lease while your handler runs, then acks on success and fails on a throw.
@@ -211,24 +218,50 @@ export function createQueueWorker<T = unknown>(client: Client, options: QueueWor
 
     async function handle(message: QueueMessage<T>): Promise<void> {
         const controller = new AbortController();
+        const attempt = message.attempts;
+        let leaseLost = false;
+        const loseLease = () => {
+            leaseLost = true;
+            controller.abort();
+        };
         const beat = Math.max(1000, (lease * 1000) / 2);
         const heartbeat = setInterval(() => {
-            queue.heartbeatMessage({ queue: options.queue, messageId: message.$id, lease }).catch(() => controller.abort());
+            queue.heartbeatMessage({ queue: options.queue, messageId: message.$id, attempt, lease }).catch(loseLease);
         }, beat);
         (heartbeat as { unref?: () => void }).unref?.();
         try {
             const result = await options.handler(message, {
                 signal: controller.signal,
                 heartbeat: async () => {
-                    await queue.heartbeatMessage({ queue: options.queue, messageId: message.$id, lease });
+                    try {
+                        await queue.heartbeatMessage({ queue: options.queue, messageId: message.$id, attempt, lease });
+                    } catch (error) {
+                        loseLease();
+                        throw error;
+                    }
                 },
             });
-            await queue.ackMessage({ queue: options.queue, messageId: message.$id, result });
+            // The handler may ignore the abort signal. If the lease is gone,
+            // another worker owns the message; never overwrite its result.
+            if (leaseLost) return;
+            try {
+                await queue.ackMessage({ queue: options.queue, messageId: message.$id, attempt, result });
+            } catch (error) {
+                // Only the ack can have lost the claim here; a handler's own
+                // 409 is still a job failure and must go through failMessage.
+                if (!isLeaseConflict(error)) throw error;
+                options.onError?.(error, message);
+            }
         } catch (error) {
+            if (leaseLost) {
+                options.onError?.(error, message);
+                return;
+            }
             try {
                 await queue.failMessage({
                     queue: options.queue,
                     messageId: message.$id,
+                    attempt,
                     error: error instanceof Error ? error.message : String(error),
                 });
             } catch (failure) {

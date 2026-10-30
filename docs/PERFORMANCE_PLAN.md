@@ -27,6 +27,37 @@ Docker networking or the network.
   background work, cross-process cache reloads and a realtime event bus.
   Design: [ARCHITECTURE.md](ARCHITECTURE.md). Commit `0f2b650`.
 - [x] **Request log sampling** (`LOG_SAMPLE_RATE`); errors are always logged.
+- [x] **Immediate write transactions.** Every write transaction now starts with
+  `BEGIN IMMEDIATE` (`DocumentStore.tx()`, schema, settings, auth, teams,
+  storage, sites, functions, variables, request logs, import and the leader
+  lease), so a second worker waits on `busy_timeout` instead of failing when a
+  read-then-write transaction tries to upgrade.
+- [x] **Cache versions on every request.** The `_meta` counters are compared on
+  each request by default, so a schema push is visible immediately even in a
+  write burst. `CACHE_CHECK_MS` can throttle the check at the cost of a short
+  stale window.
+- [x] **SQLite mmap** (`SQLITE_MMAP_MB`, default 256 MB, `0` disables it).
+- [x] **WAL tuning.** `SQLITE_WAL_AUTOCHECKPOINT` (default 2000 pages) is set per
+  connection, so checkpoint stalls are less frequent under several writers.
+- [x] **HTTP compression in one place.** `docker-compose.yml` sets
+  `COMPRESSION=false` because Caddy compresses at the edge.
+  `WEBSOCKET_COMPRESSION` stays independent for realtime frames.
+- [x] **Host networking option.** `docker-compose.host.yml` runs Caddy and
+  Bunwrite in the host network namespace on Linux, removing the bridge hop.
+- [x] **Shared rate limits and sessions.** Login and token counters live in
+  `_rate_limits`; session and role lookups are cached for 30 seconds and
+  cleared by `_meta.auth` triggers on sessions, users, memberships and teams.
+- [x] **Read caches.** Compiled queries, per-collection list results keyed by a
+  trigger-maintained version, and `ETag`/304 on document GETs.
+- [x] **Session and permission stress variant.** `booking.ts setup` creates a
+  logged-in user and a document-security collection; `booking.ts session` runs
+  the same paths with a session header.
+
+Verified after the last change: two workers behind one port served 600
+concurrent document creates (48 at a time) with 600 successes and no "database
+is locked" errors. The new tests cover a write on one connection invalidating
+another connection's list cache, a session revocation across connections,
+shared rate limits, and ETag invalidation.
 
 ## Still to do, in order
 
@@ -41,63 +72,66 @@ Confirms the multi-process gain on Linux and shows where the remaining time goes
 - [ ] Repeat with `WORKERS=1` and `WORKERS=auto` to measure the multi-process gain.
 - [ ] Record CPU per process (`top` / `pidstat`): each worker vs Caddy.
 - [ ] Take a 30 s CPU profile of one worker under load (`bun --cpu-prof`).
-- [ ] Add two variants to [scripts/stress/booking.ts](../scripts/stress/booking.ts):
+- [x] Add two variants to [scripts/stress/booking.ts](../scripts/stress/booking.ts):
   a logged-in user (session instead of API key) and a collection with
-  per-document permissions.
+  per-document permissions. `setup` creates both; `session` runs them.
 
 Done when: one baseline table shows app vs proxy vs network cost, for one and
 many workers, and for API-key and session users.
 
 ### 2. Make writes safe under several workers
 
-- [ ] **Immediate write transactions.** `DocumentStore.tx()` in
-  [src/documents/store.ts](../src/documents/store.ts) opens a deferred
-  transaction. Update, upsert, delete and increment read the row first, then
-  write; when two workers do this at once, SQLite returns "database busy" at
-  once instead of waiting on `busy_timeout`. Use `.immediate()` for write
-  transactions, as [src/transactions/service.ts](../src/transactions/service.ts)
-  and [src/instance/bootstrap.ts](../src/instance/bootstrap.ts) already do.
-  Check the other services' write transactions for the same pattern.
-- [ ] **Shared rate limits.** [src/lib/limits.ts](../src/lib/limits.ts) counts
-  in memory, so with N workers a client gets up to N times the limit. Move the
-  counters to a SQLite table, or accept the looser limit and document it.
-- [ ] Load test with 30% writes and several workers; expect zero
-  "database is locked" errors.
+- [x] **Immediate write transactions.** All write transactions use
+  `.immediate()`; `busy_timeout` is set before the WAL pragma so workers
+  starting together also wait instead of failing.
+- [x] **Shared rate limits.** Counters live in `_rate_limits`; every worker
+  increments and reads the same window, so N workers no longer give N times the
+  limit.
+- [x] Load test with several workers: 600 concurrent creates over two workers,
+  600 successes, no "database is locked" errors.
 
 ### 3. Deployment quick wins
 
-- [ ] Compress in one place only: `COMPRESSION=false` in the app and keep
-  Caddy's `encode` with a 1 KB minimum, or the other way round.
-- [ ] Remove the Docker network hop: `network_mode: host`, or a Unix socket
-  between Caddy and Bun.
-- [ ] Add `PRAGMA mmap_size` (for example 256 MB) in
+- [x] Compress in one place only: `docker-compose.yml` sets `COMPRESSION=false`
+  and keeps Caddy's `encode`. Set `COMPRESSION=true` when Bunwrite is exposed
+  directly.
+- [x] Remove the Docker network hop: `docker-compose.host.yml` runs both
+  containers with `network_mode: host` and points Caddy at `127.0.0.1:8080`.
+- [x] Add `PRAGMA mmap_size` (`SQLITE_MMAP_MB`, default 256 MB) in
   [src/db/connection.ts](../src/db/connection.ts).
-- [ ] Set `LOG_SAMPLE_RATE` (for example 0.1) in production, or turn
-  `LOG_REQUESTS` off.
+- [x] Set `LOG_SAMPLE_RATE` (for example 0.1) in production, or turn
+  `LOG_REQUESTS` off. Available as an env setting; choose the value per host.
 - [ ] If the profile shows CPU steal, move to a VPS with dedicated cores.
 
 Check: rerun step 1.
 
 ### 4. Caching
 
+Done. SQLite mmap and the per-worker page cache are in place, as are the
+compiled-query, list-result and session caches.
+
 | Step | What | Files |
 | --- | --- | --- |
-| 4a | **Collection version counter**, increased on every insert, update or delete. Must be visible to every worker (a `_meta`-style counter, like the cluster cache versions). | [src/documents/store.ts](../src/documents/store.ts) |
-| 4b | **Parsed-query cache:** query string → compiled SQL, cleared when the schema reloads. | [src/documents/query.ts](../src/documents/query.ts) |
-| 4c | **Session cache:** session hash → user and roles, kept 30 s. Cleared on logout, user block or update, label and membership changes, in every worker. | [src/auth/caller.ts](../src/auth/caller.ts), [src/auth/service.ts](../src/auth/service.ts), teams |
-| 4d | **List result cache:** size-limited, keyed by collection, version, the caller's roles and the query string. | [src/documents/store.ts](../src/documents/store.ts) |
-| 4e | **HTTP caching:** ETag/304 on GETs. Optional `Cache-Control: public, max-age=N` per collection, only when its read permission is `any`. | [src/documents/routes.ts](../src/documents/routes.ts), collection settings |
+| 4a | [x] **Collection version counter**, increased on every insert, update or delete by triggers on the document table. Visible to every worker through `_meta`. | [src/documents/store.ts](../src/documents/store.ts), [src/db/cluster-schema.ts](../src/db/cluster-schema.ts) |
+| 4b | [x] **Parsed-query cache:** query string → compiled SQL in a `WeakMap` keyed by `Collection`, so a registry reload drops it. | [src/documents/query.ts](../src/documents/query.ts) |
+| 4c | [x] **Session cache:** session hash → user and roles for 30 s, cleared on logout, user block or update, label and membership changes through `_meta.auth` in every worker. | [src/auth/caller.ts](../src/auth/caller.ts) |
+| 4d | [x] **List result cache:** size-limited, keyed by collection, version, the caller's roles and the query string. Views are never cached. | [src/documents/store.ts](../src/documents/store.ts) |
+| 4e | [x] **HTTP caching:** ETag/304 on document GETs. `CACHE_PUBLIC_MAX_AGE` allows public caching only when the collection's read permission is `any`; a per-collection override is still open. | [src/documents/routes.ts](../src/documents/routes.ts) |
 
-Main risk: stale data or stale permissions, now across workers. Every cache
-needs an explicit clear on write, with tests such as "write on worker A, read
-on worker B sees it" and "block user, their next request on any worker fails".
+The cross-worker tests in [test/caching.test.ts](../test/caching.test.ts) cover
+"write on worker A, read on worker B" and session revocation. New caches should
+keep the same rule: an explicit version or clear on write, checked on the next
+request.
 
 ### 5. Write path (only if writes still limit)
 
-- [ ] Use `RETURNING` on Linux instead of re-reading each inserted row (the
+- [x] Use `RETURNING` on Linux instead of re-reading each inserted row (the
   macOS SQLite 3.39 bug does not apply; Bun bundles its own SQLite on Linux).
-- [ ] Tune `wal_autocheckpoint`.
-- [ ] Group several writes into one transaction during peaks.
+  Inserts, updates and increments now use it there.
+- [x] Tune `wal_autocheckpoint` (`SQLITE_WAL_AUTOCHECKPOINT`, default 2000 pages).
+- [ ] Group several writes into one transaction during peaks. The transaction
+  API and the bulk document endpoints already do this; automatic batching is
+  not needed yet.
 - [ ] If lock waits dominate profiles, send write methods to a single writer
   worker through Caddy (the transaction API and writes from functions too).
 

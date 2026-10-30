@@ -1,14 +1,18 @@
 /**
  * Cross-process cache invalidation. Triggers on the tables that back the
  * in-memory caches bump a counter in `_meta`; every process compares its last
- * seen counters with the database a few times a second and reloads what
- * changed. Reading the counters is one tiny query, not a scan.
+ * seen counters with the database and reloads what changed. By default the
+ * comparison happens on every request; `CACHE_CHECK_MS` can throttle it.
  */
 import type { Db } from '~/db/connection'
 
 export const VERSION_KEYS = ['schema', 'settings', 'catalog', 'projects'] as const
 export type VersionKey = (typeof VERSION_KEYS)[number]
 export type VersionChanges = Record<VersionKey, boolean>
+
+/** The `_meta` key a collection's document triggers bump on every write. */
+export const collectionVersionKey = (databaseId: string, collectionId: string): string =>
+  `collection:${databaseId}/${collectionId}`
 
 const NO_CHANGES: VersionChanges = { schema: false, settings: false, catalog: false, projects: false }
 

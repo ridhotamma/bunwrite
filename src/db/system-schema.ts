@@ -590,7 +590,12 @@ export const queueMessages = sqliteTable(
     completedAt: text('completed_at'),
     ...timestamps,
   },
-  (t) => [index('_queue_messages_claim').on(t.queue, t.status, t.availableAt, t.seq), uniqueIndex('_queue_messages_idempotency').on(t.queue, t.idempotencyKey)],
+  (t) => [
+    index('_queue_messages_claim').on(t.queue, t.status, t.availableAt, t.seq),
+    uniqueIndex('_queue_messages_idempotency').on(t.queue, t.idempotencyKey),
+    index('_queue_messages_lease').on(t.status, t.leaseUntil),
+    index('_queue_messages_completed').on(t.completedAt),
+  ],
 )
 
 /** People who may sign in to /console. Separate from project users, as in Appwrite. */

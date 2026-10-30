@@ -262,6 +262,20 @@ export function configuredSqliteCacheMb(env: Env = process.env): number {
   return positive(env.SQLITE_CACHE_MB) ?? 16
 }
 
+/** `SQLITE_MMAP_MB`: memory-mapped database window per connection; 0 disables it. */
+export function configuredSqliteMmapMb(env: Env = process.env): number {
+  const value = Number(env.SQLITE_MMAP_MB)
+  if (env.SQLITE_MMAP_MB === undefined || env.SQLITE_MMAP_MB === '' || !Number.isFinite(value) || value < 0) return 256
+  return Math.round(value)
+}
+
+/** `SQLITE_WAL_AUTOCHECKPOINT`: pages before a WAL checkpoint; 0 turns automatic checkpoints off. */
+export function configuredWalAutocheckpoint(env: Env = process.env): number {
+  const value = Number(env.SQLITE_WAL_AUTOCHECKPOINT)
+  if (env.SQLITE_WAL_AUTOCHECKPOINT === undefined || env.SQLITE_WAL_AUTOCHECKPOINT === '' || !Number.isFinite(value) || value < 0) return 2000
+  return Math.round(value)
+}
+
 /** `bunwrite autotune`, `--json` or `--shell` for the startup-only values. */
 export function reportAutotune(args: string[] = [], env: Env = process.env): void {
   if (disabled(env)) {

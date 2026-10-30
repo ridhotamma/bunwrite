@@ -12,7 +12,6 @@ import type { Db } from '~/db/connection'
 import { addSeconds, formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
-import { page } from '~/lib/paging'
 
 export interface QueueMessageRow {
   seq: number
@@ -54,6 +53,49 @@ const QUEUE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const SYSTEM_QUEUE = /^_[a-z][a-z0-9_-]{0,62}$/
 const MAX_LEASE = 86_400
 const MAX_DELAY = 7 * 86_400
+const DEFAULT_LIST_LIMIT = 25
+const MAX_LIST_LIMIT = 5000
+
+/** Queue model field → SQLite column, for list filters and ordering. */
+const LIST_FIELDS: Record<string, string> = {
+  $id: 'id',
+  $createdAt: 'created_at',
+  $updatedAt: 'updated_at',
+  $sequence: 'seq',
+  seq: 'seq',
+  queue: 'queue',
+  status: 'status',
+  attempts: 'attempts',
+  maxAttempts: 'max_attempts',
+  availableAt: 'available_at',
+  leaseUntil: 'lease_until',
+  completedAt: 'completed_at',
+  idempotencyKey: 'idempotency_key',
+}
+
+interface ListQuery {
+  method: string
+  attribute?: string
+  values?: unknown[]
+}
+
+function listQuery(raw: unknown): ListQuery {
+  try {
+    const query = (typeof raw === 'string' ? JSON.parse(raw) : raw) as ListQuery
+    if (!query || typeof query.method !== 'string') throw new Error()
+    return query
+  } catch {
+    throw err('general_argument_invalid', `Invalid \`queries\` param: ${String(raw)}`)
+  }
+}
+
+/** The claim token: the message's `attempts` value returned by `claim`. */
+function claimAttempt(value: number): number {
+  if (!Number.isInteger(value) || value < 1) {
+    throw err('general_argument_invalid', 'Param "attempt" must be the claimed message\'s attempts value.')
+  }
+  return value
+}
 
 export function queueModel(m: QueueMessageRow) {
   let data: unknown = m.data
@@ -136,7 +178,7 @@ export class QueueService {
       .query(
         `INSERT INTO _queue_messages (id, queue, status, data, attempts, max_attempts, available_at, idempotency_key, created_at, updated_at)
          VALUES (?, ?, 'waiting', ?, 0, ?, ?, ?, ?, ?)
-         ON CONFLICT(queue, idempotency_key) DO NOTHING`,
+         ON CONFLICT DO NOTHING`,
       )
       .run(id, queueName, data, maxAttempts, addSeconds(delay), key, stamp, stamp)
     if (Number(result.changes ?? 0) === 0) {
@@ -177,46 +219,51 @@ export class QueueService {
       .all(addSeconds(lease), stamp, queueName, stamp, count)
   }
 
-  /** Extend a running message's lease; returns the updated message. */
-  heartbeat(queueName: string, id: string, lease = 60): QueueMessageRow {
+  /** Extend a running message's lease; the attempt must still be the one this worker claimed. */
+  heartbeat(queueName: string, id: string, attempt: number, lease = 60): QueueMessageRow {
     const seconds = integer(lease, 60, 1, MAX_LEASE, 'lease')
+    const claimed = claimAttempt(attempt)
     const row = this.sql
-      .query<QueueMessageRow, [string, string, string, string]>(
-        "UPDATE _queue_messages SET lease_until = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' RETURNING *",
+      .query<QueueMessageRow, [string, string, string, string, number]>(
+        "UPDATE _queue_messages SET lease_until = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
       )
-      .get(addSeconds(seconds), now(), name(queueName), id)
-    if (!row) this.leaseError(queueName, id)
+      .get(addSeconds(seconds), now(), name(queueName), id, claimed)
+    if (!row) this.leaseError(queueName, id, claimed)
     return row
   }
 
-  /** Mark a claimed message done. */
-  ack(queueName: string, id: string, result?: unknown): QueueMessageRow {
+  /** Mark a claimed message done. A late ack from an expired lease gets 409. */
+  ack(queueName: string, id: string, attempt: number, result?: unknown): QueueMessageRow {
     const stamp = now()
+    const claimed = claimAttempt(attempt)
     const text = result === undefined ? '' : typeof result === 'string' ? result : JSON.stringify(result)
     const row = this.sql
-      .query<QueueMessageRow, string[]>(
-        "UPDATE _queue_messages SET status = 'completed', result = ?, lease_until = NULL, completed_at = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' RETURNING *",
+      .query<QueueMessageRow, (string | number)[]>(
+        "UPDATE _queue_messages SET status = 'completed', result = ?, lease_until = NULL, completed_at = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
       )
-      .get(text, stamp, stamp, name(queueName), id)
-    if (!row) this.leaseError(queueName, id)
+      .get(text, stamp, stamp, name(queueName), id, claimed)
+    if (!row) this.leaseError(queueName, id, claimed)
     return row
   }
 
   /**
    * Mark a claimed message failed. It is retried with backoff until it runs
    * out of attempts, then it stays `failed` for inspection. `final` skips the
-   * retries, for errors another attempt cannot fix.
+   * retries, for errors another attempt cannot fix. The conditional UPDATE
+   * re-checks the status and attempt, so a stale worker cannot overwrite the
+   * message after a requeue or a new claim.
    */
-  fail(queueName: string, id: string, message?: string, delay?: number, final = false): QueueMessageRow {
+  fail(queueName: string, id: string, attempt: number, message?: string, delay?: number, final = false): QueueMessageRow {
+    const claimed = claimAttempt(attempt)
     const current = this.get(name(queueName), id)
-    if (current.status !== 'processing') this.leaseError(queueName, id)
+    if (current.status !== 'processing' || current.attempts !== claimed) this.leaseError(queueName, id, claimed)
     const stamp = now()
     const retry = !final && current.attempts < current.max_attempts
     const backoff = delay ?? Math.min(300, 2 ** current.attempts)
     const row = this.sql
-      .query<QueueMessageRow, (string | null)[]>(
+      .query<QueueMessageRow, (string | number | null)[]>(
         `UPDATE _queue_messages SET status = ?, errors = ?, available_at = ?, lease_until = NULL, completed_at = ?, updated_at = ?
-         WHERE queue = ? AND id = ? RETURNING *`,
+         WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *`,
       )
       .get(
         retry ? 'waiting' : 'failed',
@@ -226,36 +273,37 @@ export class QueueService {
         stamp,
         name(queueName),
         id,
+        claimed,
       )
-    return row!
+    if (!row) this.leaseError(queueName, id, claimed)
+    return row
   }
 
-  /** Requeue claims whose lease expired, so a dead worker does not hold a message forever. */
+  /**
+   * Requeue claims whose lease expired, so a dead worker does not hold a
+   * message forever. One conditional UPDATE: a heartbeat that extended the
+   * lease, or a claim that took the message, no longer matches and is left
+   * alone.
+   */
   reap(): string[] {
     // Requeuing is a scheduler job: only one process does it, or every stale
     // message would be touched once per worker.
     if (!isLeader()) return []
     const stamp = now()
-    const stale = this.sql
-      .query<QueueMessageRow, [string]>("SELECT * FROM _queue_messages WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?")
-      .all(stamp)
-    for (const row of stale) {
-      const retry = row.attempts < row.max_attempts
-      this.sql
-        .query(
-          `UPDATE _queue_messages SET status = ?, available_at = ?, lease_until = NULL, completed_at = ?, errors = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(
-          retry ? 'waiting' : 'failed',
-          retry ? stamp : row.available_at,
-          retry ? null : stamp,
-          retry ? row.errors : 'The worker did not finish before its lease expired.',
-          stamp,
-          row.id,
-        )
-    }
-    return stale.map((row) => row.id)
+    const rows = this.sql
+      .query<{ id: string }, [string, string, string, string]>(
+        `UPDATE _queue_messages
+         SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
+             available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
+             completed_at = CASE WHEN attempts < max_attempts THEN NULL ELSE ? END,
+             errors = CASE WHEN attempts < max_attempts THEN errors ELSE 'The worker did not finish before its lease expired.' END,
+             lease_until = NULL,
+             updated_at = ?
+         WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
+         RETURNING id`,
+      )
+      .all(stamp, stamp, stamp, stamp)
+    return rows.map((row) => row.id)
   }
 
   /** Replace a message's payload, for example to drop a large input once it is done. */
@@ -267,15 +315,104 @@ export class QueueService {
     return this.get(name(queueName), id)
   }
 
-  listMessages(queueName: string, queries: unknown[], status?: string) {
+  /** One SQL page; never loads the whole queue. Supports the list queries the SDK sends. */
+  listMessages(queueName: string, rawQueries: unknown[], status?: string) {
     queueName = name(queueName)
+    const filters: string[] = ['queue = ?']
+    const params: (string | number | null)[] = [queueName]
+    let limit = DEFAULT_LIST_LIMIT
+    let offset = 0
+    let order = 'seq DESC'
+    let ordered = false
+    let after: string | undefined
+    let before: string | undefined
+
+    if (status) {
+      filters.push('status = ?')
+      params.push(status)
+    }
+
+    for (const raw of rawQueries) {
+      const query = listQuery(raw)
+      const values = query.values ?? []
+      switch (query.method) {
+        case 'limit':
+          limit = Math.min(MAX_LIST_LIMIT, Math.max(0, Math.floor(Number(values[0]) || 0)))
+          break
+        case 'offset':
+          offset = Math.max(0, Math.floor(Number(values[0]) || 0))
+          break
+        case 'cursorAfter':
+          after = String(values[0])
+          break
+        case 'cursorBefore':
+          before = String(values[0])
+          break
+        case 'equal':
+        case 'notEqual': {
+          const column = LIST_FIELDS[query.attribute ?? '']
+          if (!column) throw err('general_argument_invalid', `Invalid \`queries\` param: cannot filter queue messages by "${query.attribute}".`)
+          const cast = values.map((value) => (value === null || typeof value === 'string' || typeof value === 'number' ? value : String(value)))
+          const nulls = cast.some((value) => value === null)
+          const nonNull = cast.filter((value): value is string | number => value !== null)
+          const marks = nonNull.map(() => '?').join(', ')
+          if (query.method === 'equal') {
+            if (nonNull.length && nulls) filters.push(`(${column} IN (${marks}) OR ${column} IS NULL)`)
+            else if (nonNull.length) filters.push(`${column} IN (${marks})`)
+            else if (nulls) filters.push(`${column} IS NULL`)
+            else filters.push('0')
+          } else {
+            const parts: string[] = []
+            if (nonNull.length) parts.push(`${column} NOT IN (${marks})`)
+            if (nulls) parts.push(`${column} IS NOT NULL`)
+            if (parts.length) filters.push(parts.join(' AND '))
+          }
+          params.push(...nonNull)
+          break
+        }
+        case 'orderAsc':
+        case 'orderDesc': {
+          const column = LIST_FIELDS[query.attribute ?? '$createdAt']
+          if (!column) throw err('general_argument_invalid', `Invalid \`queries\` param: cannot order queue messages by "${query.attribute}".`)
+          order = `${column} ${query.method === 'orderAsc' ? 'ASC' : 'DESC'}, seq ${query.method === 'orderAsc' ? 'ASC' : 'DESC'}`
+          ordered = true
+          break
+        }
+        default:
+          throw err('general_argument_invalid', `Invalid \`queries\` param: the ${query.method} query is not supported here.`)
+      }
+    }
+
+    // The default order is newest first by sequence; a cursor is tied to it.
+    if ((after !== undefined || before !== undefined) && ordered) {
+      throw err('general_argument_invalid', 'Cursors use the default sequence order; do not combine them with orderAsc or orderDesc.')
+    }
+
+    const where = filters.join(' AND ')
+    const total = Number(
+      this.sql
+        .query<{ n: number }, (string | number | null)[]>(`SELECT count(*) AS n FROM _queue_messages WHERE ${where}`)
+        .get(...params)?.n ?? 0,
+    )
+
+    const pageFilters = [...filters]
+    const pageParams = [...params]
+    if (after !== undefined || before !== undefined) {
+      const cursorId = (after ?? before)!
+      const cursor = this.sql
+        .query<{ seq: number }, (string | number | null)[]>(`SELECT seq FROM _queue_messages WHERE ${where} AND id = ?`)
+        .get(...params, cursorId)
+      if (!cursor) throw err('general_cursor_not_found')
+      pageFilters.push(`seq ${after !== undefined ? '<' : '>'} ?`)
+      pageParams.push(cursor.seq)
+    }
+
     const rows = this.sql
-      .query<QueueMessageRow, [string]>('SELECT * FROM _queue_messages WHERE queue = ? ORDER BY seq')
-      .all(queueName)
-      .filter((row) => !status || row.status === status)
-      .map(queueModel)
-    const { total, items } = page([...rows].reverse(), queries)
-    return { total, messages: items }
+      .query<QueueMessageRow, (string | number | null)[]>(
+        `SELECT * FROM _queue_messages WHERE ${pageFilters.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      )
+      .all(...pageParams, limit, offset)
+    return { total, messages: rows.map(queueModel) }
   }
 
   stats(queueName: string): Record<string, number> {
@@ -326,7 +463,7 @@ export class QueueService {
   }
 
   /** A queue-wide lease error: not found, or claimed by someone else / already finished. */
-  private leaseError(queueName: string, id: string): never {
+  private leaseError(queueName: string, id: string, attempt?: number): never {
     let row: QueueMessageRow | undefined
     try {
       row = this.get(queueName, id)
@@ -334,6 +471,12 @@ export class QueueService {
       row = undefined
     }
     if (!row) throw err('queue_message_not_found')
+    if (attempt !== undefined && row.status === 'processing' && row.attempts !== attempt) {
+      throw err(
+        'queue_message_conflict',
+        `Message "${id}" is processing under attempt ${row.attempts}, not ${attempt}. Claim it again or check its lease.`,
+      )
+    }
     throw err('queue_message_conflict', `Message "${id}" is ${row.status}, not processing. Claim it again or check its lease.`)
   }
 }

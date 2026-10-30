@@ -5,6 +5,7 @@
  * project config shape the project keeps in its repo.
  */
 import type { Db } from '~/db/connection'
+import { collectionVersionKey } from '~/cluster/versions'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { isValidId } from '~/lib/ids'
@@ -34,7 +35,7 @@ export class SchemaAdmin {
 
   private apply(def: ConfigCollection): string[] {
     const log: string[] = []
-    this.db.sqlite.transaction(() => pushCollection(this.db, def, now(), (l) => log.push(l)))()
+    this.db.sqlite.transaction(() => pushCollection(this.db, def, now(), (l) => log.push(l))).immediate()
     this.registry.reload()
     return log
   }
@@ -61,7 +62,8 @@ export class SchemaAdmin {
       }
       this.db.sqlite.query('DELETE FROM _collections WHERE database_id = ?').run(id)
       this.db.sqlite.query('DELETE FROM _databases WHERE id = ?').run(id)
-    })()
+      this.db.sqlite.query('DELETE FROM _meta WHERE key LIKE ?').run(`collection:${id}/%`)
+    }).immediate()
     this.registry.reload()
   }
 
@@ -82,7 +84,8 @@ export class SchemaAdmin {
     this.db.sqlite.transaction(() => {
       dropCollectionTables(this.db, c.table)
       this.db.sqlite.query('DELETE FROM _collections WHERE database_id = ? AND id = ?').run(databaseId, id)
-    })()
+      this.db.sqlite.query('DELETE FROM _meta WHERE key = ?').run(collectionVersionKey(databaseId, id))
+    }).immediate()
     this.registry.reload()
   }
 

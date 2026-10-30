@@ -153,7 +153,7 @@ export class ProxyService {
           .query('INSERT INTO _proxy_rules (id, resource_type, resource_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
           .run(uniqueId(), type, id, domain, stamp, stamp)
       }
-    })()
+    }).immediate()
     this.changed()
     return this.forResource(type, id)
   }

@@ -117,6 +117,16 @@ export interface ExecutionRow {
   updated_at: string
 }
 
+/**
+ * The ownership token of a claimed run. `attempts` moves forward on every
+ * claim, so a heartbeat or a result write that carries an older value cannot
+ * touch a row another worker has claimed since.
+ */
+interface ClaimToken {
+  attempt: number
+  maxAttempts: number
+}
+
 export interface ExecutionStatus {
   function_id: string
   status: string
@@ -421,7 +431,7 @@ export class FunctionService {
         )
         .run(id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp)
       this.proxy.set('function', id, domains)
-    })()
+    }).immediate()
     return this.fn(id)
   }
 
@@ -438,7 +448,7 @@ export class FunctionService {
         )
         .run(...this.settingValues(fields), now(), id)
       this.proxy.set('function', id, domains)
-    })()
+    }).immediate()
     return this.fn(id)
   }
 
@@ -479,7 +489,7 @@ export class FunctionService {
       this.proxy.removeFor('function', id)
       for (const table of ['_function_vars', '_executions', '_deployments']) this.sql.query(`DELETE FROM ${table} WHERE function_id = ?`).run(id)
       this.sql.query('DELETE FROM _functions WHERE id = ?').run(id)
-    })()
+    }).immediate()
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, id))
   }
 
@@ -507,7 +517,7 @@ export class FunctionService {
         if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
         statement.run(functionId, key, value, secret ? 1 : 0, context, stamp, stamp)
       }
-    })()
+    }).immediate()
   }
 
   deleteVariable(functionId: string, key: string, context: VariableContext = ''): void {
@@ -604,7 +614,7 @@ export class FunctionService {
            VALUES (?, ?, ?, 'processing', ?, ?, ?, '', ?, 1, 1, ?, ?, ?)`,
         )
         .run(id, f.id, request.trigger, request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), request.userId ?? null, addSeconds(SYNC_TIMEOUT + 30), stamp, stamp)
-      const result = await this.run(id, f, request, Math.min(f.timeout, SYNC_TIMEOUT), stream)
+      const result = await this.run(id, f, request, Math.min(f.timeout, SYNC_TIMEOUT), { attempt: 1, maxAttempts: 1 }, stream)
       return { execution: this.execution(f.id, id), result }
     }
     this.sql
@@ -664,7 +674,9 @@ export class FunctionService {
       try {
         f = this.fn(row.function_id)
       } catch {
-        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ?").run('The function was deleted before this execution ran.', now(), row.id)
+        this.sql
+          .query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
+          .run('The function was deleted before this execution ran.', now(), row.id, row.attempts)
         continue
       }
       const request: ExecutionRequest = {
@@ -675,7 +687,7 @@ export class FunctionService {
         body: row.request_body,
         userId: row.user_id,
       }
-      this.startRun(row.id, f, request, f.timeout)
+      this.startRun(row.id, f, request, f.timeout, { attempt: row.attempts, maxAttempts: row.max_attempts })
     }
   }
 
@@ -684,33 +696,49 @@ export class FunctionService {
     return Math.max(30, Math.ceil(timeout) + 30)
   }
 
-  private startRun(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number): void {
-    this.inflight.add(id)
+  private startRun(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, claim: ClaimToken): void {
+    // Keyed by attempt too: a run that lost its lease can still be finishing
+    // while a second claim of the same row starts, and it must not free the
+    // newer run's slot when it exits.
+    const slot = `${id}:${claim.attempt}`
+    this.inflight.add(slot)
     // The claim's lease was sized for the default timeout; fit it to this run.
-    this.sql.query('UPDATE _executions SET lease_until = ? WHERE id = ?').run(addSeconds(this.leaseFor(timeout)), id)
-    void this.run(id, f, request, timeout).finally(() => {
-      this.inflight.delete(id)
+    this.sql
+      .query("UPDATE _executions SET lease_until = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
+      .run(addSeconds(this.leaseFor(timeout)), id, claim.attempt)
+    void this.run(id, f, request, timeout, claim).finally(() => {
+      this.inflight.delete(slot)
       this.drain()
     })
   }
 
   /**
    * Return claims that outlived their lease to the queue, so a crash or a
-   * killed process does not leave an execution `processing` forever.
+   * killed process does not leave an execution `processing` forever. One
+   * conditional UPDATE: a heartbeat that extended the lease, or another
+   * process that claimed the row, no longer matches and is left alone.
    */
   reap(): string[] {
     if (!isLeader()) return []
     const stamp = now()
-    const stale = this.sql.query<ExecutionRow, [string]>("SELECT * FROM _executions WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?").all(stamp)
-    const retried: string[] = []
-    for (const row of stale) {
-      if (row.attempts < row.max_attempts) {
-        this.sql.query("UPDATE _executions SET status = 'waiting', lease_until = NULL, available_at = ?, updated_at = ? WHERE id = ?").run(stamp, stamp, row.id)
-        retried.push(row.id)
-      } else {
-        this.sql.query("UPDATE _executions SET status = 'failed', lease_until = NULL, errors = ?, updated_at = ? WHERE id = ?").run('The execution stopped before it finished (the server restarted or the run was killed).', stamp, row.id)
-      }
-    }
+    const rows = this.sql
+      .query<{ id: string; status: string }, [string, string, string, string]>(
+        `UPDATE _executions
+         SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
+             available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
+             lease_until = NULL,
+             errors = CASE WHEN attempts < max_attempts THEN errors ELSE ? END,
+             updated_at = ?
+         WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
+         RETURNING id, status`,
+      )
+      .all(
+        stamp,
+        'The execution stopped before it finished (the server restarted or the run was killed).',
+        stamp,
+        stamp,
+      )
+    const retried = rows.filter((row) => row.status === 'waiting').map((row) => row.id)
     if (retried.length) queueMicrotask(() => this.drain())
     return retried
   }
@@ -825,13 +853,16 @@ export class FunctionService {
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
   }
 
-  private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, stream?: ExecutionStream): Promise<ExecutionResult> {
+  private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, claim: ClaimToken, stream?: ExecutionStream): Promise<ExecutionResult> {
     const started = performance.now()
     this.running.set(f.id, (this.running.get(f.id) ?? 0) + 1)
     // Keep the claim alive while the child runs, so the reaper leaves it alone.
+    // A lease another worker reclaimed no longer matches, so this cannot steal it back.
     const heartbeat = setInterval(
       () => {
-        this.sql.query('UPDATE _executions SET lease_until = ?, updated_at = ? WHERE id = ? AND status = ?').run(addSeconds(this.leaseFor(timeout)), now(), id, 'processing')
+        this.sql
+          .query("UPDATE _executions SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
+          .run(addSeconds(this.leaseFor(timeout)), now(), id, claim.attempt)
       },
       Math.max(5_000, Math.floor((timeout * 1000) / 2)),
     )
@@ -1009,26 +1040,29 @@ export class FunctionService {
       name,
       value: String(value),
     }))
-    const attempts = this.sql.query<{ attempts: number }, [string]>('SELECT attempts FROM _executions WHERE id = ?').get(id)?.attempts ?? 1
+    // Write the outcome only while this claim still owns the row. If the lease
+    // expired and another worker reclaimed the execution, the older run must
+    // not overwrite the newer attempt's state.
+    const owned = "WHERE id = ? AND status = 'processing' AND attempts = ?"
     // A failed run goes back to the queue until it runs out of attempts.
-    if (failed && attempts < this.maxAttempts(f)) {
-      const backoff = Math.min(60, 2 ** attempts)
-      this.sql
+    if (failed && claim.attempt < claim.maxAttempts) {
+      const backoff = Math.min(60, 2 ** claim.attempt)
+      const written = this.sql
         .query(
           `UPDATE _executions SET status = 'waiting', response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, available_at = ?, lease_until = NULL, updated_at = ?
-           WHERE id = ?`,
+           ${owned}`,
         )
-        .run(statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, addSeconds(backoff), now(), id)
+        .run(statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, addSeconds(backoff), now(), id, claim.attempt)
       // Wake the queue when the backoff ends; the scheduler tick also drains.
-      setTimeout(() => this.drain(), backoff * 1000).unref?.()
+      if (Number(written.changes ?? 0) > 0) setTimeout(() => this.drain(), backoff * 1000).unref?.()
       return { statusCode, headers, body }
     }
     this.sql
       .query(
         `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', lease_until = NULL, updated_at = ?
-         WHERE id = ?`,
+         ${owned}`,
       )
-      .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id)
+      .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id, claim.attempt)
     return { statusCode, headers, body }
   }
 
@@ -1093,7 +1127,7 @@ export class FunctionService {
       try {
         f = this.fn(row.function_id)
       } catch {
-        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ?").run('The function was deleted before this execution ran.', now(), row.id)
+        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'scheduled'").run('The function was deleted before this execution ran.', now(), row.id)
         continue
       }
       if ((this.running.get(f.id) ?? 0) > 0) continue
@@ -1108,7 +1142,7 @@ export class FunctionService {
         body: claimed.request_body,
         userId: claimed.user_id,
       }
-      this.startRun(claimed.id, f, request, f.timeout)
+      this.startRun(claimed.id, f, request, f.timeout, { attempt: claimed.attempts, maxAttempts: claimed.max_attempts })
     }
     return fired
   }

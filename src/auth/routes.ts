@@ -12,13 +12,10 @@ import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from 
 import { FailedAttempts, RateLimiter } from '~/lib/limits'
 import type { AuthMethodId } from '~/settings/access'
 
-const limiter = new RateLimiter()
-const failures = new FailedAttempts()
-
 /** Appwrite's abuse limit for public auth endpoints: `limit` per hour per IP and subject. API keys are exempt. */
 function limit(route: { ctx: AppContext; request: Request }, name: string, subject: unknown, max = 10): void {
   if (route.ctx.caller.privileged) return
-  limiter.hit(`${name}:${requestInfo(route.request).ip}:${String(subject ?? '').toLowerCase()}`, max, 3600)
+  new RateLimiter(route.ctx.db).hit(`${name}:${requestInfo(route.request).ip}:${String(subject ?? '').toLowerCase()}`, max, 3600)
 }
 
 const OTP_TTL = 15 * 60
@@ -216,6 +213,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     limit(route, 'sessions-token', userId)
     const user = ctx.auth.findUser(userId)
     if (!user) throw err('user_invalid_token')
+    const failures = new FailedAttempts(ctx.db)
     let token: TokenRowFull
     try {
       token = ctx.auth.verifyToken(userId, params.secret, ['email', 'magic-url', 'oauth2', 'generic'])

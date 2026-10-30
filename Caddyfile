@@ -11,15 +11,15 @@
 	# and custom domains are fetched on their first visit, but only for hosts
 	# Bunwrite says it serves.
 	on_demand_tls {
-		ask http://bunwrite:8080/.well-known/bunwrite/host
+		ask http://{$UPSTREAM:bunwrite:8080}/.well-known/bunwrite/host
 	}
 }
 
 {$DOMAIN:localhost} {
 	encode zstd gzip
 
-	# Compose's service name; the app is not published publicly.
-	reverse_proxy bunwrite:8080
+	# Compose's service name by default; docker-compose.host.yml sets 127.0.0.1:8080.
+	reverse_proxy {$UPSTREAM:bunwrite:8080}
 }
 
 # Every other host: Bunwrite's sites and functions. Point wildcard DNS records
@@ -29,5 +29,5 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
-	reverse_proxy bunwrite:8080
+	reverse_proxy {$UPSTREAM:bunwrite:8080}
 }

@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { configuredSqliteCacheMb } from '~/system/autotune'
+import { configuredSqliteCacheMb, configuredSqliteMmapMb, configuredWalAutocheckpoint } from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
 import * as schema from './system-schema'
 
@@ -64,7 +64,12 @@ function migrationsFolder(): string {
 }
 
 /** Open (or create) the database file, tune it for the host, and migrate. */
-export function openDb(path: string, cacheMb = configuredSqliteCacheMb()): Db {
+export function openDb(
+  path: string,
+  cacheMb = configuredSqliteCacheMb(),
+  mmapMb = configuredSqliteMmapMb(),
+  walPages = configuredWalAutocheckpoint(),
+): Db {
   if (path !== ':memory:' && !path.startsWith('file::memory:')) {
     mkdirSync(dirname(path), { recursive: true })
     // A restore moves the current database aside before putting the backup in
@@ -85,6 +90,12 @@ export function openDb(path: string, cacheMb = configuredSqliteCacheMb()): Db {
     // Negative cache_size is KiB; keep at least 1 MB.
     sqlite.run(`PRAGMA cache_size = -${Math.max(1, Math.round(Number(cacheMb) || 16)) * 1000}`)
     sqlite.run('PRAGMA temp_store = MEMORY')
+    // Reads map the file instead of copying pages per query; the OS shares the
+    // mapped pages between workers. 0 keeps mmap off.
+    if (mmapMb > 0) sqlite.run(`PRAGMA mmap_size = ${Math.round(mmapMb) * 1024 * 1024}`)
+    // A slightly larger WAL than SQLite's 1000-page default means fewer
+    // checkpoint stalls under several writers. 0 disables automatic checkpoints.
+    if (walPages >= 0) sqlite.run(`PRAGMA wal_autocheckpoint = ${Math.round(walPages)}`)
     migrate(orm, { migrationsFolder: migrationsFolder() })
     ensureClusterSchema(sqlite)
   })

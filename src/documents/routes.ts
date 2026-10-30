@@ -1,7 +1,9 @@
-import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
+import { grants } from '~/auth/permissions'
+import { bool, etagFor, ifNoneMatch, json, list, noContent, notModified, num, str, type Params } from '~/lib/http'
 import { err } from '~/lib/errors'
 import type { Router } from '~/lib/router'
 import type { AppContext } from '~/app'
+import type { Collection } from '~/schema/types'
 import { mockDocument, type Action } from '~/transactions/service'
 
 const DOCS = '/databases/:databaseId/collections/:collectionId/documents'
@@ -23,6 +25,15 @@ const obj = (value: unknown): Record<string, unknown> => {
 
 const docs = (value: unknown): Record<string, unknown>[] => list(value).map(obj)
 
+/** The caller's role set is part of every ETag: another user must never reuse one. */
+const callerTag = (caller: AppContext['caller']) => (caller.privileged ? '*' : [...caller.roles].sort().join(','))
+
+/** Public only when every anonymous caller may read the collection and the operator enabled it. */
+const cacheControl = (ctx: AppContext, collection: Collection): string =>
+  !ctx.caller.privileged && ctx.config.cache.publicMaxAge > 0 && grants(collection.permissions, 'read', new Set(['any']))
+    ? `public, max-age=${ctx.config.cache.publicMaxAge}`
+    : 'private, max-age=0, must-revalidate'
+
 export function documentRoutes(router: Router<AppContext>): void {
   const collectionOf = (ctx: AppContext, path: Record<string, string>) =>
     ctx.registry.collection(path.databaseId!, path.collectionId!, ctx.caller.privileged)
@@ -37,20 +48,43 @@ export function documentRoutes(router: Router<AppContext>): void {
     return true
   }
 
-  router.get(DOCS, ({ ctx, params, path }) => {
+  router.get(DOCS, ({ ctx, request, params, path }) => {
     const collection = collectionOf(ctx, path)
-    const result = ctx.transactions.withStaged(ctx.caller, str(params.transactionId), () =>
-      ctx.store.listDocuments(ctx.caller, collection, list(params.queries), bool(params.total, true)),
+    const queries = list(params.queries)
+    const includeTotal = bool(params.total, true)
+    const transactionId = str(params.transactionId)
+    if (transactionId) {
+      const result = ctx.transactions.withStaged(ctx.caller, transactionId, () =>
+        ctx.store.listDocuments(ctx.caller, collection, queries, includeTotal),
+      )
+      return json(result)
+    }
+    const version = ctx.store.collectionVersion(collection)
+    const etag = etagFor(
+      `${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${includeTotal ? 1 : 0}\u0000${JSON.stringify(queries)}`,
     )
-    return json(result)
+    const headers = { 'cache-control': cacheControl(ctx, collection), etag }
+    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'] })
+    return json(ctx.store.listDocuments(ctx.caller, collection, queries, includeTotal, version), 200, headers)
   })
 
-  router.get(`${DOCS}/:documentId`, ({ ctx, params, path }) => {
+  router.get(`${DOCS}/:documentId`, ({ ctx, request, params, path }) => {
     const collection = collectionOf(ctx, path)
-    const doc = ctx.transactions.withStaged(ctx.caller, str(params.transactionId), () =>
-      ctx.store.getDocument(ctx.caller, collection, path.documentId!, list(params.queries)),
+    const queries = list(params.queries)
+    const transactionId = str(params.transactionId)
+    if (transactionId) {
+      const doc = ctx.transactions.withStaged(ctx.caller, transactionId, () =>
+        ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries),
+      )
+      return json(doc)
+    }
+    const version = ctx.store.collectionVersion(collection)
+    const etag = etagFor(
+      `${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${path.documentId}\u0000${JSON.stringify(queries)}`,
     )
-    return json(doc)
+    const headers = { 'cache-control': cacheControl(ctx, collection), etag }
+    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'] })
+    return json(ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries), 200, headers)
   })
 
   router.post(DOCS, ({ ctx, params, path }) => {

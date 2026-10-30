@@ -7,16 +7,29 @@ import type { SQLQueryBindings } from 'bun:sqlite'
 
 import type { Caller } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
+import { collectionVersionKey } from '~/cluster/versions'
 import { q, type Db } from '~/db/connection'
 import { normalizeDate, now } from '~/lib/datetime'
 import { BunwriteError, err, invalidStructure } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
 import type { Collection } from '~/schema/types'
 import { decodeRow, encodeAttributes, type Doc, type SqlValue } from './codec'
-import { compileQueries, cursorCondition, orderExpr, parseQueries, type Compiled, type Query } from './query'
+import { compileCached, cursorCondition, orderExpr, parseQueries, type Compiled, type Query } from './query'
 
 /** Appwrite caps `total` at this many matches. */
 export const COUNT_LIMIT = 5000
+
+/** List results are cached per worker; these caps keep a few hot pages, not a second database. */
+const LIST_CACHE_ENTRIES = 200
+const LIST_CACHE_DOCS = 5000
+const LIST_CACHE_MAX_LIMIT = 200
+
+/**
+ * Bun's bundled SQLite on Linux supports RETURNING with FTS triggers. macOS
+ * uses the system build (3.39), which fails inside a transaction when an FTS
+ * trigger fires, so it keeps the insert-then-read fallback.
+ */
+const RETURNING = process.platform === 'linux'
 
 type Row = Record<string, unknown> & { _seq: number; _id: string; _updatedAt: string; _permissions: string }
 
@@ -54,12 +67,41 @@ export class DocumentStore {
   /** Changes made by the current request; the app publishes them once it succeeds. */
   events: DocEvent[] = []
 
+  private readonly listCache = new Map<string, { total: number; documents: Doc[] }>()
+  private cachedDocs = 0
+  private stagedReads = 0
+  private readonly listVersions = new Map<string, string>()
+
   constructor(private db: Db) {}
 
   drainEvents(): DocEvent[] {
     const events = this.events
     this.events = []
     return events
+  }
+
+  /** A transaction's staged writes must not populate or read the list cache. */
+  beginStagedRead(): void {
+    this.stagedReads++
+  }
+
+  endStagedRead(): void {
+    if (this.stagedReads > 0) this.stagedReads--
+  }
+
+  /** Drop cached list results; used after the database file is replaced. */
+  clearCaches(): void {
+    this.listCache.clear()
+    this.listVersions.clear()
+    this.cachedDocs = 0
+  }
+
+  /** Bumped by the document table's triggers on every insert, update or delete. */
+  collectionVersion(collection: Collection): number {
+    const row = this.db.sqlite
+      .query<{ value: number }, [string]>('SELECT value FROM _meta WHERE key = ?')
+      .get(collectionVersionKey(collection.databaseId, collection.id))
+    return Number(row?.value ?? 0)
   }
 
   private record(collection: Collection, action: DocEvent['action'], row: Row): void {
@@ -92,7 +134,7 @@ export class DocumentStore {
   }
 
   getDocument(caller: Caller, collection: Collection, id: string, rawQueries: unknown[] = []): Doc {
-    const compiled = compileQueries(collection, parseQueries(rawQueries))
+    const compiled = compileCached(collection, rawQueries)
     if (compiled.where.length || compiled.orders.length || compiled.cursor) {
       throw err('general_query_invalid', 'Invalid query: Only select queries are allowed when getting a document.')
     }
@@ -151,12 +193,70 @@ export class DocumentStore {
     return (this.db.sqlite.query(sql).get(...bindings(params)) as { n: number }).n
   }
 
-  listDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], includeTotal = true): { total: number; documents: Doc[] } {
-    const compiled = compileQueries(collection, parseQueries(rawQueries))
+  listDocuments(
+    caller: Caller,
+    collection: Collection,
+    rawQueries: unknown[],
+    includeTotal = true,
+    version?: number,
+  ): { total: number; documents: Doc[] } {
+    const compiled = compileCached(collection, rawQueries)
+    // Views (users, teams, memberships, files, executions) have no write
+    // triggers, so their lists must not be cached. Random pages differ every
+    // time, and a large page is not worth keeping.
+    if (this.stagedReads > 0 || !collection.databaseId || compiled.random || compiled.limit > LIST_CACHE_MAX_LIMIT) {
+      return this.listWith(caller, collection, compiled, includeTotal)
+    }
+    const stamp = `${version ?? this.collectionVersion(collection)}:${collection.updatedAt}`
+    this.purgeListCache(collection.table, stamp)
+    const key = `${collection.table}\u0000${stamp}\u0000${caller.privileged ? '*' : [...caller.roles].sort().join(',')}\u0000${includeTotal ? 1 : 0}\u0000${JSON.stringify(rawQueries)}`
+    const hit = this.listCache.get(key)
+    if (hit) {
+      // Refresh LRU position. Callers treat the returned documents as read-only.
+      this.listCache.delete(key)
+      this.listCache.set(key, hit)
+      return { total: hit.total, documents: hit.documents }
+    }
+    const result = this.listWith(caller, collection, compiled, includeTotal)
+    this.rememberList(key, result)
+    return result
+  }
+
+  private listWith(
+    caller: Caller,
+    collection: Collection,
+    compiled: Compiled,
+    includeTotal: boolean,
+  ): { total: number; documents: Doc[] } {
     const rows = this.select(caller, collection, compiled)
     return {
       total: includeTotal ? this.count(caller, collection, compiled) : 0,
       documents: rows.map((r) => decodeRow(collection, r, compiled.select)),
+    }
+  }
+
+  /** A document write, or a schema/permission change, makes this collection's pages stale. */
+  private purgeListCache(table: string, version: string): void {
+    const before = this.listVersions.get(table)
+    if (before === version) return
+    this.listVersions.set(table, version)
+    if (before === undefined) return
+    const prefix = `${table}\u0000`
+    for (const [key, value] of [...this.listCache]) {
+      if (!key.startsWith(prefix)) continue
+      this.cachedDocs -= value.documents.length
+      this.listCache.delete(key)
+    }
+  }
+
+  private rememberList(key: string, result: { total: number; documents: Doc[] }): void {
+    this.listCache.set(key, result)
+    this.cachedDocs += result.documents.length
+    while (this.listCache.size > LIST_CACHE_ENTRIES || this.cachedDocs > LIST_CACHE_DOCS) {
+      const oldest = this.listCache.keys().next().value
+      if (!oldest) break
+      this.cachedDocs -= this.listCache.get(oldest)!.documents.length
+      this.listCache.delete(oldest)
     }
   }
 
@@ -247,11 +347,13 @@ export class DocumentStore {
     ]
     let row: Row
     try {
-      // No RETURNING: SQLite 3.39 (macOS) fails it inside a transaction when an FTS trigger fires.
-      const result = this.db.sqlite
-        .query(`INSERT INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
-        .run(...bindings(params))
-      row = this.rowBySeq(collection, Number(result.lastInsertRowid))
+      const sql = `INSERT INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
+      if (RETURNING) {
+        row = this.db.sqlite.query(`${sql} RETURNING *`).get(...bindings(params)) as Row
+      } else {
+        const result = this.db.sqlite.query(sql).run(...bindings(params))
+        row = this.rowBySeq(collection, Number(result.lastInsertRowid))
+      }
     } catch (error) {
       if (options.guard && error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError(error.message)
@@ -295,12 +397,16 @@ export class DocumentStore {
     changes._updatedAt = this.dates(caller, data, '$updatedAt', now())
     if (permsChanged) changes._permissions = JSON.stringify(newPermissions)
     const keys = Object.keys(changes)
+    const params = bindings([...keys.map((k) => changes[k]!), row._seq])
+    const sql = `UPDATE ${q(collection.table)} SET ${keys.map((k) => `${q(k)} = ?`).join(', ')} WHERE _seq = ?`
     let updated: Row
     try {
-      this.db.sqlite
-        .query(`UPDATE ${q(collection.table)} SET ${keys.map((k) => `${q(k)} = ?`).join(', ')} WHERE _seq = ?`)
-        .run(...bindings([...keys.map((k) => changes[k]!), row._seq]))
-      updated = this.rowBySeq(collection, row._seq)
+      if (RETURNING) {
+        updated = this.db.sqlite.query(`${sql} RETURNING *`).get(...params) as Row
+      } else {
+        this.db.sqlite.query(sql).run(...params)
+        updated = this.rowBySeq(collection, row._seq)
+      }
     } catch (error) {
       if (options.guard && error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
         throw new ConflictError(error.message)
@@ -333,7 +439,7 @@ export class DocumentStore {
   }
 
   private tx<T>(fn: () => T): T {
-    return this.db.sqlite.transaction(fn)()
+    return this.db.sqlite.transaction(fn).immediate()
   }
 
   // ---------------------------------------------------------------- writes
@@ -424,8 +530,15 @@ export class DocumentStore {
       if (bound !== null && bound !== undefined && (direction === 1 ? next > bound : next < bound)) {
         throw err('attribute_limit_exceeded', direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`)
       }
-      this.db.sqlite.query(`UPDATE ${q(collection.table)} SET ${q(key)} = ?, _updatedAt = ? WHERE _seq = ?`).run(next, now(), row._seq)
-      const updated = this.rowBySeq(collection, row._seq)
+      const stamp = now()
+      const sql = `UPDATE ${q(collection.table)} SET ${q(key)} = ?, _updatedAt = ? WHERE _seq = ?`
+      let updated: Row
+      if (RETURNING) {
+        updated = this.db.sqlite.query(`${sql} RETURNING *`).get(next, stamp, row._seq) as Row
+      } else {
+        this.db.sqlite.query(sql).run(next, stamp, row._seq)
+        updated = this.rowBySeq(collection, row._seq)
+      }
       this.touch(collection, id, options)
       this.record(collection, 'update', updated)
       return decodeRow(collection, updated)
@@ -439,9 +552,12 @@ export class DocumentStore {
   /** Rows a bulk operation applies to: the filters and limit, ignoring select. */
   private bulkRows(caller: Caller, collection: Collection, rawQueries: unknown[]): Row[] {
     const queries: Query[] = parseQueries(rawQueries)
-    const compiled = compileQueries(collection, queries)
-    if (!queries.some((query) => query.method === 'limit')) compiled.limit = Number.MAX_SAFE_INTEGER
-    return this.select(caller, collection, compiled)
+    const compiled = compileCached(collection, rawQueries)
+    // Compiled queries are shared; copy before replacing the limit.
+    const effective = queries.some((query) => query.method === 'limit')
+      ? compiled
+      : { ...compiled, limit: Number.MAX_SAFE_INTEGER }
+    return this.select(caller, collection, effective)
   }
 
   updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options: WriteOptions = {}): Doc[] {

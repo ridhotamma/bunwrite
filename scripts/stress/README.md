@@ -91,6 +91,23 @@ bun run stress:booking cleanup --yes \
   --base https://bunwrite.example.com/v1 --project booking-app
 ```
 
+### Logged-in user and per-document permissions
+
+`setup` also creates `booking_private` (document security on) and a
+`stress-session@example.com` user, grants `read`/`create` on the booking
+collections to `users`, and gives each private document a read grant for that
+user. Run the same paths as that user, without an API key:
+
+```bash
+bun run stress:booking session --manifest data/stress/booking-....json \
+  --concurrency 10,50,100
+```
+
+This adds `private` (list `booking_private`) and `private-point`. Compare it
+with an API-key run to see what the session lookup and permission filters cost;
+API keys skip both. Re-run `setup --reset` on an older dataset to create the
+user and the private collection.
+
 ## Docker at 2 vCPU / 2 GB
 
 This is the setup used for the published measurements:

@@ -34,6 +34,11 @@ const DEFAULT_WRITE_CONCURRENCY = '1,10,50,100'
 const DEFAULT_DURATION = 10
 const DEFAULT_WARMUP = 2
 const DEFAULT_TIMEOUT = 15
+const PRIVATE_COLLECTION = 'booking_private'
+const SESSION_USER_ID = 'stress-session-user'
+const SESSION_EMAIL = 'stress-session@example.com'
+const SESSION_PASSWORD = 'stress-password-123'
+const PRIVATE_DOCS = 200
 
 const argv = process.argv.slice(2)
 const command = argv[0] ?? 'all'
@@ -41,7 +46,7 @@ if (command === '--help' || command === '-h' || command === 'help') {
   usage()
   process.exit(0)
 }
-if (!['setup', 'run', 'all', 'mix', 'cleanup'].includes(command)) {
+if (!['setup', 'run', 'all', 'mix', 'session', 'cleanup'].includes(command)) {
   usage()
   process.exit(1)
 }
@@ -274,6 +279,11 @@ interface Manifest {
   firstSlotId: string
   firstBookingId: string
   writeEmail: string
+  /** Setup also creates a logged-in user for the session run. */
+  stressEmail?: string
+  privateCollection?: string
+  privateCount?: number
+  firstPrivateId?: string
 }
 
 interface SeedOptions {
@@ -392,6 +402,15 @@ function makeBookings(options: SeedOptions): Record<string, unknown>[] {
   return bookings
 }
 
+function makePrivateDocs(prefix: string): Record<string, unknown>[] {
+  return Array.from({ length: PRIVATE_DOCS }, (_, index) => ({
+    $id: `${prefix}-pv-${pad(index, 3)}`,
+    $permissions: [`read("user:${SESSION_USER_ID}")`],
+    tenantId: prefix,
+    note: `private booking ${index}`,
+  }))
+}
+
 async function bulkUpsert(
   apiOptions: ApiOptions,
   database: string,
@@ -414,17 +433,42 @@ async function createSchema(apiOptions: ApiOptions, database: string): Promise<v
   const createdDatabase = await api(apiOptions, 'POST', '/databases', { databaseId: database, name: 'Booking stress' })
   assertOk(createdDatabase, 'create database', [409])
 
+  const base = `/databases/${encodeURIComponent(database)}/collections`
+  const createOrUpdate = async (collectionId: string, body: Record<string, unknown>): Promise<void> => {
+    const created = await api(apiOptions, 'POST', base, { collectionId, ...body })
+    if (created.status !== 409) {
+      assertOk(created, `create collection ${collectionId}`)
+      return
+    }
+    const updated = await api(apiOptions, 'PUT', `${base}/${encodeURIComponent(collectionId)}`, body)
+    assertOk(updated, `update collection ${collectionId}`)
+  }
+
   for (const collection of collections) {
-    const created = await api(apiOptions, 'POST', `/databases/${encodeURIComponent(database)}/collections`, {
-      collectionId: collection.id,
+    // A logged-in user may browse and (for bookings) create; API keys stay privileged.
+    const permissions = collection.id === 'bookings' ? ['read("users")', 'create("users")'] : ['read("users")']
+    await createOrUpdate(collection.id, {
       name: collection.name,
       documentSecurity: false,
+      permissions,
       attributes: collection.attributes,
       indexes: collection.indexes,
     })
-    assertOk(created, `create collection ${collection.id}`, [409])
     console.log(`  collection ${collection.id}`)
   }
+
+  // Document security plus per-document grants: only the stress user may read these.
+  await createOrUpdate(PRIVATE_COLLECTION, {
+    name: 'Private bookings',
+    documentSecurity: true,
+    permissions: [],
+    attributes: [
+      { key: 'tenantId', type: 'string', size: 36, required: true },
+      { key: 'note', type: 'string', size: 200, required: false },
+    ],
+    indexes: [{ key: 'idx_private_tenant', type: 'key', columns: ['tenantId'], orders: ['ASC'] }],
+  })
+  console.log(`  collection ${PRIVATE_COLLECTION}`)
 }
 
 function manifestPath(prefix: string): string {
@@ -490,6 +534,16 @@ async function setup(): Promise<Manifest> {
   }
   await createSchema(options.api, options.database)
 
+  // The session run logs in as this user. The API key creates it; a reset
+  // database gets a fresh one with the known password.
+  const createdUser = await api(options.api, 'POST', '/users', {
+    userId: SESSION_USER_ID,
+    email: SESSION_EMAIL,
+    password: SESSION_PASSWORD,
+    name: 'Stress Session',
+  })
+  assertOk(createdUser, 'create session user', [409])
+
   const anchor = new Date()
   anchor.setUTCHours(0, 0, 0, 0)
   const seed: SeedOptions = {
@@ -503,6 +557,7 @@ async function setup(): Promise<Manifest> {
   const services = makeServices(seed)
   const slots = makeSlots(seed)
   const bookings = makeBookings(seed)
+  const privateDocs = makePrivateDocs(options.prefix)
 
   if (options.reset) {
     console.log(`seeding ${services.length} services`)
@@ -511,11 +566,14 @@ async function setup(): Promise<Manifest> {
     await bulkUpsert(options.api, options.database, 'slots', slots, options.batch, 'slots')
     console.log(`seeding ${bookings.length} bookings`)
     await bulkUpsert(options.api, options.database, 'bookings', bookings, options.batch, 'bookings')
+    console.log(`seeding ${privateDocs.length} private bookings`)
+    await bulkUpsert(options.api, options.database, PRIVATE_COLLECTION, privateDocs, options.batch, 'private bookings')
   } else {
     console.log('seeding with upsert (use --reset for a clean database)')
     await bulkUpsert(options.api, options.database, 'services', services, options.batch, 'services')
     await bulkUpsert(options.api, options.database, 'slots', slots, options.batch, 'slots')
     await bulkUpsert(options.api, options.database, 'bookings', bookings, options.batch, 'bookings')
+    await bulkUpsert(options.api, options.database, PRIVATE_COLLECTION, privateDocs, options.batch, 'private bookings')
   }
 
   const manifest: Manifest = {
@@ -535,11 +593,15 @@ async function setup(): Promise<Manifest> {
     firstSlotId: slotId(options.prefix, 0, 1, 0),
     firstBookingId: bookingId(options.prefix, 0),
     writeEmail: `${options.prefix}-load@example.com`,
+    stressEmail: SESSION_EMAIL,
+    privateCollection: PRIVATE_COLLECTION,
+    privateCount: privateDocs.length,
+    firstPrivateId: String(privateDocs[0]!.$id),
   }
   const path = writeManifest(manifest)
-  console.log(`\nseeded ${services.length} services, ${slots.length} slots, ${bookings.length} bookings`)
+  console.log(`\nseeded ${services.length} services, ${slots.length} slots, ${bookings.length} bookings, ${privateDocs.length} private bookings`)
   console.log(`manifest: ${path}`)
-  console.log(`\nnext:\n  bun run stress:booking run --manifest ${JSON.stringify(path)}`)
+  console.log(`\nnext:\n  bun run stress:booking run --manifest ${JSON.stringify(path)}\n  bun run stress:booking session --manifest ${JSON.stringify(path)}`)
   return manifest
 }
 
@@ -671,6 +733,74 @@ function targetsFor(options: RunOptions): Target[] {
 
 function randomId(): string {
   return Math.random().toString(36).slice(2, 14).padEnd(12, '0')
+}
+
+/** The same paths as a logged-in user, plus the private collection and a point read. */
+function sessionTargets(manifest: Manifest, base: string): Target[] {
+  const urls = targetUrls(manifest, base, true)
+  const db = encodeURIComponent(manifest.database)
+  const privateCollection = encodeURIComponent(manifest.privateCollection ?? PRIVATE_COLLECTION)
+  const privateDocuments = `${base}/databases/${db}/collections/${privateCollection}/documents`
+  const privateQuery = queryString(
+    [
+      { method: 'equal', attribute: 'tenantId', values: [manifest.prefix] },
+      { method: 'limit', values: [20] },
+      { method: 'select', values: ['$id', 'note'] },
+    ],
+    true,
+  )
+  const writeBase = urls.write!
+  const targets: Target[] = [
+    { name: 'services', url: urls.services! },
+    { name: 'availability', url: urls.availability! },
+    { name: 'bookings', url: urls.bookings! },
+    { name: 'point', url: urls.point! },
+    { name: 'private', url: `${privateDocuments}?${privateQuery}` },
+    {
+      name: 'create',
+      url: writeBase,
+      method: 'PUT',
+      body: bookingBody(manifest),
+      contentType: 'application/json',
+      randomUrl: true,
+      concurrency: levels('write-concurrency', DEFAULT_WRITE_CONCURRENCY),
+      urlFor: () => `${writeBase.slice(0, writeBase.lastIndexOf('/') + 1)}${manifest.prefix}-bk-${randomId()}`,
+    },
+  ]
+  if (manifest.firstPrivateId) {
+    targets.push({ name: 'private-point', url: `${privateDocuments}/${encodeURIComponent(manifest.firstPrivateId)}?total=false` })
+  }
+  return targets
+}
+
+/** Sign in as the stress user; no API key, so the session and permission paths are exercised. */
+async function signIn(base: string, project: string, timeout: number, email: string): Promise<string> {
+  const response = await fetch(`${base}/account/sessions/email`, {
+    method: 'POST',
+    headers: { 'X-Appwrite-Project': project, 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: SESSION_PASSWORD }),
+    signal: AbortSignal.timeout(timeout * 1000),
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`session login failed: HTTP ${response.status} ${text.slice(0, 1000)}`)
+  const fallback = response.headers.get('x-fallback-cookies')
+  if (fallback) {
+    try {
+      const secret = Object.values(JSON.parse(fallback) as Record<string, string>)[0]
+      if (secret) return secret
+    } catch {
+      /* fall through to the cookie/body */
+    }
+  }
+  const cookie = /(?:^|;\s*)[^=]+=([^;]+)/.exec(response.headers.get('set-cookie') ?? '')
+  if (cookie?.[1]) return decodeURIComponent(cookie[1])
+  try {
+    const body = JSON.parse(text) as { secret?: string }
+    if (body.secret) return body.secret
+  } catch {
+    /* not JSON */
+  }
+  throw new Error('session login did not return a secret')
 }
 
 interface MixedPathResult {
@@ -1005,6 +1135,58 @@ async function run(): Promise<void> {
   await runWith(runOptions())
 }
 
+async function runSession(): Promise<void> {
+  const manifestPath = flag('manifest') ?? env('STRESS_MANIFEST')
+  const manifest = manifestPath ? readManifest(manifestPath) : loadImplicitManifest()
+  const base = normalizeBase(flag('base') ?? env('STRESS_BASE') ?? manifest.base)
+  const project = flag('project') ?? env('STRESS_PROJECT') ?? manifest.project
+  const timeout = integerFlag('timeout', DEFAULT_TIMEOUT)
+  const email = flag('session-email') ?? manifest.stressEmail ?? SESSION_EMAIL
+  const tool = (flag('tool') ?? env('STRESS_TOOL') ?? 'auto') as RunOptions['tool']
+  if (!['auto', 'oha', 'builtin'].includes(tool)) throw new Error('--tool must be auto, oha or builtin')
+
+  const secret = await signIn(base, project, timeout, email)
+  const concurrency = levels('concurrency', DEFAULT_CONCURRENCY)
+  const duration = integerFlag('duration', DEFAULT_DURATION)
+  const warmup = integerFlag('warmup', DEFAULT_WARMUP, 0)
+  console.log(`session booking load: ${base} project=${project} (session + per-document permissions)`)
+
+  const { results, file } = await runMatrix({
+    targets: sessionTargets(manifest, base),
+    headers: { 'X-Appwrite-Project': project, 'X-Appwrite-Session': secret },
+    concurrency,
+    duration,
+    warmup,
+    timeout,
+    tool,
+    outDir: flag('out') ?? 'data/stress',
+    meta: {
+      kind: 'booking-session',
+      startedAt: new Date().toISOString(),
+      bun: Bun.version,
+      platform: process.platform,
+      arch: process.arch,
+      base,
+      project,
+      database: manifest.database,
+      prefix: manifest.prefix,
+      privateCollection: manifest.privateCollection ?? PRIVATE_COLLECTION,
+      concurrency,
+      durationSec: duration,
+      requestsPerSession: 5,
+      sessionSeconds: 60,
+    },
+    log: (line) => console.log(line),
+  })
+
+  for (const result of results) {
+    console.log(
+      `${result.target.padEnd(14)} c=${String(result.concurrency).padStart(4)} ${result.rps.toFixed(0).padStart(6)} rps p95=${result.p95ms.toFixed(1)}ms ok=${result.successPct.toFixed(2)}%`,
+    )
+  }
+  console.log(`raw results: ${file}`)
+}
+
 async function cleanup(): Promise<void> {
   const base = normalizeBase(required(flag('base') ?? env('STRESS_BASE'), '--base (or STRESS_BASE)'))
   const project = required(flag('project') ?? env('STRESS_PROJECT'), '--project (or STRESS_PROJECT)')
@@ -1030,6 +1212,7 @@ Usage:
   bun run stress:booking setup [options]
   bun run stress:booking run   [options]
   bun run stress:booking mix   [options]
+  bun run stress:booking session [options]
   bun run stress:booking all   [options]
   bun run stress:booking cleanup --yes [options]
 
@@ -1058,6 +1241,7 @@ Run:
   --mix-concurrency <list> Mixed clients, default: 50,100,200,400
   --mix-duration <seconds> Mixed level, default 15
   --mix-warmup <seconds>  Mixed warmup, default 2
+  --session-email <email> Session run: default from the manifest (${SESSION_EMAIL})
   --total                 Request total=true on list queries
   --tool <auto|oha|builtin> Default: auto
   --out <dir>             Default: data/stress
@@ -1071,6 +1255,8 @@ Paths measured:
   bookings      list a user's bookings (limit 20)
   point         get one booking by ID
   create        PUT a new booking (random ID)
+  private       session run: list per-document-permission bookings
+  private-point session run: get one private booking
 
 The report estimates active users from a 5-call booking session every 60s.
 HTML rendering is intentionally excluded; it is off on the target host.`)
@@ -1080,6 +1266,7 @@ try {
   if (command === 'setup') await setup()
   else if (command === 'run') await run()
   else if (command === 'mix') await runMix()
+  else if (command === 'session') await runSession()
   else if (command === 'cleanup') await cleanup()
   else {
     const manifest = await setup()

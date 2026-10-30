@@ -78,6 +78,7 @@ function refreshServices(services: Services): void {
   // from those instead of dragging the old ones along.
   services.versions.reset()
   services.realtime.resetBus()
+  services.store.clearCaches()
 }
 
 /**

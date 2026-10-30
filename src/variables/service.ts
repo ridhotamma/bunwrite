@@ -98,7 +98,7 @@ export class VariablesService {
         insert.run(uniqueId(), PROJECT_SCOPE, row.key, row.value, row.secret, row.context, row.created_at, row.updated_at)
       }
       this.sql.query("DELETE FROM _function_vars WHERE function_id = '*'").run()
-    })()
+    }).immediate()
   }
 
   /** Project values first, then the site's own — the site wins. */

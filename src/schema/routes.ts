@@ -168,7 +168,7 @@ function indexIn(c: Collection, key: string): Index {
 /** Run schema changes as one unit; a failure part-way leaves nothing behind. */
 function atomically(ctx: AppContext, work: () => void): void {
   try {
-    ctx.db.sqlite.transaction(work)()
+    ctx.db.sqlite.transaction(work).immediate()
   } finally {
     ctx.registry.reload()
   }

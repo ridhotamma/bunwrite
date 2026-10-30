@@ -6,9 +6,9 @@
  *   GET    /queue/:queue/messages                        list
  *   GET    /queue/:queue/messages/:messageId             read one
  *   DELETE /queue/:queue/messages/:messageId             delete one
- *   POST   /queue/:queue/messages/:messageId/ack         done
- *   POST   /queue/:queue/messages/:messageId/fail        error, retry with backoff
- *   POST   /queue/:queue/messages/:messageId/heartbeat   extend the lease
+ *   POST   /queue/:queue/messages/:messageId/ack         done (attempt)
+ *   POST   /queue/:queue/messages/:messageId/fail        error, retry with backoff (attempt)
+ *   POST   /queue/:queue/messages/:messageId/heartbeat   extend the lease (attempt)
  *   GET    /queue/:queue/stats                           counts by status
  *   DELETE /queue/:queue                                 purge (optional ?status=)
  *
@@ -29,6 +29,15 @@ function status(value: unknown): string | undefined {
     throw err('general_argument_invalid', 'Param "status" must be waiting, processing, completed or failed.')
   }
   return text
+}
+
+/** The claim token: the `attempts` value of the message returned by claim. */
+function attempt(value: unknown): number {
+  const n = num(value)
+  if (n === undefined || !Number.isInteger(n) || n < 1) {
+    throw err('general_argument_invalid', 'Param "attempt" is required: send the claimed message\'s attempts value.')
+  }
+  return n
 }
 
 /** System queues (`_render`, …) belong to Bunwrite and are not reachable here. */
@@ -71,17 +80,27 @@ export function queueRoutes(router: Router<AppContext>): void {
 
   router.post('/queue/:queue/messages/:messageId/ack', ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json(queueModel(ctx.queue.ack(q(path.queue!), path.messageId!, params.result)))
+    return json(queueModel(ctx.queue.ack(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), params.result)))
   })
 
   router.post('/queue/:queue/messages/:messageId/fail', ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json(queueModel(ctx.queue.fail(q(path.queue!), path.messageId!, str(params.error) ?? str(params.message), num(params.delay))))
+    return json(
+      queueModel(
+        ctx.queue.fail(
+          q(path.queue!),
+          path.messageId!,
+          attempt(params.attempt ?? params.attempts),
+          str(params.error) ?? str(params.message),
+          num(params.delay),
+        ),
+      ),
+    )
   })
 
   router.post('/queue/:queue/messages/:messageId/heartbeat', ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json(queueModel(ctx.queue.heartbeat(q(path.queue!), path.messageId!, num(params.lease) ?? 60)))
+    return json(queueModel(ctx.queue.heartbeat(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), num(params.lease) ?? 60)))
   })
 
   router.get('/queue/:queue/stats', ({ ctx, path }) => {

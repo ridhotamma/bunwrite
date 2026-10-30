@@ -45,8 +45,6 @@ interface ConsoleApiContext {
   secret: string | null
 }
 
-const limiter = new RateLimiter()
-
 function sessionSecret(request: Request): string | null {
   return sessionFromCookies(parseCookies(request.headers.get('cookie') ?? ''), request.headers.get('x-fallback-cookies'), CONSOLE_PROJECT)
 }
@@ -154,7 +152,7 @@ function routes(): Router<ConsoleApiContext> {
 
   router.post('/account/sessions/email', async ({ ctx }) => {
     const email = str(ctx.params.email) ?? ''
-    limiter.hit(`console-api-login:${requestInfo(ctx.request).ip}:${email.toLowerCase()}`, 10, 900)
+    new RateLimiter(ctx.projects.control.db).hit(`console-api-login:${requestInfo(ctx.request).ip}:${email.toLowerCase()}`, 10, 900)
     const secret = await ctx.auth.login(email, str(ctx.params.password) ?? '')
     if (!secret) throw err('user_invalid_credentials')
     const session = ctx.auth.session(secret)!

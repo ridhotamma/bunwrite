@@ -48,7 +48,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
   const auth = new ConsoleAuth(control.db)
   const organizations = new OrganizationService(control.db)
   organizations.ensure(control.config.orgId, control.config.projectName)
-  const limiter = new RateLimiter()
+  const limiter = new RateLimiter(control.db)
   const router = new Router<ConsoleContext>()
   registerConsolePages(router)
 

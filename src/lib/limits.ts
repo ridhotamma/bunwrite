@@ -1,50 +1,65 @@
 /**
- * Appwrite's abuse limits, in memory: a fixed window per key. API-key callers
- * are exempt, as on Appwrite. Trusted backend servers call these endpoints with
- * the key and keep their own login limits and captcha.
+ * Appwrite's abuse limits. Counters live in SQLite so every worker sees the
+ * same window; API-key callers are exempt, as on Appwrite. Trusted backend
+ * servers call these endpoints with the key and keep their own login limits
+ * and captcha.
  */
+import type { Db } from '~/db/connection'
 import { err } from './errors'
 
+interface CountRow {
+  count: number
+}
+
+/**
+ * Add one hit to `key` and return the count in the current window. The upsert
+ * resets the window and count in one statement, so two workers cannot both
+ * start a fresh window and let a caller through twice.
+ */
+function count(db: Db, key: string, resetAt: number): number {
+  const stamp = Date.now()
+  const row = db.sqlite
+    .query<CountRow, [string, number, number, number]>(
+      `INSERT INTO _rate_limits (key, count, reset_at) VALUES (?, 1, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         count = CASE WHEN reset_at <= ? THEN 1 ELSE count + 1 END,
+         reset_at = CASE WHEN reset_at <= ? THEN excluded.reset_at ELSE reset_at END
+       RETURNING count`,
+    )
+    .get(key, resetAt, stamp, stamp)
+  return Number(row?.count ?? 1)
+}
+
 export class RateLimiter {
-  private hits = new Map<string, { count: number; resetAt: number }>()
+  constructor(private db: Db) {}
 
   /** Count one hit; throw general_rate_limit_exceeded past `limit` within `windowSeconds`. */
   hit(key: string, limit: number, windowSeconds: number): void {
-    const now = Date.now()
-    const entry = this.hits.get(key)
-    if (!entry || entry.resetAt <= now) {
-      this.hits.set(key, { count: 1, resetAt: now + windowSeconds * 1000 })
-      if (this.hits.size > 50_000) this.sweep(now)
-      return
+    if (count(this.db, `rate:${key}`, Date.now() + Math.max(1, windowSeconds) * 1000) > limit) {
+      throw err('general_rate_limit_exceeded')
     }
-    entry.count++
-    if (entry.count > limit) throw err('general_rate_limit_exceeded')
-  }
-
-  private sweep(now: number): void {
-    for (const [k, v] of this.hits) if (v.resetAt <= now) this.hits.delete(k)
   }
 }
 
 /** Wrong guesses at a token secret per user; past the limit the user's login codes are burned. */
 export class FailedAttempts {
-  private counts = new Map<string, { count: number; resetAt: number }>()
-
-  constructor(private limit = 10, private windowSeconds = 15 * 60) {}
+  constructor(
+    private db: Db,
+    private limit = 10,
+    private windowSeconds = 15 * 60,
+  ) {}
 
   /** Record a failure; returns true when the limit is reached. */
   fail(userId: string): boolean {
-    const now = Date.now()
-    const entry = this.counts.get(userId)
-    if (!entry || entry.resetAt <= now) {
-      this.counts.set(userId, { count: 1, resetAt: now + this.windowSeconds * 1000 })
-      return false
-    }
-    entry.count++
-    return entry.count >= this.limit
+    return count(this.db, `token:${userId}`, Date.now() + this.windowSeconds * 1000) >= this.limit
   }
 
   clear(userId: string): void {
-    this.counts.delete(userId)
+    this.db.sqlite.query('DELETE FROM _rate_limits WHERE key = ?').run(`token:${userId}`)
   }
+}
+
+/** Drop windows that have already reset; the leader runs this with its pruning. */
+export function pruneRateLimits(db: Db): void {
+  db.sqlite.query('DELETE FROM _rate_limits WHERE reset_at <= ?').run(Date.now())
 }

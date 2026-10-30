@@ -268,7 +268,7 @@ export function functionRoutes(router: Router<AppContext>): void {
         ctx.functions.deleteVariable(f.id, current.key, current.context as VariableContext)
       }
       ctx.functions.setVariable(f.id, key, str(params.value) ?? current.value, secret, context)
-    })()
+    }).immediate()
     return json(variableModel(variableOf(ctx, f.id, functionVariableId(key, context))))
   })
 

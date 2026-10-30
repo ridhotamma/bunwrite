@@ -255,7 +255,7 @@ export class StorageService {
     this.sql.transaction(() => {
       this.sql.query('DELETE FROM _files WHERE bucket_id = ?').run(id)
       this.sql.query('DELETE FROM _buckets WHERE id = ?').run(id)
-    })()
+    }).immediate()
     if (this.config.s3.enabled) await this.deletePrefix(`${this.prefix() ? `${this.prefix()}/` : ''}${id}/`)
     else rmSync(join(this.config.storagePath, id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.previews', id), { recursive: true, force: true })

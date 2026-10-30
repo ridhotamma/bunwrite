@@ -1,8 +1,8 @@
 /**
  * Infrastructure tables shared by every process that opens the same database:
- * cache versions, the leader lease, realtime presence and the realtime event
- * bus. They are created next to the drizzle migrations so a database restored
- * from an older backup gets them too.
+ * cache versions, rate limits, the leader lease, realtime presence and the
+ * realtime event bus. They are created next to the drizzle migrations so a
+ * database restored from an older backup gets them too.
  *
  * Triggers bump the version counters from any writer, including the CLI and a
  * worker that does not own the in-memory cache, which is what lets the other
@@ -10,13 +10,24 @@
  */
 import type { Database } from 'bun:sqlite'
 
+import { collectionVersionKey } from '~/cluster/versions'
+import { tableName } from '~/schema/types'
+
+const ident = (name: string) => `"${name.replace(/"/g, '""')}"`
+const literal = (value: string) => `'${value.replace(/'/g, "''")}'`
+
 const TABLES = [
   `CREATE TABLE IF NOT EXISTS \`_meta\` (
     \`key\` TEXT PRIMARY KEY NOT NULL,
     \`value\` INTEGER NOT NULL DEFAULT 0
   )`,
   `INSERT OR IGNORE INTO \`_meta\` (\`key\`, \`value\`) VALUES
-    ('schema', 0), ('settings', 0), ('catalog', 0), ('projects', 0)`,
+    ('schema', 0), ('settings', 0), ('catalog', 0), ('projects', 0), ('auth', 0)`,
+  `CREATE TABLE IF NOT EXISTS \`_rate_limits\` (
+    \`key\` TEXT PRIMARY KEY NOT NULL,
+    \`count\` INTEGER NOT NULL,
+    \`reset_at\` INTEGER NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS \`_cluster_leases\` (
     \`name\` TEXT PRIMARY KEY NOT NULL,
     \`owner\` TEXT NOT NULL,
@@ -47,6 +58,10 @@ const VERSIONED: [string, string][] = [
   ['catalog', '_sites'],
   ['catalog', '_proxy_rules'],
   ['projects', '_projects'],
+  ['auth', '_sessions'],
+  ['auth', '_users'],
+  ['auth', '_memberships'],
+  ['auth', '_teams'],
 ]
 
 const TRIGGERS = VERSIONED.flatMap(([version, table]) =>
@@ -59,8 +74,40 @@ const TRIGGERS = VERSIONED.flatMap(([version, table]) =>
   ),
 )
 
+/**
+ * A version row per collection, bumped by the document table's own triggers.
+ * List caches and ETags key off it, so every worker sees a write immediately
+ * without putting document writes through `_collections` (which would reload
+ * the schema cache on every insert).
+ */
+export function collectionVersionTriggers(sqlite: Database, databaseId: string, collectionId: string, table: string): void {
+  const key = literal(collectionVersionKey(databaseId, collectionId))
+  for (const event of ['INSERT', 'UPDATE', 'DELETE'] as const) {
+    const suffix = event === 'INSERT' ? 'ai' : event === 'UPDATE' ? 'au' : 'ad'
+    sqlite.run(`CREATE TRIGGER IF NOT EXISTS ${ident(`${table}__version_${suffix}`)}
+      AFTER ${event} ON ${ident(table)}
+      BEGIN
+        INSERT INTO \`_meta\` (\`key\`, \`value\`) VALUES (${key}, 1)
+        ON CONFLICT(\`key\`) DO UPDATE SET \`value\` = \`value\` + 1;
+      END`)
+  }
+}
+
+/** Recreate version triggers for collections that existed before this feature or came from a backup. */
+function ensureCollectionVersionTriggers(sqlite: Database): void {
+  const collections = sqlite
+    .query<{ database_id: string; id: string; seq: number }, []>('SELECT database_id, id, seq FROM _collections')
+    .all()
+  for (const collection of collections) {
+    const table = tableName(collection.seq, collection.id)
+    const exists = sqlite.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)
+    if (exists) collectionVersionTriggers(sqlite, collection.database_id, collection.id, table)
+  }
+}
+
 export function ensureClusterSchema(sqlite: Database): void {
   sqlite.transaction(() => {
     for (const statement of [...TABLES, ...TRIGGERS]) sqlite.run(statement)
-  })()
+    ensureCollectionVersionTriggers(sqlite)
+  }).immediate()
 }

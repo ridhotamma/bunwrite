@@ -94,7 +94,7 @@ export class LeaderLease {
           .query<{ owner: string }, [string]>('SELECT owner FROM _cluster_leases WHERE name = ?')
           .get(this.name)
         won = row?.owner === this.owner
-      })()
+      }).immediate()
     } catch (error) {
       console.error('[cluster] leader lease failed:', error)
       won = false

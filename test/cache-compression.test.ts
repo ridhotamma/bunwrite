@@ -157,7 +157,7 @@ describe('file cache', () => {
 
     const saved = await form('/console/settings/cache', { fileMaxAge: '0', previewMaxAge: '86400', previewRetentionDays: '7' })
     expect(saved.status).toBe(303)
-    expect(server.config.cache).toEqual({ fileMaxAge: 0, previewMaxAge: 86400, previewRetentionDays: 7 })
+    expect(server.config.cache).toEqual({ fileMaxAge: 0, previewMaxAge: 86400, previewRetentionDays: 7, publicMaxAge: 0 })
     expect((await api('/storage/buckets/cache/files/notes/view')).headers.get('cache-control')).toBe('private, no-cache')
     expect((await api('/storage/buckets/cache/files/logo/preview?width=16')).headers.get('cache-control')).toBe('private, max-age=86400')
 
@@ -165,7 +165,7 @@ describe('file cache', () => {
     expect(new URL(bad.headers.get('location')!, base).searchParams.get('err')).toContain('zero or more')
 
     await form('/console/settings/cache/reset', {})
-    expect(server.config.cache).toEqual({ fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 })
+    expect(server.config.cache).toEqual({ fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30, publicMaxAge: 0 })
   })
 })
 

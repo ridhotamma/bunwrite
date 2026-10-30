@@ -11,7 +11,7 @@
  */
 import type { ServerWebSocket } from 'bun'
 
-import { findSessionUser, guestCaller, userCaller, type Caller } from '~/auth/caller'
+import { guestCaller, sessionCaller, userCaller, type Caller } from '~/auth/caller'
 import { accountModel, type UserRowFull } from '~/auth/models'
 import { grants } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
@@ -117,12 +117,12 @@ export class RealtimeHub {
         return
       case 'authentication': {
         const secret = message.data?.session
-        const found = typeof secret === 'string' ? findSessionUser(this.db, secret) : null
-        if (!found) {
+        const caller = typeof secret === 'string' ? sessionCaller(this.db, secret) : null
+        if (!caller) {
           send(ws, 'error', { code: 1003, message: 'Session is not valid.' })
           return
         }
-        ws.data.caller = userCaller(this.db, found.user, found.sessionId)
+        ws.data.caller = caller
         send(ws, 'response', { to: 'authentication', success: true, user: userOf(ws.data.caller) })
         return
       }

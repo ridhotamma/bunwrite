@@ -69,8 +69,9 @@ const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cooki
 export { originAllowed }
 
 /**
- * Reload what another process changed. The version read is throttled by
- * CACHE_CHECK_MS, so most requests only compare a timestamp.
+ * Reload what another process changed. Comparing the counters is one tiny
+ * prepared SELECT; CACHE_CHECK_MS can throttle it at the cost of a short stale
+ * window after an external schema or settings change.
  */
 function syncServices(services: Services): void {
   if (services.config.workers <= 1) return
@@ -241,7 +242,7 @@ export function createApp(source: Services | ProjectResolver) {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     const services = runtime.services
     meta.project = runtime.info.id
-    syncServices(services)
+    if (services !== control) syncServices(services)
 
     if (pathname === '/realtime') {
       const caller = await callerOf(services, request, meta)
@@ -282,7 +283,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
-      syncServices(hosted.project.services)
+      if (hosted.project.services !== control) syncServices(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
     const hostedFunction = functionFor(request)
@@ -290,7 +291,7 @@ export function createApp(source: Services | ProjectResolver) {
       meta.project = hostedFunction.project.info.id
       meta.auth = `function:${hostedFunction.fn.id}`
       try {
-        syncServices(hostedFunction.project.services)
+        if (hostedFunction.project.services !== control) syncServices(hostedFunction.project.services)
         const caller = await resolveCaller(hostedFunction.project.services.db, hostedFunction.project.services.config, request)
         return await functionHttpResponse(hostedFunction.project.services, hostedFunction.fn, caller, request, `${url.pathname}${url.search}`)
       } catch (error) {
@@ -350,12 +351,14 @@ export function createApp(source: Services | ProjectResolver) {
     hub,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       // Another worker may have changed projects, schema or settings.
-      projects.sync?.()
-      syncServices(control)
+      if (projects.sync) projects.sync()
+      else syncServices(control)
       const started = performance.now()
       const url = new URL(request.url)
       // The console resolves its own project, so refresh every runtime it may show.
-      if (url.pathname.startsWith('/console')) for (const runtime of projects.list()) syncServices(runtime.services)
+      if (url.pathname.startsWith('/console')) {
+        for (const runtime of projects.list()) if (runtime.services !== control) syncServices(runtime.services)
+      }
       const id = requestId(request)
       const ip = rememberClientIp(request, server?.requestIP(request)?.address, trustedProxies)
       const meta: RequestMeta = { auth: url.pathname.startsWith('/console') ? 'console' : undefined }
@@ -406,7 +409,7 @@ export function createApp(source: Services | ProjectResolver) {
     },
     websocket: {
       // Realtime messages are JSON; compressing them saves bandwidth for clients that support it.
-      perMessageDeflate: control.config.compression,
+      perMessageDeflate: control.config.websocketCompression,
       open: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.open(ws),
       message: (ws: Socket, message: string | Buffer) => projects.get(ws.data.projectId)?.services.realtime.message(ws, message),
       close: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.close(ws),

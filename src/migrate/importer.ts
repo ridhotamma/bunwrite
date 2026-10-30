@@ -175,7 +175,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
           u.mfa ? 1 : 0, JSON.stringify(u.prefs ?? {}), empty(u.accessedAt) as string | null, u.$createdAt, u.$updatedAt,
         )
       }
-    })()
+    }).immediate()
     report.users = users.length
     log(`users: ${users.length}`)
 
@@ -190,7 +190,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
         insertIdentity.run(i.$id, i.userId, i.provider, i.providerUid, i.providerEmail ?? '', i.providerAccessToken ?? '', i.providerAccessTokenExpiry ?? '', i.providerRefreshToken ?? '', i.$createdAt, i.$updatedAt)
         report.identities++
       }
-    })()
+    }).immediate()
     log(`identities: ${report.identities}`)
   }
 
@@ -238,7 +238,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
         insert.run(v.$id, v.key, v.value ?? '', v.secret ? 1 : 0, v.$createdAt, v.$updatedAt)
         report.variables++
       }
-    })()
+    }).immediate()
     log(`project variables: ${report.variables}`)
   }
 
@@ -322,7 +322,7 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
         }
         imported++
       }
-    })()
+    }).immediate()
     if (page.documents.length < pageSize) break
     cursor = page.documents[page.documents.length - 1].$id
   }

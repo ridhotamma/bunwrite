@@ -121,7 +121,7 @@ export class RequestLogService {
             row.createdAt,
           )
         }
-      })()
+      }).immediate()
     } catch (error) {
       console.error('[logs] failed to store request logs:', error)
     }

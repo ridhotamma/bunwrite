@@ -162,7 +162,7 @@ back up `STORAGE_PATH` or the uploads bucket separately.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `WORKERS` | `1` (`auto` in the Docker image) | HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. |
-| `CACHE_CHECK_MS` | `250` | How often a worker checks whether another worker changed settings, schema, sites or proxy rules. |
+| `CACHE_CHECK_MS` | `0` | Check for settings/schema changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
 
 With `WORKERS` above 1, the processes bind the same port with `SO_REUSEPORT`
@@ -174,9 +174,11 @@ takes over within ten seconds.
 
 Writes still go through SQLite one at a time; reads run in parallel, so expect
 roughly 3–3.5× read throughput on four cores. `FUNCTIONS_CONCURRENCY` applies
-per process, and the in-memory rate limits and request-log batches are per
-process too. Restoring a backup replaces the project's SQLite file in place, so
-restart the container or service after a restore.
+per process, and request-log batches are per process; rate limits are shared
+through SQLite. Each worker keeps its own `SQLITE_CACHE_MB` page cache and maps
+up to `SQLITE_MMAP_MB` of the database file; the OS shares the mapped pages.
+Restoring a backup replaces the project's SQLite file in place, so restart the
+container or service after a restore.
 
 ## Console
 
@@ -288,6 +290,8 @@ Explicit values always win.
 | `AUTOTUNE_CPUS` | detected | Override the CPU count when cgroups are not visible. |
 | `AUTOTUNE_MEMORY_MB` | detected | Override memory in MB when cgroups are not visible. |
 | `SQLITE_CACHE_MB` | auto, 8–64 | SQLite page cache in MB. |
+| `SQLITE_MMAP_MB` | `256` | Memory-mapped database window per connection in MB; `0` disables mmap. |
+| `SQLITE_WAL_AUTOCHECKPOINT` | `2000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. |
 | `MAX_REQUEST_BODY_MB` | auto, 16–256 | Largest accepted HTTP request body. |
 | `BUN_JSC_forceRAMSize` | unset | JS heap size in bytes. Startup-only; the Docker entrypoint and systemd wrapper set it. |
 | `MALLOC_ARENA_MAX` | unset | glibc malloc arena count. Startup-only; set by the deployment wrapper. |
@@ -299,9 +303,12 @@ Explicit values always win.
 | `CACHE_FILES_MAX_AGE` | `3888000` | Browser cache lifetime for file views/downloads, in seconds. |
 | `CACHE_PREVIEWS_MAX_AGE` | `2592000` | Browser cache lifetime for image previews, in seconds. |
 | `PREVIEW_CACHE_DAYS` | `30` | Days a generated preview stays on disk; `0` keeps it until the file changes. |
-| `COMPRESSION` | `true` | Compress responses (Brotli, else gzip) and realtime messages. |
+| `COMPRESSION` | `true` | Compress HTTP responses (Brotli, else gzip). Turn it off when Caddy or another proxy compresses at the edge; `docker-compose.yml` does. |
+| `WEBSOCKET_COMPRESSION` | `true` | Compress realtime WebSocket messages (perMessageDeflate); independent of HTTP compression. |
+| `CACHE_PUBLIC_MAX_AGE` | `0` | Seconds a shared cache may keep a document GET whose collection is readable by `any`; `0` keeps every response private. |
 
-These can also be changed in **Console → Settings → Caching**.
+`CACHE_FILES_MAX_AGE`, `CACHE_PREVIEWS_MAX_AGE` and `PREVIEW_CACHE_DAYS` can
+also be changed in **Console → Settings → Caching**.
 
 ## Image previews
 

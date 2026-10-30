@@ -29,6 +29,10 @@ services:
       # One HTTP process per CPU (Linux SO_REUSEPORT). Set WORKERS=1 for a
       # single process, or a number to pin the count.
       WORKERS: ${WORKERS:-auto}
+      # Caddy compresses HTTP responses at the edge; compressing in the workers
+      # as well only spends CPU. Set COMPRESSION=true when Bunwrite is exposed
+      # directly, without a proxy.
+      COMPRESSION: ${COMPRESSION:-false}
       DATABASE_PATH: /app/data/bunwrite.sqlite
       STORAGE_PATH: /app/data/storage
       BACKUPS_PATH: /app/data/backups

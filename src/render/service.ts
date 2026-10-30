@@ -383,7 +383,7 @@ export class RenderService {
     // Waiting in line counts against the lease too, so keep it alive.
     const beat = setInterval(() => {
       try {
-        queue.heartbeat(RENDER_QUEUE, message.id, JOB_LEASE_S)
+        queue.heartbeat(RENDER_QUEUE, message.id, message.attempts, JOB_LEASE_S)
       } catch {
         // Already finished or reaped; the result write below reports it.
       }
@@ -410,7 +410,7 @@ export class RenderService {
         const savedBefore = error instanceof BunwriteError && error.type === 'storage_file_already_exists' && message.attempts > 1
         if (!savedBefore) throw error
       }
-      queue.ack(RENDER_QUEUE, message.id, { bucketId: data.bucketId, fileId: data.fileId })
+      queue.ack(RENDER_QUEUE, message.id, message.attempts, { bucketId: data.bucketId, fileId: data.fileId })
       this.dropHtml(message.id, data)
     } catch (error) {
       // A 4xx (bad selector, too large, bucket gone) fails the same way again.
@@ -418,7 +418,7 @@ export class RenderService {
         error instanceof BunwriteError && error.code < 500 && error.type !== 'general_rate_limit_exceeded' && error.type !== 'general_service_disabled'
       const text = error instanceof Error ? error.message : String(error)
       try {
-        const row = queue.fail(RENDER_QUEUE, message.id, text, undefined, final)
+        const row = queue.fail(RENDER_QUEUE, message.id, message.attempts, text, undefined, final)
         if (row.status === 'failed' && data) this.dropHtml(message.id, data)
       } catch {
         // The lease was lost; whoever holds it now reports the outcome.

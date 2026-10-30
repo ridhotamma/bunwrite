@@ -34,8 +34,9 @@ function folder.
 On Linux, `WORKERS=auto` (the Docker image default) starts one HTTP process per
 CPU. All of them bind the same port with `SO_REUSEPORT` and open the same
 SQLite file in WAL mode: the kernel spreads connections, reads run in parallel
-and SQLite serializes writes. The processes coordinate through the database
-(`src/cluster`):
+and SQLite serializes writes. Every connection maps up to `SQLITE_MMAP_MB` of
+the file (default 256 MB; `0` disables mmap), so reads come from shared mapped
+pages. The processes coordinate through the database (`src/cluster`):
 
 - **Leader lease** — `_cluster_leases` names the process that runs cron
   schedules, automatic backups, the queue reaper, the render queue and pruning.
@@ -47,9 +48,14 @@ and SQLite serializes writes. The processes coordinate through the database
   clients, so nothing is appended while realtime is unused.
 - **Cache versions** — triggers on `_settings`, `_databases`, `_collections`,
   `_sites`, `_proxy_rules` and `_projects` bump counters in `_meta`. Each
-  worker checks them at most every `CACHE_CHECK_MS` and reloads the affected
-  cache, so a schema push or a settings change reaches every process. The same
-  counters carry project additions and removals.
+  worker compares them on every request (set `CACHE_CHECK_MS` to throttle) and
+  reloads the affected cache, so a schema push or a settings change reaches
+  every process. The same counters carry project additions and removals.
+- **Shared rate limits and sessions** — `_rate_limits` holds login and token
+  windows that every worker increments. A worker caches a session and its roles
+  for 30 seconds; `_meta.auth` triggers on sessions, users, memberships and
+  teams clear it, so a logout, block or role change is visible on the next
+  request in every worker.
 
 Migrations run under a file lock, and first-run bootstrap runs in an immediate
 write transaction, so workers starting together cannot create two instances or
@@ -169,7 +175,9 @@ The console keeps the same boundaries as the API:
      `any`, `users`, `user:ID`, verified variants, `team:ID`, `team:ID/role`, `member:ID` and `label:X`;
    - otherwise the caller is a guest.
 3. The handler runs synchronously against SQLite (bun:sqlite is synchronous), so
-   one request's reads and writes never interleave with another's.
+   one request's reads and writes never interleave with another's. Write
+   transactions start with `BEGIN IMMEDIATE`, so another worker waits for the
+   write lock instead of failing when a read-then-write transaction upgrades.
 4. On success, the changed documents go to realtime subscribers who may read
    them. On failure, the events are dropped.
 5. Every response carries `X-Request-Id`. When `LOG_REQUESTS` is on, one line
@@ -181,15 +189,37 @@ The console keeps the same boundaries as the API:
    configured retention (env or Console Settings) are pruned. The Home page
    charts hourly inbound/outbound bytes and lists the top paths.
 
+## Caching
+
+Three per-worker read caches sit in front of SQLite, all invalidated across
+workers:
+
+- **Compiled queries** — query string to compiled SQL in a `WeakMap` keyed by
+  the Registry's `Collection`, so a schema reload drops the old entries.
+- **List results** — keyed by the collection's trigger-maintained version, its
+  update time, the caller's roles and the query string; capped at 200 pages /
+  5,000 documents per worker. Views (users, teams, memberships, files,
+  executions) are never cached because they have no document triggers.
+- **Sessions** — session hash to user and roles for 30 seconds; `_meta.auth`
+  triggers clear it on any session, user, membership or team change.
+
+Document writes bump a per-collection counter in `_meta` through triggers on the
+document table. Document GET responses carry a weak `ETag` built from that
+version, the caller's roles and the query, so `If-None-Match` returns 304
+without a SQLite read. `CACHE_PUBLIC_MAX_AGE` allows shared caching only for
+collections readable by `any`; everything else is private.
+
 ## Transactions
 
 Writes sent with a `transactionId` are validated and stored in
 `_transaction_logs`. A read sent with that `transactionId` replays them inside a
 savepoint and then rolls back, so the transaction sees its own writes.
 
-Commit replays the operations in one `BEGIN IMMEDIATE` transaction. If a
-document changed after its operation was staged, the commit fails with
-`transaction_conflict` (409) and nothing is applied. Apps can build
+Commit replays the operations in one write transaction. Every write transaction
+(documents, schema, settings, teams and commit) uses `BEGIN IMMEDIATE`, so a
+second worker waits for the write lock rather than failing with "database is
+locked". If a document changed after its operation was staged, the commit fails
+with `transaction_conflict` (409) and nothing is applied. Apps can build
 transactional flows on this.
 
 ## Functions

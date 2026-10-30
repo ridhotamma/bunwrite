@@ -4,6 +4,8 @@ import {
   applyAutotune,
   bodyLimitBytes,
   configuredSqliteCacheMb,
+  configuredSqliteMmapMb,
+  configuredWalAutocheckpoint,
   detectResources,
   MB,
   parseCpuLimit,
@@ -255,5 +257,17 @@ describe('fallback limits', () => {
   test('configuredSqliteCacheMb uses SQLITE_CACHE_MB or 16 MB', () => {
     expect(configuredSqliteCacheMb({})).toBe(16)
     expect(configuredSqliteCacheMb({ SQLITE_CACHE_MB: '48' })).toBe(48)
+  })
+
+  test('configuredSqliteMmapMb uses SQLITE_MMAP_MB or 256 MB', () => {
+    expect(configuredSqliteMmapMb({})).toBe(256)
+    expect(configuredSqliteMmapMb({ SQLITE_MMAP_MB: '64' })).toBe(64)
+    expect(configuredSqliteMmapMb({ SQLITE_MMAP_MB: '0' })).toBe(0)
+  })
+
+  test('configuredWalAutocheckpoint uses SQLITE_WAL_AUTOCHECKPOINT or 2000 pages', () => {
+    expect(configuredWalAutocheckpoint({})).toBe(2000)
+    expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '500' })).toBe(500)
+    expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '0' })).toBe(0)
   })
 })

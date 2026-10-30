@@ -210,20 +210,7 @@ function ignoredEnvironment(
  * instance record and store different secrets.
  */
 function immediate<T>(db: Db, run: () => T): T {
-  if (db.sqlite.inTransaction) return run()
-  db.sqlite.run('BEGIN IMMEDIATE')
-  try {
-    const result = run()
-    db.sqlite.run('COMMIT')
-    return result
-  } catch (error) {
-    try {
-      db.sqlite.run('ROLLBACK')
-    } catch {
-      /* the transaction may already be gone */
-    }
-    throw error
-  }
+  return db.sqlite.transaction(run).immediate()
 }
 
 export function bootstrapInstance(

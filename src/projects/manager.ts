@@ -17,6 +17,7 @@ import { functionHost, siteHost } from '~/lib/hosts'
 import { isValidId, randomSecret, resolveId, sha256 } from '~/lib/ids'
 import { removeTree } from '~/functions/sandbox'
 import type { FunctionRow } from '~/functions/service'
+import { pruneRateLimits } from '~/lib/limits'
 import { createServices, type Services } from '~/services'
 import type { SiteRow } from '~/sites/service'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
@@ -430,6 +431,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.requestLogs.prune()
       runtime.services.storage.prunePreviews()
       runtime.services.realtime.pruneBus()
+      pruneRateLimits(runtime.services.db)
     }
   }
 

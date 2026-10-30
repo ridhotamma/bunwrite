@@ -305,6 +305,10 @@ Notes:
   intentionally want the app exposed directly.
 - Caddy proxies WebSockets (`/v1/realtime`) and passes `X-Forwarded-*`; keep the
   `/v1` prefix (no path rewriting), or the API routes stop matching.
+- To remove the Docker network hop between Caddy and the app on a Linux host,
+  use `docker compose -f docker-compose.yml -f docker-compose.host.yml up -d`.
+  Both containers use the host network, and Caddy proxies `127.0.0.1:8080`.
+  Docker Desktop does not support host networking.
 - To use Cloudflare in front, choose one origin setup: `TLS_MODE=acme` and
   **Full (strict)** once Caddy has a certificate; `TLS_MODE=external` with a
   Cloudflare Origin Certificate; or `TLS_MODE=off` behind a Cloudflare Tunnel.

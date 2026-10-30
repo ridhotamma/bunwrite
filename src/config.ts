@@ -110,6 +110,8 @@ export interface CacheConfig {
   previewMaxAge: number
   /** Days a generated preview stays on disk before it is made again; 0 keeps previews until the file changes. */
   previewRetentionDays: number
+  /** Seconds a shared cache may keep a document GET whose collection is readable by `any`; 0 disables public caching. */
+  publicMaxAge: number
 }
 
 /**
@@ -159,7 +161,7 @@ export function vcsGithubFromEnv(env: Record<string, string | undefined>): VcsGi
 }
 
 /** Appwrite's own values: 45 days for files, 30 for previews. */
-export const DEFAULT_CACHE: CacheConfig = { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30 }
+export const DEFAULT_CACHE: CacheConfig = { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30, publicMaxAge: 0 }
 
 const wholeNumber = (value: string | undefined, fallback: number) => {
   const n = Number(value)
@@ -297,6 +299,8 @@ export interface Config {
   cache: CacheConfig
   /** Compress responses (Brotli or gzip). Server-wide; read from the main project's config. */
   compression: boolean
+  /** Compress WebSocket messages (perMessageDeflate), independently of HTTP compression. */
+  websocketCompression: boolean
   /** Proxies whose forwarding headers carry the client's IP (TRUSTED_PROXIES; see lib/client-ip). Server-wide. */
   trustedProxies?: string
   /** Set by the first-run bootstrap; not part of the environment. */
@@ -401,7 +405,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     port,
     workers: cluster.workers,
     workerIndex: cluster.workerIndex,
-    cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 250),
+    cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),
     hostname: env.HOST || '0.0.0.0',
@@ -460,8 +464,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
       fileMaxAge: wholeNumber(env.CACHE_FILES_MAX_AGE, DEFAULT_CACHE.fileMaxAge),
       previewMaxAge: wholeNumber(env.CACHE_PREVIEWS_MAX_AGE, DEFAULT_CACHE.previewMaxAge),
       previewRetentionDays: wholeNumber(env.PREVIEW_CACHE_DAYS, DEFAULT_CACHE.previewRetentionDays),
+      publicMaxAge: wholeNumber(env.CACHE_PUBLIC_MAX_AGE, DEFAULT_CACHE.publicMaxAge),
     },
     compression: env.COMPRESSION !== 'false',
+    websocketCompression: env.WEBSOCKET_COMPRESSION !== 'false',
     trustedProxies: env.TRUSTED_PROXIES || undefined,
   }
 }

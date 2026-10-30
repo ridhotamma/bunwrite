@@ -167,7 +167,7 @@ export class TransactionService {
         )
         .run(tx.seq, input.databaseId, input.collectionId, input.documentId ?? null, input.action, JSON.stringify(data), stamp)
       this.db.sqlite.query('UPDATE _transactions SET operations = operations + 1, updated_at = ? WHERE seq = ?').run(stamp, tx.seq)
-    })()
+    }).immediate()
   }
 
   private prepare(caller: Caller, tx: TxRow, collection: Collection, input: StageInput): Record<string, any> {
@@ -302,19 +302,25 @@ export class TransactionService {
     if (logs.length === 0) return read()
     const sqlite = this.db.sqlite
     const events = this.store.events.length
-    sqlite.run('SAVEPOINT staged_read')
+    // A staged write is not real: never fill (or read) the list cache here.
+    this.store.beginStagedRead()
     try {
-      for (const log of logs) {
-        try {
-          this.apply(log)
-        } catch {
-          // A staged write that cannot apply (yet) is simply not visible.
+      sqlite.run('SAVEPOINT staged_read')
+      try {
+        for (const log of logs) {
+          try {
+            this.apply(log)
+          } catch {
+            // A staged write that cannot apply (yet) is simply not visible.
+          }
         }
+        return read()
+      } finally {
+        sqlite.run('ROLLBACK TO staged_read')
+        sqlite.run('RELEASE staged_read')
       }
-      return read()
     } finally {
-      sqlite.run('ROLLBACK TO staged_read')
-      sqlite.run('RELEASE staged_read')
+      this.store.endStagedRead()
       // Replayed writes were never real; nobody may hear about them.
       this.store.events.length = events
     }

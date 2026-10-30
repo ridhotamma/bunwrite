@@ -294,7 +294,7 @@ export class OrganizationService {
         this.sql.query('DELETE FROM _console_admins WHERE seq = ?').run(admin.seq)
       }
       this.sql.query('DELETE FROM _organization_members WHERE id = ?').run(memberId)
-    })()
+    }).immediate()
   }
 
   ownerCount(orgId: string): number {

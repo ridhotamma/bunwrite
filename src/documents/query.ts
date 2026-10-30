@@ -299,6 +299,30 @@ export function compileQueries(collection: Collection, queries: Query[]): Compil
 }
 
 /**
+ * Compile once per collection and query string. A schema reload builds new
+ * `Collection` objects, so the WeakMap entry disappears with the old one and
+ * a changed attribute definition can never reuse stale SQL. The returned
+ * object is shared: callers must treat it as read-only.
+ */
+const compiledQueries = new WeakMap<Collection, Map<string, Compiled>>()
+const MAX_COMPILED_QUERIES = 256
+
+export function compileCached(collection: Collection, rawQueries: unknown[]): Compiled {
+  const key = JSON.stringify(rawQueries)
+  let cache = compiledQueries.get(collection)
+  if (!cache) {
+    cache = new Map()
+    compiledQueries.set(collection, cache)
+  }
+  const hit = cache.get(key)
+  if (hit) return hit
+  const compiled = compileQueries(collection, parseQueries(rawQueries))
+  if (cache.size >= MAX_COMPILED_QUERIES) cache.clear()
+  cache.set(key, compiled)
+  return compiled
+}
+
+/**
  * Keyset condition for rows strictly after `row` in `orders` (already flipped
  * for cursorBefore). SQLite sorts NULL first ascending, as MariaDB does.
  */

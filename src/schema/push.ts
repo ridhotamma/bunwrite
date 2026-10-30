@@ -6,7 +6,9 @@
  */
 import { resolve } from 'node:path'
 
+import { collectionVersionKey } from '~/cluster/versions'
 import { q, type Db } from '~/db/connection'
+import { collectionVersionTriggers } from '~/db/cluster-schema'
 import { now } from '~/lib/datetime'
 import {
   ftsTableName,
@@ -114,10 +116,11 @@ export function pushConfig(db: Db, config: any, options: PushOptions = {}): void
         if (wanted.has(`${c.database_id}/${c.id}`)) continue
         dropCollectionTables(db, tableName(c.dseq, c.id))
         sqlite.run('DELETE FROM _collections WHERE database_id = ? AND id = ?', [c.database_id, c.id])
+        sqlite.run('DELETE FROM _meta WHERE key = ?', [collectionVersionKey(c.database_id, c.id)])
         log(`- collection ${c.database_id}/${c.id}`)
       }
     }
-  })()
+  }).immediate()
 }
 
 export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: (line: string) => void): void {
@@ -137,6 +140,7 @@ export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: 
       [c.databaseId, c.id, c.name, c.enabled, c.documentSecurity, JSON.stringify(c.permissions), JSON.stringify(c.attributes), JSON.stringify(c.indexes), stamp, stamp],
     )
     createIndexes(db, table, c.indexes, c.attributes)
+    collectionVersionTriggers(sqlite, c.databaseId, c.id, table)
     log(`+ collection ${c.databaseId}/${c.id} (${c.attributes.length} attributes, ${c.indexes.length} indexes)`)
     return
   }
@@ -192,6 +196,8 @@ export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: 
      WHERE database_id = ? AND id = ?`,
     [c.name, c.enabled, c.documentSecurity, JSON.stringify(c.permissions), JSON.stringify(c.attributes), JSON.stringify(c.indexes), stamp, c.databaseId, c.id],
   )
+  // A rebuild drops the old table's triggers with it.
+  collectionVersionTriggers(sqlite, c.databaseId, c.id, table)
 }
 
 function columnDefs(attributes: Attribute[]): string {

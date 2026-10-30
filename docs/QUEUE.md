@@ -106,9 +106,10 @@ const { messages } = await queue.claimMessages({ queue: 'emails', count: 10, lea
 for (const message of messages) {
   try {
     const result = await sendEmail(message.data.to)
-    await queue.ackMessage({ queue: 'emails', messageId: message.$id, result })
+    // `message.attempts` is the claim token; a stale claim gets 409.
+    await queue.ackMessage({ queue: 'emails', messageId: message.$id, attempt: message.attempts, result })
   } catch (error) {
-    await queue.failMessage({ queue: 'emails', messageId: message.$id, error: String(error) })
+    await queue.failMessage({ queue: 'emails', messageId: message.$id, attempt: message.attempts, error: String(error) })
   }
 }
 ```
@@ -121,10 +122,10 @@ All of them need an API key. The queue is for servers, not browsers.
 | --- | --- | --- |
 | `POST` | `/v1/queue/:queue/messages` | Enqueue |
 | `POST` | `/v1/queue/:queue/claim` | Claim 1–100 messages (`count`, `lease`) |
-| `POST` | `/v1/queue/:queue/messages/:id/ack` | Complete (`result`) |
-| `POST` | `/v1/queue/:queue/messages/:id/fail` | Fail (`error`, `delay`) |
-| `POST` | `/v1/queue/:queue/messages/:id/heartbeat` | Extend the lease (`lease`) |
-| `GET` | `/v1/queue/:queue/messages` | List (`queries`, `status`) |
+| `POST` | `/v1/queue/:queue/messages/:id/ack` | Complete (`attempt`, `result`) |
+| `POST` | `/v1/queue/:queue/messages/:id/fail` | Fail (`attempt`, `error`, `delay`) |
+| `POST` | `/v1/queue/:queue/messages/:id/heartbeat` | Extend the lease (`attempt`, `lease`) |
+| `GET` | `/v1/queue/:queue/messages` | List (`queries`, `status`; paged in SQL) |
 | `GET` | `/v1/queue/:queue/messages/:id` | Read one |
 | `DELETE` | `/v1/queue/:queue/messages/:id` | Delete one |
 | `GET` | `/v1/queue/:queue/stats` | Counts by status |
@@ -135,9 +136,15 @@ All of them need an API key. The queue is for servers, not browsers.
 - **At-least-once.** A claim moves the message to `processing` and increments
   `attempts`. If the worker dies, the lease expires and the message is
   delivered again. Make handlers idempotent.
-- **Leases.** A claim lasts `lease` seconds (default 60). The SDK worker
-  heartbeats at half of it. `409 queue_message_conflict` means the lease was
-  lost; do not ack.
+- **Leases and ownership.** A claim lasts `lease` seconds (default 60) and
+  increments `attempts`. Ack, fail and heartbeat must send that `attempts` value
+  as `attempt`. If the lease expired and another worker claimed the message,
+  those calls return `409 queue_message_conflict`; do not ack the old result.
+  The SDK worker sends the token and will not ack after it loses the lease, even
+  if the handler ignores the abort signal.
+- **Listing.** List filters by `status` in SQL and supports `limit`, `offset`,
+  `cursorAfter`/`cursorBefore` and `orderAsc`/`orderDesc` on the message fields.
+  Cursors use the default sequence order.
 - **Ordering.** Messages are claimed oldest-first, but with `concurrency > 1`
   handlers finish out of order.
 - **Retention.** Completed and failed messages are pruned after 30 days, like
@@ -161,4 +168,6 @@ relevant settings:
 A run that is still `processing` when the server restarts is returned to the
 queue after its lease expires (or immediately at startup, if the lease already
 passed), and a run out of attempts is marked `failed` with a message saying it
-was interrupted.
+was interrupted. Reclaiming is one conditional SQL update, and a heartbeat or
+result write from a run whose lease was taken over no longer matches, so a
+stale worker cannot overwrite the newer attempt's result.

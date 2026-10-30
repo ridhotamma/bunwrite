@@ -1,0 +1,16 @@
+# Linux only: run Caddy and Bunwrite in the host network namespace, removing
+# the Docker bridge hop between them. Use it on top of the normal file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+#
+# Docker Desktop does not support host networking. The published ports from the
+# base file are reset because both containers bind the host ports directly.
+services:
+  bunwrite:
+    network_mode: host
+    ports: !reset []
+  caddy:
+    network_mode: host
+    ports: !reset []
+    environment:
+      UPSTREAM: 127.0.0.1:8080
