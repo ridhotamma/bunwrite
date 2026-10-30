@@ -207,8 +207,10 @@ Requests are proxied to the app's process:
 
 - it starts on the first request and listens on `127.0.0.1:$PORT`;
 - it is stopped after `SITES_SSR_IDLE_MS` without a request;
-- at most `SITES_SSR_MAX_PROCESSES` apps run per project (least recently used
-  first out);
+- at most `SITES_SSR_MAX_PROCESSES` apps run per worker (least recently used
+  first out). Each HTTP worker keeps its own app processes, so with
+  `WORKERS=4` and the default `2` a server can hold up to eight, and visiting
+  more sites evicts the least recently used ones;
 - a crash answers `502` once, then the next request starts it again after a
   short backoff;
 - activating another deployment, deleting the site or project, and shutting

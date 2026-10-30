@@ -263,7 +263,7 @@ variables. Secret values are write-only through the API. See
 | `SITES_BUILD_COMMANDS` | `true` | Run an SSR site's `installCommand` and `buildCommand` on this server. Set `false` to upload an already-built app and only run its start command. |
 | `SITES_SSR` | `true` | Allow sites with `adapter: ssr` to build and run. `false` answers those hosts with a "turned off" page. |
 | `SITES_SSR_IDLE_MS` | `300000` | Stop an SSR app that has had no requests for this long. `0` keeps apps running until the site changes. |
-| `SITES_SSR_MAX_PROCESSES` | `2` | Most SSR apps running at once per project. The least recently used app is stopped first. Memory, not CPU, is the limit: a warm Next/Nuxt app is often 80–150 MB. |
+| `SITES_SSR_MAX_PROCESSES` | `2` | Most SSR apps running at once per HTTP worker. The least recently used app is stopped first. Each worker keeps its own copy, so set `WORKERS=1` when hosting many SSR sites, or raise this to cover the sites you expect to be warm. Memory, not CPU, is the limit: a warm Next/Nuxt app is often 80–150 MB. |
 | `SITES_SSR_KEEP_PREVIOUS` | `2` | Ready SSR deployments kept besides the live one, for rollback. Each one is a full app folder on disk; set `0` or `1` on a small disk. |
 
 SSR apps are started on the first request and always listen on loopback; the

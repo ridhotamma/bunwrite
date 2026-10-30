@@ -291,6 +291,21 @@ describe('SSR sites: build and serve', () => {
     expect(server.services.sites.site('app').deployment_id).not.toBe(old)
   })
 
+  test('two apps starting together get separate ports in this worker range', async () => {
+    createSite('port-a')
+    createSite('port-b')
+    await deploy('port-a', { 'server.js': APP })
+    await deploy('port-b', { 'server.js': APP })
+    const [a, b] = await Promise.all([visit('/marker', { site: 'port-a' }), visit('/marker', { site: 'port-b' })])
+    expect([a.status, b.status]).toEqual([200, 200])
+    const port = (id: string) => Number(/listening on 127\.0\.0\.1:(\d+)/.exec(server.services.sites.runtimeLogs(id))?.[1])
+    expect(port('port-a')).not.toBe(port('port-b'))
+    for (const id of ['port-a', 'port-b']) {
+      expect(port(id)).toBeGreaterThanOrEqual(8_000)
+      expect(port(id)).toBeLessThan(9_000)
+    }
+  })
+
   test('the live app and a preview of another build each get their own deploy context', async () => {
     const live = server.services.sites.site('app').deployment_id
     const preview = await deploy('app', { 'server.js': APP }, false)

@@ -7,8 +7,8 @@
  * Processes are lazy and short-lived:
  * - the first request starts the app; later requests reuse it;
  * - an idle app is stopped after `SITES_SSR_IDLE_MS`;
- * - at most `SITES_SSR_MAX_PROCESSES` apps run at once per project, least
- *   recently used first out;
+ * - at most `SITES_SSR_MAX_PROCESSES` apps run at once per worker (least
+ *   recently used first out), since each worker keeps its own process;
  * - a crash is reported once, then the next request starts it again after a
  *   short backoff;
  * - activating another deployment, deleting a site or shutting down kills it.
@@ -149,19 +149,27 @@ async function canConnect(port: number, timeoutMs: number): Promise<boolean> {
   })
 }
 
-/** A free loopback port. The app binds it immediately after, so the gap is tiny. */
-async function freePort(): Promise<number> {
-  const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
-  const port = server.port!
-  await server.stop(true)
-  return port
-}
+/**
+ * Site apps listen on a loopback port in this worker's own range. Ephemeral
+ * ports (the OS default) are shared by every worker, so two workers starting
+ * an app at the same moment could pick one port, stop their probes, and then
+ * race to bind it: one app dies with EADDRINUSE and its requests 502. Ranges
+ * below the ephemeral range keep workers apart; `ports` does the same inside
+ * one worker.
+ */
+const SITE_PORT_BASE = 8_000
+const SITE_PORTS_PER_WORKER = 1_000
+/** Public workers plus the dedicated writer: indexes 0..16. */
+const SITE_PORT_WORKERS = 17
 
 export class SsrRuntime {
   private readonly apps = new Map<string, RunningApp>()
   private readonly failures = new Map<string, Failure>()
   private readonly lastLogs = new Map<string, string>()
   private readonly sandbox: FunctionSandbox | null
+  /** Ports this worker has handed to an app that is still starting or running. */
+  private readonly ports = new Set<number>()
+  private portCursor = 0
 
   constructor(
     private readonly config: Config,
@@ -277,15 +285,23 @@ export class SsrRuntime {
 
   private async start(app: RunningApp): Promise<void> {
     const target = app.target
-    const port = await freePort()
-    app.port = port
     const argv = ['sh', '-c', target.command]
     const uid = this.sandbox?.uidFor(this.config.projectId, `site:${target.siteId}`)
     const sandboxed = this.sandbox !== null && uid !== undefined
-    let proc: Bun.Subprocess
+    let runtime: Awaited<ReturnType<typeof ensureRuntime>>
     try {
       // Installed by the build; only a runtime removed since then downloads here.
-      const runtime = await ensureRuntime(this.config, target.runtime, (line) => this.log(app, `[runtime] ${line}`))
+      runtime = await ensureRuntime(this.config, target.runtime, (line) => this.log(app, `[runtime] ${line}`))
+    } catch (error) {
+      this.recordFailure(target.siteId)
+      throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`)
+    }
+    // Take the port only after the runtime is ready: the shorter the gap before
+    // the app binds it, the smaller the chance anything else takes it.
+    const port = await this.freePort()
+    app.port = port
+    let proc: Bun.Subprocess
+    try {
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
         env: withRuntime(
@@ -298,6 +314,7 @@ export class SsrRuntime {
         detached: true,
       })
     } catch (error) {
+      this.ports.delete(port)
       this.recordFailure(target.siteId)
       throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -318,6 +335,7 @@ export class SsrRuntime {
       .catch(() => {
         if (app.live) LIVE.delete(app.live)
       })
+      .finally(() => this.ports.delete(port))
 
     try {
       await this.waitUntilListening(app, proc, port)
@@ -329,6 +347,35 @@ export class SsrRuntime {
       throw error
     }
     this.log(app, `[runtime] listening on 127.0.0.1:${port}`)
+  }
+
+  /**
+   * A loopback port from this worker's range, reserved until the app exits.
+   * `Bun.serve` on the exact port proves that nothing else holds it, and the
+   * probe is closed before the app starts.
+   */
+  private async freePort(): Promise<number> {
+    const base = SITE_PORT_BASE + (Math.abs(this.config.workerIndex) % SITE_PORT_WORKERS) * SITE_PORTS_PER_WORKER
+    for (let i = 0; i < SITE_PORTS_PER_WORKER; i++) {
+      const port = base + ((this.portCursor + i) % SITE_PORTS_PER_WORKER)
+      if (this.ports.has(port)) continue
+      // Reserve before the await, so a second start in this worker skips it.
+      this.ports.add(port)
+      try {
+        const server = Bun.serve({ port, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
+        await server.stop(true)
+        this.portCursor = (this.portCursor + i + 1) % SITE_PORTS_PER_WORKER
+        return port
+      } catch {
+        this.ports.delete(port)
+      }
+    }
+    // The whole range is taken or blocked: let the OS choose, as before.
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
+    const port = server.port!
+    await server.stop(true)
+    this.ports.add(port)
+    return port
   }
 
   private async waitUntilListening(app: RunningApp, proc: Bun.Subprocess, port: number): Promise<void> {
