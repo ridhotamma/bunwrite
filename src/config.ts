@@ -195,6 +195,12 @@ export interface Config {
   /** This process's position in the cluster, 0-based. Index 0 is the writer. */
   workerIndex: number
   /**
+   * Distinguishes test servers that share a project ID and an in-memory
+   * database in the same temp folder. Unset in production, where the database
+   * path already scopes the deployment folders.
+   */
+  instanceKey?: string
+  /**
    * Loopback port where worker 0 serves database writes. The other workers
    * forward write requests here so SQLite has one writer process. 0 disables
    * both the listener and the forwarding.

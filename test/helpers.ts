@@ -154,7 +154,9 @@ export function startServer(schema: unknown = testSchema, over: Partial<Config> 
   const db = openDb(':memory:')
   pushConfig(db, schema, { baseDir })
   const mailer = new MemoryMailer()
-  const config = testConfig(over)
+  // Every test server gets its own deployment folder, even though they all use
+  // an in-memory database and the same project ID.
+  const config = testConfig({ instanceKey: uniqueId(), ...over })
   const services = createServices(config, db, { mailer })
   const app = createApp(services)
   const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket, ...serve })

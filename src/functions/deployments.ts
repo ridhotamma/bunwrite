@@ -67,7 +67,9 @@ export interface DeploymentRow extends SourceColumns {
 /** `<data>/deployments[/<functionId>[/<deploymentId>]]`, next to the database file. */
 export function deploymentDir(config: Config, functionId?: string, deploymentId?: string): string {
   const memory = config.databasePath === ':memory:' || config.databasePath.startsWith('file::memory:')
-  const base = memory ? join(tmpdir(), 'bunwrite', config.projectId, 'deployments') : join(dirname(resolve(config.databasePath)), 'deployments')
+  // See sitesDir: in-memory test servers need a key so they do not share folders.
+  const scope = config.instanceKey ? `${config.projectId}-${config.instanceKey}` : config.projectId
+  const base = memory ? join(tmpdir(), 'bunwrite', scope, 'deployments') : join(dirname(resolve(config.databasePath)), 'deployments')
   return join(...[base, functionId, deploymentId].filter((p): p is string => Boolean(p)))
 }
 

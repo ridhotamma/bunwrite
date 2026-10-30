@@ -7,7 +7,11 @@ import type { Config } from '~/config'
 /** `<data>/sites[/<siteId>[/<deploymentId>]]`, next to the database file. */
 export function sitesDir(config: Config, siteId?: string, deploymentId?: string): string {
   const memory = config.databasePath === ':memory:' || config.databasePath.startsWith('file::memory:')
-  const base = memory ? join(tmpdir(), 'bunwrite', config.projectId, 'sites') : join(dirname(resolve(config.databasePath)), 'sites')
+  // In-memory databases have no folder to scope them, so tests pass a key;
+  // without it, two servers (or two test files) with the same project would
+  // share deployments.
+  const scope = config.instanceKey ? `${config.projectId}-${config.instanceKey}` : config.projectId
+  const base = memory ? join(tmpdir(), 'bunwrite', scope, 'sites') : join(dirname(resolve(config.databasePath)), 'sites')
   return join(...[base, siteId, deploymentId].filter((p): p is string => Boolean(p)))
 }
 
