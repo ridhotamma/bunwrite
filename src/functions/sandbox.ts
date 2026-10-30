@@ -158,15 +158,22 @@ function lockDown(dir: string, depth = 0): void {
     try {
       const st = statSync(path)
       if (st.uid !== process.getuid?.()) continue
-      if (name === 'deployments') {
+      if (name === 'deployments' || name === 'sites') {
+        // A restart must not cut code users off from their own folder: keep the
+        // way in passable (`sites/<siteId>/`), while each deployment stays 0700.
         chmodSync(path, 0o711)
-        for (const fn of readdirSync(path)) {
-          const fnDir = join(path, fn)
-          if (!statSync(fnDir).isDirectory()) continue
-          chmodSync(fnDir, 0o711)
+        for (const child of readdirSync(path)) {
+          const childPath = join(path, child)
+          const childStat = statSync(childPath)
+          if (!childStat.isDirectory()) continue
+          // A site's deployment folders and home belong to the site's user;
+          // leave their 0700 alone so only that app can read them.
+          if (childStat.uid !== process.getuid?.()) continue
+          chmodSync(childPath, 0o711)
+          if (name !== 'deployments') continue
           // Kept sources and code not yet handed to a function user stay the server's.
-          for (const item of readdirSync(fnDir)) {
-            const itemPath = join(fnDir, item)
+          for (const item of readdirSync(childPath)) {
+            const itemPath = join(childPath, item)
             const it = statSync(itemPath)
             if (it.uid === process.getuid?.()) chmodSync(itemPath, it.isDirectory() ? 0o700 : 0o600)
           }

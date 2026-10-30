@@ -135,6 +135,27 @@ module.exports = async ({ res }) => res.json({
     expect(existsSync(deploymentDir(server.config, 'two'))).toBe(false)
   })
 
+  test('a restart keeps the way open to each site deployment', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-sites-'))
+    try {
+      const siteDir = join(root, 'sites', 'site-1')
+      const deployment = join(siteDir, 'deployment-1')
+      const home = join(siteDir, '.home')
+      mkdirSync(deployment, { recursive: true, mode: 0o700 })
+      mkdirSync(home, { recursive: true, mode: 0o700 })
+      for (const path of [root, join(root, 'sites'), siteDir, deployment, home]) chmodSync(path, 0o700)
+      // What the next container start does to the data folder.
+      setupSandbox(join(root, 'bunwrite.sqlite'), { FUNCTIONS_SANDBOX: 'on', FUNCTIONS_SANDBOX_HELPER: process.env.FUNCTIONS_SANDBOX_HELPER })
+      const mode = (path: string) => statSync(path).mode & 0o777
+      // The app runs as another user, so it must be able to walk this path.
+      expect([mode(root), mode(join(root, 'sites')), mode(siteDir)]).toEqual([0o711, 0o711, 0o711])
+      // But its own folders stay private.
+      expect([mode(deployment), mode(home)]).toEqual([0o700, 0o700])
+    } finally {
+      removeTree(null, root)
+    }
+  })
+
   test('a deployment made before isolation was on is handed over on its next run', async () => {
     const d = (await functions.listDeployments({ functionId: 'one' })).deployments[0]
     const folder = deploymentDir(server.config, 'one', d.$id)
