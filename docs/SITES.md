@@ -257,9 +257,16 @@ are kept for rollback.
 
 The console shows the app's recent output on the live deployment page. Builds
 run under the site's own user when `FUNCTIONS_SANDBOX` is on, with the same
-trust model as functions: the uploaded commands run on the server. Keep
-`SITES_SSR_MAX_PROCESSES` small on a 1 GB machine; memory, not CPU, is the
-limit.
+trust model as functions: the uploaded commands run on the server.
+
+Each worker gives its site apps a slice of the loopback ports between 10000 and
+31999, sized by `WORKERS`: one process gets the whole range, and the maximum 16
+public workers plus the writer get about 1,290 each. Ports are rarely the limit;
+a warm app needs memory, PIDs and file descriptors (roughly 100–200 MB and
+around ten threads each), so a host sized for a few hundred apps runs out of
+those long before it runs out of ports. Keep `SITES_SSR_MAX_PROCESSES` small on
+a 1 GB machine; memory, not CPU, is the limit. Static sites use no app process
+at all and are the better choice for mostly-idle domains.
 
 ## Variables
 

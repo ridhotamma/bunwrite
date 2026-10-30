@@ -301,8 +301,8 @@ describe('SSR sites: build and serve', () => {
     const port = (id: string) => Number(/listening on 127\.0\.0\.1:(\d+)/.exec(server.services.sites.runtimeLogs(id))?.[1])
     expect(port('port-a')).not.toBe(port('port-b'))
     for (const id of ['port-a', 'port-b']) {
-      expect(port(id)).toBeGreaterThanOrEqual(8_000)
-      expect(port(id)).toBeLessThan(9_000)
+      expect(port(id)).toBeGreaterThanOrEqual(10_000)
+      expect(port(id)).toBeLessThan(32_000)
     }
   })
 

@@ -150,17 +150,21 @@ async function canConnect(port: number, timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * Site apps listen on a loopback port in this worker's own range. Ephemeral
- * ports (the OS default) are shared by every worker, so two workers starting
- * an app at the same moment could pick one port, stop their probes, and then
- * race to bind it: one app dies with EADDRINUSE and its requests 502. Ranges
- * below the ephemeral range keep workers apart; `ports` does the same inside
- * one worker.
+ * Site apps listen on a loopback port in this worker's own slice of
+ * 10000–31999. Ephemeral ports (Linux starts those at 32768) are shared by
+ * every worker, so two workers starting an app at the same moment could pick
+ * one port, stop their probes, and then race to bind it: one app dies with
+ * EADDRINUSE and its requests 502. The slices keep workers apart, and `ports`
+ * does the same inside one worker.
+ *
+ * The slice is sized from WORKERS: one process gets the whole range, while the
+ * maximum 16 public workers plus the writer get about 1,290 ports each. More
+ * apps than that are possible on a big host, but memory, PIDs and file
+ * descriptors run out long before the ports do.
  */
-const SITE_PORT_BASE = 8_000
-const SITE_PORTS_PER_WORKER = 1_000
-/** Public workers plus the dedicated writer: indexes 0..16. */
-const SITE_PORT_WORKERS = 17
+const SITE_PORT_BASE = 10_000
+/** Exclusive. Kept below the default ephemeral range (32768+). */
+const SITE_PORT_LIMIT = 32_000
 
 export class SsrRuntime {
   private readonly apps = new Map<string, RunningApp>()
@@ -355,22 +359,24 @@ export class SsrRuntime {
    * probe is closed before the app starts.
    */
   private async freePort(): Promise<number> {
-    const base = SITE_PORT_BASE + (Math.abs(this.config.workerIndex) % SITE_PORT_WORKERS) * SITE_PORTS_PER_WORKER
-    for (let i = 0; i < SITE_PORTS_PER_WORKER; i++) {
-      const port = base + ((this.portCursor + i) % SITE_PORTS_PER_WORKER)
+    const workers = Math.max(1, this.config.workers)
+    const size = Math.max(1, Math.floor((SITE_PORT_LIMIT - SITE_PORT_BASE) / workers))
+    const base = SITE_PORT_BASE + (Math.abs(this.config.workerIndex) % workers) * size
+    for (let i = 0; i < size; i++) {
+      const port = base + ((this.portCursor + i) % size)
       if (this.ports.has(port)) continue
       // Reserve before the await, so a second start in this worker skips it.
       this.ports.add(port)
       try {
         const server = Bun.serve({ port, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
         await server.stop(true)
-        this.portCursor = (this.portCursor + i + 1) % SITE_PORTS_PER_WORKER
+        this.portCursor = (this.portCursor + i + 1) % size
         return port
       } catch {
         this.ports.delete(port)
       }
     }
-    // The whole range is taken or blocked: let the OS choose, as before.
+    // The whole slice is taken or blocked: let the OS choose, as before.
     const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
     const port = server.port!
     await server.stop(true)
