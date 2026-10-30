@@ -17,6 +17,8 @@ import { grants } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
 import type { DocEvent } from '~/documents/store'
 import { now } from '~/lib/datetime'
+import type { Collection } from '~/schema/types'
+import { RealtimeBus, type BusEvent } from './bus'
 
 export interface SocketData {
   caller: Caller
@@ -65,18 +67,40 @@ function canRead(caller: Caller, e: DocEvent): boolean {
   return e.collection.documentSecurity && grants((e.document.$permissions as string[]) ?? [], 'read', caller.roles)
 }
 
+export interface RealtimeHubOptions {
+  /** Enabled when several processes serve the same project database. */
+  bus?: {
+    projectId: string
+    pollMs: number
+  }
+  /** Turns a bus event back into a collection from this process's registry. */
+  collectionOf?: (databaseId: string, collectionId: string) => Collection | null
+}
+
 export class RealtimeHub {
   sockets = new Set<Socket>()
+  private readonly bus: RealtimeBus | null
+  private readonly collectionOf: ((databaseId: string, collectionId: string) => Collection | null) | undefined
 
-  constructor(private db: Db) {}
+  constructor(
+    private db: Db,
+    options: RealtimeHubOptions = {},
+  ) {
+    this.collectionOf = options.collectionOf
+    this.bus = options.bus
+      ? new RealtimeBus(db, options.bus.projectId, options.bus.pollMs, (events) => this.deliver(events))
+      : null
+  }
 
   open(ws: Socket): void {
     this.sockets.add(ws)
+    this.bus?.setSockets(this.sockets.size)
     send(ws, 'connected', { channels: [], user: userOf(ws.data.caller) })
   }
 
   close(ws: Socket): void {
     this.sockets.delete(ws)
+    this.bus?.setSockets(this.sockets.size)
   }
 
   message(ws: Socket, raw: string | Buffer): void {
@@ -120,7 +144,14 @@ export class RealtimeHub {
   }
 
   publish(events: DocEvent[]): void {
-    if (events.length === 0 || this.sockets.size === 0) return
+    if (events.length === 0) return
+    if (this.sockets.size > 0) this.fanout(events)
+    // Even without local sockets, another process may have some.
+    this.bus?.send(events)
+  }
+
+  /** Deliver events to this process's sockets only. */
+  private fanout(events: DocEvent[]): void {
     for (const e of events) {
       const channels = channelsOf(e)
       const names = eventNames(e)
@@ -135,6 +166,33 @@ export class RealtimeHub {
         send(ws, 'event', { events: names, channels: hit, timestamp, payload: e.document, subscriptions: matched })
       }
     }
+  }
+
+  /** Events that another process published to the shared bus. */
+  private deliver(events: BusEvent[]): void {
+    const local: DocEvent[] = []
+    for (const event of events) {
+      const collection = this.collectionOf?.(event.databaseId, event.collectionId)
+      // The collection may have been deleted since the writer saw it.
+      if (!collection) continue
+      local.push({ collection, action: event.action, document: event.document })
+    }
+    if (local.length) this.fanout(local)
+  }
+
+  /** Stop the bus timers; called when a project runtime closes. */
+  stop(): void {
+    this.bus?.stop()
+  }
+
+  /** The database was replaced; ignore sequence numbers from the old one. */
+  resetBus(): void {
+    this.bus?.reset()
+  }
+
+  /** Drop expired bus rows; runs with the leader's cleanup. */
+  pruneBus(): void {
+    this.bus?.prune()
   }
 }
 

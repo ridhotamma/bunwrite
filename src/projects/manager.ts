@@ -76,6 +76,8 @@ export class ProjectManager implements ProjectResolver {
     this.ensureDefault()
     this.load()
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
+    // The rows this process just wrote are already reflected in memory.
+    this.control.versions.reset()
     this.control.settings.subscribe((key) => {
       if (key !== 'smtp') return
       for (const runtime of this.runtimes.values()) {
@@ -271,6 +273,7 @@ export class ProjectManager implements ProjectResolver {
       services.backups.start()
       services.queue.start()
       services.render.start()
+      this.control.versions.reset()
       return { project: runtime, apiKey }
     } catch (error) {
       this.runtimes.delete(id)
@@ -290,6 +293,7 @@ export class ProjectManager implements ProjectResolver {
     this.db.sqlite
       .query('UPDATE _projects SET name = ?, org_id = ?, updated_at = ? WHERE id = ?')
       .run(runtime.info.name, runtime.info.orgId, runtime.info.updatedAt, id)
+    this.control.versions.reset()
     return runtime.info
   }
 
@@ -306,6 +310,7 @@ export class ProjectManager implements ProjectResolver {
     if (!control) return
     this.ensureDefault()
     this.reloadProjects()
+    this.control.versions.reset()
   }
 
   /** Reconcile the open project runtimes with the control database. */
@@ -339,6 +344,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.queue.stop()
       runtime.services.render.stop()
       runtime.services.render.shutdown()
+      runtime.services.realtime.stop()
       runtime.services.requestLogs.flush()
       runtime.services.db.sqlite.close()
       this.runtimes.delete(id)
@@ -359,6 +365,7 @@ export class ProjectManager implements ProjectResolver {
     runtime.services.queue.stop()
     runtime.services.render.stop()
     runtime.services.render.shutdown()
+    runtime.services.realtime.stop()
 
     // Best effort: remove external objects before the local database goes away.
     for (const bucket of runtime.services.storage.buckets()) {
@@ -377,6 +384,7 @@ export class ProjectManager implements ProjectResolver {
     runtime.services.requestLogs.flush()
     this.db.sqlite.query('DELETE FROM _projects WHERE id = ?').run(id)
     runtime.services.db.sqlite.close()
+    this.control.versions.reset()
     // Isolated functions own their folders, so the sandbox deletes them.
     removeTree(this.config.functionsSandbox, this.paths(id).dir)
   }
@@ -391,6 +399,25 @@ export class ProjectManager implements ProjectResolver {
     }
   }
 
+  /**
+   * Apply schema, settings and project-list changes made by another process.
+   * Called at the start of a request; the version check is throttled.
+   */
+  sync(): void {
+    if (this.config.workers <= 1) return
+    const changed = this.control.versions.poll()
+    if (changed.schema) this.control.registry.reload()
+    if (changed.settings) {
+      this.control.settings.refreshAll()
+      this.control.access.reload()
+    }
+    if (changed.catalog) {
+      this.control.proxy.reload()
+      this.control.sites.reload()
+    }
+    if (changed.projects) this.reloadProjects()
+  }
+
   /** Run the periodic cleanup for every project. */
   prune(): void {
     for (const runtime of this.runtimes.values()) {
@@ -402,6 +429,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.queue.prune()
       runtime.services.requestLogs.prune()
       runtime.services.storage.prunePreviews()
+      runtime.services.realtime.pruneBus()
     }
   }
 
@@ -413,6 +441,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.backups.stop()
       runtime.services.queue.stop()
       runtime.services.render.stop()
+      runtime.services.realtime.stop()
       runtime.services.requestLogs.flush()
       if (id !== this.config.projectId) runtime.services.db.sqlite.close()
     }

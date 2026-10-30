@@ -26,6 +26,9 @@ services:
       # The container always listens on 8080; change the published port below instead.
       HOST: 0.0.0.0
       PORT: 8080
+      # One HTTP process per CPU (Linux SO_REUSEPORT). Set WORKERS=1 for a
+      # single process, or a number to pin the count.
+      WORKERS: ${WORKERS:-auto}
       DATABASE_PATH: /app/data/bunwrite.sqlite
       STORAGE_PATH: /app/data/storage
       BACKUPS_PATH: /app/data/backups

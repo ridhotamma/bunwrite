@@ -2,9 +2,11 @@
 
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
-admin console (`/console`). The default project uses the main SQLite file;
-additional projects each use their own database under `data/projects/<id>/`,
-plus their own storage, backups and function folder.
+admin console (`/console`); on Linux, `WORKERS=auto` starts one such process per
+CPU behind a shared port (see [Multiple processes](#multiple-processes)). The
+default project uses the main SQLite file; additional projects each use their
+own database under `data/projects/<id>/`, plus their own storage, backups and
+function folder.
 
 ```
  Client apps (Web, mobile, server)        Admin (browser)
@@ -26,6 +28,34 @@ plus their own storage, backups and function folder.
              ▲
    child processes: one per function run (bun runner / python3 runner)
 ```
+
+## Multiple processes
+
+On Linux, `WORKERS=auto` (the Docker image default) starts one HTTP process per
+CPU. All of them bind the same port with `SO_REUSEPORT` and open the same
+SQLite file in WAL mode: the kernel spreads connections, reads run in parallel
+and SQLite serializes writes. The processes coordinate through the database
+(`src/cluster`):
+
+- **Leader lease** — `_cluster_leases` names the process that runs cron
+  schedules, automatic backups, the queue reaper, the render queue and pruning.
+  Workers renew it every two seconds; when the leader stops, another worker
+  takes over within ten seconds.
+- **Realtime bus** — a write in one worker appends the event to
+  `_realtime_events`; the other workers with WebSocket clients poll it and
+  deliver to their own sockets. `_cluster_processes` records which workers have
+  clients, so nothing is appended while realtime is unused.
+- **Cache versions** — triggers on `_settings`, `_databases`, `_collections`,
+  `_sites`, `_proxy_rules` and `_projects` bump counters in `_meta`. Each
+  worker checks them at most every `CACHE_CHECK_MS` and reloads the affected
+  cache, so a schema push or a settings change reaches every process. The same
+  counters carry project additions and removals.
+
+Migrations run under a file lock, and first-run bootstrap runs in an immediate
+write transaction, so workers starting together cannot create two instances or
+different secrets. Function executions use a server-wide internal key derived
+from the project secret, because a run started by one worker may call back
+through another.
 
 ## Source layout
 

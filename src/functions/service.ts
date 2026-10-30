@@ -8,6 +8,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import type { Caller } from '~/auth/caller'
+import { isLeader } from '~/cluster/role'
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
@@ -698,6 +699,7 @@ export class FunctionService {
    * killed process does not leave an execution `processing` forever.
    */
   reap(): string[] {
+    if (!isLeader()) return []
     const stamp = now()
     const stale = this.sql.query<ExecutionRow, [string]>("SELECT * FROM _executions WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?").all(stamp)
     const retried: string[] = []
@@ -1053,6 +1055,7 @@ export class FunctionService {
 
   /** Fire every function whose schedule matches this minute (once per minute). */
   tick(date: Date): string[] {
+    if (!isLeader()) return []
     const minute = Math.floor(date.getTime() / 60_000)
     if (minute === this.lastTick) return []
     this.lastTick = minute
@@ -1082,6 +1085,7 @@ export class FunctionService {
    * matching the cron path.
    */
   tickScheduled(date: Date): string[] {
+    if (!isLeader()) return []
     const due = this.sql.query<ExecutionRow, [string, number]>("SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?").all(formatDate(date), 50)
     const fired: string[] = []
     for (const row of due) {

@@ -74,6 +74,10 @@ function refreshServices(services: Services): void {
   services.sites.reload()
   services.access.reload()
   services.settings.refreshAll()
+  // The restored database has its own version counters and bus sequence; start
+  // from those instead of dragging the old ones along.
+  services.versions.reset()
+  services.realtime.resetBus()
 }
 
 /**

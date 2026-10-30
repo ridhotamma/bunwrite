@@ -198,6 +198,31 @@ When you pass `--config` and do not pass `--url`/`--targets`, the runner builds:
 Attributes that do not exist in the collection definition are skipped, so the
 same command works with the small example schema and a large production schema.
 
+## Measuring on the server itself
+
+A run from your laptop includes TLS, Caddy, the network and the Wi-Fi hop. To
+see the server's own ceiling, run the load generator in the same box and call
+loopback:
+
+```bash
+# Copy oha into the running container, then measure without Caddy or TLS.
+docker cp "$(command -v oha)" bunwrite-stress:/tmp/oha
+docker exec bunwrite-stress /tmp/oha -z 30s -c 50 http://127.0.0.1:8080/v1/health
+```
+
+Run the same command against the published port from the host
+(`http://127.0.0.1:18080/v1/health`) to see what the proxy and network add.
+Production numbers are often about ten times lower than a local loopback run,
+more than a slower VPS core alone explains; connections and the proxy usually
+account for most of the gap. The 1–5% errors sometimes seen at 200+ clients are
+also usually connection- or proxy-side rather than application errors.
+
+Request logging is on by default and costs 5–25%. For a ceiling test set
+`LOG_REQUESTS=false`, or keep it on with `LOG_SAMPLE_RATE=0.1` to log a tenth of
+successful requests (errors are still always logged). A run with an API key
+also skips the session lookup and permission filters that logged-in SDK users
+pay for, so expect lower numbers for session clients.
+
 ## Results
 
 Every run writes `data/stress/stress-<timestamp>.json` and prints:

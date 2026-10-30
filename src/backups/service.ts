@@ -8,6 +8,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, stat
 import { basename, dirname, join } from 'node:path'
 
 import type { Config } from '~/config'
+import { isLeader } from '~/cluster/role'
 import type { Db } from '~/db/connection'
 import { BunwriteError, err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
@@ -229,6 +230,8 @@ export class BackupService {
 
   /** Daily at 02:00 UTC; exposed for tests through the optional date argument. */
   async tick(now = new Date()): Promise<void> {
+    // One backup a day across the cluster, not one per worker.
+    if (!isLeader()) return
     if (!this.config.backups.enabled) return
     const day = now.toISOString().slice(0, 10)
     if (now.getUTCHours() !== 2 || this.lastAutoDay === day) return

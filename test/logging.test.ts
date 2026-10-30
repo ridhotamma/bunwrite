@@ -67,6 +67,17 @@ describe('request logs', () => {
     server.config.logRequests = true
   })
 
+  test('sampling skips successful requests but keeps errors', async () => {
+    server.config.logSampleRate = 0
+    const before = lines.length
+    await fetch(`${server.endpoint}/health`, { headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'sampled-out' } })
+    expect(lines.length).toBe(before)
+
+    await fetch(`${server.endpoint}/nope`, { headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'sampled-error' } })
+    expect(lines.some((entry) => entry.includes('sampled-error'))).toBe(true)
+    server.config.logSampleRate = 1
+  })
+
   test('stores logs and renders them in the console', async () => {
     server.config.logRequests = true
     const base = server.endpoint.replace(/\/v1$/, '')

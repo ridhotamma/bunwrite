@@ -204,10 +204,40 @@ function ignoredEnvironment(
   return ignored
 }
 
+/**
+ * Run first-run setup under an immediate write transaction. Workers boot at
+ * the same time; without the write lock two of them could read an empty
+ * instance record and store different secrets.
+ */
+function immediate<T>(db: Db, run: () => T): T {
+  if (db.sqlite.inTransaction) return run()
+  db.sqlite.run('BEGIN IMMEDIATE')
+  try {
+    const result = run()
+    db.sqlite.run('COMMIT')
+    return result
+  } catch (error) {
+    try {
+      db.sqlite.run('ROLLBACK')
+    } catch {
+      /* the transaction may already be gone */
+    }
+    throw error
+  }
+}
+
 export function bootstrapInstance(
   db: Db,
   env: Record<string, string | undefined> = process.env,
   options: BootstrapOptions = {},
+): BootstrapResult {
+  return immediate(db, () => bootstrapInstanceUnlocked(db, env, options))
+}
+
+function bootstrapInstanceUnlocked(
+  db: Db,
+  env: Record<string, string | undefined>,
+  options: BootstrapOptions,
 ): BootstrapResult {
   const generateApiKey = options.generateApiKey ?? true
   const stored = read(db)
@@ -287,7 +317,9 @@ export function bootstrapInstance(
 
 /** Drop the plaintext bootstrap key after the first admin is created. */
 export function clearInstanceApiKey(db: Db): void {
-  const stored = read(db)
-  if (!stored?.apiKey) return
-  write(db, { ...stored, apiKey: undefined })
+  immediate(db, () => {
+    const stored = read(db)
+    if (!stored?.apiKey) return
+    write(db, { ...stored, apiKey: undefined })
+  })
 }

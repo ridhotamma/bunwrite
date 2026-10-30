@@ -157,6 +157,27 @@ S3 for uploads and backups is configured in **Console → Settings → File stor
 and **Settings → Backups**, not in `.env`. Backups contain the database only;
 back up `STORAGE_PATH` or the uploads bucket separately.
 
+## Server processes
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `WORKERS` | `1` (`auto` in the Docker image) | HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. |
+| `CACHE_CHECK_MS` | `250` | How often a worker checks whether another worker changed settings, schema, sites or proxy rules. |
+| `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
+
+With `WORKERS` above 1, the processes bind the same port with `SO_REUSEPORT`
+and share the SQLite file in WAL mode. Every process serves HTTP and WebSocket
+connections. Work that must not run once per worker uses a database lease:
+cron schedules, automatic backups, the queue reaper, the render queue and
+pruning run only in the elected leader. If the leader stops, another worker
+takes over within ten seconds.
+
+Writes still go through SQLite one at a time; reads run in parallel, so expect
+roughly 3–3.5× read throughput on four cores. `FUNCTIONS_CONCURRENCY` applies
+per process, and the in-memory rate limits and request-log batches are per
+process too. Restoring a backup replaces the project's SQLite file in place, so
+restart the container or service after a restore.
+
 ## Console
 
 | Variable | Default | Meaning |
@@ -176,6 +197,7 @@ bun run console:admin you@example.com
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LOG_REQUESTS` | `true` | Write one line per HTTP request to stdout and the console's request log. |
+| `LOG_SAMPLE_RATE` | `1` | Fraction of successful requests to log (0–1). Errors are always logged. Lower it to keep visibility at a fraction of the cost. |
 | `LOG_FORMAT` | `text` | `text` for journald, `json` for a log collector. |
 | `LOG_RETENTION_DAYS` | `7` | Days to keep request logs; `0` keeps them until cleared. |
 | `LOG_IP` | `true` | Store client IP addresses in request logs. |

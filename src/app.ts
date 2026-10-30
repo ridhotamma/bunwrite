@@ -68,6 +68,24 @@ const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cooki
 
 export { originAllowed }
 
+/**
+ * Reload what another process changed. The version read is throttled by
+ * CACHE_CHECK_MS, so most requests only compare a timestamp.
+ */
+function syncServices(services: Services): void {
+  if (services.config.workers <= 1) return
+  const changed = services.versions.poll()
+  if (changed.schema) services.registry.reload()
+  if (changed.settings) {
+    services.settings.refreshAll()
+    services.access.reload()
+  }
+  if (changed.catalog) {
+    services.proxy.reload()
+    services.sites.reload()
+  }
+}
+
 export function createApp(source: Services | ProjectResolver) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const control = projects.control
@@ -223,6 +241,7 @@ export function createApp(source: Services | ProjectResolver) {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     const services = runtime.services
     meta.project = runtime.info.id
+    syncServices(services)
 
     if (pathname === '/realtime') {
       const caller = await callerOf(services, request, meta)
@@ -263,6 +282,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
+      syncServices(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
     const hostedFunction = functionFor(request)
@@ -270,6 +290,7 @@ export function createApp(source: Services | ProjectResolver) {
       meta.project = hostedFunction.project.info.id
       meta.auth = `function:${hostedFunction.fn.id}`
       try {
+        syncServices(hostedFunction.project.services)
         const caller = await resolveCaller(hostedFunction.project.services.db, hostedFunction.project.services.config, request)
         return await functionHttpResponse(hostedFunction.project.services, hostedFunction.fn, caller, request, `${url.pathname}${url.search}`)
       } catch (error) {
@@ -328,8 +349,13 @@ export function createApp(source: Services | ProjectResolver) {
   return {
     hub,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
+      // Another worker may have changed projects, schema or settings.
+      projects.sync?.()
+      syncServices(control)
       const started = performance.now()
       const url = new URL(request.url)
+      // The console resolves its own project, so refresh every runtime it may show.
+      if (url.pathname.startsWith('/console')) for (const runtime of projects.list()) syncServices(runtime.services)
       const id = requestId(request)
       const ip = rememberClientIp(request, server?.requestIP(request)?.address, trustedProxies)
       const meta: RequestMeta = { auth: url.pathname.startsWith('/console') ? 'console' : undefined }
@@ -354,7 +380,9 @@ export function createApp(source: Services | ProjectResolver) {
         const skip = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
         const runtime = meta.project ? projects.get(meta.project) : undefined
         const logConfig = runtime?.services.config ?? control.config
-        if (logConfig.logRequests && !skip) {
+        // Sampling keeps the hot path cheap while errors are always recorded.
+        const sampling = logConfig.logSampleRate < 1 && status < 400
+        if (logConfig.logRequests && !skip && (!sampling || Math.random() < logConfig.logSampleRate)) {
           const entry = {
             id,
             method: request.method,

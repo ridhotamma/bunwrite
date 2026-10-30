@@ -7,6 +7,7 @@
  * a lease, and a worker that dies before acking loses the lease, so the
  * message is delivered again. Handlers should be idempotent.
  */
+import { isLeader } from '~/cluster/role'
 import type { Db } from '~/db/connection'
 import { addSeconds, formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -231,6 +232,9 @@ export class QueueService {
 
   /** Requeue claims whose lease expired, so a dead worker does not hold a message forever. */
   reap(): string[] {
+    // Requeuing is a scheduler job: only one process does it, or every stale
+    // message would be touched once per worker.
+    if (!isLeader()) return []
     const stamp = now()
     const stale = this.sql
       .query<QueueMessageRow, [string]>("SELECT * FROM _queue_messages WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?")

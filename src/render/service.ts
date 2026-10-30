@@ -15,6 +15,7 @@
 import { existsSync } from 'node:fs'
 
 import { keyCaller } from '~/auth/caller'
+import { isLeader } from '~/cluster/role'
 import type { Config } from '~/config'
 import { BunwriteError, err } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
@@ -357,6 +358,9 @@ export class RenderService {
    * as direct requests, so queued work never adds a second Chromium tab.
    */
   drain(): void {
+    // Chromium is heavy and the queue claim would let several workers render at
+    // once; one process owns the render queue.
+    if (!isLeader()) return
     if (this.draining || !this.jobs || !this.config.render.enabled) return
     this.draining = true
     void (async () => {

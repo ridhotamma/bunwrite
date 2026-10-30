@@ -2,12 +2,13 @@
 import { OAuthService } from './auth/oauth'
 import { AuthService } from './auth/service'
 import { BackupService } from './backups/service'
+import { VersionMonitor } from './cluster/versions'
 import type { Config } from './config'
 import type { Db } from './db/connection'
 import { DocumentStore } from './documents/store'
 import { FunctionService, readEnvFile } from './functions/service'
 import { functionHost, siteHost } from './lib/hosts'
-import { randomSecret } from './lib/ids'
+import { randomSecret, sha256 } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
 import { ProxyService } from './proxy/service'
@@ -29,6 +30,8 @@ import { EmailTemplateService } from './mail/templates'
 export interface Services {
   config: Config
   db: Db
+  /** Counters that reveal settings/schema changes made by another process. */
+  versions: VersionMonitor
   registry: Registry
   store: DocumentStore
   transactions: TransactionService
@@ -60,7 +63,13 @@ export interface Services {
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
-  config.internalKey ??= `internal_${randomSecret(32)}`
+  // Every process must hand the same key to function runs: a run started by
+  // one worker may call back through another. Deriving it from the shared
+  // secret keeps that true without storing another secret.
+  config.internalKey ??= config.secret
+    ? `internal_${sha256(`${config.secret}:internal`)}`
+    : `internal_${randomSecret(32)}`
+  const versions = new VersionMonitor(db, config.cacheCheckMs)
   const registry = new Registry(db)
   const store = new DocumentStore(db)
   const transactions = new TransactionService(db, registry, store)
@@ -72,7 +81,10 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const sites = new SiteService(db, config, proxy, variables)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
-  const realtime = new RealtimeHub(db)
+  const realtime = new RealtimeHub(db, {
+    bus: config.workers > 1 ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
+    collectionOf: (databaseId, collectionId) => registry.collections.get(`${databaseId}/${collectionId}`) ?? null,
+  })
   const storage = new StorageService(db, config, store)
   const functions = new FunctionService(db, config, store, proxy, {
     functionEnv: readEnvFile(config.functionsEnvFile),
@@ -87,7 +99,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
   proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
-  const services = { config, db, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as Services
+  const services = { config, db, versions, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(

@@ -1,5 +1,6 @@
 import { dirname, resolve } from 'node:path'
 
+import { clusterConfig } from './cluster/config'
 import type { FunctionSandbox } from './functions/sandbox'
 import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
@@ -178,6 +179,14 @@ export interface BootstrapInfo {
 
 export interface Config {
   port: number
+  /** HTTP processes sharing the port (WORKERS); 1 means a single process. */
+  workers: number
+  /** This process's position in the cluster, 0-based. */
+  workerIndex: number
+  /** How often to check for settings/schema changes made by another process. */
+  cacheCheckMs: number
+  /** How often a worker with WebSocket clients reads the realtime bus. */
+  realtimeBusPollMs: number
   /**
    * Names the server sends: `bunwrite` (X-Bunwrite-* webhook headers, bw_session cookies,
    * BUNWRITE_* function variables) or `appwrite`. Both families are always accepted.
@@ -262,6 +271,8 @@ export interface Config {
   schemaSyncOnStart: boolean
   /** Write one line per HTTP request to stdout. */
   logRequests: boolean
+  /** Fraction of successful requests to log (LOG_SAMPLE_RATE); 1 logs all, errors are always logged. */
+  logSampleRate: number
   /** `text` for journald, `json` for a log collector. */
   logFormat: LogFormat
   /** Days to keep request logs in the console; 0 keeps them until cleared. */
@@ -372,6 +383,8 @@ export function oauthFromEnv(env: Record<string, string | undefined>): Partial<R
  */
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080)
+  const cluster = clusterConfig(env)
+  const sample = env.LOG_SAMPLE_RATE === undefined || env.LOG_SAMPLE_RATE === '' ? 1 : Number(env.LOG_SAMPLE_RATE)
   // DOMAIN is only a default for PUBLIC_ENDPOINT: whatever terminates TLS has
   // to be reachable at https://<domain>, and the container cannot know that on
   // its own. Strip a pasted scheme and path so https://x.example/ also works.
@@ -386,6 +399,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const ssrKeep = wholeNumber(env.SITES_SSR_KEEP_PREVIOUS, 2)
   return {
     port,
+    workers: cluster.workers,
+    workerIndex: cluster.workerIndex,
+    cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 250),
+    realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
@@ -428,6 +445,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: env.LOG_REQUESTS !== 'false',
+    logSampleRate: Number.isFinite(sample) ? Math.min(1, Math.max(0, sample)) : 1,
     logFormat: env.LOG_FORMAT === 'json' ? 'json' : 'text',
     logRetentionDays: Number.isFinite(retention) && retention >= 0 ? Math.round(retention) : 7,
     logIp: env.LOG_IP !== 'false',
