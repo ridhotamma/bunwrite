@@ -197,6 +197,16 @@ describe('sites API', () => {
     expect(res.status).toBe(200)
     expect(await res.text()).toContain('Built')
     expect((await visit('/missing.js')).status).toBe(404)
+    // A real navigation gets the shell...
+    expect((await visit('/settings/profile', { headers: { accept: 'text/html', 'sec-fetch-dest': 'document' } })).status).toBe(200)
+    // ...but a fragment or data request must not get it, or the page can embed
+    // itself again (`hx-trigger="load"`) forever.
+    expect((await visit('/fragments/status', { headers: { 'hx-request': 'true' } })).status).toBe(404)
+    expect((await visit('/fragments/status', { headers: { accept: 'application/json' } })).status).toBe(404)
+    expect((await visit('/fragments/status', { headers: { 'sec-fetch-dest': 'empty' } })).status).toBe(404)
+    // An htmx boosted link is still a full navigation.
+    expect((await visit('/settings/profile', { headers: { 'hx-request': 'true', 'hx-boosted': 'true', 'sec-fetch-dest': 'empty' } })).status).toBe(200)
+    expect((await visit('/api/missing')).status).toBe(404)
   })
 
   test('a paused site says so', async () => {

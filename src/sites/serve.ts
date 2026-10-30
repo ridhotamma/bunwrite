@@ -102,6 +102,27 @@ async function apiResponse(services: Services, site: SiteRow, request: Request, 
   }
 }
 
+/**
+ * A missing path gets the single-page shell only for a full page navigation.
+ * A fetch, htmx swap or JSON request must stay a 404: serving `index.html` for
+ * one lets a page insert itself again (`hx-trigger="load"`) forever.
+ */
+export function wantsPage(request: Request, pathname: string): boolean {
+  if (pathname === API_PREFIX || pathname.startsWith(`${API_PREFIX}/`)) return false
+  // htmx normally wants a fragment, so a miss is a 404. `hx-boost` and history
+  // restoration are full-page navigations, so those still get the shell.
+  const fullPage = Boolean(request.headers.get('hx-boosted') || request.headers.get('hx-history-restore-request'))
+  if (request.headers.get('hx-request') && !fullPage) return false
+  if ((request.headers.get('x-requested-with') ?? '').toLowerCase() === 'xmlhttprequest') return false
+  const accept = (request.headers.get('accept') ?? '').toLowerCase()
+  if (accept.includes('application/json') || accept.includes('text/event-stream')) return false
+  // A browser marks a real navigation as document/iframe; scripts, fetches and
+  // htmx fragment swaps arrive as empty, script, image, and so on.
+  const dest = (request.headers.get('sec-fetch-dest') ?? '').toLowerCase()
+  if (dest && dest !== 'document' && dest !== 'iframe' && dest !== 'frame' && !fullPage) return false
+  return true
+}
+
 /** Serve a site's live deployment, or with `deploymentId` a preview of another one. */
 export async function serveSite(services: Services, site: SiteRow, request: Request, deploymentId?: string | null): Promise<Response> {
   const url = new URL(request.url)
@@ -123,7 +144,7 @@ export async function serveSite(services: Services, site: SiteRow, request: Requ
   if (found) return fileResponse(request, found.path, shown)
   // Single-page apps route in the browser: unknown paths get the app shell,
   // but a missing asset (it has an extension) stays a 404.
-  if (site.fallback_file && !extname(url.pathname)) {
+  if (site.fallback_file && wantsPage(request, url.pathname) && !extname(url.pathname)) {
     const fallback = findFile(root, `/${site.fallback_file}`)
     if (fallback && !fallback.folder) return fileResponse(request, fallback.path, shown)
   }

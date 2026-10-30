@@ -302,8 +302,8 @@ its app, or to its API function when it has no start command.
 | --- | --- |
 | `/` | `index.html` |
 | `/about` | `about`, else `about.html`, else a redirect to `/about/` when `about/index.html` exists |
-| No file, fallback file set, no extension in the path | The fallback file, with 200 (single-page apps) |
-| No file | `404.html` with 404, else a small 404 page |
+| No file, fallback file set, no extension, and a full page navigation | The fallback file, with 200 (single-page apps) |
+| No file (including missing `/api` paths, JSON/fetch requests and htmx fragments) | `404.html` with 404, else a small 404 page |
 | `/api`, `/api/*` with an API function | The function (see below) |
 | Anything but GET or HEAD | 405 |
 
