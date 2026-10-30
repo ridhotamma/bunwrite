@@ -8,7 +8,7 @@ const resolver: DomainResolver = {
   addresses: async (host) => {
     if (host === 'landing.sites.example.com' || host === 'appwrite.example.com') return [serverIp]
     if (host === 'apex.example.org') return [serverIp]
-    if (host === 'wildcard-check.example.org') return [serverIp]
+    if (host.startsWith('wildcard-check-') && host.endsWith('.example.org')) return [serverIp]
     if (host === 'stale.example.org') return ['198.51.100.9']
     throw new Error('ENOTFOUND')
   },
@@ -43,6 +43,29 @@ describe('custom-domain verification', () => {
     })
 
     expect(overview.domains).toEqual([{ domain: '*.example.org', status: 'verified' }])
+  })
+
+  test('probes a wildcard with a fresh label each time', async () => {
+    const probes: string[] = []
+    const freshResolver: DomainResolver = {
+      addresses: async (host) => {
+        if (host.startsWith('wildcard-check-') && host.endsWith('.example.org')) {
+          probes.push(host)
+          return [serverIp]
+        }
+        if (host === 'landing.sites.example.com' || host === 'appwrite.example.com') return [serverIp]
+        throw new Error('ENOTFOUND')
+      },
+      cnames: async () => {
+        throw new Error('ENODATA')
+      },
+    }
+
+    await checkCustomDomains(['*.example.org'], { target: 'landing.sites.example.com', publicEndpoint: 'https://appwrite.example.com/v1', resolver: freshResolver })
+    await checkCustomDomains(['*.example.org'], { target: 'landing.sites.example.com', publicEndpoint: 'https://appwrite.example.com/v1', resolver: freshResolver })
+
+    expect(probes).toHaveLength(2)
+    expect(new Set(probes).size).toBe(2)
   })
 
   test('marks a different record as unverified', async () => {

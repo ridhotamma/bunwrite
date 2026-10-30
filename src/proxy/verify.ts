@@ -3,7 +3,8 @@
  * it points at this server, either through a CNAME to the resource's default
  * host or through an A record for the server's IPv4 address.
  */
-import { lookup, resolveCname } from 'node:dns/promises'
+import { randomUUID } from 'node:crypto'
+import { resolve4, resolveCname } from 'node:dns/promises'
 
 import { hostOf } from '~/lib/hosts'
 
@@ -33,9 +34,14 @@ export interface DomainResolver {
 const TIMEOUT_MS = 2_000
 
 const systemResolver: DomainResolver = {
-  addresses: async (host) => (await lookup(host, { family: 4, all: true })).map((entry) => entry.address),
+  // Query DNS directly. `lookup` goes through getaddrinfo, so its cache (and
+  // /etc/hosts) can keep returning an answer from before the record changed.
+  addresses: async (host) => resolve4(host),
   cnames: async (host) => (await resolveCname(host)).map(hostOf),
 }
+
+/** A fresh probe label per check, so an NXDOMAIN cached before the wildcard existed is not reused. */
+const wildcardProbe = (base: string) => `wildcard-check-${randomUUID().slice(0, 8)}.${base}`
 
 /** Resolve without throwing; rejections and timeouts become `fallback`. */
 async function settle<T>(work: Promise<T>, fallback: T): Promise<T> {
@@ -79,7 +85,7 @@ export async function checkCustomDomains(
     domains.map(async (domain): Promise<DomainCheck> => {
       const host = hostOf(domain)
       // `*.example.com` is not a name DNS can resolve; probe a label it covers.
-      const probe = host.startsWith('*.') ? `wildcard-check.${host.slice(2)}` : host
+      const probe = host.startsWith('*.') ? wildcardProbe(host.slice(2)) : host
       const [cnames, addresses] = await Promise.all([
         settle(resolver.cnames(probe), []),
         settle(resolver.addresses(probe), []),
