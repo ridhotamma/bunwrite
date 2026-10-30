@@ -13,4 +13,5 @@ services:
     network_mode: host
     ports: !reset []
     environment:
-      UPSTREAM: 127.0.0.1:8080
+      UPSTREAM: ${UPSTREAM:-127.0.0.1:8080}
+      ASK_UPSTREAM: ${ASK_UPSTREAM:-127.0.0.1:8080}

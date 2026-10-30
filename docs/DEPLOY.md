@@ -166,6 +166,59 @@ its own sign-in and rate limiting, but the admin UI should not be public. Set
 `CONSOLE_ENABLED=false` to disable it entirely; use an SSH tunnel to
 `localhost:8080/console` when needed.
 
+### 6. Proxy timeouts, worker health and capacity
+
+Two settings matter more than any benchmark number:
+
+- **The proxy's upstream keepalive must be shorter than Bun's idle timeout.**
+  Bun closes an idle connection after `HTTP_IDLE_TIMEOUT` seconds (30 by
+  default). Caddy's default upstream keepalive is **2 minutes**, so it can reuse
+  a connection Bun has already closed; the request then waits with no response
+  timeout. The bundled Caddyfiles set `keepalive 5s` and
+  `response_header_timeout 30s`. With nginx, use `keepalive_timeout 5s` and
+  `proxy_read_timeout 30s`. Raise the response timeout if an endpoint
+  legitimately renders for longer.
+- **Give the proxy a response timeout.** Without one, a stalled worker turns
+  into a client timeout instead of a fast `504` that a retry or health check can
+  act on.
+
+For per-worker health checks, set `WORKER_PORTS=true` and point Caddy at the
+whole range:
+
+```dotenv
+WORKERS=4
+WORKER_PORTS=true
+UPSTREAM=bunwrite:8080-8083
+ASK_UPSTREAM=bunwrite:8080
+MAX_INFLIGHT=200
+```
+
+Each public worker binds its own port, so Caddy's `health_uri /v1/health`
+probes them separately and `unhealthy_latency` / `fail_duration` remove a
+stalled process. The writer listens on a loopback port outside that range and
+never receives public traffic. Without `WORKER_PORTS`, the workers share one
+port with `SO_REUSEPORT`; that is slightly faster but the proxy cannot see an
+individual stalled worker.
+
+`MAX_INFLIGHT` is a total across the public workers. Above it, Bunwrite answers
+`503` with `Retry-After: 1` immediately instead of holding the request. Keep it
+near the measured safe concurrency (about 200 for the write-heavy booking mix)
+and leave headroom for spikes.
+
+**Scaling beyond one host.** Bunwrite uses SQLite. Do not point two containers
+or two machines at the same database file over a network filesystem: SQLite's
+locking assumes one host. For more capacity, either:
+
+- run one instance per project (the console already keeps each project in its
+  own database), or
+- use a replicated setup such as LiteFS (one writer, read replicas) or
+  Litestream for a warm standby, and put both behind the proxy with health
+  checks.
+
+Caddy accepts multiple upstreams (`UPSTREAM="host-a:8080 host-b:8080"`) and will
+fail over when one fails its health check. Do not enable retries for
+non-idempotent writes unless the client uses an explicit document ID.
+
 ## Option B: Docker Compose
 
 `docker-compose.yml` runs the same standalone binary on `debian:trixie-slim`.

@@ -26,9 +26,20 @@ services:
       # The container always listens on 8080; change the published port below instead.
       HOST: 0.0.0.0
       PORT: 8080
-      # One HTTP process per CPU (Linux SO_REUSEPORT). Set WORKERS=1 for a
-      # single process, or a number to pin the count.
+      # One public HTTP process per CPU, plus a dedicated SQLite writer that
+      # never accepts public traffic. Set WORKERS=1 for a single process.
       WORKERS: ${WORKERS:-auto}
+      # One listener per public worker (PORT, PORT+1, ...) so Caddy can health
+      # check each one. Set UPSTREAM to the same range (see the caddy service).
+      WORKER_PORTS: ${WORKER_PORTS:-false}
+      # Total in-flight requests across the public workers before returning 503
+      # with Retry-After. 0 disables shedding.
+      MAX_INFLIGHT: ${MAX_INFLIGHT:-200}
+      # Bun closes idle HTTP connections after this many seconds. Keep it above
+      # Caddy's 5s upstream keepalive (see Caddyfile).
+      HTTP_IDLE_TIMEOUT: ${HTTP_IDLE_TIMEOUT:-30}
+      # Larger WAL: fewer synchronous checkpoints on the writer process.
+      SQLITE_WAL_AUTOCHECKPOINT: ${SQLITE_WAL_AUTOCHECKPOINT:-10000}
       # Caddy compresses HTTP responses at the edge; compressing in the workers
       # as well only spends CPU. Set COMPRESSION=true when Bunwrite is exposed
       # directly, without a proxy.
@@ -53,7 +64,9 @@ services:
       CHROME_NO_SANDBOX: "true"
     ports:
       # Only on loopback: Caddy below is the public entry point. Set
-      # BUNWRITE_BIND=0.0.0.0 to expose the app directly instead.
+      # BUNWRITE_BIND=0.0.0.0 to expose the app directly instead. With
+      # WORKER_PORTS, only 8080 is published; Caddy reaches PORT+1.. over the
+      # compose network, so keep the proxy as the entry point.
       - "${BUNWRITE_BIND:-127.0.0.1}:${BUNWRITE_PORT:-8080}:8080"
     volumes:
       - bunwrite-data:/app/data
@@ -92,6 +105,11 @@ services:
     entrypoint: ["/bin/sh", "/usr/local/bin/caddy-entrypoint.sh"]
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      # A single address, or a worker range such as bunwrite:8080-8083 when
+      # WORKER_PORTS=1. Health checks then remove a stalled worker.
+      UPSTREAM: ${UPSTREAM:-bunwrite:8080}
+      # On-demand TLS asks one specific address, never the whole range.
+      ASK_UPSTREAM: ${ASK_UPSTREAM:-bunwrite:8080}
       # acme (Caddy obtains certificates), external (TLS_CERT_FILE/TLS_KEY_FILE)
       # or off (an upstream proxy/tunnel terminates TLS).
       TLS_MODE: ${TLS_MODE:-acme}

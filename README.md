@@ -652,7 +652,7 @@ assets, saving to S3 and the HTTP examples.
 
 | Area | Endpoints |
 | --- | --- |
-| Databases | document CRUD, bulk create/upsert/update/delete, increment/decrement, queries, row permissions, transactions with conflict detection, database/collection metadata |
+| Databases | document CRUD, bulk create/upsert/update/delete, increment/decrement, queries, row permissions, transactions with conflict detection, `If-Match`/`$revision` optimistic concurrency, database/collection metadata |
 | Account | email + password, email OTP, token sessions, OAuth2 token flow (Google, Facebook, GitHub, Apple), recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
@@ -672,6 +672,50 @@ Abuse limits match Appwrite's: 10 tries an hour per IP and account on sign-in,
 codes and recovery for browsers (API keys are exempt), and ten wrong codes
 cancel the real one.
 
+## Optimistic concurrency
+
+Every document carries a `$revision`. It starts at `1` and increments on each
+write, so a client can say "only write if this is still the document I read".
+This is the cheapest way to prevent lost updates and double submits; it needs
+no locks and works across every worker.
+
+Send the revision a read returned in one of three ways:
+
+```ts
+// 1. Inside data — works with the Appwrite SDK unchanged.
+await databases.updateDocument({
+  databaseId, collectionId, documentId,
+  data: { ...changes, $revision: doc.$revision },
+})
+
+// 2. As a param, for a custom client.
+//    PATCH .../documents/doc-1?revision=3
+
+// 3. As the standard If-Match header (allowed by CORS for browser clients).
+//    If-Match: "3"   or   If-Match: 3
+```
+
+A stale revision returns **409 `document_update_conflict`** and writes nothing;
+fetch the document again, merge, retry. `If-Match: *` only requires the document
+to exist. The precondition applies to single-document update, upsert, delete and
+increment/decrement; a mismatch on an upsert never creates the document.
+Transactions already detect conflicts at commit, so `If-Match` is rejected when
+`transactionId` is also present.
+
+```ts
+try {
+  await databases.updateDocument({ databaseId, collectionId, documentId, data: { ...changes, $revision } })
+} catch (error) {
+  if (error.type === 'document_update_conflict') {
+    // Someone else wrote first: refetch, show the new value, or retry.
+  }
+}
+```
+
+For a booking slot, the revision is the guard against two people taking the same
+row. A unique index on the slot key is still worth adding as the hard guarantee:
+even a caller that ignores `$revision` cannot insert a duplicate.
+
 ## Known differences from Appwrite
 
 - An accented first letter sorts after `Z` (`Éclair` after `Yogurt`);
@@ -679,6 +723,9 @@ cancel the real one.
 - Search keeps English stop words ("the", "and") that PostgreSQL drops.
 - On the raw wire, some documents list `$id` before their attributes where live
   lists it after; the SDKs parse both to the same object.
+- Every document includes a `$revision` field (see
+  [Optimistic concurrency](#optimistic-concurrency)); Appwrite has no equivalent
+  and its SDK types do not declare it, so TypeScript needs a cast to read it.
 - Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
   login; magic URLs; sending messages (topics are stored only); server-side
   rendered Sites and site builds (sites are served as uploaded).

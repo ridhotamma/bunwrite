@@ -3,7 +3,8 @@
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
 admin console (`/console`); on Linux, `WORKERS=auto` starts one such process per
-CPU behind a shared port (see [Multiple processes](#multiple-processes)). The
+CPU behind a shared port, plus a dedicated writer (see
+[Multiple processes](#multiple-processes)). The
 default project uses the main SQLite file; additional projects each use their
 own database under `data/projects/<id>/`, plus their own storage, backups and
 function folder.
@@ -31,11 +32,12 @@ function folder.
 
 ## Multiple processes
 
-On Linux, `WORKERS=auto` (the Docker image default) starts one HTTP process per
-CPU. All of them bind the same port with `SO_REUSEPORT` and open the same
-SQLite file in WAL mode: the kernel spreads connections, reads run in parallel
-and SQLite serializes writes. Every connection maps up to `SQLITE_MMAP_MB` of
-the file (default 256 MB; `0` disables mmap), so reads come from shared mapped
+On Linux, `WORKERS=auto` (the Docker image default) starts one public HTTP
+process per CPU plus one dedicated writer. The public processes bind the same
+port with `SO_REUSEPORT`, or one port each when `WORKER_PORTS` is on, and all
+processes open the same SQLite file in WAL mode: reads run in parallel and
+SQLite serializes writes. Every connection maps up to `SQLITE_MMAP_MB` of the
+file (default 256 MB; `0` disables mmap), so reads come from shared mapped
 pages. The processes coordinate through the database (`src/cluster`):
 
 - **Leader lease** — `_cluster_leases` names the process that runs cron
@@ -51,6 +53,17 @@ pages. The processes coordinate through the database (`src/cluster`):
   worker compares them on every request (set `CACHE_CHECK_MS` to throttle) and
   reloads the affected cache, so a schema push or a settings change reaches
   every process. The same counters carry project additions and removals.
+- **Dedicated writer** — process 0 opens only a loopback listener on
+  `127.0.0.1:${WRITER_PORT}` and never accepts public traffic, so a synchronous
+  WAL checkpoint or lock wait cannot stall client connections. Public workers
+  that receive a database write (`POST`/`PUT`/`PATCH`/`DELETE` under
+  `/v1/databases`) forward it there and return the writer's response, so one
+  process owns SQLite's write connection. `WRITE_BATCH_MS` groups writes that
+  arrive together into one transaction (each with its own savepoint), which
+  removes a commit per request at peak. If the writer is restarting, a reader
+  retries briefly and then serves the write locally; `WRITER_PORT=0` disables
+  the split entirely. Public workers also answer `503` with `Retry-After` when
+  `MAX_INFLIGHT` is reached, instead of queueing without bound.
 - **Shared rate limits and sessions** — `_rate_limits` holds login and token
   windows that every worker increments. A worker caches a session and its roles
   for 30 seconds; `_meta.auth` triggers on sessions, users, memberships and

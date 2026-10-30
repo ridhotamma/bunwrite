@@ -272,7 +272,27 @@ export function configuredSqliteMmapMb(env: Env = process.env): number {
 /** `SQLITE_WAL_AUTOCHECKPOINT`: pages before a WAL checkpoint; 0 turns automatic checkpoints off. */
 export function configuredWalAutocheckpoint(env: Env = process.env): number {
   const value = Number(env.SQLITE_WAL_AUTOCHECKPOINT)
-  if (env.SQLITE_WAL_AUTOCHECKPOINT === undefined || env.SQLITE_WAL_AUTOCHECKPOINT === '' || !Number.isFinite(value) || value < 0) return 2000
+  // 10,000 pages (~40 MB) instead of SQLite's 1,000-page default: a busy
+  // writer checkpoints less often, and each checkpoint is off the read path
+  // because a cluster gives the writer its own process.
+  if (env.SQLITE_WAL_AUTOCHECKPOINT === undefined || env.SQLITE_WAL_AUTOCHECKPOINT === '' || !Number.isFinite(value) || value < 0) return 10000
+  return Math.round(value)
+}
+
+/**
+ * `SQLITE_BUSY_TIMEOUT_MS`: how long a write waits for SQLite's lock. The
+ * writer owns that lock, so it can afford to wait; readers must fail fast
+ * instead of blocking a public worker's event loop for seconds.
+ */
+export function configuredBusyTimeout(env: Env = process.env): number {
+  const value = Number(env.SQLITE_BUSY_TIMEOUT_MS)
+  if (env.SQLITE_BUSY_TIMEOUT_MS === undefined || env.SQLITE_BUSY_TIMEOUT_MS === '' || !Number.isFinite(value) || value < 0) return 5000
+  return Math.round(value)
+}
+
+export function configuredReaderBusyTimeout(env: Env = process.env): number {
+  const value = Number(env.SQLITE_READER_BUSY_TIMEOUT_MS)
+  if (env.SQLITE_READER_BUSY_TIMEOUT_MS === undefined || env.SQLITE_READER_BUSY_TIMEOUT_MS === '' || !Number.isFinite(value) || value < 0) return 500
   return Math.round(value)
 }
 

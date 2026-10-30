@@ -4,7 +4,12 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { configuredSqliteCacheMb, configuredSqliteMmapMb, configuredWalAutocheckpoint } from '~/system/autotune'
+import {
+  configuredBusyTimeout,
+  configuredSqliteCacheMb,
+  configuredSqliteMmapMb,
+  configuredWalAutocheckpoint,
+} from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
 import * as schema from './system-schema'
 
@@ -69,6 +74,7 @@ export function openDb(
   cacheMb = configuredSqliteCacheMb(),
   mmapMb = configuredSqliteMmapMb(),
   walPages = configuredWalAutocheckpoint(),
+  busyTimeoutMs = configuredBusyTimeout(),
 ): Db {
   if (path !== ':memory:' && !path.startsWith('file::memory:')) {
     mkdirSync(dirname(path), { recursive: true })
@@ -83,7 +89,7 @@ export function openDb(
   // WAL needs an exclusive lock, and SQLite returns SQLITE_BUSY at once when
   // another worker is doing the same instead of waiting on busy_timeout.
   withMigrationLock(path, () => {
-    sqlite.run('PRAGMA busy_timeout = 5000')
+    sqlite.run(`PRAGMA busy_timeout = ${Math.max(0, Math.round(busyTimeoutMs))}`)
     sqlite.run('PRAGMA journal_mode = WAL')
     sqlite.run('PRAGMA synchronous = NORMAL')
     sqlite.run('PRAGMA foreign_keys = ON')

@@ -5,5 +5,5 @@ import { runSupervisor } from './cluster/supervisor'
 import { startServer } from './server'
 
 const cluster = clusterConfig()
-if (cluster.supervisor) await runSupervisor(cluster.workers)
+if (cluster.supervisor) await runSupervisor(cluster.publicWorkers)
 else await startServer()

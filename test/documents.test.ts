@@ -47,7 +47,7 @@ describe('document shape', () => {
 
   test('select keeps system fields and the chosen attributes only', async () => {
     const res = await db.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.equal('$id', 'p1'), Query.select(['$id', 'name'])] })
-    expect(Object.keys(res.documents[0]!)).toEqual(['$id', '$sequence', '$collectionId', '$databaseId', '$createdAt', '$updatedAt', '$permissions', 'name'])
+    expect(Object.keys(res.documents[0]!)).toEqual(['$id', '$sequence', '$collectionId', '$databaseId', '$createdAt', '$updatedAt', '$permissions', '$revision', 'name'])
   })
 
   test('total:false reports 0', async () => {

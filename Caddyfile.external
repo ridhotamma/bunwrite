@@ -19,14 +19,36 @@
 # handy for a quick local look but not useful on a VPS.
 {
 	on_demand_tls {
-		ask http://bunwrite:8080/.well-known/bunwrite/host
+		# Keep this a single address even when UPSTREAM is a worker range.
+		ask http://{$ASK_UPSTREAM:bunwrite:8080}/.well-known/bunwrite/host
 	}
 }
 
 {$DOMAIN:localhost} {
 	encode zstd gzip
 	tls {$TLS_CERT_FILE} {$TLS_KEY_FILE}
-	reverse_proxy bunwrite:8080
+	reverse_proxy {$UPSTREAM:bunwrite:8080} {
+		lb_policy least_conn
+		health_uri /v1/health
+		health_interval 3s
+		health_timeout 2s
+		health_fails 3
+		health_passes 1
+		health_headers {
+			Host {$DOMAIN:localhost}
+		}
+		fail_duration 10s
+		max_fails 5
+		unhealthy_latency 5s
+		lb_try_duration 3s
+		transport http {
+			# Bun closes idle connections after HTTP_IDLE_TIMEOUT (30s default);
+			# keep Caddy's pool shorter so it never reuses a closed one.
+			keepalive 5s
+			dial_timeout 3s
+			response_header_timeout 30s
+		}
+	}
 }
 
 # Every other host: Bunwrite's sites and functions, covered by the loaded
@@ -36,5 +58,24 @@ https:// {
 	tls {$TLS_CERT_FILE} {$TLS_KEY_FILE} {
 		on_demand
 	}
-	reverse_proxy bunwrite:8080
+	reverse_proxy {$UPSTREAM:bunwrite:8080} {
+		lb_policy least_conn
+		health_uri /v1/health
+		health_interval 3s
+		health_timeout 2s
+		health_fails 3
+		health_passes 1
+		health_headers {
+			Host {$DOMAIN:localhost}
+		}
+		fail_duration 10s
+		max_fails 5
+		unhealthy_latency 5s
+		lb_try_duration 3s
+		transport http {
+			keepalive 5s
+			dial_timeout 3s
+			response_header_timeout 30s
+		}
+	}
 }

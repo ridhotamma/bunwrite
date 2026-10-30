@@ -5,6 +5,7 @@ import { BackupService } from './backups/service'
 import { VersionMonitor } from './cluster/versions'
 import type { Config } from './config'
 import type { Db } from './db/connection'
+import { WriteBatcher } from './documents/batcher'
 import { DocumentStore } from './documents/store'
 import { FunctionService, readEnvFile } from './functions/service'
 import { functionHost, siteHost } from './lib/hosts'
@@ -34,6 +35,8 @@ export interface Services {
   versions: VersionMonitor
   registry: Registry
   store: DocumentStore
+  /** Groups concurrent document writes into one transaction (WRITE_BATCH_MS). */
+  writes: WriteBatcher
   transactions: TransactionService
   auth: AuthService
   teams: TeamService
@@ -72,6 +75,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const versions = new VersionMonitor(db, config.cacheCheckMs)
   const registry = new Registry(db)
   const store = new DocumentStore(db)
+  const writes = new WriteBatcher(store, config.writeBatchMs)
   const transactions = new TransactionService(db, registry, store)
   const auth = new AuthService(db, config, store)
   const teams = new TeamService(db, store, auth)
@@ -99,7 +103,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
   proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
-  const services = { config, db, versions, registry, store, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as Services
+  const services = { config, db, versions, registry, store, writes, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(

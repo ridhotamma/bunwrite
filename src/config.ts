@@ -1,11 +1,12 @@
 import { dirname, resolve } from 'node:path'
 
-import { clusterConfig } from './cluster/config'
+import { clusterConfig, workerPortsEnabled } from './cluster/config'
 import type { FunctionSandbox } from './functions/sandbox'
 import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 import { DEFAULT_RUNTIMES, type RuntimesConfig } from './runtimes/install'
+import { configuredBusyTimeout, configuredReaderBusyTimeout } from './system/autotune'
 
 export interface SmtpConfig {
   host: string
@@ -181,10 +182,39 @@ export interface BootstrapInfo {
 
 export interface Config {
   port: number
-  /** HTTP processes sharing the port (WORKERS); 1 means a single process. */
+  /** Total HTTP processes including the dedicated writer (WORKERS + 1). */
   workers: number
-  /** This process's position in the cluster, 0-based. */
+  /** Processes that accept public HTTP traffic (WORKERS). */
+  publicWorkers: number
+  /**
+   * Bind one port per public worker (PORT, PORT+1, ...) instead of sharing one
+   * port with SO_REUSEPORT. A proxy can then health-check each worker and route
+   * around a stalled one.
+   */
+  workerPorts: boolean
+  /** This process's position in the cluster, 0-based. Index 0 is the writer. */
   workerIndex: number
+  /**
+   * Loopback port where worker 0 serves database writes. The other workers
+   * forward write requests here so SQLite has one writer process. 0 disables
+   * both the listener and the forwarding.
+   */
+  writerPort: number
+  /** Interface for the writer listener; loopback by default, workers share a namespace. */
+  writerHost: string
+  /** Group document writes arriving within this many ms into one transaction; 0 disables. */
+  writeBatchMs: number
+  /**
+   * Total in-flight HTTP requests allowed across the public workers before new
+   * ones get a 503. 0 disables shedding. Health checks are always allowed.
+   */
+  maxInflight: number
+  /** Bun's HTTP idle timeout in seconds (0 disables, maximum 255). */
+  httpIdleTimeout: number
+  /** How long a write waits for SQLite's lock (writer process). */
+  busyTimeoutMs: number
+  /** How long a read waits for SQLite's lock; short so a public worker never blocks for long. */
+  readerBusyTimeoutMs: number
   /** How often to check for settings/schema changes made by another process. */
   cacheCheckMs: number
   /** How often a worker with WebSocket clients reads the realtime bus. */
@@ -401,10 +431,24 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const ssrIdle = wholeNumber(env.SITES_SSR_IDLE_MS, 5 * 60 * 1000)
   const ssrMax = wholeNumber(env.SITES_SSR_MAX_PROCESSES, 2)
   const ssrKeep = wholeNumber(env.SITES_SSR_KEEP_PREVIOUS, 2)
+  const workerPorts = workerPortsEnabled(env)
+  const idleTimeout = wholeNumber(env.HTTP_IDLE_TIMEOUT, 30)
   return {
     port,
     workers: cluster.workers,
+    publicWorkers: cluster.publicWorkers,
+    workerPorts,
     workerIndex: cluster.workerIndex,
+    // Keep the writer off the public port range when workers bind PORT..PORT+N-1.
+    writerPort: wholeNumber(env.WRITER_PORT, workerPorts ? port + 100 : port + 1),
+    writerHost: env.WRITER_HOST || '127.0.0.1',
+    // A few milliseconds is invisible next to a network round trip but lets
+    // the writer group every request that is already waiting on the lock.
+    writeBatchMs: wholeNumber(env.WRITE_BATCH_MS, cluster.workers > 1 ? 1 : 0),
+    maxInflight: wholeNumber(env.MAX_INFLIGHT, 200),
+    httpIdleTimeout: Math.min(255, Math.max(0, idleTimeout)),
+    busyTimeoutMs: configuredBusyTimeout(env),
+    readerBusyTimeoutMs: configuredReaderBusyTimeout(env),
     cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),

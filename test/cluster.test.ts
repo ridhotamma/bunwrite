@@ -4,7 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { keyCaller } from '~/auth/caller'
-import { clusterConfig, resolveWorkers } from '~/cluster/config'
+import {
+  clusterConfig,
+  clusterProcessCount,
+  resolveWorkers,
+  workerPort,
+  workerPortsEnabled,
+  writerEnabled,
+} from '~/cluster/config'
 import { LeaderLease } from '~/cluster/leader'
 import { workerCommand } from '~/cluster/supervisor'
 import { VersionMonitor } from '~/cluster/versions'
@@ -67,13 +74,45 @@ describe('worker count', () => {
     expect(resolveWorkers('4', 'darwin')).toBe(1)
   })
 
-  test('a supervisor passes the total to its workers', () => {
-    expect(clusterConfig({ WORKERS: '3' }, 'linux')).toEqual({ workers: 3, workerIndex: 0, supervisor: true })
-    expect(clusterConfig({ BUNWRITE_WORKER: '2', BUNWRITE_CLUSTER_SIZE: '3', WORKERS: '3' }, 'linux')).toEqual({
-      workers: 3,
+  test('a supervisor adds one writer process beside the public workers', () => {
+    expect(clusterConfig({ WORKERS: '3' }, 'linux')).toEqual({
+      workers: 4,
+      publicWorkers: 3,
+      workerIndex: 0,
+      supervisor: true,
+    })
+    expect(clusterConfig({ BUNWRITE_WORKER: '2', BUNWRITE_CLUSTER_SIZE: '4', WORKERS: '3' }, 'linux')).toEqual({
+      workers: 4,
+      publicWorkers: 3,
       workerIndex: 2,
       supervisor: false,
     })
+    // WRITER_PORT=0 keeps local writes, so every process serves public traffic.
+    expect(clusterConfig({ WORKERS: '3', WRITER_PORT: '0' }, 'linux')).toEqual({
+      workers: 3,
+      publicWorkers: 3,
+      workerIndex: 0,
+      supervisor: true,
+    })
+    expect(clusterConfig({}, 'linux')).toEqual({ workers: 1, publicWorkers: 1, workerIndex: 0, supervisor: false })
+  })
+
+  test('process and port helpers follow the writer layout', () => {
+    expect(clusterProcessCount(1)).toBe(1)
+    expect(clusterProcessCount(4)).toBe(5)
+    expect(clusterProcessCount(4, false)).toBe(4)
+    expect(writerEnabled({})).toBe(true)
+    expect(writerEnabled({ WRITER_PORT: '0' })).toBe(false)
+    expect(workerPortsEnabled({})).toBe(false)
+    expect(workerPortsEnabled({ WORKER_PORTS: 'true' })).toBe(true)
+    expect(workerPortsEnabled({ WORKER_PORTS: 'yes' })).toBe(true)
+    expect(workerPort(8080, 0, true)).toBe(8080)
+    expect(workerPort(8080, 1, true)).toBe(8080)
+    expect(workerPort(8080, 3, true)).toBe(8082)
+    expect(workerPort(8080, 3, false)).toBe(8080)
+    // No dedicated writer: index 0 is the first public worker.
+    expect(workerPort(8080, 0, true, 0)).toBe(8080)
+    expect(workerPort(8080, 2, true, 0)).toBe(8082)
   })
 
   test('workers are spawned with the executable and the user arguments only', () => {
@@ -92,6 +131,18 @@ describe('worker count', () => {
     expect(workerCommand(['/Users/me/.bun/bin/bun', '/repo/src/index.ts'], '/Users/me/.bun/bin/bun')).toEqual([
       '/Users/me/.bun/bin/bun',
     ])
+  })
+})
+
+describe('sqlite connection', () => {
+  test('the busy timeout is configurable per process role', () => {
+    const writer = openDb(tempDatabase(), undefined, undefined, undefined, 5000)
+    databases.push(writer)
+    const reader = openDb(tempDatabase(), undefined, undefined, undefined, 250)
+    databases.push(reader)
+
+    expect(writer.sqlite.query('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 })
+    expect(reader.sqlite.query('PRAGMA busy_timeout').get()).toEqual({ timeout: 250 })
   })
 })
 

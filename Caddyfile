@@ -11,7 +11,8 @@
 	# and custom domains are fetched on their first visit, but only for hosts
 	# Bunwrite says it serves.
 	on_demand_tls {
-		ask http://{$UPSTREAM:bunwrite:8080}/.well-known/bunwrite/host
+		# Keep this a single address even when UPSTREAM is a worker range.
+		ask http://{$ASK_UPSTREAM:bunwrite:8080}/.well-known/bunwrite/host
 	}
 }
 
@@ -19,7 +20,33 @@
 	encode zstd gzip
 
 	# Compose's service name by default; docker-compose.host.yml sets 127.0.0.1:8080.
-	reverse_proxy {$UPSTREAM:bunwrite:8080}
+	# Set UPSTREAM to a range (for example bunwrite:8080-8083) when WORKER_PORTS=1,
+	# so Caddy can health-check each worker and route around a stalled one.
+	reverse_proxy {$UPSTREAM:bunwrite:8080} {
+		lb_policy least_conn
+		health_uri /v1/health
+		health_interval 3s
+		health_timeout 2s
+		health_fails 3
+		health_passes 1
+		health_headers {
+			Host {$DOMAIN:localhost}
+		}
+		fail_duration 10s
+		max_fails 5
+		unhealthy_latency 5s
+		lb_try_duration 3s
+		transport http {
+			# Bun closes idle connections after HTTP_IDLE_TIMEOUT (30s default).
+			# Caddy's 2m default outlives that and can write requests onto
+			# half-dead pooled connections.
+			keepalive 5s
+			dial_timeout 3s
+			# Backstop for a worker that accepts a request and never answers.
+			# Raise this if an endpoint legitimately renders for longer.
+			response_header_timeout 30s
+		}
+	}
 }
 
 # Every other host: Bunwrite's sites and functions. Point wildcard DNS records
@@ -29,5 +56,24 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
-	reverse_proxy {$UPSTREAM:bunwrite:8080}
+	reverse_proxy {$UPSTREAM:bunwrite:8080} {
+		lb_policy least_conn
+		health_uri /v1/health
+		health_interval 3s
+		health_timeout 2s
+		health_fails 3
+		health_passes 1
+		health_headers {
+			Host {$DOMAIN:localhost}
+		}
+		fail_duration 10s
+		max_fails 5
+		unhealthy_latency 5s
+		lb_try_duration 3s
+		transport http {
+			keepalive 5s
+			dial_timeout 3s
+			response_header_timeout 30s
+		}
+	}
 }

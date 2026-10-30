@@ -25,6 +25,34 @@ const obj = (value: unknown): Record<string, unknown> => {
 
 const docs = (value: unknown): Record<string, unknown>[] => list(value).map(obj)
 
+/**
+ * Optimistic-concurrency precondition for a single-document write. Accepts the
+ * standard `If-Match` header (the Appwrite SDKs let a client set headers) and,
+ * for convenience, `$revision` inside `data` or a `revision` param. A revision
+ * is the `$revision` value a previous read returned; `*` only requires the
+ * document to exist.
+ */
+function expectedRevision(request: Request, value: unknown): number | '*' | undefined {
+  const header = request.headers.get('if-match')?.trim()
+  const raw = header || (value === undefined || value === null || value === '' ? undefined : value)
+  if (raw === undefined) return undefined
+  // `If-Match: "3", "4"` means "any of these"; this API stores one revision.
+  const first = String(raw).split(',')[0]!.trim()
+  if (first === '*') return '*'
+  const revision = Number(first.replace(/^W\//i, '').replace(/^"|"$/g, ''))
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw err('general_argument_invalid', 'Invalid `If-Match` header or `$revision`: expected a document revision number or "*".')
+  }
+  return revision
+}
+
+/** Transactions already detect conflicts at commit; a staged write cannot carry If-Match. */
+function assertNoRevision(revision: number | '*' | undefined, transactionId: string | undefined): void {
+  if (revision !== undefined && transactionId) {
+    throw err('general_argument_invalid', 'If-Match is not supported with transactionId; transactions detect conflicts at commit.')
+  }
+}
+
 /** The caller's role set is part of every ETag: another user must never reuse one. */
 const callerTag = (caller: AppContext['caller']) => (caller.privileged ? '*' : [...caller.roles].sort().join(','))
 
@@ -87,7 +115,7 @@ export function documentRoutes(router: Router<AppContext>): void {
     return json(ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries), 200, headers)
   })
 
-  router.post(DOCS, ({ ctx, params, path }) => {
+  router.post(DOCS, async ({ ctx, params, path }) => {
     const collection = collectionOf(ctx, path)
     const hasData = params.data !== undefined && params.data !== null
     const hasDocuments = Array.isArray(params.documents) && params.documents.length > 0
@@ -113,11 +141,15 @@ export function documentRoutes(router: Router<AppContext>): void {
     if (staged(ctx, params, path, 'create', String(params.documentId), { data, permissions: params.permissions })) {
       return json(mockDocument(collection, path.stagedId!, data), 201)
     }
-    const doc = ctx.store.createDocument(ctx.caller, collection, {
-      id: params.documentId,
-      data,
-      permissions: params.permissions ?? null,
-    })
+    const { value: doc, events } = await ctx.writes.submit((sink) =>
+      ctx.store.createDocumentInTx(
+        ctx.caller,
+        collection,
+        { id: params.documentId, data, permissions: params.permissions ?? null },
+        { events: sink },
+      ),
+    )
+    ctx.events.push(...events)
     return json(doc, 201)
   })
 
@@ -152,21 +184,28 @@ export function documentRoutes(router: Router<AppContext>): void {
     return json({ total: deleted.length, documents: deleted })
   })
 
-  router.put(`${DOCS}/:documentId`, ({ ctx, params, path }) => {
+  router.put(`${DOCS}/:documentId`, async ({ ctx, params, path, request }) => {
     const collection = collectionOf(ctx, path)
-    const data = obj(params.data)
+    const { $revision, ...data } = obj(params.data)
+    const revision = expectedRevision(request, $revision ?? params.revision)
+    assertNoRevision(revision, str(params.transactionId))
     if (staged(ctx, params, path, 'upsert', path.documentId!, { data, permissions: params.permissions })) {
       return json(mockDocument(collection, path.documentId!, data), 201)
     }
-    const { doc } = ctx.store.upsertDocument(ctx.caller, collection, path.documentId!, data, params.permissions ?? null)
-    return json(doc, 201)
+    const { value, events } = await ctx.writes.submit((sink) =>
+      ctx.store.upsertDocumentInTx(ctx.caller, collection, path.documentId!, data, params.permissions ?? null, { events: sink, revision }),
+    )
+    ctx.events.push(...events)
+    return json(value.doc, 201)
   })
 
-  router.patch(`${DOCS}/:documentId`, ({ ctx, params, path }) => {
+  router.patch(`${DOCS}/:documentId`, async ({ ctx, params, path, request }) => {
     const collection = collectionOf(ctx, path)
-    const data = obj(params.data)
+    const { $revision, ...data } = obj(params.data)
+    const revision = expectedRevision(request, $revision ?? params.revision)
     const transactionId = str(params.transactionId)
     if (transactionId) {
+      assertNoRevision(revision, transactionId)
       const base = ctx.transactions.withStaged(ctx.caller, transactionId, () => {
         try {
           return ctx.store.getDocument(ctx.caller, collection, path.documentId!)
@@ -177,26 +216,48 @@ export function documentRoutes(router: Router<AppContext>): void {
       staged(ctx, params, path, 'update', path.documentId!, { data, permissions: params.permissions })
       return json(mockDocument(collection, path.documentId!, data, base))
     }
-    const doc = ctx.store.updateDocument(ctx.caller, collection, path.documentId!, data, params.permissions ?? null)
+    const { value: doc, events } = await ctx.writes.submit((sink) =>
+      ctx.store.updateDocumentInTx(ctx.caller, collection, path.documentId!, data, params.permissions ?? null, { events: sink, revision }),
+    )
+    ctx.events.push(...events)
     return json(doc)
   })
 
-  router.delete(`${DOCS}/:documentId`, ({ ctx, params, path }) => {
+  router.delete(`${DOCS}/:documentId`, async ({ ctx, params, path, request }) => {
     const collection = collectionOf(ctx, path)
+    const revision = expectedRevision(request, params.revision)
+    assertNoRevision(revision, str(params.transactionId))
     if (staged(ctx, params, path, 'delete', path.documentId!, {})) return noContent()
-    ctx.store.deleteDocument(ctx.caller, collection, path.documentId!)
+    const { events } = await ctx.writes.submit((sink) =>
+      ctx.store.deleteDocumentInTx(ctx.caller, collection, path.documentId!, { events: sink, revision }),
+    )
+    ctx.events.push(...events)
     return noContent()
   })
 
   for (const action of ['increment', 'decrement'] as const) {
-    router.patch(`${DOCS}/:documentId/:attribute/${action}`, ({ ctx, params, path }) => {
+    router.patch(`${DOCS}/:documentId/:attribute/${action}`, async ({ ctx, params, path, request }) => {
       const collection = collectionOf(ctx, path)
       const value = num(params.value, 1)!
       const bound = num(action === 'increment' ? params.max : params.min) ?? null
+      const revision = expectedRevision(request, params.revision)
+      assertNoRevision(revision, str(params.transactionId))
       if (staged(ctx, params, path, action, path.documentId!, { attribute: path.attribute, value, bound })) {
         return json(mockDocument(collection, path.documentId!, { [path.attribute!]: value }))
       }
-      const doc = ctx.store.incrementAttribute(ctx.caller, collection, path.documentId!, path.attribute!, value, bound, action === 'increment' ? 1 : -1)
+      const { value: doc, events } = await ctx.writes.submit((sink) =>
+        ctx.store.incrementAttributeInTx(
+          ctx.caller,
+          collection,
+          path.documentId!,
+          path.attribute!,
+          value,
+          bound,
+          action === 'increment' ? 1 : -1,
+          { events: sink, revision },
+        ),
+      )
+      ctx.events.push(...events)
       return json(doc)
     })
   }

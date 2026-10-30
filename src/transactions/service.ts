@@ -390,6 +390,7 @@ export function mockDocument(collection: Collection, id: string, data: Record<st
     $createdAt: '',
     $updatedAt: '',
     $permissions: [],
+    $revision: 0,
     ...(base ?? {}),
     ...rest,
   } as Doc

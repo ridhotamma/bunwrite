@@ -37,8 +37,8 @@ Docker networking or the network.
   write burst. `CACHE_CHECK_MS` can throttle the check at the cost of a short
   stale window.
 - [x] **SQLite mmap** (`SQLITE_MMAP_MB`, default 256 MB, `0` disables it).
-- [x] **WAL tuning.** `SQLITE_WAL_AUTOCHECKPOINT` (default 2000 pages) is set per
-  connection, so checkpoint stalls are less frequent under several writers.
+- [x] **WAL tuning.** `SQLITE_WAL_AUTOCHECKPOINT` (default 10000 pages) is set
+  per connection, so checkpoint stalls are less frequent under several writers.
 - [x] **HTTP compression in one place.** `docker-compose.yml` sets
   `COMPRESSION=false` because Caddy compresses at the edge.
   `WEBSOCKET_COMPRESSION` stays independent for realtime frames.
@@ -58,6 +58,28 @@ concurrent document creates (48 at a time) with 600 successes and no "database
 is locked" errors. The new tests cover a write on one connection invalidating
 another connection's list cache, a session revocation across connections,
 shared rate limits, and ETag invalidation.
+
+## Stress-test follow-up (implemented, not yet measured)
+
+The 2026-10-30 booking run showed a hard tail above ~200 concurrent clients:
+`/health` at 400 connections had 0.6–2.4% timeouts while p50 stayed at 13–27 ms,
+and some mixed paths went to 0% for a whole run. The likely causes were a proxy
+keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
+
+- [x] **Caddy keepalive below Bun's idle timeout.** Caddy's 2m default outlives
+  Bun's 10s; the bundled Caddyfiles now use `keepalive 5s`,
+  `response_header_timeout 15s`, active health checks and `least_conn`.
+- [x] **Dedicated writer process.** A cluster starts `WORKERS` public processes
+  plus one writer that never accepts public traffic (`clusterProcessCount`).
+- [x] **Per-worker ports.** `WORKER_PORTS=true` binds `PORT..PORT+N-1` so the
+  proxy can health-check each process and route around a stalled one.
+- [x] **Load shedding.** `MAX_INFLIGHT` (default 200, total across public
+  workers) returns `503` + `Retry-After` instead of holding a black-holed
+  request; health checks are exempt.
+- [x] **Fast reader lock waits.** `SQLITE_READER_BUSY_TIMEOUT_MS` (default
+  500 ms) replaces the 5 s wait on public workers; the writer keeps 5 s.
+- [ ] Re-run the booking matrix at 200/300/400 clients with `WORKER_PORTS=true`
+  to confirm the tail is gone before treating 300+ as safe.
 
 ## Still to do, in order
 
@@ -128,12 +150,23 @@ request.
 - [x] Use `RETURNING` on Linux instead of re-reading each inserted row (the
   macOS SQLite 3.39 bug does not apply; Bun bundles its own SQLite on Linux).
   Inserts, updates and increments now use it there.
-- [x] Tune `wal_autocheckpoint` (`SQLITE_WAL_AUTOCHECKPOINT`, default 2000 pages).
-- [ ] Group several writes into one transaction during peaks. The transaction
-  API and the bulk document endpoints already do this; automatic batching is
-  not needed yet.
-- [ ] If lock waits dominate profiles, send write methods to a single writer
-  worker through Caddy (the transaction API and writes from functions too).
+- [x] Tune `wal_autocheckpoint` (`SQLITE_WAL_AUTOCHECKPOINT`, default 10000 pages).
+- [x] **Group several writes into one transaction during peaks.** Single-document
+  writes that arrive together now share one transaction (`WRITE_BATCH_MS`,
+  default 1 ms in a cluster), each in its own savepoint so one failure does not
+  roll back the others. The transaction API and the bulk document endpoints
+  already batched; this covers the ordinary one-document-per-request path.
+- [x] **Send database writes to a dedicated writer process.** A cluster starts
+  `WORKERS` public processes plus one writer that only opens a loopback
+  listener (`WRITER_PORT`, default `PORT + 1`, or `PORT + 100` with
+  `WORKER_PORTS`). Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` under
+  `/v1/databases` and return the response. This is done in-process rather than
+  in Caddy, so it works with any proxy and in direct installs; `WRITER_PORT=0`
+  reverts it. If the writer is restarting, readers retry and then serve the
+  write locally. Auth, storage,
+  sites and asynchronous function runs keep writing on their own worker (they
+  already use immediate transactions), so the split does not serialise uploads
+  or function CPU work.
 
 ### 6. Fewer calls from the app (pesanle frontend repo)
 

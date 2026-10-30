@@ -81,7 +81,16 @@ export function testConfig(over: Partial<Config> = {}): Config {
   return {
     port: 0,
     workers: 1,
+    publicWorkers: 1,
+    workerPorts: false,
     workerIndex: 0,
+    writerPort: 0,
+    writerHost: '127.0.0.1',
+    writeBatchMs: 0,
+    maxInflight: 0,
+    httpIdleTimeout: 30,
+    busyTimeoutMs: 5000,
+    readerBusyTimeoutMs: 500,
     cacheCheckMs: 0,
     realtimeBusPollMs: 100,
     // The suite checks Appwrite compatibility through Appwrite's SDKs; test/compat.test.ts covers Bunwrite's names.

@@ -128,6 +128,9 @@ export function decodeRow(collection: Collection, row: Record<string, unknown>, 
     $createdAt: row._createdAt as string,
     $updatedAt: row._updatedAt as string,
     $permissions: JSON.parse((row._permissions as string) || '[]'),
+    // Bunwrite extension: bumped on every write; send it back with If-Match
+    // (or as data.$revision) to make an update conditional.
+    $revision: Number(row._rev ?? 1),
   }
   for (const a of collection.attributes) {
     if (select && !select.has(a.key)) continue

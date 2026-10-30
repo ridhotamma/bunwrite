@@ -3,9 +3,11 @@ import type { Server } from 'bun'
 import { keyCaller, resolveCaller, type Caller } from './auth/caller'
 import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
+import { forwardDatabaseWrite, shouldForwardDatabaseWrite } from './cluster/writer'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
+import type { DocEvent } from './documents/store'
 import { apiHeader, assertCompatHeaders, corsHeaderNames } from './lib/compat'
 import { addVary, compressResponse } from './lib/compress'
 import { isStreaming } from './lib/streaming'
@@ -41,12 +43,16 @@ export interface AppContext extends Services {
   caller: Caller
   /** Git deployments for the whole server (GitHub App, webhooks, repository links). */
   hub: VcsHub
+  /** Events of this request's batched writes; published once the handler returns. */
+  events: DocEvent[]
 }
 
 interface RequestMeta {
   auth?: string
   error?: string
   project?: string
+  /** Handed to the writer worker; that listener logs the real request. */
+  forwarded?: boolean
 }
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
@@ -62,7 +68,7 @@ const HTMX_RESPONSE_HEADERS =
 /** Bunwrite's and Appwrite's request headers, by short name (see lib/compat). */
 const API_HEADERS = corsHeaderNames(['Project', 'Key', 'Locale', 'Mode', 'JWT', 'Response-Format', 'Timeout', 'ID', 'Timestamp', 'Session', 'Organization'])
 
-const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
+const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, If-Match, If-None-Match, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
 
 const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, ${HTMX_RESPONSE_HEADERS}`
 
@@ -244,6 +250,17 @@ export function createApp(source: Services | ProjectResolver) {
     meta.project = runtime.info.id
     if (services !== control) syncServices(services)
 
+    // Cluster mode: one process owns the write connection, so hand database
+    // writes to it. If it is unreachable, `forwardDatabaseWrite` returns null
+    // and this worker handles the request itself so writes never fail open.
+    if (shouldForwardDatabaseWrite(services.config, request.method, pathname)) {
+      const forwarded = await forwardDatabaseWrite(services.config, request)
+      if (forwarded) {
+        meta.forwarded = true
+        return forwarded
+      }
+    }
+
     if (pathname === '/realtime') {
       const caller = await callerOf(services, request, meta)
       if (!caller.privileged) services.access.assertProtocol('websocket')
@@ -264,10 +281,11 @@ export function createApp(source: Services | ProjectResolver) {
       services.access.assertService(pathname)
     }
     services.store.drainEvents()
-    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, hub } })
-    const events = services.store.drainEvents()
-    services.realtime.publish(events)
-    services.webhooks.dispatch(events, caller)
+    const events: DocEvent[] = []
+    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, hub, events } })
+    const published = [...events, ...services.store.drainEvents()]
+    services.realtime.publish(published)
+    services.webhooks.dispatch(published, caller)
     return response
   }
 
@@ -385,7 +403,7 @@ export function createApp(source: Services | ProjectResolver) {
         const logConfig = runtime?.services.config ?? control.config
         // Sampling keeps the hot path cheap while errors are always recorded.
         const sampling = logConfig.logSampleRate < 1 && status < 400
-        if (logConfig.logRequests && !skip && (!sampling || Math.random() < logConfig.logSampleRate)) {
+        if (logConfig.logRequests && !meta.forwarded && !skip && (!sampling || Math.random() < logConfig.logSampleRate)) {
           const entry = {
             id,
             method: request.method,

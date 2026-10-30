@@ -288,7 +288,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
 
 async function importCollection(db: Db, source: Source, collection: Collection, pageSize: number): Promise<{ source: number; imported: number }> {
   const sql = db.sqlite
-  const columns = ['_seq', '_id', '_createdAt', '_updatedAt', '_permissions', ...collection.attributes.map((a) => a.key)]
+  const columns = ['_seq', '_id', '_createdAt', '_updatedAt', '_permissions', '_rev', ...collection.attributes.map((a) => a.key)]
   const insert = sql.query(`INSERT OR REPLACE INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
   const clearPerms = sql.query(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`)
   const addPerm = sql.query(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`)
@@ -310,6 +310,8 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
           normalizeDate(d.$createdAt) ?? now(),
           normalizeDate(d.$updatedAt) ?? now(),
           JSON.stringify(d.$permissions ?? []),
+          // Appwrite has no revision; keep the source's if it is a Bunwrite one.
+          Number(d.$revision) || 1,
           ...collection.attributes.map((a) => encodeLenient(a, d[a.key])),
         )
         clearPerms.run(seq)
@@ -356,7 +358,14 @@ export async function verifyAgainstAppwrite(
     if (remote.total !== local.total) mismatches.push(`${collection.id}: total ${remote.total} vs ${local.total}`)
     remote.documents.forEach((doc, i) => {
       checked++
-      const mine = local.documents[i]
+      const localDoc = local.documents[i]
+      // A real Appwrite source has no `$revision`; ignore our metadata there.
+      const mine = localDoc && doc.$revision === undefined
+        ? (() => {
+            const { $revision, ...rest } = localDoc
+            return rest
+          })()
+        : localDoc
       if (canonical(doc) !== canonical(mine)) {
         const keys = new Set([...Object.keys(doc), ...Object.keys(mine ?? {})])
         const fields = [...keys].filter((k) => canonical(doc[k]) !== canonical(mine?.[k]))

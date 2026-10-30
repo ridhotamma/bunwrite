@@ -4,6 +4,7 @@
  * exits is restarted with backoff; SIGINT/SIGTERM stops them all.
  */
 import { applyAutotune } from '~/system/autotune'
+import { clusterProcessCount, workerPortsEnabled, writerEnabled } from './config'
 
 const MAX_BACKOFF_MS = 30_000
 const SHUTDOWN_GRACE_MS = 10_000
@@ -18,11 +19,19 @@ export function workerCommand(argv: string[] = process.argv, execPath: string = 
   return [execPath, ...argv.slice(2)]
 }
 
-export async function runSupervisor(workers: number): Promise<void> {
+export async function runSupervisor(publicWorkers: number): Promise<void> {
   // Set the runtime limits in this process too, so the workers inherit them
   // before their Bun runtimes start.
   applyAutotune()
-  console.log(`[cluster] starting ${workers} HTTP workers on :${process.env.PORT ?? 8080}`)
+  const withWriter = writerEnabled()
+  const total = clusterProcessCount(publicWorkers, withWriter)
+  const ports = workerPortsEnabled()
+  const port = process.env.PORT ?? '8080'
+  const publicRange = ports ? ` on :${port}-${Number(port) + publicWorkers - 1}` : ` on :${port}`
+  console.log(
+    `[cluster] starting ${publicWorkers} HTTP worker${publicWorkers === 1 ? '' : 's'}${publicRange}` +
+      `${withWriter ? ' + 1 writer' : ''}`,
+  )
 
   const children = new Map<number, ReturnType<typeof Bun.spawn>>()
   const backoff = new Map<number, number>()
@@ -32,7 +41,7 @@ export async function runSupervisor(workers: number): Promise<void> {
     const startedAt = Date.now()
     const child = Bun.spawn({
       cmd: workerCommand(),
-      env: { ...process.env, BUNWRITE_WORKER: String(index), BUNWRITE_CLUSTER_SIZE: String(workers) },
+      env: { ...process.env, BUNWRITE_WORKER: String(index), BUNWRITE_CLUSTER_SIZE: String(total) },
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',
@@ -52,7 +61,7 @@ export async function runSupervisor(workers: number): Promise<void> {
     })
   }
 
-  for (let index = 0; index < workers; index++) spawnWorker(index)
+  for (let index = 0; index < total; index++) spawnWorker(index)
 
   const shutdown = async (signal: string): Promise<void> => {
     if (stopping) return

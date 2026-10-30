@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test'
 import {
   applyAutotune,
   bodyLimitBytes,
+  configuredBusyTimeout,
+  configuredReaderBusyTimeout,
   configuredSqliteCacheMb,
   configuredSqliteMmapMb,
   configuredWalAutocheckpoint,
@@ -265,9 +267,16 @@ describe('fallback limits', () => {
     expect(configuredSqliteMmapMb({ SQLITE_MMAP_MB: '0' })).toBe(0)
   })
 
-  test('configuredWalAutocheckpoint uses SQLITE_WAL_AUTOCHECKPOINT or 2000 pages', () => {
-    expect(configuredWalAutocheckpoint({})).toBe(2000)
+  test('configuredWalAutocheckpoint uses SQLITE_WAL_AUTOCHECKPOINT or 10000 pages', () => {
+    expect(configuredWalAutocheckpoint({})).toBe(10000)
     expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '500' })).toBe(500)
     expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '0' })).toBe(0)
+  })
+
+  test('busy timeouts are separate for the writer and readers', () => {
+    expect(configuredBusyTimeout({})).toBe(5000)
+    expect(configuredBusyTimeout({ SQLITE_BUSY_TIMEOUT_MS: '1500' })).toBe(1500)
+    expect(configuredReaderBusyTimeout({})).toBe(500)
+    expect(configuredReaderBusyTimeout({ SQLITE_READER_BUSY_TIMEOUT_MS: '100' })).toBe(100)
   })
 })

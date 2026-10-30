@@ -19,8 +19,26 @@
 
 :80 {
 	encode zstd gzip
-	reverse_proxy bunwrite:8080 {
+	reverse_proxy {$UPSTREAM:bunwrite:8080} {
 		# The public request arrived over the provider's HTTPS; this hop is HTTP.
 		header_up X-Forwarded-Proto https
+
+		lb_policy least_conn
+		health_uri /v1/health
+		health_interval 3s
+		health_timeout 2s
+		health_fails 3
+		health_passes 1
+		fail_duration 10s
+		max_fails 5
+		unhealthy_latency 5s
+		lb_try_duration 3s
+		transport http {
+			# Bun closes idle connections after HTTP_IDLE_TIMEOUT (30s default);
+			# keep Caddy's pool shorter so it never reuses a closed one.
+			keepalive 5s
+			dial_timeout 3s
+			response_header_timeout 30s
+		}
 	}
 }

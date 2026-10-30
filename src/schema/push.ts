@@ -42,7 +42,8 @@ const SYSTEM_COLUMNS = `_seq INTEGER PRIMARY KEY AUTOINCREMENT,
   _id TEXT NOT NULL UNIQUE,
   _createdAt TEXT NOT NULL,
   _updatedAt TEXT NOT NULL,
-  _permissions TEXT NOT NULL DEFAULT '[]'`
+  _permissions TEXT NOT NULL DEFAULT '[]',
+  _rev INTEGER NOT NULL DEFAULT 1`
 
 export function sqlType(attribute: Attribute): string {
   if (attribute.array) return 'TEXT'
@@ -228,7 +229,7 @@ function rebuildTable(db: Db, table: string, before: Attribute[], after: Attribu
   db.sqlite.run(`CREATE TABLE ${q(temp)} (\n  ${SYSTEM_COLUMNS}${columnDefs(after)}\n)`)
   const oldKeys = new Set(before.map((a) => a.key))
   const shared = after.filter((a) => oldKeys.has(a.key)).map((a) => q(a.key))
-  const cols = ['_seq', '_id', '_createdAt', '_updatedAt', '_permissions', ...shared].join(', ')
+  const cols = ['_seq', '_id', '_createdAt', '_updatedAt', '_permissions', '_rev', ...shared].join(', ')
   db.sqlite.run(`INSERT INTO ${q(temp)} (${cols}) SELECT ${cols} FROM ${q(table)}`)
   db.sqlite.run(`DROP TABLE ${q(table)}`)
   db.sqlite.run(`ALTER TABLE ${q(temp)} RENAME TO ${q(table)}`)

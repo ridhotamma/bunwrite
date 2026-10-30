@@ -161,24 +161,42 @@ back up `STORAGE_PATH` or the uploads bucket separately.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WORKERS` | `1` (`auto` in the Docker image) | HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. |
+| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A cluster also starts one dedicated writer process. |
+| `WORKER_PORTS` | `false` | With `WORKERS` > 1, bind one port per public worker (`PORT`, `PORT+1`, ...) instead of sharing one port with `SO_REUSEPORT`. Set the proxy upstream to the same range so it can health-check and route around a stalled worker. |
+| `MAX_INFLIGHT` | `200` | Total in-flight requests allowed across the public workers before new ones get `503` with `Retry-After: 1`. Health checks are always allowed. `0` disables shedding. |
+| `HTTP_IDLE_TIMEOUT` | `30` | Seconds Bun keeps an idle HTTP connection open (maximum 255, `0` disables). Keep it above the proxy's upstream keepalive; the bundled Caddyfile uses 5s. |
 | `CACHE_CHECK_MS` | `0` | Check for settings/schema changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
+| `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | Loopback port where the dedicated writer accepts database writes. The public workers forward `POST`/`PUT`/`PATCH`/`DELETE` requests under `/v1/databases` there, so one process owns SQLite's write connection. `0` disables the listener and forwarding; each worker then writes locally. |
+| `WRITER_HOST` | `127.0.0.1` | Interface for the writer listener. The workers are processes in the same container/network namespace, so loopback is reachable and the port is never public. |
+| `WRITE_BATCH_MS` | `1` with `WORKERS` > 1, `0` otherwise | Group document writes that arrive within this window into one SQLite transaction. `0` writes each request immediately. Every write keeps its own savepoint, permissions and events; one failure never rolls back the others. |
 
-With `WORKERS` above 1, the processes bind the same port with `SO_REUSEPORT`
-and share the SQLite file in WAL mode. Every process serves HTTP and WebSocket
-connections. Work that must not run once per worker uses a database lease:
-cron schedules, automatic backups, the queue reaper, the render queue and
-pruning run only in the elected leader. If the leader stops, another worker
-takes over within ten seconds.
+With `WORKERS` above 1, the supervisor starts `WORKERS` public processes plus
+one dedicated writer. The public processes either share one port with
+`SO_REUSEPORT`, or bind `PORT` through `PORT + WORKERS - 1` when `WORKER_PORTS`
+is on. The writer only listens on the loopback writer port, so a synchronous
+WAL checkpoint or lock wait cannot stall client connections. A proxy can use
+the per-worker ports to health-check each process and route around a stalled
+one. Work that must not run once per worker uses a database lease: cron
+schedules, automatic backups, the queue reaper, the render queue and pruning
+run only in the elected leader. If the leader stops, another worker takes over
+within ten seconds.
 
-Writes still go through SQLite one at a time; reads run in parallel, so expect
-roughly 3–3.5× read throughput on four cores. `FUNCTIONS_CONCURRENCY` applies
-per process, and request-log batches are per process; rate limits are shared
-through SQLite. Each worker keeps its own `SQLITE_CACHE_MB` page cache and maps
-up to `SQLITE_MMAP_MB` of the database file; the OS shares the mapped pages.
-Restoring a backup replaces the project's SQLite file in place, so restart the
-container or service after a restore.
+Database writes are forwarded to the writer through its loopback listener, so
+the public processes never queue on SQLite's write lock for document writes;
+they forward the request and return the writer's response unchanged. If the
+writer is restarting, the readers retry for a moment and then serve the write
+locally rather than failing it. Writes that arrive together are committed in
+one transaction up to `WRITE_BATCH_MS`, which removes one commit per request
+under load. Storage uploads, auth, sites and functions are not forwarded: they
+keep running on the worker that accepted them.
+
+Reads run in parallel, so expect roughly 3–3.5× read throughput on four cores.
+`FUNCTIONS_CONCURRENCY` applies per process, and request-log batches are per
+process; rate limits are shared through SQLite. Each worker keeps its own
+`SQLITE_CACHE_MB` page cache and maps up to `SQLITE_MMAP_MB` of the database
+file; the OS shares the mapped pages. Restoring a backup replaces the project's
+SQLite file in place, so restart the container or service after a restore.
 
 ## Console
 
@@ -291,7 +309,9 @@ Explicit values always win.
 | `AUTOTUNE_MEMORY_MB` | detected | Override memory in MB when cgroups are not visible. |
 | `SQLITE_CACHE_MB` | auto, 8–64 | SQLite page cache in MB. |
 | `SQLITE_MMAP_MB` | `256` | Memory-mapped database window per connection in MB; `0` disables mmap. |
-| `SQLITE_WAL_AUTOCHECKPOINT` | `2000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. |
+| `SQLITE_WAL_AUTOCHECKPOINT` | `10000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. A larger WAL means fewer synchronous checkpoints on the writer. |
+| `SQLITE_BUSY_TIMEOUT_MS` | `5000` | How long the writer waits for SQLite's lock before failing. |
+| `SQLITE_READER_BUSY_TIMEOUT_MS` | `500` | How long a public worker waits for a lock before failing fast. Keep this short: a synchronous wait blocks that process's event loop. |
 | `MAX_REQUEST_BODY_MB` | auto, 16–256 | Largest accepted HTTP request body. |
 | `BUN_JSC_forceRAMSize` | unset | JS heap size in bytes. Startup-only; the Docker entrypoint and systemd wrapper set it. |
 | `MALLOC_ARENA_MAX` | unset | glibc malloc arena count. Startup-only; set by the deployment wrapper. |

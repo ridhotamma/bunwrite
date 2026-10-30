@@ -31,7 +31,7 @@ const LIST_CACHE_MAX_LIMIT = 200
  */
 const RETURNING = process.platform === 'linux'
 
-type Row = Record<string, unknown> & { _seq: number; _id: string; _updatedAt: string; _permissions: string }
+type Row = Record<string, unknown> & { _seq: number; _id: string; _updatedAt: string; _permissions: string; _rev: number }
 
 /**
  * Set while committing a transaction: a write to a document changed after
@@ -46,7 +46,22 @@ export class ConflictError extends Error {}
 
 export interface WriteOptions {
   guard?: Guard
+  /**
+   * Optimistic concurrency: only write when the document is still at this
+   * revision. `'*'` requires the document to exist. A mismatch throws
+   * `document_update_conflict` (409) without touching the row.
+   */
+  revision?: number | '*'
+  /**
+   * Collect the events of this write here instead of the store-wide buffer.
+   * Batched writes use a per-write sink so a request only publishes its own
+   * events, even while other requests are in the same transaction.
+   */
+  events?: DocEvent[]
 }
+
+/** One write's outcome inside a batch: a failure rolls back only that write. */
+export type BatchOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
 /** A committed change, for realtime subscribers. */
 export interface DocEvent {
@@ -104,9 +119,10 @@ export class DocumentStore {
     return Number(row?.value ?? 0)
   }
 
-  private record(collection: Collection, action: DocEvent['action'], row: Row): void {
+  private record(collection: Collection, action: DocEvent['action'], row: Row, options: WriteOptions = {}): void {
     if (!collection.databaseId) return // users/teams views never emit
-    this.events.push({ collection, action, document: decodeRow(collection, row) })
+    const sink = options.events ?? this.events
+    sink.push({ collection, action, document: decodeRow(collection, row) })
   }
 
   // ---------------------------------------------------------------- reads
@@ -319,6 +335,23 @@ export class DocumentStore {
     }
   }
 
+  /**
+   * Enforce `If-Match` / `data.$revision` inside the write transaction, so two
+   * concurrent updates at the same revision cannot both pass. `'*'` only
+   * asserts that the row exists, which the callers already know.
+   */
+  private revisionCheck(row: Row, options: WriteOptions): void {
+    const expected = options.revision
+    if (expected === undefined || expected === '*') return
+    const current = Number(row._rev ?? 1)
+    if (current !== expected) {
+      throw err(
+        'document_update_conflict',
+        `Document '${row._id}' is at revision ${current}, not ${expected}. Fetch it again and retry.`,
+      )
+    }
+  }
+
   private touch(collection: Collection, id: string, options: WriteOptions): void {
     options.guard?.touched.add(`${collection.table}/${id}`)
   }
@@ -337,12 +370,13 @@ export class DocumentStore {
     const stamp = now()
     const values = encodeAttributes(collection, data, 'create')
     const keys = Object.keys(values)
-    const columns = ['_id', '_createdAt', '_updatedAt', '_permissions', ...keys]
+    const columns = ['_id', '_createdAt', '_updatedAt', '_permissions', '_rev', ...keys]
     const params: SqlValue[] = [
       id,
       this.dates(caller, data, '$createdAt', stamp),
       this.dates(caller, data, '$updatedAt', stamp),
       JSON.stringify(permissions),
+      1,
       ...keys.map((k) => values[k]!),
     ]
     let row: Row
@@ -362,7 +396,7 @@ export class DocumentStore {
     }
     this.writePerms(collection, row._seq, permissions)
     this.touch(collection, id, options)
-    this.record(collection, 'create', row)
+    this.record(collection, 'create', row, options)
     return row
   }
 
@@ -380,6 +414,7 @@ export class DocumentStore {
     options: WriteOptions,
   ): Row {
     this.guardCheck(collection, row, options)
+    this.revisionCheck(row, options)
     const values = encodeAttributes(collection, data, 'update')
     const oldPermissions = JSON.parse(row._permissions) as string[]
     const newPermissions = this.resolvePermissions(caller, permissions, null)
@@ -398,7 +433,7 @@ export class DocumentStore {
     if (permsChanged) changes._permissions = JSON.stringify(newPermissions)
     const keys = Object.keys(changes)
     const params = bindings([...keys.map((k) => changes[k]!), row._seq])
-    const sql = `UPDATE ${q(collection.table)} SET ${keys.map((k) => `${q(k)} = ?`).join(', ')} WHERE _seq = ?`
+    const sql = `UPDATE ${q(collection.table)} SET ${keys.map((k) => `${q(k)} = ?`).join(', ')}, ${q('_rev')} = ${q('_rev')} + 1 WHERE _seq = ?`
     let updated: Row
     try {
       if (RETURNING) {
@@ -415,16 +450,17 @@ export class DocumentStore {
     }
     if (permsChanged) this.writePerms(collection, row._seq, newPermissions!)
     this.touch(collection, row._id, options)
-    this.record(collection, 'update', updated)
+    this.record(collection, 'update', updated, options)
     return updated
   }
 
   private deleteRow(collection: Collection, row: Row, options: WriteOptions): void {
     this.guardCheck(collection, row, options)
+    this.revisionCheck(row, options)
     this.db.sqlite.query(`DELETE FROM ${q(collection.table)} WHERE _seq = ?`).run(row._seq)
     this.db.sqlite.query(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`).run(row._seq)
     this.touch(collection, row._id, options)
-    this.record(collection, 'delete', row)
+    this.record(collection, 'delete', row, options)
   }
 
   private requireRow(caller: Caller, collection: Collection, id: string, type: PermissionType): Row {
@@ -442,11 +478,49 @@ export class DocumentStore {
     return this.db.sqlite.transaction(fn).immediate()
   }
 
+  /**
+   * Run independent writes in one transaction. Every operation gets a
+   * savepoint, so a failing write rolls back only itself and the rest still
+   * commit. Operations must use the `...InTx` methods; they must not open
+   * their own transaction.
+   *
+   * One transaction per batch means one WAL commit and one checkpoint's worth
+   * of work for N writes, which is what `WriteBatcher` uses under load.
+   */
+  runBatch<T>(operations: Array<() => T>): Array<BatchOutcome<T>> {
+    if (operations.length === 0) return []
+    return this.tx(() =>
+      operations.map((operation, index) => {
+        // Savepoint names are internal and never touch user input.
+        const savepoint = `bunwrite_batch_${index}`
+        this.db.sqlite.run(`SAVEPOINT ${savepoint}`)
+        try {
+          const value = operation()
+          this.db.sqlite.run(`RELEASE ${savepoint}`)
+          return { ok: true as const, value }
+        } catch (error) {
+          try {
+            this.db.sqlite.run(`ROLLBACK TO ${savepoint}`)
+            this.db.sqlite.run(`RELEASE ${savepoint}`)
+          } catch {
+            // The transaction is no longer usable; the outer rollback reports it.
+          }
+          return { ok: false as const, error }
+        }
+      }),
+    )
+  }
+
   // ---------------------------------------------------------------- writes
 
   createDocument(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
+    return this.tx(() => this.createDocumentInTx(caller, collection, input, options))
+  }
+
+  /** `createDocument` without its own transaction; for `runBatch` and staged writes. */
+  createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
     this.assertCreate(caller, collection)
-    return this.tx(() => decodeRow(collection, this.insertRow(caller, collection, input, options)))
+    return decodeRow(collection, this.insertRow(caller, collection, input, options))
   }
 
   createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
@@ -460,25 +534,34 @@ export class DocumentStore {
   }
 
   updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
+    return this.tx(() => this.updateDocumentInTx(caller, collection, id, data, permissions, options))
+  }
+
+  /** `updateDocument` without its own transaction; for `runBatch` and staged writes. */
+  updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
     if (Object.keys(data ?? {}).length === 0 && (permissions === null || permissions === undefined)) {
       throw err('document_missing_payload')
     }
-    return this.tx(() => {
-      const row = this.requireRow(caller, collection, id, 'update')
-      return decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options))
-    })
+    const row = this.requireRow(caller, collection, id, 'update')
+    return decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options))
   }
 
   upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
-    return this.tx(() => {
-      const row = this.row(collection, id)
-      if (row) {
-        if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
-        return { doc: decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options)), created: false }
-      }
-      this.assertCreate(caller, collection)
-      return { doc: decodeRow(collection, this.insertRow(caller, collection, { id, data: data ?? {}, permissions }, options)), created: true }
-    })
+    return this.tx(() => this.upsertDocumentInTx(caller, collection, id, data, permissions, options))
+  }
+
+  /** `upsertDocument` without its own transaction; for `runBatch` and staged writes. */
+  upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
+    const row = this.row(collection, id)
+    if (row) {
+      if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
+      return { doc: decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options)), created: false }
+    }
+    if (options.revision !== undefined) {
+      throw err('document_update_conflict', `Document '${id}' does not exist, but the request requires an existing revision.`)
+    }
+    this.assertCreate(caller, collection)
+    return { doc: decodeRow(collection, this.insertRow(caller, collection, { id, data: data ?? {}, permissions }, options)), created: true }
   }
 
   upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
@@ -497,14 +580,31 @@ export class DocumentStore {
   }
 
   deleteDocument(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
-    return this.tx(() => {
-      const row = this.requireRow(caller, collection, id, 'delete')
-      this.deleteRow(collection, row, options)
-      return decodeRow(collection, row)
-    })
+    return this.tx(() => this.deleteDocumentInTx(caller, collection, id, options))
+  }
+
+  /** `deleteDocument` without its own transaction; for `runBatch` and staged writes. */
+  deleteDocumentInTx(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
+    const row = this.requireRow(caller, collection, id, 'delete')
+    this.deleteRow(collection, row, options)
+    return decodeRow(collection, row)
   }
 
   incrementAttribute(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    key: string,
+    by: number,
+    bound: number | null,
+    direction: 1 | -1,
+    options: WriteOptions = {},
+  ): Doc {
+    return this.tx(() => this.incrementAttributeInTx(caller, collection, id, key, by, bound, direction, options))
+  }
+
+  /** `incrementAttribute` without its own transaction; for `runBatch` and staged writes. */
+  incrementAttributeInTx(
     caller: Caller,
     collection: Collection,
     id: string,
@@ -522,27 +622,26 @@ export class DocumentStore {
     if (typeof by !== 'number' || !Number.isFinite(by) || by <= 0) {
       throw err('general_argument_invalid', 'Invalid `value` param: Value must be a number greater than 0.')
     }
-    return this.tx(() => {
-      const row = this.requireRow(caller, collection, id, 'update')
-      this.guardCheck(collection, row, options)
-      const current = (row[key] as number | null) ?? 0
-      const next = current + direction * by
-      if (bound !== null && bound !== undefined && (direction === 1 ? next > bound : next < bound)) {
-        throw err('attribute_limit_exceeded', direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`)
-      }
-      const stamp = now()
-      const sql = `UPDATE ${q(collection.table)} SET ${q(key)} = ?, _updatedAt = ? WHERE _seq = ?`
-      let updated: Row
-      if (RETURNING) {
-        updated = this.db.sqlite.query(`${sql} RETURNING *`).get(next, stamp, row._seq) as Row
-      } else {
-        this.db.sqlite.query(sql).run(next, stamp, row._seq)
-        updated = this.rowBySeq(collection, row._seq)
-      }
-      this.touch(collection, id, options)
-      this.record(collection, 'update', updated)
-      return decodeRow(collection, updated)
-    })
+    const row = this.requireRow(caller, collection, id, 'update')
+    this.guardCheck(collection, row, options)
+    this.revisionCheck(row, options)
+    const current = (row[key] as number | null) ?? 0
+    const next = current + direction * by
+    if (bound !== null && bound !== undefined && (direction === 1 ? next > bound : next < bound)) {
+      throw err('attribute_limit_exceeded', direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`)
+    }
+    const stamp = now()
+    const sql = `UPDATE ${q(collection.table)} SET ${q(key)} = ?, _updatedAt = ?, ${q('_rev')} = ${q('_rev')} + 1 WHERE _seq = ?`
+    let updated: Row
+    if (RETURNING) {
+      updated = this.db.sqlite.query(`${sql} RETURNING *`).get(next, stamp, row._seq) as Row
+    } else {
+      this.db.sqlite.query(sql).run(next, stamp, row._seq)
+      updated = this.rowBySeq(collection, row._seq)
+    }
+    this.touch(collection, id, options)
+    this.record(collection, 'update', updated, options)
+    return decodeRow(collection, updated)
   }
 
   private assertBulk(caller: Caller): void {
