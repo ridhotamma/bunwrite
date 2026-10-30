@@ -122,9 +122,15 @@ export function emptyState(heading: string, text: string, action?: Html): Html {
 export const hidden = (fields: Record<string, string>) =>
   Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)
 
-/** A destructive action: a plain red button that POSTs after the confirm dialog. */
-export const destroy = (action: string, label: string, confirm: string, fields: Record<string, string> = {}) =>
-  html`<form method="post" action="${action}" class="inline" data-confirm="${confirm}" data-confirm-label="${label}" data-confirm-tone="critical">${hidden(fields)}<button class="critical plain">${label}</button></form>`
+/** A destructive action that POSTs after the confirm dialog. Plain by default, or a normal white button with red text. */
+export const destroy = (
+  action: string,
+  label: string,
+  confirm: string,
+  fields: Record<string, string> = {},
+  options: { asButton?: boolean } = {},
+) =>
+  html`<form method="post" action="${action}" class="inline" data-confirm="${confirm}" data-confirm-label="${label}" data-confirm-tone="critical">${hidden(fields)}<button class="${options.asButton ? 'critical' : 'critical plain'}">${label}</button></form>`
 
 export function formFooter(cancel: string | null, submit: string): Html {
   return html`<div class="foot">${cancel ? html`<a class="btn" href="${cancel}">Cancel</a>` : ''}<button class="primary">${submit}</button></div>`

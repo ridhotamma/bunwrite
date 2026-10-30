@@ -298,7 +298,7 @@ export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeL
     ${header('Deployment', {
       back: base,
       actions: html`${d.status === 'ready' && d.id !== site.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}
-        ${d.id === site.deployment_id ? '' : destroy(`${base}/deployments/${d.id}/delete`, 'Delete', 'Delete this deployment and its files?')}`,
+        ${d.id === site.deployment_id ? '' : destroy(`${base}/deployments/${d.id}/delete`, 'Delete', 'Delete this deployment and its files?', {}, { asButton: true })}`,
     })}
     <div class="stats" style="margin-bottom:16px">
       <div class="stat"><span>Status</span><b style="font-size:14px">${siteDeploymentBadge(d, site.deployment_id)}</b></div>
