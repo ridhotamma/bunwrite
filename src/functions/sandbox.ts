@@ -152,7 +152,7 @@ class SetprivSandbox implements FunctionSandbox {
 }
 
 /** Make what already sits in the data folder readable by the server only; code folders stay passable. */
-function lockDown(dir: string, depth = 0): void {
+export function lockDown(dir: string, depth = 0): void {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name)
     try {

@@ -166,14 +166,27 @@ const SITE_PORT_BASE = 10_000
 /** Exclusive. Kept below the default ephemeral range (32768+). */
 const SITE_PORT_LIMIT = 32_000
 
+/**
+ * Ports in this process handed to an app that is still starting or running.
+ * Every project has its own SsrRuntime, so this cannot live on one instance:
+ * two projects starting an app at the same moment would otherwise reserve the
+ * same port. Workers are separate processes and are kept apart by the slice.
+ */
+const reservedPorts = new Set<number>()
+let portCursor = 0
+
+/** The loopback port slice one worker may use for site apps. */
+export function sitePortSlice(workers: number, index: number): { base: number; size: number } {
+  const count = Math.max(1, Math.floor(workers) || 1)
+  const size = Math.max(1, Math.floor((SITE_PORT_LIMIT - SITE_PORT_BASE) / count))
+  return { base: SITE_PORT_BASE + (Math.abs(index) % count) * size, size }
+}
+
 export class SsrRuntime {
   private readonly apps = new Map<string, RunningApp>()
   private readonly failures = new Map<string, Failure>()
   private readonly lastLogs = new Map<string, string>()
   private readonly sandbox: FunctionSandbox | null
-  /** Ports this worker has handed to an app that is still starting or running. */
-  private readonly ports = new Set<number>()
-  private portCursor = 0
 
   constructor(
     private readonly config: Config,
@@ -318,7 +331,7 @@ export class SsrRuntime {
         detached: true,
       })
     } catch (error) {
-      this.ports.delete(port)
+      reservedPorts.delete(port)
       this.recordFailure(target.siteId)
       throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -339,7 +352,7 @@ export class SsrRuntime {
       .catch(() => {
         if (app.live) LIVE.delete(app.live)
       })
-      .finally(() => this.ports.delete(port))
+      .finally(() => reservedPorts.delete(port))
 
     try {
       await this.waitUntilListening(app, proc, port)
@@ -354,33 +367,31 @@ export class SsrRuntime {
   }
 
   /**
-   * A loopback port from this worker's range, reserved until the app exits.
-   * `Bun.serve` on the exact port proves that nothing else holds it, and the
-   * probe is closed before the app starts.
+   * A loopback port from this worker's range, reserved process-wide until the
+   * app exits. `Bun.serve` on the exact port proves that nothing else holds
+   * it, and the probe is closed before the app starts.
    */
   private async freePort(): Promise<number> {
-    const workers = Math.max(1, this.config.workers)
-    const size = Math.max(1, Math.floor((SITE_PORT_LIMIT - SITE_PORT_BASE) / workers))
-    const base = SITE_PORT_BASE + (Math.abs(this.config.workerIndex) % workers) * size
+    const { base, size } = sitePortSlice(this.config.workers, this.config.workerIndex)
     for (let i = 0; i < size; i++) {
-      const port = base + ((this.portCursor + i) % size)
-      if (this.ports.has(port)) continue
-      // Reserve before the await, so a second start in this worker skips it.
-      this.ports.add(port)
+      const port = base + ((portCursor + i) % size)
+      if (reservedPorts.has(port)) continue
+      // Reserve before the await, so another project or start skips it.
+      reservedPorts.add(port)
       try {
         const server = Bun.serve({ port, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
         await server.stop(true)
-        this.portCursor = (this.portCursor + i + 1) % size
+        portCursor = (portCursor + i + 1) % size
         return port
       } catch {
-        this.ports.delete(port)
+        reservedPorts.delete(port)
       }
     }
     // The whole slice is taken or blocked: let the OS choose, as before.
     const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response(null, { status: 204 }) })
     const port = server.port!
     await server.stop(true)
-    this.ports.add(port)
+    reservedPorts.add(port)
     return port
   }
 

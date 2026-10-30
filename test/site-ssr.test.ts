@@ -8,6 +8,7 @@ import { configFromEnv } from '~/config'
 import { sitesDir } from '~/sites/paths'
 import { packageManagerOf, pruneScript } from '~/sites/prune'
 import type { SiteDeploymentRow, SiteSettings } from '~/sites/service'
+import { sitePortSlice, SsrRuntime } from '~/sites/ssr'
 import { KEY, PROJECT, startServer, testSchema, type TestServer } from './helpers'
 
 let dir: string
@@ -304,6 +305,36 @@ describe('SSR sites: build and serve', () => {
       expect(port(id)).toBeGreaterThanOrEqual(10_000)
       expect(port(id)).toBeLessThan(32_000)
     }
+  })
+
+  test('port slices never overlap for any worker count', () => {
+    for (let workers = 1; workers <= 17; workers++) {
+      const ranges = Array.from({ length: workers }, (_, index) => sitePortSlice(workers, index))
+      for (const [index, range] of ranges.entries()) {
+        expect(range.size).toBeGreaterThan(0)
+        expect(range.base).toBeGreaterThanOrEqual(10_000)
+        expect(range.base + range.size).toBeLessThanOrEqual(32_000)
+        if (index) expect(range.base).toBeGreaterThanOrEqual(ranges[index - 1]!.base + ranges[index - 1]!.size)
+      }
+    }
+  })
+
+  test('two project runtimes starting together get different ports', async () => {
+    const runtime = () => new SsrRuntime(server.config, () => null)
+    const [a, b] = await Promise.all([(runtime() as any).freePort(), (runtime() as any).freePort()])
+    expect(a).not.toBe(b)
+    expect([a, b].every((port) => port >= 10_000 && port < 32_000)).toBe(true)
+  })
+
+  test('workers get disjoint port slices', async () => {
+    const one = { ...server.config, workers: 4, workerIndex: 0 }
+    const two = { ...server.config, workers: 4, workerIndex: 1 }
+    const a = await (new SsrRuntime(one, () => null) as any).freePort()
+    const b = await (new SsrRuntime(two, () => null) as any).freePort()
+    expect(a).toBeGreaterThanOrEqual(10_000)
+    expect(a).toBeLessThan(14_500)
+    expect(b).toBeGreaterThanOrEqual(14_500)
+    expect(b).toBeLessThan(18_800)
   })
 
   test('the live app and a preview of another build each get their own deploy context', async () => {

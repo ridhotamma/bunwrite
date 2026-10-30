@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { deploymentDir, Deployments } from '~/functions/deployments'
-import { allowPassThrough, DEFAULT_HELPER, removeTree, setupSandbox, type FunctionSandbox } from '~/functions/sandbox'
+import { allowPassThrough, DEFAULT_HELPER, lockDown, removeTree, setupSandbox, type FunctionSandbox } from '~/functions/sandbox'
 import { adminClient, PROJECT, startServer, testSchema, type TestServer } from './helpers'
 
 describe('turning isolation on', () => {
@@ -42,6 +42,43 @@ describe('turning isolation on', () => {
     expect(mode(top)).toBe(0o700)
     removeTree(null, top)
     expect(existsSync(top)).toBe(false)
+  })
+
+  test('a restart leaves the way open to each site deployment, default and project databases', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-lock-'))
+    try {
+      const sites = join(root, 'sites', 'site-1')
+      const deployment = join(sites, 'deployment-1')
+      const home = join(sites, '.home')
+      const project = join(root, 'projects', 'project-b')
+      const projectSites = join(project, 'sites', 'site-2')
+      const projectDeployment = join(projectSites, 'deployment-2')
+      const dirs = [
+        join(root, 'sites'),
+        sites,
+        deployment,
+        home,
+        join(root, 'projects'),
+        project,
+        join(project, 'sites'),
+        projectSites,
+        projectDeployment,
+      ]
+      for (const dir of dirs) mkdirSync(dir, { recursive: true, mode: 0o700 })
+      for (const dir of [root, ...dirs]) chmodSync(dir, 0o700)
+
+      // What setupSandbox does at every start.
+      lockDown(root)
+
+      const mode = (path: string) => statSync(path).mode & 0o777
+      // The site's user must be able to walk in...
+      expect([mode(join(root, 'sites')), mode(sites)]).toEqual([0o711, 0o711])
+      expect([mode(join(root, 'projects')), mode(project), mode(join(project, 'sites')), mode(projectSites)]).toEqual([0o711, 0o711, 0o711, 0o711])
+      // ...but the deployment and home folders stay private to it.
+      expect([mode(deployment), mode(home), mode(projectDeployment)]).toEqual([0o700, 0o700, 0o700])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
