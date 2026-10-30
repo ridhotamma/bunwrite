@@ -8,6 +8,16 @@ import { applyAutotune } from '~/system/autotune'
 const MAX_BACKOFF_MS = 30_000
 const SHUTDOWN_GRACE_MS = 10_000
 
+/**
+ * The command line for a worker: the executable plus only the user's
+ * arguments. Bun puts the entrypoint at argv[1] (`/$bunfs/root/bunwrite` in a
+ * compiled binary), so argv.slice(2) is what `src/main.ts` dispatches on.
+ * Passing argv[1] through would hand the worker the script path as a command.
+ */
+export function workerCommand(argv: string[] = process.argv, execPath: string = process.execPath): string[] {
+  return [execPath, ...argv.slice(2)]
+}
+
 export async function runSupervisor(workers: number): Promise<void> {
   // Set the runtime limits in this process too, so the workers inherit them
   // before their Bun runtimes start.
@@ -21,7 +31,7 @@ export async function runSupervisor(workers: number): Promise<void> {
   const spawnWorker = (index: number): void => {
     const startedAt = Date.now()
     const child = Bun.spawn({
-      cmd: [process.execPath, ...process.argv.slice(1)],
+      cmd: workerCommand(),
       env: { ...process.env, BUNWRITE_WORKER: String(index), BUNWRITE_CLUSTER_SIZE: String(workers) },
       stdin: 'inherit',
       stdout: 'inherit',

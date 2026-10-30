@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { keyCaller } from '~/auth/caller'
 import { clusterConfig, resolveWorkers } from '~/cluster/config'
 import { LeaderLease } from '~/cluster/leader'
+import { workerCommand } from '~/cluster/supervisor'
 import { VersionMonitor } from '~/cluster/versions'
 import { openDb, type Db } from '~/db/connection'
 import { pushConfig } from '~/schema/push'
@@ -73,6 +74,24 @@ describe('worker count', () => {
       workerIndex: 2,
       supervisor: false,
     })
+  })
+
+  test('workers are spawned with the executable and the user arguments only', () => {
+    // Compiled binary: argv[1] is the entrypoint inside the Bun virtual FS.
+    expect(workerCommand(['bun', '/$bunfs/root/bunwrite', 'serve'], '/usr/local/bin/bunwrite')).toEqual([
+      '/usr/local/bin/bunwrite',
+      'serve',
+    ])
+    expect(workerCommand(['bun', '/$bunfs/root/bunwrite'], '/usr/local/bin/bunwrite')).toEqual(['/usr/local/bin/bunwrite'])
+    // From source: argv[1] is the entrypoint file.
+    expect(workerCommand(['/Users/me/.bun/bin/bun', '/repo/src/main.ts', 'serve'], '/Users/me/.bun/bin/bun')).toEqual([
+      '/Users/me/.bun/bin/bun',
+      'serve',
+    ])
+    // `bun --watch src/index.ts` still keeps the entrypoint at argv[1].
+    expect(workerCommand(['/Users/me/.bun/bin/bun', '/repo/src/index.ts'], '/Users/me/.bun/bin/bun')).toEqual([
+      '/Users/me/.bun/bin/bun',
+    ])
   })
 })
 
