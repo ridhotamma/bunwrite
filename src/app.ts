@@ -428,6 +428,13 @@ export function createApp(source: Services | ProjectResolver) {
     websocket: {
       // Realtime messages are JSON; compressing them saves bandwidth for clients that support it.
       perMessageDeflate: control.config.websocketCompression,
+      // A subscribe message with many channels is still one JSON frame. Keep it
+      // bounded so a client cannot force a huge allocation per message.
+      maxPayloadLength: 1024 * 1024,
+      // Slow consumers are disconnected instead of buffering without limit.
+      // send() returns -1 when it queues and 0 when it drops.
+      backpressureLimit: 1024 * 1024,
+      closeOnBackpressureLimit: true,
       open: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.open(ws),
       message: (ws: Socket, message: string | Buffer) => projects.get(ws.data.projectId)?.services.realtime.message(ws, message),
       close: (ws: Socket) => projects.get(ws.data.projectId)?.services.realtime.close(ws),

@@ -108,6 +108,147 @@ with an API-key run to see what the session lookup and permission filters cost;
 API keys skip both. Re-run `setup --reset` on an older dataset to create the
 user and the private collection.
 
+## Social-media scenario
+
+`bun run stress:social` builds a disposable social dataset and measures the
+paths a social user generates: home feed, following feed, trending, post detail,
+comments, profile, profile posts, full-text search, create post, post likes,
+comments, comment likes, reposts, follows, and the counter increments those
+actions trigger.
+
+It creates the `social_stress` database with seven collections (`profiles`,
+`posts`, `comments`, `post_likes`, `comment_likes`, `reposts`, `follows`),
+seeds them, then runs per-path matrices or a concurrent mix.
+
+```bash
+export STRESS_API_KEY=your-api-key
+
+# Create the schema and seed 86,000 documents.
+bun run stress:social setup \
+  --base https://bunwrite.example.com/v1 \
+  --project social-media-app \
+  --prefix soc-20261030 --reset
+
+# Per-path throughput and latency.
+bun run stress:social run \
+  --manifest data/stress/social-soc-20261030.json \
+  --concurrency 1,10,50,100 \
+  --write-concurrency 1,10,25,50
+
+# Only some paths.
+bun run stress:social run \
+  --manifest data/stress/social-soc-20261030.json \
+  --paths feed,post,comments,like,create-post
+
+# Real concurrent mix: 8 read paths and 10 write/counter paths.
+bun run stress:social mix \
+  --manifest data/stress/social-soc-20261030.json \
+  --mix-concurrency 50,100,200 \
+  --mix-duration 20 --mix-warmup 5
+
+# The same reads/writes as a logged-in user (session + permissions).
+bun run stress:social session \
+  --manifest data/stress/social-soc-20261030.json \
+  --concurrency 10,50,100
+```
+
+The default mix is feed-heavy (27% home feed) with roughly 30% writes. Counter
+paths (`like-count`, `comment-like-count`, `repost-count`, `follow-count`) use
+`PATCH .../documents/<id>/<attribute>/increment`, targeting 100 hot rows to
+model viral posts. If your client updates counters differently, adjust the mix
+or skip those paths with `--paths`.
+
+Seed sizes are configurable (`--profiles`, `--posts`, `--comments`,
+`--post-likes`, `--comment-likes`, `--reposts`, `--follows`); `--profiles`,
+`--posts` and `--comments` must be at least 100 because the counter paths use a
+regex over the first 100 IDs. The report estimates active users from 20 API
+calls per user per 60 s.
+
+Delete the disposable database when done:
+
+```bash
+bun run stress:social cleanup --yes \
+  --base https://bunwrite.example.com/v1 --project social-media-app
+```
+
+## Realtime WebSocket scenario
+
+`bun run stress:realtime` opens real WebSocket clients against
+`/v1/realtime` and measures two things:
+
+- `connect`: how many sockets can connect and subscribe, how long the handshake
+  takes, and whether they stay alive under a ping cadence.
+- `fanout`: how many document events each subscribed socket receives when REST
+  writes are made, plus delivery latency, loss and duplicates.
+
+```bash
+export STRESS_API_KEY=your-api-key
+
+# Connection capacity: 100, 500 and 1000 sockets, held for 30s.
+bun run stress:realtime connect \
+  --base https://bunwrite.example.com/v1 \
+  --project social-media-app \
+  --connections 100,500,1000 --duration 30 --ping-interval 5
+
+# Event fan-out: N listeners, M REST writes, measure delivery to every socket.
+bun run stress:realtime fanout \
+  --base https://bunwrite.example.com/v1 \
+  --project social-media-app \
+  --manifest data/stress/social-soc-20261030.json \
+  --fanout-connections 100,290 --writes 100 --write-concurrency 10
+```
+
+The listener channel defaults to `databases.<db>.collections.<collection>.documents`.
+Use `--channels` with collection names (`posts,comments,...`), `social` for all
+six social collections, or `all` for the global `documents` channel. The
+`--collection` flag also picks the write body, so the fan-out test can create
+posts, comments, post likes, comment likes, reposts or follows.
+
+Auth modes:
+
+```bash
+--auth key                  # X-Appwrite-Key header (default)
+--auth session              # session header, signs in the social stress user
+--auth session --auth-message  # guest socket, then browser-style authentication message
+--auth guest                # no auth; events are filtered by collection permissions
+```
+
+The session login defaults to `stress-social@example.com`; set
+`STRESS_SESSION_PASSWORD` if the password differs.
+
+### Connection ceiling
+
+The published test host originally stalled at **~290–300 concurrent
+connections**. At 300, REST writes also timed out, which pointed at a
+file-descriptor budget shared by Caddy and Bun (roughly 3 descriptors per
+WebSocket). The bundled `docker-compose.yml` now sets `nofile=65536` on both
+`bunwrite` and `caddy`; redeploy for it to take effect and check the host's
+`fs.file-max` / `net.core.somaxconn` as well.
+
+The realtime hub was also changed to:
+
+- queue fan-out instead of running it inside the document-write request;
+- index sockets by channel instead of scanning every socket per event;
+- serialize the event payload once and only append per-socket subscription IDs;
+- bound subscriptions and close slow clients via Bun's `backpressureLimit`;
+- let `/realtime` upgrades bypass `MAX_INFLIGHT`, so a reconnect storm does not
+  turn into 503s.
+
+On a local single-process instance with the new hub:
+
+| Check | Result |
+| --- | --- |
+| 10,000 socket attempt | 9,917 connected, 0 closed during hold, every ping answered |
+| 1,000 listeners × 100 writes | 100,000 events, 0% loss, p95 387 ms |
+| 1,000 listeners, unique subscription IDs | 100,000 events, 0% loss, p95 543 ms |
+| 5,000 listeners × 20 writes | 99,260 events, 0% loss, p95 387 ms |
+| Old hub vs new, 290 listeners | 378 → 1,493 write RPS |
+
+`WEBSOCKET_COMPRESSION=false` is worth testing for a 1 vCPU host with many
+connected clients: per-message deflate spends CPU on every event. The stress
+report prints attempted vs connected vs subscribed and lists write errors, so a
+capacity failure is visible instead of looking like 0% event loss.
+
 ## Docker at 2 vCPU / 2 GB
 
 This is the setup used for the published measurements:

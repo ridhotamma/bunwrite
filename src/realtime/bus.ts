@@ -31,6 +31,7 @@ export class RealtimeBus {
   private readonly startedAt = now()
   private lastSeq = 0
   private sockets = 0
+  private stopped = false
   private timer: ReturnType<typeof setInterval> | null = null
   private lastHeartbeat = 0
   private lastPrune = 0
@@ -67,7 +68,7 @@ export class RealtimeBus {
 
   /** Append our events for the other processes, if any of them can use them. */
   send(events: DocEvent[]): void {
-    if (events.length === 0) return
+    if (events.length === 0 || this.stopped) return
     try {
       if (!this.wanted()) return
       const payload = JSON.stringify(
@@ -103,6 +104,7 @@ export class RealtimeBus {
   }
 
   stop(): void {
+    this.stopped = true
     this.removePresence()
     this.stopPolling()
   }

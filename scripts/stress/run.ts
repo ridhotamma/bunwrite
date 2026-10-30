@@ -6,6 +6,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { randomId } from './lib'
+
 export interface Target {
   name: string
   url: string
@@ -237,7 +239,7 @@ export async function runMatrix(options: RunOptions): Promise<{ results: RunResu
   }
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  const file = join(options.outDir, `stress-${stamp}.json`)
+  const file = join(options.outDir, `stress-${stamp}-${randomId().slice(0, 6)}.json`)
   mkdirSync(options.outDir, { recursive: true })
   writeFileSync(file, JSON.stringify({ ...options.meta, tool, durationSec: options.duration, concurrency: options.concurrency, results }, null, 2))
   log(`\nresults: ${file}`)

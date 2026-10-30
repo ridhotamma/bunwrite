@@ -20,6 +20,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
+import {
+  api,
+  assertId,
+  assertOk,
+  createCli,
+  env,
+  escapeRegex,
+  iso,
+  normalizeBase,
+  pad,
+  queryString,
+  randomId,
+  required,
+  type ApiOptions,
+} from './lib'
 import { runMatrix, type RunResult, type Target } from './run'
 
 const DEFAULT_DATABASE = 'booking_stress'
@@ -55,74 +70,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
   process.exit(0)
 }
 
-function flag(name: string): string | undefined {
-  const eq = argv.find((arg) => arg.startsWith(`--${name}=`))
-  if (eq !== undefined) return eq.slice(name.length + 3)
-  const index = argv.indexOf(`--${name}`)
-  return index >= 0 ? argv[index + 1] : undefined
-}
-
-function has(name: string): boolean {
-  return argv.includes(`--${name}`)
-}
-
-function numberFlag(name: string, fallback: number): number {
-  const raw = flag(name)
-  if (raw === undefined) return fallback
-  const value = Number(raw)
-  if (!Number.isFinite(value)) throw new Error(`--${name} must be a number`)
-  return value
-}
-
-function integerFlag(name: string, fallback: number, min = 1): number {
-  const value = numberFlag(name, fallback)
-  if (!Number.isInteger(value) || value < min) throw new Error(`--${name} must be an integer >= ${min}`)
-  return value
-}
-
-function levels(name: string, fallback: string): number[] {
-  const raw = flag(name) ?? fallback
-  const out = raw.split(',').map((value) => Number(value.trim()))
-  if (out.length === 0 || out.some((value) => !Number.isInteger(value) || value < 1)) {
-    throw new Error(`--${name} must be a comma-separated list of positive integers`)
-  }
-  return out
-}
-
-function boolFlag(name: string, fallback = false): boolean {
-  if (has(name)) return true
-  const raw = flag(name)
-  if (raw === undefined) return fallback
-  return raw === 'true' || raw === '1' || raw === 'yes'
-}
-
-function required(value: string | undefined, label: string): string {
-  if (!value) throw new Error(`${label} is required.`)
-  return value
-}
-
-function normalizeBase(value: string): string {
-  return value.trim().replace(/\/+$/, '')
-}
-
-function env(name: string): string | undefined {
-  return process.env[name] || undefined
-}
-
-function assertId(value: string, label: string): string {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(value)) {
-    throw new Error(`${label} must be 1-36 chars of a-z, A-Z, 0-9, period, hyphen and underscore`)
-  }
-  return value
-}
-
-function pad(value: number, size = 2): string {
-  return String(value).padStart(size, '0')
-}
-
-function iso(value: Date): string {
-  return value.toISOString()
-}
+const { flag, numberFlag, integerFlag, levels, boolFlag } = createCli(argv)
 
 function dayStart(anchor: Date, day: number): Date {
   const date = new Date(anchor)
@@ -136,64 +84,6 @@ function dayEnd(anchor: Date, day: number): Date {
   date.setUTCDate(date.getUTCDate() + day)
   date.setUTCHours(23, 59, 59, 999)
   return date
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function queryString(queries: Record<string, unknown>[], total: boolean): string {
-  const encoded = queries.map((query, index) => `queries[${index}]=${encodeURIComponent(JSON.stringify(query))}`)
-  encoded.push(`total=${total ? 'true' : 'false'}`)
-  return encoded.join('&')
-}
-
-interface ApiOptions {
-  base: string
-  project: string
-  key: string
-  timeout: number
-}
-
-interface ApiResult {
-  status: number
-  body: unknown
-  text: string
-}
-
-async function api(
-  options: ApiOptions,
-  method: string,
-  path: string,
-  body?: unknown,
-  extraHeaders: Record<string, string> = {},
-): Promise<ApiResult> {
-  const headers: Record<string, string> = {
-    'X-Appwrite-Project': options.project,
-    'X-Appwrite-Key': options.key,
-    ...extraHeaders,
-  }
-  if (body !== undefined) headers['content-type'] = 'application/json'
-  const response = await fetch(`${options.base}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(options.timeout * 1000),
-  })
-  const text = await response.text()
-  let parsed: unknown = null
-  try {
-    parsed = text ? JSON.parse(text) : null
-  } catch {
-    parsed = null
-  }
-  return { status: response.status, body: parsed, text }
-}
-
-function assertOk(result: ApiResult, label: string, allowed: number[] = []): ApiResult {
-  if (result.status >= 200 && result.status < 300) return result
-  if (allowed.includes(result.status)) return result
-  throw new Error(`${label} failed: HTTP ${result.status} ${result.text.slice(0, 1000)}`)
 }
 
 const serviceAttributes = [
@@ -618,9 +508,9 @@ interface RunOptions {
   out: string
 }
 
-function runOptions(): RunOptions {
+function runOptions(manifestOverride?: Manifest): RunOptions {
   const manifestPath = flag('manifest') ?? env('STRESS_MANIFEST')
-  const manifest = manifestPath ? readManifest(manifestPath) : loadImplicitManifest()
+  const manifest = manifestOverride ?? (manifestPath ? readManifest(manifestPath) : loadImplicitManifest())
   const base = normalizeBase(flag('base') ?? env('STRESS_BASE') ?? manifest.base)
   const project = flag('project') ?? env('STRESS_PROJECT') ?? manifest.project
   const key = required(flag('key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
@@ -729,10 +619,6 @@ function targetsFor(options: RunOptions): Target[] {
       urlFor: () => `${writeBase.slice(0, writeBase.lastIndexOf('/') + 1)}${options.manifest.prefix}-bk-${randomId()}`,
     },
   ]
-}
-
-function randomId(): string {
-  return Math.random().toString(36).slice(2, 14).padEnd(12, '0')
 }
 
 /** The same paths as a logged-in user, plus the private collection and a point read. */
@@ -1270,32 +1156,11 @@ try {
   else if (command === 'cleanup') await cleanup()
   else {
     const manifest = await setup()
-    const next = runOptionsFromManifest(manifest)
-    await runWith(next)
+    await runWith(runOptions(manifest))
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : error)
   process.exit(1)
-}
-
-function runOptionsFromManifest(manifest: Manifest): RunOptions {
-  return {
-    manifest,
-    api: {
-      base: normalizeBase(flag('base') ?? env('STRESS_BASE') ?? manifest.base),
-      project: flag('project') ?? env('STRESS_PROJECT') ?? manifest.project,
-      key: required(flag('key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)'),
-      timeout: numberFlag('timeout', DEFAULT_TIMEOUT),
-    },
-    concurrency: levels('concurrency', DEFAULT_CONCURRENCY),
-    writeConcurrency: levels('write-concurrency', DEFAULT_WRITE_CONCURRENCY),
-    duration: integerFlag('duration', DEFAULT_DURATION),
-    warmup: integerFlag('warmup', DEFAULT_WARMUP, 0),
-    timeout: integerFlag('timeout', DEFAULT_TIMEOUT),
-    tool: (flag('tool') ?? env('STRESS_TOOL') ?? 'auto') as RunOptions['tool'],
-    total: boolFlag('total'),
-    out: flag('out') ?? 'data/stress',
-  }
 }
 
 async function runWith(options: RunOptions): Promise<void> {

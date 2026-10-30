@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { busyResponse, isHealthPath, withInflightLimit } from '~/http/load-shed'
+import { busyResponse, isHealthPath, isRealtimePath, withInflightLimit } from '~/http/load-shed'
 
 const request = (path = '/v1/databases/main/collections/products/documents') => new Request(`http://localhost${path}`)
 
@@ -10,6 +10,29 @@ describe('load shedding', () => {
     expect(isHealthPath('/health')).toBe(true)
     expect(isHealthPath('/v1/health/version')).toBe(true)
     expect(isHealthPath('/v1/databases/main/collections/products/documents')).toBe(false)
+  })
+
+  test('realtime upgrades are recognised as bypass paths', () => {
+    expect(isRealtimePath('/v1/realtime')).toBe(true)
+    expect(isRealtimePath('/realtime')).toBe(true)
+    expect(isRealtimePath('/v1/databases/main/collections/products/documents')).toBe(false)
+  })
+
+  test('realtime upgrades bypass a full REST in-flight cap', async () => {
+    let release!: (value: Response) => void
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    const handler = withInflightLimit(
+      (request) => (request.url.includes('/realtime') ? new Response('upgraded') : pending),
+      1,
+    )
+    const rest = handler(request())
+    const realtime = handler(request('/v1/realtime?project=test-project'))
+    expect(realtime).toBeInstanceOf(Response)
+    expect((realtime as Response).status).toBe(200)
+    release(new Response('ok'))
+    await rest
   })
 
   test('rejects above the limit with a retryable 503 and recovers afterwards', async () => {

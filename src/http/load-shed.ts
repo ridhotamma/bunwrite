@@ -15,6 +15,16 @@ export function isHealthPath(pathname: string): boolean {
   return pathname === '/health' || pathname === '/v1/health' || pathname.startsWith('/v1/health/')
 }
 
+/**
+ * WebSocket upgrades are long-lived but the handler returns as soon as the
+ * socket is upgraded, so counting them as in-flight REST requests only turns a
+ * reconnect storm into 503s. The connection itself is still bounded by the
+ * file-descriptor limit and `backpressureLimit`.
+ */
+export function isRealtimePath(pathname: string): boolean {
+  return pathname === '/realtime' || pathname === '/v1/realtime'
+}
+
 export function busyResponse(): Response {
   return new Response(JSON.stringify({ message: 'Server is busy', code: 503, type: 'service_unavailable' }), {
     status: 503,
@@ -33,7 +43,7 @@ export function withInflightLimit(handler: FetchHandler, limit: number): FetchHa
     } catch {
       // A malformed URL is rejected by the app; do not let it bypass the cap.
     }
-    if (isHealthPath(pathname)) return handler(request, server)
+    if (isHealthPath(pathname) || isRealtimePath(pathname)) return handler(request, server)
     if (inflight >= limit) return busyResponse()
     inflight++
     let result: Response | Promise<Response>

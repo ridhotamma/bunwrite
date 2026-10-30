@@ -10,6 +10,7 @@
 import { resolve } from 'node:path'
 
 import { makeDocument, seed, type CollectionDef, type ColumnDef } from './seed'
+import { createCli, randomId } from './lib'
 import { runMatrix, type Target } from './run'
 
 interface AppwriteConfig {
@@ -37,24 +38,7 @@ if (args.includes('--help') || args.includes('-h')) {
   process.exit(0)
 }
 
-function has(name: string): boolean {
-  return args.includes(`--${name}`)
-}
-
-function flag(name: string): string | undefined {
-  const eq = args.find((arg) => arg.startsWith(`--${name}=`))
-  if (eq !== undefined) return eq.slice(name.length + 3)
-  const index = args.indexOf(`--${name}`)
-  return index >= 0 ? args[index + 1] : undefined
-}
-
-function numberFlag(name: string, fallback: number): number {
-  const raw = flag(name)
-  if (raw === undefined) return fallback
-  const value = Number(raw)
-  if (!Number.isFinite(value)) throw new Error(`--${name} must be a number`)
-  return value
-}
+const { flag, has, numberFlag } = createCli(args)
 
 function listFlag(name: string): string[] {
   const raw = flag(name)
@@ -322,10 +306,6 @@ await runMatrix({
 
 function timestamp(): string {
   return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
-}
-
-function randomId(): string {
-  return Math.random().toString(36).slice(2, 14).padEnd(12, '0')
 }
 
 function usage(): void {

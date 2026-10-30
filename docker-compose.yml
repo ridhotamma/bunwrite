@@ -21,6 +21,13 @@ services:
     image: bunwrite:latest
     restart: unless-stopped
     init: true
+    # Realtime keeps one descriptor per WebSocket, and Caddy keeps one for each
+    # client plus one upstream. The default 1024 lands at ~300 sockets and then
+    # even REST requests starve, so give both containers room for 10k+ clients.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     env_file: .env
     environment:
       # The container always listens on 8080; change the published port below instead.
@@ -100,6 +107,11 @@ services:
     restart: unless-stopped
     depends_on:
       - bunwrite
+    # Two descriptors per WebSocket (downstream + upstream) plus HTTP traffic.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Wait for DOMAIN to point here before starting, so a first install can run
     # before DNS has propagated without burning ACME attempts and backing off.
     entrypoint: ["/bin/sh", "/usr/local/bin/caddy-entrypoint.sh"]

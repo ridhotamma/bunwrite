@@ -8,10 +8,17 @@
  * session secret. Events go out as `{ type: 'event', data: { events,
  * channels, timestamp, payload, subscriptions } }`, only to callers allowed to
  * read the document.
+ *
+ * Fan-out is queued instead of running inside the document-write request.
+ * PocketBase uses one goroutine + buffered channel per client; Bun has one
+ * event loop, so the closest equivalent is to serialize the event once, index
+ * sockets by channel, and drain the broadcast queue in small time slices. That
+ * keeps a slow or very large fan-out from delaying the HTTP response that
+ * caused the event.
  */
 import type { ServerWebSocket } from 'bun'
 
-import { guestCaller, sessionCaller, userCaller, type Caller } from '~/auth/caller'
+import { sessionCaller, type Caller } from '~/auth/caller'
 import { accountModel, type UserRowFull } from '~/auth/models'
 import { grants } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
@@ -27,6 +34,17 @@ export interface SocketData {
 }
 
 export type Socket = ServerWebSocket<SocketData>
+
+/** Keep one abusive client from turning the subscribe message into a memory sink. */
+const MAX_SUBSCRIPTIONS = 1000
+const MAX_CHANNELS_PER_SUBSCRIPTION = 1000
+const MAX_CHANNELS_PER_SOCKET = 2000
+const MAX_CHANNEL_LENGTH = 512
+const MAX_SUBSCRIPTION_ID_LENGTH = 128
+
+/** Broadcast work budget per event-loop turn, and the safety valve if consumers fall behind. */
+const DRAIN_BUDGET_MS = 8
+const MAX_QUEUED_EVENTS = 10_000
 
 const send = (ws: Socket, type: string, data: unknown) => ws.send(JSON.stringify({ type, data }))
 
@@ -49,7 +67,7 @@ export function eventNames(e: DocEvent): string[] {
   return names
 }
 
-export function channelsOf(e: DocEvent): string[] {
+function channelsOf(e: DocEvent): string[] {
   const { databaseId: db, id: coll } = e.collection
   const doc = e.document.$id
   return [
@@ -82,6 +100,18 @@ export class RealtimeHub {
   private readonly bus: RealtimeBus | null
   private readonly collectionOf: ((databaseId: string, collectionId: string) => Collection | null) | undefined
 
+  /** channel -> sockets subscribed to it, so fan-out never scans unrelated sockets. */
+  private readonly channelIndex = new Map<string, Set<Socket>>()
+  /** socket -> every channel it currently subscribes to, for cheap re-indexing. */
+  private readonly socketChannels = new Map<Socket, Set<string>>()
+
+  private queue: DocEvent[] = []
+  private queueHead = 0
+  private busQueue: DocEvent[] = []
+  private drainScheduled = false
+  private droppedEvents = 0
+  private lastDropWarning = 0
+
   constructor(
     private db: Db,
     options: RealtimeHubOptions = {},
@@ -94,12 +124,17 @@ export class RealtimeHub {
 
   open(ws: Socket): void {
     this.sockets.add(ws)
+    // A socket may arrive with subscriptions already populated (or from a test
+    // harness), so index them before the first event.
+    this.reindex(ws)
     this.bus?.setSockets(this.sockets.size)
     send(ws, 'connected', { channels: [], user: userOf(ws.data.caller) })
   }
 
   close(ws: Socket): void {
     this.sockets.delete(ws)
+    this.unindex(ws)
+    this.socketChannels.delete(ws)
     this.bus?.setSockets(this.sockets.size)
   }
 
@@ -126,16 +161,52 @@ export class RealtimeHub {
         send(ws, 'response', { to: 'authentication', success: true, user: userOf(ws.data.caller) })
         return
       }
-      case 'subscribe':
-        for (const row of Array.isArray(message.data) ? message.data : []) {
-          if (typeof row?.subscriptionId === 'string' && Array.isArray(row.channels)) {
-            ws.data.subscriptions.set(row.subscriptionId, row.channels.map(String))
-          }
+      case 'subscribe': {
+        const rows = Array.isArray(message.data) ? message.data : []
+        if (rows.length > MAX_SUBSCRIPTIONS) {
+          send(ws, 'error', { code: 1008, message: 'Too many subscriptions.' })
+          return
         }
+        const next = new Map<string, string[]>()
+        let totalChannels = 0
+        for (const row of rows) {
+          if (typeof row?.subscriptionId !== 'string' || row.subscriptionId.length === 0) continue
+          if (row.subscriptionId.length > MAX_SUBSCRIPTION_ID_LENGTH) {
+            send(ws, 'error', { code: 1008, message: 'Subscription ID is too long.' })
+            return
+          }
+          if (!Array.isArray(row.channels)) continue
+          if (row.channels.length > MAX_CHANNELS_PER_SUBSCRIPTION) {
+            send(ws, 'error', { code: 1008, message: 'Too many channels in a subscription.' })
+            return
+          }
+          const channels: string[] = []
+          for (const value of row.channels) {
+            if (typeof value !== 'string' || value.length === 0) continue
+            if (value.length > MAX_CHANNEL_LENGTH) {
+              send(ws, 'error', { code: 1008, message: 'Channel name is too long.' })
+              return
+            }
+            channels.push(value)
+          }
+          totalChannels += channels.length
+          if (totalChannels > MAX_CHANNELS_PER_SOCKET) {
+            send(ws, 'error', { code: 1008, message: 'Too many channels on one connection.' })
+            return
+          }
+          next.set(row.subscriptionId, channels)
+        }
+        // Apply only after the whole message passed validation.
+        for (const [id, channels] of next) ws.data.subscriptions.set(id, channels)
+        this.reindex(ws)
         send(ws, 'response', { to: 'subscribe', success: true })
         return
+      }
       case 'unsubscribe':
-        for (const row of Array.isArray(message.data) ? message.data : []) ws.data.subscriptions.delete(row?.subscriptionId)
+        for (const row of Array.isArray(message.data) ? message.data : []) {
+          if (typeof row?.subscriptionId === 'string') ws.data.subscriptions.delete(row.subscriptionId)
+        }
+        this.reindex(ws)
         send(ws, 'response', { to: 'unsubscribe', success: true })
         return
       default:
@@ -145,30 +216,12 @@ export class RealtimeHub {
 
   publish(events: DocEvent[]): void {
     if (events.length === 0) return
-    if (this.sockets.size > 0) this.fanout(events)
-    // Even without local sockets, another process may have some.
-    this.bus?.send(events)
+    // Other workers need these events even when this process has no sockets.
+    this.busQueue.push(...events)
+    this.enqueue(events)
   }
 
-  /** Deliver events to this process's sockets only. */
-  private fanout(events: DocEvent[]): void {
-    for (const e of events) {
-      const channels = channelsOf(e)
-      const names = eventNames(e)
-      const timestamp = now()
-      for (const ws of this.sockets) {
-        const matched: string[] = []
-        for (const [id, subscribed] of ws.data.subscriptions) {
-          if (subscribed.some((c) => channels.includes(c))) matched.push(id)
-        }
-        if (matched.length === 0 || !canRead(ws.data.caller, e)) continue
-        const hit = channels.filter((c) => [...ws.data.subscriptions.values()].some((s) => s.includes(c)))
-        send(ws, 'event', { events: names, channels: hit, timestamp, payload: e.document, subscriptions: matched })
-      }
-    }
-  }
-
-  /** Events that another process published to the shared bus. */
+  /** Delivery from another worker's bus row: fan out locally, never re-publish. */
   private deliver(events: BusEvent[]): void {
     const local: DocEvent[] = []
     for (const event of events) {
@@ -177,12 +230,18 @@ export class RealtimeHub {
       if (!collection) continue
       local.push({ collection, action: event.action, document: event.document })
     }
-    if (local.length) this.fanout(local)
+    if (local.length) this.enqueue(local)
   }
 
-  /** Stop the bus timers; called when a project runtime closes. */
+  /** Stop timers and release every socket reference; called when a project runtime closes. */
   stop(): void {
     this.bus?.stop()
+    this.sockets.clear()
+    this.channelIndex.clear()
+    this.socketChannels.clear()
+    this.queue = []
+    this.queueHead = 0
+    this.busQueue = []
   }
 
   /** The database was replaced; ignore sequence numbers from the old one. */
@@ -194,6 +253,146 @@ export class RealtimeHub {
   pruneBus(): void {
     this.bus?.prune()
   }
-}
 
-export { guestCaller }
+  private enqueue(events: DocEvent[]): void {
+    const queued = this.queue.length - this.queueHead
+    if (queued + events.length > MAX_QUEUED_EVENTS) {
+      this.droppedEvents += events.length
+      this.warnDropped()
+      return
+    }
+    for (const event of events) this.queue.push(event)
+    this.scheduleDrain()
+  }
+
+  private scheduleDrain(): void {
+    if (this.drainScheduled) return
+    this.drainScheduled = true
+    // setImmediate (not queueMicrotask) lets the HTTP response leave before the fan-out runs.
+    setImmediate(() => this.drain())
+  }
+
+  private drain(): void {
+    this.drainScheduled = false
+    const deadline = performance.now() + DRAIN_BUDGET_MS
+
+    // Tell other workers first; they may have sockets this process cannot see.
+    if (this.busQueue.length > 0) {
+      const batch = this.busQueue
+      this.busQueue = []
+      this.bus?.send(batch)
+    }
+
+    while (this.queueHead < this.queue.length) {
+      const event = this.queue[this.queueHead++]!
+      try {
+        this.fanout(event)
+      } catch (error) {
+        // One malformed event must not stall every later subscription.
+        console.error('[realtime] could not fan out an event:', error)
+      }
+      if (performance.now() >= deadline) break
+    }
+
+    if (this.queueHead >= this.queue.length) {
+      this.queue.length = 0
+      this.queueHead = 0
+    } else if (this.queueHead > 1024) {
+      // Compact instead of letting the head offset grow forever.
+      this.queue = this.queue.slice(this.queueHead)
+      this.queueHead = 0
+    }
+    if (this.queueHead < this.queue.length) this.scheduleDrain()
+  }
+
+  private fanout(e: DocEvent): void {
+    const channels = channelsOf(e)
+    const channelSet = new Set(channels)
+
+    // Union only the sockets subscribed to one of this event's channels.
+    const targets = new Set<Socket>()
+    for (const channel of channels) {
+      const sockets = this.channelIndex.get(channel)
+      if (sockets) for (const ws of sockets) targets.add(ws)
+    }
+    if (targets.size === 0) return
+
+    // The event name/channel/payload JSON is identical for every socket, so
+    // serialize it once and only append the per-socket subscription IDs.
+    const head =
+      '{"type":"event","data":{"events":' +
+      JSON.stringify(eventNames(e)) +
+      ',"channels":' +
+      JSON.stringify(channels) +
+      ',"timestamp":' +
+      JSON.stringify(now()) +
+      ',"payload":' +
+      JSON.stringify(e.document) +
+      ',"subscriptions":'
+    const subscriptionsJson = new Map<string, string>()
+
+    for (const ws of targets) {
+      if (ws.readyState === 3) continue
+      if (!canRead(ws.data.caller, e)) continue
+
+      const matched: string[] = []
+      for (const [id, subscribed] of ws.data.subscriptions) {
+        for (const channel of subscribed) {
+          if (channelSet.has(channel)) {
+            matched.push(id)
+            break
+          }
+        }
+      }
+      if (matched.length === 0) continue
+
+      const key = matched.join('\u0000')
+      let suffix = subscriptionsJson.get(key)
+      if (suffix === undefined) {
+        suffix = JSON.stringify(matched)
+        subscriptionsJson.set(key, suffix)
+      }
+      ws.send(head + suffix + '}}')
+    }
+  }
+
+  /** Rebuild this socket's entries in the channel index after (un)subscribe. */
+  private reindex(ws: Socket): void {
+    this.unindex(ws)
+    const next = new Set<string>()
+    for (const channels of ws.data.subscriptions.values()) {
+      for (const channel of channels) next.add(channel)
+    }
+    for (const channel of next) {
+      let sockets = this.channelIndex.get(channel)
+      if (!sockets) {
+        sockets = new Set()
+        this.channelIndex.set(channel, sockets)
+      }
+      sockets.add(ws)
+    }
+    this.socketChannels.set(ws, next)
+  }
+
+  private unindex(ws: Socket): void {
+    const previous = this.socketChannels.get(ws)
+    if (!previous) return
+    for (const channel of previous) {
+      const sockets = this.channelIndex.get(channel)
+      if (!sockets) continue
+      sockets.delete(ws)
+      if (sockets.size === 0) this.channelIndex.delete(channel)
+    }
+    this.socketChannels.set(ws, new Set())
+  }
+
+  private warnDropped(): void {
+    const stamp = Date.now()
+    if (stamp - this.lastDropWarning < 5000) return
+    this.lastDropWarning = stamp
+    console.warn(
+      `[realtime] event queue full (${MAX_QUEUED_EVENTS}); dropped ${this.droppedEvents} events. ` +
+        `A slow consumer or an event burst is outrunning the fan-out loop.`,
+    )
+  }
+}
