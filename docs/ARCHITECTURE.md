@@ -56,13 +56,21 @@ pages. The processes coordinate through the database (`src/cluster`):
 - **Dedicated writer** — process 0 opens only a loopback listener on
   `127.0.0.1:${WRITER_PORT}` and never accepts public traffic, so a synchronous
   WAL checkpoint or lock wait cannot stall client connections. Public workers
-  that receive a database write (`POST`/`PUT`/`PATCH`/`DELETE` under
-  `/v1/databases`) forward it there and return the writer's response, so one
-  process owns SQLite's write connection. `WRITE_BATCH_MS` groups writes that
-  arrive together into one transaction (each with its own savepoint), which
-  removes a commit per request at peak. If the writer is restarting, a reader
-  retries briefly and then serves the write locally; `WRITER_PORT=0` disables
-  the split entirely. Public workers also answer `503` with `Retry-After` when
+  forward every short `POST`/`PUT`/`PATCH`/`DELETE` API request there, not only
+  document writes: auth, teams, storage metadata, schema, variables, proxy
+  rules, queues and settings all share the writer's connection. Short console
+  forms take the same hop; their uploads, builds, backups and outbound tests
+  stay local. Requests that spend their time outside SQLite stay on the worker
+  that accepted them — storage uploads, function executions and deployments,
+  function HTTP endpoints, site deployments, render jobs and VCS work.
+  `WRITE_BATCH_MS`
+  groups writes that arrive together into one transaction (each with its own
+  savepoint), which removes a commit per request at peak. Write transactions
+  retry a busy lock a few times with jittered backoff before failing; a retry
+  only happens before the transaction callback starts, so events and generated
+  IDs are never duplicated. If the writer is restarting, a reader retries
+  briefly and then serves the write locally; `WRITER_PORT=0` disables the
+  split entirely. Public workers also answer `503` with `Retry-After` when
   `MAX_INFLIGHT` is reached, instead of queueing without bound.
 - **Shared rate limits and sessions** — `_rate_limits` holds login and token
   windows that every worker increments. A worker caches a session and its roles

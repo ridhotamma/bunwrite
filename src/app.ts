@@ -3,7 +3,7 @@ import type { Server } from 'bun'
 import { keyCaller, resolveCaller, type Caller } from './auth/caller'
 import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
-import { forwardDatabaseWrite, shouldForwardDatabaseWrite } from './cluster/writer'
+import { forwardWrite, shouldForwardConsoleWrite, shouldForwardWrite } from './cluster/writer'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
@@ -250,17 +250,6 @@ export function createApp(source: Services | ProjectResolver) {
     meta.project = runtime.info.id
     if (services !== control) syncServices(services)
 
-    // Cluster mode: one process owns the write connection, so hand database
-    // writes to it. If it is unreachable, `forwardDatabaseWrite` returns null
-    // and this worker handles the request itself so writes never fail open.
-    if (shouldForwardDatabaseWrite(services.config, request.method, pathname)) {
-      const forwarded = await forwardDatabaseWrite(services.config, request)
-      if (forwarded) {
-        meta.forwarded = true
-        return forwarded
-      }
-    }
-
     if (pathname === '/realtime') {
       const caller = await callerOf(services, request, meta)
       if (!caller.privileged) services.access.assertProtocol('websocket')
@@ -269,6 +258,18 @@ export function createApp(source: Services | ProjectResolver) {
     }
 
     const match = router.match(request.method, pathname)
+    // Cluster mode: one process owns the write connection, so hand short
+    // mutations there. Uploads, function runs and deployments stay local.
+    // If the writer is unreachable, `forwardWrite` returns null and this
+    // worker handles the request itself so writes never fail open.
+    if (match && shouldForwardWrite(services.config, request.method, pathname)) {
+      const forwarded = await forwardWrite(services.config, request)
+      if (forwarded) {
+        meta.forwarded = true
+        return forwarded
+      }
+    }
+
     if (request.method === 'OPTIONS' && !match?.raw) return new Response(null, { status: 204 })
     if (!match) throw err('general_route_not_found')
 
@@ -333,6 +334,15 @@ export function createApp(source: Services | ProjectResolver) {
     if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
       const file = Bun.file(brand.path)
       return new Response(file, { headers: { 'content-type': brand.type, 'content-length': String(file.size), 'cache-control': 'public, max-age=604800' } })
+    }
+    // Console forms are short database writes too. Uploads, builds, backups
+    // and outbound tests stay on this worker; the writer handles the rest.
+    if (shouldForwardConsoleWrite(control.config, request.method, url.pathname)) {
+      const forwarded = await forwardWrite(control.config, request)
+      if (forwarded) {
+        meta.forwarded = true
+        return forwarded
+      }
     }
     const consoleResponse = await consoleApp.handle(request, server)
     if (consoleResponse) return consoleResponse

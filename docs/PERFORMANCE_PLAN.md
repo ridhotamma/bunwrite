@@ -156,17 +156,22 @@ request.
   default 1 ms in a cluster), each in its own savepoint so one failure does not
   roll back the others. The transaction API and the bulk document endpoints
   already batched; this covers the ordinary one-document-per-request path.
-- [x] **Send database writes to a dedicated writer process.** A cluster starts
-  `WORKERS` public processes plus one writer that only opens a loopback
+- [x] **Send short database writes to a dedicated writer process.** A cluster
+  starts `WORKERS` public processes plus one writer that only opens a loopback
   listener (`WRITER_PORT`, default `PORT + 1`, or `PORT + 100` with
-  `WORKER_PORTS`). Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` under
-  `/v1/databases` and return the response. This is done in-process rather than
-  in Caddy, so it works with any proxy and in direct installs; `WRITER_PORT=0`
-  reverts it. If the writer is restarting, readers retry and then serve the
-  write locally. Auth, storage,
-  sites and asynchronous function runs keep writing on their own worker (they
-  already use immediate transactions), so the split does not serialise uploads
-  or function CPU work.
+  `WORKER_PORTS`). Public workers forward every short `POST`/`PUT`/`PATCH`/
+  `DELETE` API request, not only `/v1/databases`, and short console forms, then
+  return the response. This is done in-process rather than in Caddy, so it
+  works with any proxy and in direct installs; `WRITER_PORT=0` reverts it. If
+  the writer is restarting, readers retry and then serve the write locally.
+  Uploads, function executions and deployments, function HTTP endpoints, site
+  deployments, render jobs, VCS work, and console forms that upload, build,
+  back up or call out stay on the accepting worker, so the split does not
+  serialise uploads or function CPU work.
+- [x] **Retry a busy write lock.** Write transactions retry `SQLITE_BUSY` /
+  `SQLITE_LOCKED` up to five times with jittered exponential backoff. Retries
+  only happen before the transaction callback runs, so events or generated IDs
+  cannot be duplicated; `busy_timeout` still handles ordinary contention first.
 
 ### 6. Fewer calls from the app (pesanle frontend repo)
 

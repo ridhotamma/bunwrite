@@ -5,7 +5,15 @@ import { join } from 'node:path'
 
 import { createApp } from '~/app'
 import { keyCaller } from '~/auth/caller'
-import { isDatabaseWrite, isWriterWorker, shouldForwardDatabaseWrite } from '~/cluster/writer'
+import {
+  isDatabaseWrite,
+  isForwardedConsoleWrite,
+  isForwardedWrite,
+  isWriterWorker,
+  shouldForwardConsoleWrite,
+  shouldForwardWrite,
+} from '~/cluster/writer'
+import { ConsoleAuth } from '~/console/auth'
 import { configFromEnv } from '~/config'
 import { openDb, type Db } from '~/db/connection'
 import { pushConfig } from '~/schema/push'
@@ -52,24 +60,69 @@ describe('writer role', () => {
     expect(isWriterWorker({ workers: 4, workerIndex: 3 })).toBe(false)
   })
 
-  test('only database writes move to the writer', () => {
+  test('document and transaction writes are database writes', () => {
     expect(isDatabaseWrite('POST', '/databases')).toBe(true)
     expect(isDatabaseWrite('POST', '/databases/main/collections/products/documents')).toBe(true)
     expect(isDatabaseWrite('PATCH', '/databases/main/collections/products/documents/p1')).toBe(true)
     expect(isDatabaseWrite('PATCH', '/databases/transactions/tx1')).toBe(true)
     expect(isDatabaseWrite('GET', '/databases/main/collections/products/documents')).toBe(false)
-    expect(isDatabaseWrite('POST', '/storage/buckets/files/files')).toBe(false)
-    expect(isDatabaseWrite('POST', '/functions/fn/executions')).toBe(false)
     expect(isDatabaseWrite('POST', '/account/sessions/email')).toBe(false)
+  })
+
+  test('every short mutation moves to the writer; long work stays local', () => {
+    expect(isForwardedWrite('POST', '/databases/main/collections/products/documents')).toBe(true)
+    expect(isForwardedWrite('POST', '/account/sessions/email')).toBe(true)
+    expect(isForwardedWrite('POST', '/teams')).toBe(true)
+    expect(isForwardedWrite('PUT', '/teams/team-1/prefs')).toBe(true)
+    expect(isForwardedWrite('POST', '/storage/buckets')).toBe(true)
+    expect(isForwardedWrite('PUT', '/storage/buckets/files/files/file-1')).toBe(true)
+    expect(isForwardedWrite('POST', '/proxy/rules/site')).toBe(true)
+    expect(isForwardedWrite('PATCH', '/project/services/functions')).toBe(true)
+    expect(isForwardedWrite('GET', '/account')).toBe(false)
+    // Uploads, function/site work, rendering and GitHub calls stay on the accepting worker.
+    expect(isForwardedWrite('POST', '/storage/buckets/files/files')).toBe(false)
+    expect(isForwardedWrite('POST', '/functions/fn/executions')).toBe(false)
+    expect(isForwardedWrite('POST', '/functions/fn/deployments')).toBe(false)
+    expect(isForwardedWrite('POST', '/functions/fn/deployments/vcs')).toBe(false)
+    expect(isForwardedWrite('POST', '/functions/fn/http/webhook')).toBe(false)
+    expect(isForwardedWrite('POST', '/sites/site-1/deployments')).toBe(false)
+    expect(isForwardedWrite('POST', '/render/pdf')).toBe(false)
+    expect(isForwardedWrite('POST', '/vcs/github/installations/1/detections')).toBe(false)
+  })
+
+  test('short console forms move to the writer; uploads and builds stay local', () => {
+    expect(isForwardedConsoleWrite('POST', '/console/auth/teams')).toBe(true)
+    expect(isForwardedConsoleWrite('POST', '/console/settings/project')).toBe(true)
+    expect(isForwardedConsoleWrite('POST', '/console/databases/main/collections/products')).toBe(true)
+    expect(isForwardedConsoleWrite('POST', '/console/organization/members/invite')).toBe(true)
+    expect(isForwardedConsoleWrite('POST', '/console/logout')).toBe(true)
+    expect(isForwardedConsoleWrite('GET', '/console/auth/teams')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/setup')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/login')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/projects/project-c/delete')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/storage/photos/files')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/functions/fn/run')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/functions/fn/deployments')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/sites/site-1/deployments')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/settings/backups/create')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/settings/smtp/test')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/webhooks/hook-1/test')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/vcs/approve')).toBe(false)
   })
 
   test('readers forward, the writer and single-process servers do not', () => {
     const base = testConfig({ workers: 4, writerPort: 8081 })
-    expect(shouldForwardDatabaseWrite({ ...base, workerIndex: 1 }, 'POST', '/databases/main/collections/products/documents')).toBe(true)
-    expect(shouldForwardDatabaseWrite({ ...base, workerIndex: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
-    expect(shouldForwardDatabaseWrite({ ...base, workerIndex: 1 }, 'GET', '/databases/main/collections/products/documents')).toBe(false)
-    expect(shouldForwardDatabaseWrite({ ...base, workerIndex: 1, writerPort: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
-    expect(shouldForwardDatabaseWrite({ ...base, workers: 1, workerIndex: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
+    expect(shouldForwardWrite({ ...base, workerIndex: 1 }, 'POST', '/databases/main/collections/products/documents')).toBe(true)
+    expect(shouldForwardWrite({ ...base, workerIndex: 1 }, 'POST', '/account/sessions/email')).toBe(true)
+    expect(shouldForwardWrite({ ...base, workerIndex: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
+    expect(shouldForwardWrite({ ...base, workerIndex: 1 }, 'GET', '/databases/main/collections/products/documents')).toBe(false)
+    expect(shouldForwardWrite({ ...base, workerIndex: 1, writerPort: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
+    expect(shouldForwardWrite({ ...base, workers: 1, workerIndex: 0 }, 'POST', '/databases/main/collections/products/documents')).toBe(false)
+    expect(shouldForwardConsoleWrite({ ...base, workerIndex: 1 }, 'POST', '/console/auth/teams')).toBe(true)
+    expect(shouldForwardConsoleWrite({ ...base, workerIndex: 0 }, 'POST', '/console/auth/teams')).toBe(false)
+    expect(shouldForwardConsoleWrite({ ...base, workerIndex: 1, writerPort: 0 }, 'POST', '/console/auth/teams')).toBe(false)
+    expect(shouldForwardConsoleWrite({ ...base, workerIndex: 1 }, 'POST', '/console/setup')).toBe(false)
   })
 
   test('configuration defaults keep the listener on loopback beside PORT', () => {
@@ -159,5 +212,36 @@ describe('write forwarding', () => {
     })
     expect(bulk.status).toBe(201)
     expect(((await bulk.json()) as { total: number }).total).toBe(2)
+
+    // Other short mutations use the writer too, so their auth and schema
+    // writes do not contend with the document writes on another connection.
+    const team = await fetch(`http://127.0.0.1:${readerServer.port}/v1/teams`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ teamId: 'forwarded-team', name: 'Forwarded team' }),
+    })
+    expect(team.status).toBe(201)
+    expect(((await team.json()) as { $id: string }).$id).toBe('forwarded-team')
+    const stored = writerDb.sqlite.query<{ id: string }, [string]>('SELECT id FROM _teams WHERE id = ?').get('forwarded-team')
+    expect(stored?.id).toBe('forwarded-team')
+
+    // Console forms take the same hop. Set up an admin, then send the form to
+    // the reader with the console and project cookies a browser would send.
+    const consoleAuth = new ConsoleAuth(writerDb)
+    await consoleAuth.upsert('admin@example.com', 'password123')
+    const consoleSecret = (await consoleAuth.login('admin@example.com', 'password123'))!
+    const consoleResponse = await fetch(`http://127.0.0.1:${readerServer.port}/console/auth/teams`, {
+      method: 'POST',
+      headers: {
+        cookie: `bunwrite_console=${consoleSecret}; console_project=${PROJECT}`,
+        origin: `http://127.0.0.1:${readerServer.port}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: 'name=Console+team&id=console-team',
+      redirect: 'manual',
+    })
+    expect(consoleResponse.status).toBe(303)
+    const consoleStored = writerDb.sqlite.query<{ id: string }, [string]>('SELECT id FROM _teams WHERE id = ?').get('console-team')
+    expect(consoleStored?.id).toBe('console-team')
   })
 })

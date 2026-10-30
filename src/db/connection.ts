@@ -23,6 +23,89 @@ export interface Db {
 const MIGRATION_LOCK_STALE_MS = 60_000
 const MIGRATION_LOCK_WAIT_MS = 60_000
 
+/** SQLite's primary result codes for "another connection holds the lock". */
+const SQLITE_BUSY = 5
+const SQLITE_LOCKED = 6
+
+/** Whether an error means the write lock was unavailable, not that the query was wrong. */
+export function isBusyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const code = String((error as { code?: unknown }).code ?? '')
+  if (code.startsWith('SQLITE_BUSY') || code.startsWith('SQLITE_LOCKED')) return true
+  const errno = Number((error as { errno?: unknown }).errno)
+  if (Number.isFinite(errno)) {
+    const primary = errno & 0xff
+    if (primary === SQLITE_BUSY || primary === SQLITE_LOCKED) return true
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  return /\bdatabase (?:table )?is locked\b/i.test(message)
+}
+
+export interface BusyRetryOptions {
+  /** Total attempts, including the first one. Default 5. */
+  attempts?: number
+  /** First backoff in milliseconds; doubles each attempt. Default 10. */
+  baseDelayMs?: number
+  /** Upper bound for the exponential part of a backoff. Default 100. */
+  maxDelayMs?: number
+  /** Return false to stop retrying, for example after a transaction callback ran. */
+  canRetry?: () => boolean
+}
+
+/**
+ * Run a synchronous write, retrying when SQLite reports the lock is busy.
+ * `busy_timeout` already waits for ordinary contention; this covers the cases
+ * where SQLite returns at once (deadlock detection, a snapshot conflict, a
+ * checkpoint racing the writer). Backoff is short and jittered so a retry
+ * never turns into a long stall of the process's event loop.
+ */
+export function withBusyRetry<T>(run: () => T, options: BusyRetryOptions = {}): T {
+  const attempts = Math.max(1, Math.round(options.attempts ?? 5))
+  const base = Math.max(0, options.baseDelayMs ?? 10)
+  const max = Math.max(base, options.maxDelayMs ?? 100)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return run()
+    } catch (error) {
+      const canRetry = options.canRetry ? options.canRetry() : true
+      if (attempt + 1 >= attempts || !canRetry || !isBusyError(error)) throw error
+      const delay = Math.min(max, base * 2 ** attempt) + Math.random() * base
+      if (delay > 0) Bun.sleepSync(Math.round(delay))
+    }
+  }
+}
+
+/**
+ * Install a retry around every transaction on this connection. A retry is only
+ * safe before the callback starts: once it has run, its JavaScript side effects
+ * (events, ID generation, counters) may already be visible, so those errors
+ * still surface to the caller.
+ */
+function installTransactionRetry(sqlite: Database): void {
+  const native = sqlite.transaction.bind(sqlite)
+  type AnyTx = ((...args: any[]) => any) & {
+    deferred: (...args: any[]) => any
+    immediate: (...args: any[]) => any
+    exclusive: (...args: any[]) => any
+  }
+  sqlite.transaction = ((fn: AnyTx) => {
+    let started = false
+    const tx = native((...args: any[]) => {
+      started = true
+      return fn(...args)
+    })
+    const run = (call: (...callArgs: any[]) => any, args: any[]) => {
+      started = false
+      return withBusyRetry(() => call(...args), { canRetry: () => !started })
+    }
+    const wrapped = ((...args: any[]) => run(tx, args)) as AnyTx
+    wrapped.deferred = (...args: any[]) => run(tx.deferred, args)
+    wrapped.immediate = (...args: any[]) => run(tx.immediate, args)
+    wrapped.exclusive = (...args: any[]) => run(tx.exclusive, args)
+    return wrapped
+  }) as typeof sqlite.transaction
+}
+
 /**
  * Workers open the same database at the same time on boot. Drizzle's migrator
  * reads which migrations ran and then applies them, so without a lock two
@@ -84,6 +167,7 @@ export function openDb(
     if (!existsSync(path) && existsSync(beforeRestore)) renameSync(beforeRestore, path)
   }
   const sqlite = new Database(path, { create: true, strict: true })
+  installTransactionRetry(sqlite)
   const orm = drizzle(sqlite, { schema })
   // Holding the lock through the pragmas too: switching a brand-new file to
   // WAL needs an exclusive lock, and SQLite returns SQLITE_BUSY at once when

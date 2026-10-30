@@ -201,9 +201,10 @@ export interface Config {
    */
   instanceKey?: string
   /**
-   * Loopback port where worker 0 serves database writes. The other workers
-   * forward write requests here so SQLite has one writer process. 0 disables
-   * both the listener and the forwarding.
+   * Loopback port where worker 0 serves short database writes. The other
+   * workers forward mutating API requests and short console forms here so
+   * SQLite has one writer process. Uploads, executions, deployments, renders
+   * and VCS work stay local. 0 disables both the listener and the forwarding.
    */
   writerPort: number
   /** Interface for the writer listener; loopback by default, workers share a namespace. */
