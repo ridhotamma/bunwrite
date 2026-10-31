@@ -13,69 +13,32 @@ import {
   type SqliteSynchronous,
 } from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
+import type { DriverCapabilities } from './driver'
+import { withBusyRetry } from './errors'
+import { createSqliteDriver, type SqliteDriver } from './sqlite-driver'
 import * as schema from './system-schema'
+
+export { isBusyError, withBusyRetry, type BusyRetryOptions } from './errors'
 
 export type Orm = BunSQLiteDatabase<typeof schema>
 
+/**
+ * The synchronous SQLite connection plus the async driver port.
+ *
+ * Existing services keep using `sqlite` (and `driver` is the same connection
+ * behind the async port). A migration to Postgres or MongoDB moves a service
+ * from `sqlite` to `driver`; see docs/DATABASE.md.
+ */
 export interface Db {
   sqlite: Database
   orm: Orm
+  driver: SqliteDriver
+  readonly dialect: 'sqlite'
+  readonly capabilities: DriverCapabilities
 }
 
 const MIGRATION_LOCK_STALE_MS = 60_000
 const MIGRATION_LOCK_WAIT_MS = 60_000
-
-/** SQLite's primary result codes for "another connection holds the lock". */
-const SQLITE_BUSY = 5
-const SQLITE_LOCKED = 6
-
-/** Whether an error means the write lock was unavailable, not that the query was wrong. */
-export function isBusyError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false
-  const code = String((error as { code?: unknown }).code ?? '')
-  if (code.startsWith('SQLITE_BUSY') || code.startsWith('SQLITE_LOCKED')) return true
-  const errno = Number((error as { errno?: unknown }).errno)
-  if (Number.isFinite(errno)) {
-    const primary = errno & 0xff
-    if (primary === SQLITE_BUSY || primary === SQLITE_LOCKED) return true
-  }
-  const message = error instanceof Error ? error.message : String(error)
-  return /\bdatabase (?:table )?is locked\b/i.test(message)
-}
-
-export interface BusyRetryOptions {
-  /** Total attempts, including the first one. Default 5. */
-  attempts?: number
-  /** First backoff in milliseconds; doubles each attempt. Default 10. */
-  baseDelayMs?: number
-  /** Upper bound for the exponential part of a backoff. Default 100. */
-  maxDelayMs?: number
-  /** Return false to stop retrying, for example after a transaction callback ran. */
-  canRetry?: () => boolean
-}
-
-/**
- * Run a synchronous write, retrying when SQLite reports the lock is busy.
- * `busy_timeout` already waits for ordinary contention; this covers the cases
- * where SQLite returns at once (deadlock detection, a snapshot conflict, a
- * checkpoint racing the writer). Backoff is short and jittered so a retry
- * never turns into a long stall of the process's event loop.
- */
-export function withBusyRetry<T>(run: () => T, options: BusyRetryOptions = {}): T {
-  const attempts = Math.max(1, Math.round(options.attempts ?? 5))
-  const base = Math.max(0, options.baseDelayMs ?? 10)
-  const max = Math.max(base, options.maxDelayMs ?? 100)
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return run()
-    } catch (error) {
-      const canRetry = options.canRetry ? options.canRetry() : true
-      if (attempt + 1 >= attempts || !canRetry || !isBusyError(error)) throw error
-      const delay = Math.min(max, base * 2 ** attempt) + Math.random() * base
-      if (delay > 0) Bun.sleepSync(Math.round(delay))
-    }
-  }
-}
 
 /**
  * Install a retry around every transaction on this connection. A retry is only
@@ -172,6 +135,7 @@ export function openDb(
   const sqlite = new Database(path, { create: true, strict: true })
   installTransactionRetry(sqlite)
   const orm = drizzle(sqlite, { schema })
+  const driver = createSqliteDriver({ db: sqlite })
   // Holding the lock through the pragmas too: switching a brand-new file to
   // WAL needs an exclusive lock, and SQLite returns SQLITE_BUSY at once when
   // another worker is doing the same instead of waiting on busy_timeout.
@@ -195,7 +159,7 @@ export function openDb(
     migrate(orm, { migrationsFolder: migrationsFolder() })
     ensureClusterSchema(sqlite)
   })
-  return { sqlite, orm }
+  return { sqlite, orm, driver, dialect: 'sqlite', capabilities: driver.capabilities }
 }
 
 /** Quote an SQL identifier. */

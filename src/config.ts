@@ -1,6 +1,8 @@
 import { dirname, resolve } from 'node:path'
 
 import { clusterConfig, workerPortsEnabled } from './cluster/config'
+import type { DatabaseBackend } from './db/driver'
+import { parseDatabaseBackend } from './db/driver'
 import type { FunctionSandbox } from './functions/sandbox'
 import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
@@ -248,6 +250,20 @@ export interface Config {
   hostname: string
   /** SQLite file path. */
   databasePath: string
+  /**
+   * Storage backend selected by `DB_DRIVER`/`DATABASE_DRIVER`. `sqlite` (the
+   * default) keeps the zero-config SQLite path; Postgres and MongoDB are opt-in
+   * and are being wired in service by service. See docs/DATABASE.md.
+   */
+  databaseDriver?: DatabaseBackend
+  /** Postgres or MongoDB connection URL (`DATABASE_URL`). */
+  databaseUrl?: string
+  /** Postgres schema or MongoDB database name for project data. */
+  databaseNamespace?: string
+  /** Connection-pool size for the network backends (default 10). */
+  databasePoolMax?: number
+  /** Require TLS for Postgres (`DATABASE_SSL`). */
+  databaseSsl?: boolean
   /** Organization grouping for this instance; stored in the database on first start. */
   orgId: string
   /** Project ID stored in the database; environment values only seed an empty instance. */
@@ -432,6 +448,23 @@ export function oauthFromEnv(env: Record<string, string | undefined>): Partial<R
   return providers
 }
 
+/** `DB_DRIVER`/`DATABASE_URL` and the network-backend options. */
+function databaseConfig(
+  env: Record<string, string | undefined>,
+): Pick<Config, 'databaseDriver' | 'databaseUrl' | 'databaseNamespace' | 'databasePoolMax' | 'databaseSsl'> {
+  const url = (env.DATABASE_URL || env.DB_URL || '').trim() || undefined
+  // `DB_DRIVER` is the switch. A `DATABASE_URL` from another tool in the same
+  // environment must not silently move Bunwrite off SQLite.
+  const explicit = env.DB_DRIVER || env.DATABASE_DRIVER
+  return {
+    databaseDriver: parseDatabaseBackend(explicit, explicit ? url : undefined),
+    databaseUrl: url,
+    databaseNamespace: (env.DATABASE_SCHEMA || env.DATABASE_NAMESPACE || env.MONGO_DATABASE || '').trim() || undefined,
+    databasePoolMax: Math.max(1, wholeNumber(env.DATABASE_POOL_MAX, 10)),
+    databaseSsl: env.DATABASE_SSL === 'true' || env.DATABASE_SSL === '1',
+  }
+}
+
 /**
  * Server configuration. Project identity and settings are not read from the
  * environment here: `bootstrapInstance` seeds them into the database once, and
@@ -478,6 +511,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     apiCompat: parseApiCompat(env.API_COMPAT),
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
+    ...databaseConfig(env),
     orgId: '',
     projectId: '',
     projectName: 'Bunwrite',

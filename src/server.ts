@@ -19,6 +19,18 @@ export async function startServer(): Promise<void> {
   if (tuning) console.log(`[autotune] ${tuning.summary}`)
 
   const config = configFromEnv()
+  // Fail loudly instead of quietly writing to SQLite when the operator asked
+  // for a network database. The drivers and schema bootstrap are ready; the
+  // request path is migrated service by service (docs/DATABASE.md).
+  if (config.databaseDriver && config.databaseDriver !== 'sqlite') {
+    console.error(
+      `[database] DB_DRIVER=${config.databaseDriver} is configured, but the request path still uses SQLite during the migration.\n` +
+        `[database] Run \`bun run db:check\` to verify the ${config.databaseDriver} connection and schema, then see docs/DATABASE.md.\n` +
+        `[database] Remove DB_DRIVER/DATABASE_URL or set DB_DRIVER=sqlite to start with SQLite.`,
+    )
+    process.exit(1)
+  }
+
   // `createServices` applies the default project's stored settings over
   // `config`; keep the environment value as the default for other projects.
   const sqliteSynchronous = config.sqliteSynchronous

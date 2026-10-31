@@ -34,9 +34,14 @@ Puppeteer dependency in your app.
 
 It is not a fork of Appwrite and is not affiliated with it. Bunwrite implements
 the endpoints most apps use and stays compatible with Appwrite's SDKs and CLI.
-If you need horizontal scaling, a multi-node database or the complete Appwrite
-platform, use Appwrite. If you want the Appwrite API on a small VPS with a file
-you can back up, Bunwrite is for you.
+If you need the complete Appwrite platform, use Appwrite. If you want the
+Appwrite API on a small VPS with a file you can back up, Bunwrite is for you.
+
+SQLite is still the default and the only backend that serves every feature
+today. A database port now sits under the data layer, with working Postgres and
+MongoDB drivers, schema bootstrap and a `db:check` CLI, so the move to a
+network database is incremental instead of a rewrite. See
+[docs/DATABASE.md](docs/DATABASE.md) for exactly what runs on each backend.
 
 ## What you get
 
@@ -45,9 +50,12 @@ you can back up, Bunwrite is for you.
   and SQLite stores everything.
 - **Appwrite-compatible.** Point the Appwrite SDK or CLI at Bunwrite and keep
   your existing code and workflow.
-- **SQLite-native.** Drizzle migrations create the schema, each project is its
-  own database file, and you can inspect or copy the data with standard SQLite
-  tools.
+- **SQLite-native, with a database port.** Drizzle migrations create the
+  schema, each project is its own database file, and you can inspect or copy the
+  data with standard SQLite tools. The same data layer can target Postgres or
+  MongoDB through `DB_DRIVER`/`DATABASE_URL`; the service migration is ongoing
+  and documented per backend.
+
 - **Environments.** Keep staging and production as separate projects, on one
   server or several. The CLI's `bunwrite env` keeps each environment's
   variables in `.env` files, and previews can have their own values.
@@ -900,6 +908,21 @@ separately. Restore with `bunwrite restore` while the server is stopped. See
 For continuous SQLite replication and restore onto a replacement host, set
 `LITESTREAM_REPLICA_URL`; see
 [Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
+
+## Database backends
+
+SQLite is the default and the only backend that serves every feature today.
+Under the data layer there is now a driver port with working Postgres and
+MongoDB implementations, runtime schema bootstrap and a CLI to verify a
+connection:
+
+```bash
+bun run db:check --driver postgres --url postgres://localhost:5432/bunwrite
+```
+
+The request path is migrated service by service; [docs/DATABASE.md](docs/DATABASE.md)
+lists exactly what runs on each backend, the dialect translation, and the
+migration order.
 
 ## Architecture
 

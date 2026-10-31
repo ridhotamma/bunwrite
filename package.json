@@ -25,6 +25,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "migrate": "bun src/cli/migrate.ts",
+    "db:check": "bun src/cli/db.ts check",
+    "db:migrate": "bun src/cli/db.ts migrate",
+    "db:ping": "bun src/cli/db.ts ping",
     "snapshot": "bun src/cli/snapshot.ts",
     "restore": "bun src/cli/restore.ts",
     "failover": "bun src/cli/failover.ts",
@@ -44,6 +47,7 @@
   "dependencies": {
     "drizzle-orm": "^0.45.4",
     "htmx.org": "2.0.11",
+    "mongodb": "^7.8.0",
     "nodemailer": "10.2.1",
     "sharp": "0.35.5"
   },

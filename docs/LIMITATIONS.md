@@ -23,6 +23,7 @@ Related documents:
 | Area | Current state | Risk |
 | --- | --- | --- |
 | High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
+| Database backends | SQLite serves every feature; Postgres/MongoDB drivers, schema bootstrap and tests exist, but the service layer still needs the async migration | **Medium** |
 | API key permissions | Console keys can be scoped per API group; env `API_KEYS` and old keys stay full access | **Low/Medium** |
 | Backups | Off by default; whole-instance archives plus optional Litestream PITR | **High/Medium** |
 | Function isolation | Shared CPU/memory/network, no quotas | **High** |
@@ -59,6 +60,12 @@ Mitigations: keep the database on local disk, monitor disk health, use
 Litestream plus `bunwrite failover` for host-loss recovery, and plan a
 replicated-SQLite design (for example LiteFS) if automatic failover is
 required.
+
+A database port now exists under the data layer (`src/db/driver.ts`) with
+working Postgres and MongoDB drivers, runtime schema bootstrap and integration
+tests against real servers. It is the route to horizontal scaling, but the
+request path is still SQLite-only until services move to `db.driver`; see
+[DATABASE.md](DATABASE.md) for the current state and the migration order.
 
 ### 2. API key scopes are available, but environment keys bypass them
 

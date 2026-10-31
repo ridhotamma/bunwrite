@@ -146,6 +146,12 @@ terminator per host.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the default project. |
+| `DB_DRIVER` | `sqlite` | Storage backend: `sqlite`, `postgres` or `mongodb`. This is the switch; a `DATABASE_URL` alone does not move the server off SQLite. See [DATABASE.md](DATABASE.md). |
+| `DATABASE_URL` | unset | Postgres or MongoDB connection URL for `DB_DRIVER`. |
+| `DATABASE_SCHEMA` | `public` | Postgres schema used for the built-in tables. |
+| `MONGO_DATABASE` | `bunwrite` | MongoDB database for project data. |
+| `DATABASE_POOL_MAX` | `10` | Connection-pool size for Postgres/MongoDB. |
+| `DATABASE_SSL` | `false` | Require TLS for Postgres. |
 | `STORAGE_PATH` | `./data/storage` | Uploaded files when S3 storage is off. |
 | `BACKUPS_PATH` | `./data/backups` | Local whole-instance backup archives when backup S3 storage is off. |
 | `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. Restores read it from the environment or `.env`, or from `--key`. |
