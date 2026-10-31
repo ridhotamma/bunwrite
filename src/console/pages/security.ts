@@ -2,14 +2,27 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html } from '~/console/html'
-import { header, settingsSection } from '~/console/ui'
+import { settingsSection } from '~/console/ui'
+import { organizationHeader } from '~/console/views/organization'
 
 export const SECURITY = '/console/security'
+
+/** The organization chrome, so Security sits beside Members and Settings instead of inside a project. */
+function securityHeader(ctx: ConsoleContext) {
+  const org = ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
+  const members = ctx.organizations.members(org.id)
+  return organizationHeader(
+    org,
+    { projects: ctx.projects.list().length, members: members.filter((member) => member.status === 'active').length },
+    'security',
+    ctx.organizations.roleOf(org.id, ctx.admin.email) === 'owner',
+  )
+}
 
 function securityView(ctx: ConsoleContext) {
   const admin = ctx.auth.find(ctx.admin.email)!
   const smtp = ctx.projects.control.mailer.enabled
-  return html`${header('Security')}
+  return html`${securityHeader(ctx)}
     ${settingsSection(
       'Email MFA',
       'When this is on, signing in asks for a six-digit code sent to your admin email after the password. The code expires in 10 minutes and is single use.',

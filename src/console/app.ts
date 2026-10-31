@@ -268,7 +268,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         selectedProjectId: selected?.info.id ?? null,
         render: (title, section, body) =>
           page(
-            section === 'projects' || section === 'organization'
+            section === 'projects' || section === 'organization' || section === 'security'
               ? projectShell(title, { admin: admin.email }, body, flash)
               : shell(
                   title,

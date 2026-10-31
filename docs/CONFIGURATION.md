@@ -182,8 +182,14 @@ Litestream; back up `STORAGE_PATH` or the uploads bucket separately. See
 [DEPLOY.md](DEPLOY.md#continuous-backup-and-failover).
 
 S3 for uploads and backups is configured in **Console → Settings → File storage**
-and **Settings → Backups**, not in `.env`. An archive contains every database
+and **Organization → Backups**, not in `.env`. An archive contains every database
 but no uploaded files; back up `STORAGE_PATH` or the uploads bucket separately.
+
+Backups and Litestream may share one bucket if they use different key prefixes.
+Set the backup **Key prefix** in Organization → Backups (for example `backups`)
+and keep the replica at a different prefix such as `s3://bucket/litestream`.
+Scope each credential to its own prefix so the backup key cannot delete the
+replica.
 
 ## Server processes
 

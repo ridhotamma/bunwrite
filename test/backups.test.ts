@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { readArchive, writeArchive } from '~/backups/archive'
 import { decrypt, encrypt, packBackup, unpackBackup } from '~/backups/format'
 import { createInstanceBackup } from '~/backups/instance'
+import { litestreamStatus } from '~/backups/litestream'
 import { applyPendingRestore, cancelPendingRestore, readPendingRestore, stagePendingRestore } from '~/backups/pending'
 import { inspectBackup, inspectDatabase, restoreInstance } from '~/backups/restore'
 import { BackupService } from '~/backups/service'
@@ -370,6 +371,30 @@ describe('restoring whole-instance archives', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('litestream status', () => {
+  test('masks credentials and reports the configured flags', () => {
+    const status = litestreamStatus({
+      LITESTREAM_REPLICA_URL: 's3://access:secret@bucket/bunwrite',
+      LITESTREAM_SYNC_INTERVAL: '2s',
+      LITESTREAM_HEARTBEAT_URL: 'https://hc.example/ping',
+      LITESTREAM_ALLOW_EMPTY: 'true',
+    })
+    expect(status.configured).toBe(true)
+    expect(status.replica).toContain('bucket/bunwrite')
+    expect(status.replica).not.toContain('secret')
+    expect(status.syncInterval).toBe('2s')
+    expect(status.heartbeat).toBe(true)
+    expect(status.allowEmpty).toBe(true)
+  })
+
+  test('reports an unconfigured instance', () => {
+    const status = litestreamStatus({})
+    expect(status.configured).toBe(false)
+    expect(status.replica).toBeUndefined()
+    expect(status.syncInterval).toBe('1s')
   })
 })
 

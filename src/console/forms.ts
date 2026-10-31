@@ -1,4 +1,5 @@
 /** Reading and normalising console form values. */
+import type { S3Config } from '~/config'
 import { err } from '~/lib/errors'
 
 export type Form = Record<string, any>
@@ -57,4 +58,34 @@ export function parseJsonObject(raw: unknown, message: string): Record<string, u
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw err('general_argument_invalid', message)
   return parsed as Record<string, unknown>
+}
+
+/** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
+export function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
+  const read = (suffix: string) => value(form, `${prefix}${suffix}`)
+  const enabled = checked(form[`${prefix}Enabled`])
+  const secret = String(form[`${prefix}Secret`] ?? '') || existing.secret
+  const endpoint = read('Endpoint').replace(/\/$/, '')
+  const config: S3Config = {
+    enabled,
+    bucket: read('Bucket'),
+    region: read('Region'),
+    endpoint,
+    accessKey: read('AccessKey'),
+    secret,
+    forcePathStyle: checked(form[`${prefix}ForcePathStyle`]),
+  }
+  if (enabled) {
+    if (!config.endpoint || !config.bucket || !config.region || !config.accessKey || !config.secret) {
+      throw err('general_argument_invalid', 'Endpoint, bucket, region, access key and secret are required for S3 storage.')
+    }
+    let url: URL
+    try {
+      url = new URL(config.endpoint)
+    } catch {
+      throw err('general_argument_invalid', 'The S3 endpoint must be a valid URL.')
+    }
+    if (!['http:', 'https:'].includes(url.protocol)) throw err('general_argument_invalid', 'The S3 endpoint must use http or https.')
+  }
+  return config
 }

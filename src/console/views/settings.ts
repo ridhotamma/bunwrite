@@ -1,12 +1,10 @@
 /** Settings tab markup. The page loads data and validates writes; this module renders it. */
 import { gitTabView } from '~/console/views/vcs'
-import type { BackupFile } from '~/backups/service'
-import { readPendingRestore } from '~/backups/pending'
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type OAuthProviderId, type S3Config } from '~/config'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { SETTINGS, SETTING_GROUPS, TABS, type SettingsTab } from '~/console/settings-meta'
-import { alert, badge, destroy, emptyState, formatBytes, header, icon, settingsSection, when } from '~/console/ui'
+import { alert, badge, destroy, formatBytes, header, icon, settingsSection } from '~/console/ui'
 import { SAMPLE_INVOICE } from '~/render/sample'
 import type { SettingKey } from '~/settings/service'
 import type { TemplateFields, TemplateId } from '~/mail/templates'
@@ -95,7 +93,7 @@ function emailCards(ctx: ConsoleContext): Html {
     ${OAUTH_PROVIDER_IDS.map((id) => oauthCard(ctx, id))}`
 }
 
-function s3Fields(prefix: string, s3: S3Config): Html {
+export function s3Fields(prefix: string, s3: S3Config): Html {
   const field = (label: string, input: Html) => html`<label>${label}${input}</label>`
   return html`
     <label>Endpoint<input name="${prefix}Endpoint" class="mono" value="${s3.endpoint}" placeholder="https://s3.example.com"></label>
@@ -120,92 +118,6 @@ function storageCard(ctx: ConsoleContext): Html {
       ${s3Fields('s3', s3)}
       <div class="foot"><button class="primary">Save</button></div>
     </form>`)
-}
-
-async function backupsCards(ctx: ConsoleContext): Promise<Html> {
-  const control = ctx.projects.control
-  const c = control.config
-  let backups: BackupFile[] = []
-  let error = ''
-  try {
-    backups = await control.backups.list()
-  } catch (problem) {
-    error = problem instanceof Error ? problem.message : String(problem)
-  }
-  const pending = readPendingRestore(control.config.databasePath)
-  const encryption = c.backupEncryptionKey
-    ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one with <code>bunwrite restore &lt;file&gt;</code>.`)
-    : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
-  return html`
-    ${error ? alert('critical', html`${error}`) : ''}
-    ${encryption}
-    ${settingsSection(
-      'Backups',
-      'One archive covers the control database and every project database. Automatic backups run once a day at 02:00 UTC.',
-      html`<div class="toolbar"><h2 style="margin:0">Saved backups</h2>
-          <form method="post" action="${SETTINGS}/backups/create" class="inline" style="margin-left:auto"><button class="primary">Create backup</button></form>
-        </div>
-        ${backups.length
-          ? html`<ul class="list backup-list">${backups.map(
-              (b) => html`<li>
-                <div class="backup-meta">
-                  <span class="mono clip" title="${b.name}">${b.name}</span>
-                  <span class="subdued cell-sub">${formatBytes(b.size)} · Created ${when(b.modified)}</span>
-                </div>
-                <div class="backup-actions">
-                  <a class="btn small" href="${SETTINGS}/backups/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
-                  <form method="post" action="${SETTINGS}/backups/${encodeURIComponent(b.name)}/delete" class="inline" data-confirm="Delete ${b.name}?" data-confirm-label="Delete" data-confirm-tone="critical">
-                    <button class="critical small">Delete</button>
-                  </form>
-                </div>
-              </li>`,
-            )}</ul>`
-          : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
-      { id: 'backups', flush: true },
-    )}
-    ${pending
-      ? settingsSection(
-          'Restore staged',
-          'This archive was validated and is waiting for the next start.',
-          html`<div class="toolbar">
-              <div class="backup-meta"><span class="mono clip" title="${pending.name}">${pending.name}</span><span class="subdued cell-sub">Uploaded ${pending.uploadedAt ? when(pending.uploadedAt) : 'earlier'}</span></div>
-              <form method="post" action="${SETTINGS}/backups/restore/cancel" class="inline" style="margin-left:auto" data-confirm="Cancel the staged restore?" data-confirm-label="Cancel restore" data-confirm-tone="critical"><button class="critical small">Cancel staged restore</button></form>
-            </div>
-            <p>Restart Bunwrite to apply it. The control database and every project database are replaced; the previous files stay as <code>*.before-restore-&lt;timestamp&gt;</code>.</p>
-            <p>Uploaded files, function code and site builds are not in the archive.</p>`,
-          { id: 'backup-pending' },
-        )
-      : settingsSection(
-          'Restore archive',
-          'Upload a backup here. Bunwrite validates it now and applies it the next time it starts, so there is no CLI step.',
-          html`<form method="post" action="${SETTINGS}/backups/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
-              data-confirm="Stage this archive? The control database and every project database will be replaced when Bunwrite next starts." data-confirm-label="Stage restore" data-confirm-tone="critical">
-            <label>Backup archive<input type="file" name="backup" accept=".zst,.enc,application/x-bunwrite-archive" required>
-              <small>A <code>.archive.zst</code> or <code>.archive.zst.enc</code> file from this server.</small></label>
-            <label>Encryption key <span class="subdued">(only for encrypted archives)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
-              <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
-            <div class="foot"><button class="critical">Validate and stage</button></div>
-          </form>
-          <p class="subdued">After staging, restart Bunwrite from your host (<code>docker compose restart bunwrite</code> or <code>systemctl restart bunwrite</code>). The archive is applied before the database opens. You can still run <code>bunwrite restore &lt;file&gt;</code> manually with the server stopped.</p>`,
-          { id: 'backup-restore' },
-        )}
-    ${settingsSection(
-      'Backup options',
-      'Whole-instance backups: enable the daily run, choose how many to keep, and where they are stored.',
-      html`<form method="post" action="${SETTINGS}/backups">
-        <label class="check"><input type="checkbox" name="backupsEnabled" ${c.backups.enabled ? 'checked' : ''}>Enable auto backups</label>
-        <div class="fields"><label>Keep automatic backups<input name="backupsKeep" type="number" min="1" max="100" value="${c.backups.keep}"></label></div>
-        <label class="check"><input type="checkbox" name="backupS3Enabled" ${c.backups.s3.enabled ? 'checked' : ''}>Store backups in S3 storage</label>
-        ${s3Fields('backupS3', c.backups.s3)}
-        <div class="foot"><button>Save</button></div>
-      </form>`,
-      {
-        id: 'backup-options',
-        badge: control.settings.overridden('backups')
-          ? html`${badge('Custom', 'info')} ${destroy(`${SETTINGS}/backups/reset`, 'Reset', 'Reset backup settings to the defaults?')}`
-          : badge('Default'),
-      },
-    )}`
 }
 
 function projectVariablesCard(ctx: ConsoleContext): Html {
@@ -323,17 +235,15 @@ export function inlineStatus(message: string, tone: 'success' | 'critical'): Htm
 
 const TAB_BY_KEY = Object.fromEntries(TABS.map((tab) => [tab.key, tab])) as Record<SettingsTab, (typeof TABS)[number]>
 
-function settingsNav(active: SettingsTab, canManageBackups: boolean): Html {
+function settingsNav(active: SettingsTab): Html {
   return html`<nav class="settings-nav" aria-label="Settings sections">
     ${SETTING_GROUPS.map(
       (group) => html`<div class="settings-nav-group">
         <div class="settings-nav-label">${group.label}</div>
-        ${group.tabs
-          .filter((key) => key !== 'backups' || canManageBackups)
-          .map((key) => {
-            const tab = TAB_BY_KEY[key]
-            return html`<a href="${tab.href}" class="${key === active ? 'on' : ''}" ${key === active ? html`aria-current="page"` : ''}>${tab.label}</a>`
-          })}
+        ${group.tabs.map((key) => {
+          const tab = TAB_BY_KEY[key]
+          return html`<a href="${tab.href}" class="${key === active ? 'on' : ''}" ${key === active ? html`aria-current="page"` : ''}>${tab.label}</a>`
+        })}
       </div>`,
     )}
   </nav>`
@@ -353,9 +263,6 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
     case 'storage':
       body = storageCard(ctx)
-      break
-    case 'backups':
-      body = await backupsCards(ctx)
       break
     case 'functions':
       body = functionCards(ctx)
@@ -378,7 +285,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
   }
   return html`${header('Settings')}
     <div class="settings-layout">
-      ${settingsNav(tab, ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email) === 'owner')}
+      ${settingsNav(tab)}
       <div class="settings-content">${body}</div>
     </div>`
 }

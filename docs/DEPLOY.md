@@ -401,10 +401,10 @@ Upgrade with `git pull && docker compose up -d --build`.
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - Enable daily database backups and optional S3 backup storage in
-  **Settings → Backups**. One archive contains the control database and every
+  **Organization → Backups**. One archive contains the control database and every
   project database; it does not include uploaded files. `bunwrite snapshot` is
   available for cron-driven archives. Restore by uploading the archive in
-  **Settings → Backups** and restarting Bunwrite, or run
+  **Organization → Backups** and restarting Bunwrite, or run
   `bunwrite restore <archive>` with the server stopped; either way every
   database is validated first and the previous files are kept as
   `*.before-restore-<timestamp>`.
@@ -431,6 +431,12 @@ LITESTREAM_SYNC_INTERVAL=1s
 Use a bucket/prefix dedicated to this instance. Enable bucket versioning and
 encryption, and give the key access only to that prefix. Do not point
 `DATABASE_PATH` at S3 or a network filesystem.
+
+Backups may use the same bucket as the replica if they use a different prefix:
+set the backup **Key prefix** (for example `backups`) and keep the replica at
+`s3://bucket/litestream`. Use separate credentials scoped to each prefix, and
+separate lifecycle rules; the replica churns WAL objects while archives are
+large and infrequent.
 
 On `docker compose up`, the entrypoint:
 

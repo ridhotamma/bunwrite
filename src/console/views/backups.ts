@@ -1,0 +1,113 @@
+/** Organization-level whole-instance backups: one archive for every project. */
+import { readPendingRestore } from '~/backups/pending'
+import type { BackupFile } from '~/backups/service'
+import { litestreamStatus } from '~/backups/litestream'
+import type { ConsoleContext } from '~/console/context'
+import { html, type Html } from '~/console/html'
+import { alert, badge, destroy, emptyState, formatBytes, settingsSection, when } from '~/console/ui'
+import { s3Fields } from './settings'
+
+export const BACKUPS = '/console/organization/backups'
+
+export async function backupsView(ctx: ConsoleContext): Promise<Html> {
+  const control = ctx.projects.control
+  const c = control.config
+  let backups: BackupFile[] = []
+  let error = ''
+  try {
+    backups = await control.backups.list()
+  } catch (problem) {
+    error = problem instanceof Error ? problem.message : String(problem)
+  }
+  const pending = readPendingRestore(c.databasePath)
+  const litestream = litestreamStatus()
+  const encryption = c.backupEncryptionKey
+    ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one here, or with <code>bunwrite restore &lt;file&gt;</code>.`)
+    : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
+  return html`
+    ${error ? alert('critical', html`${error}`) : ''}
+    ${encryption}
+    ${settingsSection(
+      'Backups',
+      'One archive covers the control database and every project database. Automatic backups run once a day at 02:00 UTC.',
+      html`<div class="toolbar"><h2 style="margin:0">Saved backups</h2>
+          <form method="post" action="${BACKUPS}/create" class="inline" style="margin-left:auto"><button class="primary">Create backup</button></form>
+        </div>
+        ${backups.length
+          ? html`<ul class="list backup-list">${backups.map(
+              (b) => html`<li>
+                <div class="backup-meta">
+                  <span class="mono clip" title="${b.name}">${b.name}</span>
+                  <span class="subdued cell-sub">${formatBytes(b.size)} · Created ${when(b.modified)}</span>
+                </div>
+                <div class="backup-actions">
+                  <a class="btn small" href="${BACKUPS}/${encodeURIComponent(b.name)}/download" hx-boost="false">Download</a>
+                  <form method="post" action="${BACKUPS}/${encodeURIComponent(b.name)}/delete" class="inline" data-confirm="Delete ${b.name}?" data-confirm-label="Delete" data-confirm-tone="critical">
+                    <button class="critical small">Delete</button>
+                  </form>
+                </div>
+              </li>`,
+            )}</ul>`
+          : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
+      { id: 'backups', flush: true },
+    )}
+    ${pending
+      ? settingsSection(
+          'Restore staged',
+          'This archive was validated and is waiting for the next start.',
+          html`<div class="toolbar">
+              <div class="backup-meta"><span class="mono clip" title="${pending.name}">${pending.name}</span><span class="subdued cell-sub">Uploaded ${pending.uploadedAt ? when(pending.uploadedAt) : 'earlier'}</span></div>
+              <form method="post" action="${BACKUPS}/restore/cancel" class="inline" style="margin-left:auto" data-confirm="Cancel the staged restore?" data-confirm-label="Cancel restore" data-confirm-tone="critical"><button class="critical small">Cancel staged restore</button></form>
+            </div>
+            <p>Restart Bunwrite to apply it. The control database and every project database are replaced; the previous files stay as <code>*.before-restore-&lt;timestamp&gt;</code>.</p>
+            <p>Uploaded files, function code and site builds are not in the archive.</p>`,
+          { id: 'backup-pending' },
+        )
+      : settingsSection(
+          'Restore archive',
+          'Upload a backup here. Bunwrite validates it now and applies it the next time it starts, so there is no CLI step.',
+          html`<form method="post" action="${BACKUPS}/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
+              data-confirm="Stage this archive? The control database and every project database will be replaced when Bunwrite next starts." data-confirm-label="Stage restore" data-confirm-tone="critical">
+            <label>Backup archive<input type="file" name="backup" accept=".zst,.enc,application/x-bunwrite-archive" required>
+              <small>A <code>.archive.zst</code> or <code>.archive.zst.enc</code> file from this server.</small></label>
+            <label>Encryption key <span class="subdued">(only for encrypted archives)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
+              <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
+            <div class="foot"><button class="critical">Validate and stage</button></div>
+          </form>
+          <p class="subdued">After staging, restart Bunwrite from your host (<code>docker compose restart bunwrite</code> or <code>systemctl restart bunwrite</code>). The archive is applied before the database opens. You can still run <code>bunwrite restore &lt;file&gt;</code> manually with the server stopped.</p>`,
+          { id: 'backup-restore' },
+        )}
+    ${settingsSection(
+      'Continuous replication (Litestream)',
+      'Continuous WAL replication to object storage, separate from the archives above. Configured in the server environment, not in this console.',
+      html`${litestream.configured
+        ? alert('info', html`Configured for <code class="mono">${litestream.replica}</code> · every ${litestream.syncInterval}${litestream.heartbeat ? ' · heartbeat on' : ''}.`)
+        : alert('warning', html`Not configured. Without Litestream, recovery can only reach the last archive above, so writes since then are lost if the host or disk fails. Set <code>LITESTREAM_REPLICA_URL</code> and S3 credentials in the server environment, then restart.`)}
+        <p>Litestream streams SQLite WAL frames to the replica while the server runs. On start, the entrypoint restores missing databases; on a replacement host, run <code>bunwrite failover</code> before starting to restore the control database and every project database. It is single-writer disaster recovery, not active/active HA.</p>
+        <p>It covers databases only. Uploaded files, function code and site builds are not replicated; back up <code>STORAGE_PATH</code> or the uploads bucket separately.</p>
+        <p>If the replica and the backup archives share one bucket, use different key prefixes (for example <code>litestream</code> in the replica URL and <code>backups</code> in Backup options) and credentials scoped to each prefix.</p>
+        <p class="subdued">Retention and sync tuning live in the Litestream config (<code>LITESTREAM_CONFIG</code>, default <code>deploy/litestream.yml</code>): one week of restore points in the bundled file. <code>bunwrite failover</code> restores the latest point; use Litestream's <code>restore -timestamp</code> for point-in-time recovery.</p>
+        ${litestream.allowEmpty ? alert('warning', html`<code>LITESTREAM_ALLOW_EMPTY</code> is set. A missing restore point will start an empty instance instead of failing closed; remove it after the first deployment.`) : ''}
+        ${litestream.forceRestore ? alert('critical', html`<code>LITESTREAM_FORCE_RESTORE</code> is set. Every start replaces local databases from the replica; remove it unless you mean it.`) : ''}`,
+      { id: 'litestream' },
+    )}
+    ${settingsSection(
+      'Backup options',
+      'Whole-instance backups: enable the daily run, choose how many to keep, and where they are stored.',
+      html`<form method="post" action="${BACKUPS}">
+        <label class="check"><input type="checkbox" name="backupsEnabled" ${c.backups.enabled ? 'checked' : ''}>Enable auto backups</label>
+        <div class="fields"><label>Keep automatic backups<input name="backupsKeep" type="number" min="1" max="100" value="${c.backups.keep}"></label></div>
+        <label class="check"><input type="checkbox" name="backupS3Enabled" ${c.backups.s3.enabled ? 'checked' : ''}>Store backups in S3 storage</label>
+        ${s3Fields('backupS3', c.backups.s3)}
+        <label>Key prefix<input name="backupPrefix" class="mono" value="${c.backups.prefix ?? ''}" placeholder="backups">
+          <small>Object keys go under this prefix. If Litestream uses the same bucket, keep the prefixes separate (for example <code>backups</code> here and <code>litestream</code> in the replica URL).</small></label>
+        <div class="foot"><button>Save</button></div>
+      </form>`,
+      {
+        id: 'backup-options',
+        badge: control.settings.overridden('backups')
+          ? html`${badge('Custom', 'info')} ${destroy(`${BACKUPS}/reset`, 'Reset', 'Reset backup settings to the defaults?')}`
+          : badge('Default'),
+      },
+    )}`
+}

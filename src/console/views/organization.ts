@@ -12,11 +12,11 @@ export interface OrganizationCounts {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-/** Organization title and its Projects / Members / Settings tabs. */
+/** Organization title and its Projects / Members / Security / Backups / Settings tabs. */
 export function organizationHeader(
   org: OrganizationInfo,
   counts: OrganizationCounts,
-  active: 'projects' | 'members' | 'settings',
+  active: 'projects' | 'members' | 'security' | 'backups' | 'settings',
   canManage: boolean,
   actions?: Html,
 ): Html {
@@ -32,7 +32,13 @@ export function organizationHeader(
     [
       { key: 'projects', label: 'Projects', href: '/console' },
       { key: 'members', label: 'Members', href: '/console/organization/members' },
-      ...(canManage ? [{ key: 'settings', label: 'Settings', href: '/console/organization' }] : []),
+      { key: 'security', label: 'Security', href: '/console/security' },
+      ...(canManage
+        ? [
+            { key: 'backups', label: 'Backups', href: '/console/organization/backups' },
+            { key: 'settings', label: 'Settings', href: '/console/organization' },
+          ]
+        : []),
     ],
     active,
   )}`

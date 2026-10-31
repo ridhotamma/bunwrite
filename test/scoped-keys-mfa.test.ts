@@ -137,6 +137,14 @@ describe('console email MFA', () => {
     await auth.upsert('admin@example.com', 'password123')
     const secret = (await auth.login('admin@example.com', 'password123'))!
     const cookie = `bunwrite_console=${secret}`
+
+    // Security belongs to the organization shell, beside Members and Settings,
+    // not inside the selected project's sidebar.
+    const page = await (await fetch(`${origin}/console/security`, { headers: { cookie } })).text()
+    expect(page).toContain('select-topbar')
+    expect(page).toContain('href="/console/organization/members"')
+    expect(page).not.toContain('<nav class="nav">')
+
     const post = (fields: Record<string, string>) =>
       fetch(`${origin}/console/security/mfa`, {
         method: 'POST',

@@ -134,7 +134,7 @@ export const TEMPLATES: TemplateInfo[] = [
   {
     id: 'mfaChallenge',
     name: 'Console MFA',
-    description: 'Sent to a console admin who turned on email two-factor sign-in.',
+    description: 'Sign-in code for console admins.',
     variables: ['user', 'project', 'otp'],
     sample: { user: 'admin@example.com', otp: '123456' },
   },

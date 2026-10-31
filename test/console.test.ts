@@ -546,15 +546,16 @@ describe('settings through the console', () => {
     }
     const read = (path: string) => fetch(`${fileBase}${path}`, { headers: { cookie: fileCookie }, redirect: 'manual' })
     try {
-      const created = await post('/console/settings/backups/create', {})
+      const created = await post('/console/organization/backups/create', {})
       expect(new URL(created.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('Created backup-')
       const backups = await fileServer.services.backups.list()
       expect(backups).toHaveLength(1)
-      const page = await (await read('/console/settings/backups')).text()
+      const page = await (await read('/console/organization/backups')).text()
       expect(page).toContain(backups[0]!.name)
       expect(backups[0]!.name).toEndWith('.archive.zst')
       expect(page).toContain('compressed but not encrypted')
-      const download = await read(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
+      expect(page).toContain('Continuous replication (Litestream)')
+      const download = await read(`/console/organization/backups/${encodeURIComponent(backups[0]!.name)}/download`)
       expect(download.status).toBe(200)
       expect(download.headers.get('content-disposition')).toContain('.archive.zst')
 
@@ -562,7 +563,7 @@ describe('settings through the console', () => {
       // staged for the next start, no CLI needed.
       const upload = new FormData()
       upload.append('backup', new File([readFileSync(join(dir, 'backups', backups[0]!.name))], backups[0]!.name))
-      const staged = await fetch(`${fileBase}/console/settings/backups/restore`, {
+      const staged = await fetch(`${fileBase}/console/organization/backups/restore`, {
         method: 'POST',
         body: upload,
         headers: { cookie: fileCookie },
@@ -571,20 +572,34 @@ describe('settings through the console', () => {
       expect(staged.status).toBe(303)
       expect(new URL(staged.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('validated and staged')
       expect(readPendingRestore(fileServer.config.databasePath)?.name).toBe(backups[0]!.name)
-      const stagedPage = await (await read('/console/settings/backups')).text()
+      const stagedPage = await (await read('/console/organization/backups')).text()
       expect(stagedPage).toContain('Restore staged')
       expect(stagedPage).toContain('Cancel staged restore')
 
-      const cancelled = await post('/console/settings/backups/restore/cancel', {})
+      const cancelled = await post('/console/organization/backups/restore/cancel', {})
       expect(new URL(cancelled.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('cancelled')
       expect(readPendingRestore(fileServer.config.databasePath)).toBeNull()
 
-      await post(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
+      const options = await post('/console/organization/backups', {
+        backupsEnabled: 'on',
+        backupsKeep: '3',
+        backupPrefix: 'backups',
+      })
+      expect(new URL(options.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('Backup settings saved')
+      expect(fileServer.config.backups).toMatchObject({ enabled: true, keep: 3, prefix: 'backups' })
+
+      await post(`/console/organization/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
       expect(await fileServer.services.backups.list()).toHaveLength(0)
     } finally {
       fileServer.stop()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  test('the old project backup URL redirects to the organization page', async () => {
+    const res = await get('/console/settings/backups')
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toBe('/console/organization/backups')
   })
 
   test('automatic backups run once a day', async () => {

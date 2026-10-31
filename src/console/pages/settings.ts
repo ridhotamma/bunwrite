@@ -1,16 +1,12 @@
-import { existsSync, rmSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
 
-import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type S3Config } from '~/config'
-import { cancelPendingRestore, pendingRestoreDir, readPendingRestore, stagePendingRestore } from '~/backups/pending'
-import { restoreInstance } from '~/backups/restore'
-import { uniqueId } from '~/lib/ids'
+import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
 import { SETTING_KEYS, type SettingKey } from '~/settings/service'
 import type { ImageOutput } from '~/render/service'
 import { err } from '~/lib/errors'
 import { SmtpMailer } from '~/mail/mailer'
-import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { arrayOf, checked, lines, value } from '~/console/forms'
+import type { ConsoleRouter } from '~/console/context'
+import { arrayOf, checked, lines, s3FromForm, value } from '~/console/forms'
 import { html, page } from '~/console/html'
 import { alert } from '~/console/ui'
 import { inlineStatus, settingsView } from '~/console/views/settings'
@@ -21,44 +17,6 @@ import { BunwriteError } from '~/lib/errors'
 import { PROJECT_SCOPE } from '~/variables/service'
 import { registerVariableRoutes } from './variables'
 
-/** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
-function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
-  const read = (suffix: string) => value(form, `${prefix}${suffix}`)
-  const enabled = checked(form[`${prefix}Enabled`])
-  const secret = String(form[`${prefix}Secret`] ?? '') || existing.secret
-  const endpoint = read('Endpoint').replace(/\/$/, '')
-  const config: S3Config = {
-    enabled,
-    bucket: read('Bucket'),
-    region: read('Region'),
-    endpoint,
-    accessKey: read('AccessKey'),
-    secret,
-    forcePathStyle: checked(form[`${prefix}ForcePathStyle`]),
-  }
-  if (enabled) {
-    if (!config.endpoint || !config.bucket || !config.region || !config.accessKey || !config.secret) {
-      throw err('general_argument_invalid', 'Endpoint, bucket, region, access key and secret are required for S3 storage.')
-    }
-    let url: URL
-    try {
-      url = new URL(config.endpoint)
-    } catch {
-      throw err('general_argument_invalid', 'The S3 endpoint must be a valid URL.')
-    }
-    if (!['http:', 'https:'].includes(url.protocol)) throw err('general_argument_invalid', 'The S3 endpoint must use http or https.')
-  }
-  return config
-}
-
-/** Only an organization owner may see or change whole-instance backups. */
-const canManageBackups = (ctx: ConsoleContext) =>
-  ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email) === 'owner'
-
-const requireBackupOwner = (ctx: ConsoleContext) => {
-  if (!canManageBackups(ctx)) throw err('general_argument_invalid', 'Only an organization owner can manage backups.')
-}
-
 /** Settings handlers. Tab markup lives in console/views/settings. */
 export function settingsPages(router: ConsoleRouter): void {
   router.get(SETTINGS, ({ ctx }) => ctx.go(tabPath('general')))
@@ -66,9 +24,8 @@ export function settingsPages(router: ConsoleRouter): void {
     const tab = path.tab ?? ''
     // The old Access tab moved to its own API page.
     if (tab === 'access') return ctx.go('/console/api')
-    if (tab === 'backups' && !canManageBackups(ctx)) {
-      return ctx.go(tabPath('general'), { tone: 'warning', text: 'Only an organization owner can manage backups.' })
-    }
+    // Whole-instance backups moved to the organization shell.
+    if (tab === 'backups') return ctx.go('/console/organization/backups')
     return isTab(tab) ? ctx.render('Settings', 'settings', await settingsView(ctx, tab)) : ctx.go(tabPath('general'))
   })
 
@@ -117,11 +74,6 @@ export function settingsPages(router: ConsoleRouter): void {
     const fields = templateForm(ctx.form)
     const defaults = ctx.services.templates.defaults(id)
     return page(templatePreview(ctx.services.templates.preview(id, { ...fields, subject: fields.subject || defaults.subject, message: fields.message || defaults.message })))
-  })
-
-  router.get(`${SETTINGS}/backups/:name/download`, async ({ ctx, path }) => {
-    requireBackupOwner(ctx)
-    return ctx.projects.control.backups.serve(path.name!)
   })
 
   router.post(`${SETTINGS}/project`, ({ ctx }) => {
@@ -266,79 +218,11 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('cache'), { tone: 'success', text: 'Preview cache cleared' })
   })
 
-  router.post(`${SETTINGS}/backups`, ({ ctx }) => {
-    requireBackupOwner(ctx)
-    const keep = Number(ctx.form.backupsKeep)
-    if (!Number.isInteger(keep) || keep < 1 || keep > 100) throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
-    const control = ctx.projects.control
-    const s3 = s3FromForm(ctx.form, 'backupS3', control.config.backups.s3)
-    control.settings.set('backups', { enabled: checked(ctx.form.backupsEnabled), keep, s3 })
-    return ctx.go(tabPath('backups'), { tone: 'success', text: 'Backup settings saved' })
-  })
-
-  router.post(`${SETTINGS}/backups/create`, async ({ ctx }) => {
-    requireBackupOwner(ctx)
-    const backup = await ctx.projects.control.backups.create('manual')
-    return ctx.go(tabPath('backups'), { tone: 'success', text: `Created ${backup.name}` })
-  })
-
-  router.post(`${SETTINGS}/backups/restore`, async ({ ctx }) => {
-    requireBackupOwner(ctx)
-    const file = ctx.form.backup
-    if (!(file instanceof Blob) || file.size === 0) throw err('general_argument_invalid', 'Choose a backup archive to restore.')
-    const config = ctx.projects.control.config
-    if (readPendingRestore(config.databasePath)) {
-      throw err('general_argument_invalid', 'A restore is already staged. Restart Bunwrite to apply it, or cancel it first.')
-    }
-    const key = value(ctx.form, 'backupKey') || undefined
-    const upload = join(dirname(pendingRestoreDir(config.databasePath)), `.restore-upload-${uniqueId()}`)
-    try {
-      if (!(await Bun.write(upload, file))) throw new Error('The backup archive is empty.')
-      // Validate every database before anything is staged.
-      await restoreInstance({
-        databasePath: config.databasePath,
-        archive: upload,
-        key: key ?? config.backupEncryptionKey,
-        dryRun: true,
-        log: () => {},
-      })
-      stagePendingRestore({
-        databasePath: config.databasePath,
-        archive: upload,
-        name: basename(String((file as File).name || 'backup archive')),
-        key,
-      })
-    } catch (error) {
-      rmSync(upload, { force: true })
-      throw error
-    }
-    return ctx.go(tabPath('backups'), { tone: 'success', text: 'Archive validated and staged. Restart Bunwrite to apply it.' })
-  })
-
-  router.post(`${SETTINGS}/backups/restore/cancel`, ({ ctx }) => {
-    requireBackupOwner(ctx)
-    const removed = cancelPendingRestore(ctx.projects.control.config.databasePath)
-    return ctx.go(tabPath('backups'), {
-      tone: 'info',
-      text: removed ? 'Staged restore cancelled' : 'There is no staged restore to cancel',
-    })
-  })
-
-  router.post(`${SETTINGS}/backups/:name/delete`, async ({ ctx, path }) => {
-    requireBackupOwner(ctx)
-    await ctx.projects.control.backups.delete(path.name!)
-    return ctx.go(tabPath('backups'), { tone: 'success', text: 'Backup deleted' })
-  })
-
   router.post(`${SETTINGS}/:key/reset`, ({ ctx, path }) => {
     const key = path.key as SettingKey
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
-    if (key === 'backups') {
-      requireBackupOwner(ctx)
-      ctx.projects.control.settings.reset(key)
-    } else {
-      ctx.services.settings.reset(key)
-    }
+    if (key === 'backups') return ctx.go('/console/organization/backups')
+    ctx.services.settings.reset(key)
     if (key === 'project') ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
     if (key === 'logs') ctx.services.requestLogs.prune()
     if (key === 'cache') ctx.services.storage.prunePreviews(true)

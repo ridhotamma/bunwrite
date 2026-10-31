@@ -1,5 +1,6 @@
 import type { ConsoleRouter } from '~/console/context'
 import { apiPages } from './api'
+import { backupPages } from './backups'
 import { databasePages } from './databases'
 import { functionPages } from './functions'
 import { logPages } from './logs'
@@ -20,6 +21,7 @@ import { webhookPages } from './webhooks'
 export function registerConsolePages(router: ConsoleRouter): void {
   overviewPages(router)
   organizationPages(router)
+  backupPages(router)
   projectPages(router)
   userPages(router)
   teamPages(router)

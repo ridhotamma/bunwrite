@@ -93,7 +93,7 @@ uploaded files.
   `STORAGE_PATH` and the functions/sites folders separately.
 - Backup encryption is optional (`BACKUP_ENCRYPTION_KEY`). Without it, archives
   are plaintext; if the key is lost, encrypted archives cannot be opened.
-- Restore is offline: upload an archive in **Settings → Backups** and restart
+- Restore is offline: upload an archive in **Organization → Backups** and restart
   Bunwrite, or run `bunwrite restore <archive>` with the server stopped. The
   upload is validated before it is staged; the swap happens on the next start.
 - There is no scheduled restore drill; `restore --dry-run` checks an archive but

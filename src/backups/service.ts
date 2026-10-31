@@ -47,7 +47,9 @@ export class BackupService {
   }
 
   private s3Prefix(): string {
-    const prefix = (this.config.backupsPrefix ?? '').replace(/^\/+|\/+$/g, '')
+    // The console setting wins; `backupsPrefix` stays for older project configs
+    // where it was the project ID.
+    const prefix = (this.config.backups.prefix ?? this.config.backupsPrefix ?? '').replace(/^\/+|\/+$/g, '')
     return prefix ? `${prefix}/` : ''
   }
 

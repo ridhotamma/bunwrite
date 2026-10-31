@@ -236,7 +236,7 @@ See [Connect an app](#connect-an-app).
 
 ### 8. Turn on optional features
 
-- **Backups:** open **Settings → Backups** in the console and create a manual
+- **Backups:** open **Organization → Backups** in the console and create a manual
   archive or enable daily automatic backups. See [Backups](#backups).
 - **HTML rendering:** install Chromium, then enable it under **Settings → HTML
   rendering**. See [HTML rendering for invoices](#html-rendering-for-invoices).
@@ -515,7 +515,7 @@ backup-<timestamp>.archive.zst
 
 ### From the console
 
-**Settings → Backups** (organization owners) lets you:
+**Organization → Backups** (organization owners) lets you:
 
 - create a manual archive;
 - download it;
@@ -541,6 +541,12 @@ openssl rand -base64 32   # put the result in BACKUP_ENCRYPTION_KEY
 Keep a copy of the key somewhere other than the server. Without it an encrypted
 archive cannot be opened, and anyone who has it can open every backup.
 
+The backup bucket can be the same bucket as the Litestream replica, provided the
+two use different prefixes. Set a **Key prefix** in Backup options (for example
+`backups`) and point `LITESTREAM_REPLICA_URL` at another prefix (for example
+`s3://my-bucket/litestream`). Scope each credential to its own prefix; the backup
+key should not be able to delete the replica.
+
 ### From cron
 
 `bun run snapshot [dir]` writes one archive and keeps the newest `KEEP`
@@ -553,7 +559,7 @@ bun run snapshot /var/backups/bunwrite
 
 ### Restoring
 
-You can restore from the console: open **Settings → Backups → Restore archive**
+You can restore from the console: open **Organization → Backups → Restore archive**
 and upload a `.archive.zst` or `.archive.zst.enc` file. The server validates the
 whole archive (checksums, SQLite integrity, every project ID) and stages it;
 **restart Bunwrite** to apply it. The swap is still offline under the hood,
@@ -600,6 +606,13 @@ That restores `<replica>/bunwrite.sqlite`, reads `_projects`, then restores
 `<replica>/projects/<id>/bunwrite.sqlite` for each project. Keep only one writer
 against a replica prefix at a time. See
 [Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
+
+The organization **Backups** page shows whether Litestream is configured, the
+replica, sync interval and heartbeat, and warns when `LITESTREAM_ALLOW_EMPTY` or
+`LITESTREAM_FORCE_RESTORE` is set. It is read-only: starting, stopping and tuning
+the replicator is the container/systemd wrapper's job. Litestream is continuous
+replication (RPO in seconds); the archives above are periodic recovery points
+and the only defence against a logical mistake that replication would copy.
 
 ## HTML rendering for invoices
 
@@ -880,7 +893,7 @@ cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy, TLS_MODE=acme|exter
 docker compose up -d --build
 ```
 
-Before going live, enable **Settings → Backups**, keep the encryption key off
+Before going live, enable **Organization → Backups**, keep the encryption key off
 the server, and back up uploaded files (`STORAGE_PATH` or the S3 bucket)
 separately. Restore with `bunwrite restore` while the server is stopped. See
 [Backups](#backups).

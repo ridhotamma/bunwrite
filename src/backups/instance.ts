@@ -31,7 +31,7 @@ export interface InstanceBackup {
 }
 
 function projectIds(databasePath: string): string[] {
-  const db = new Database(databasePath)
+  const db = new Database(databasePath, { readonly: true })
   try {
     // The control project's database is the control database itself; it must
     // not be archived a second time as `projects/<id>/bunwrite.sqlite`.

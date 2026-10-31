@@ -101,6 +101,11 @@ export interface BackupsConfig {
   /** Keep this many automatic backups; manual backups are never pruned. */
   keep: number
   s3: S3Config
+  /**
+   * Object-key prefix inside the backup bucket. Keep it different from the
+   * Litestream replica prefix when both use the same bucket.
+   */
+  prefix?: string
 }
 
 /** How long browsers may reuse files and previews, and how long previews stay on disk. */
@@ -512,7 +517,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     logIp: env.LOG_IP !== 'false',
     s3: emptyS3(),
     storagePrefix: '',
-    backups: { enabled: false, keep: 7, s3: emptyS3() },
+    backups: { enabled: false, keep: 7, s3: emptyS3(), prefix: '' },
     backupsPrefix: '',
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
     instanceBackups: true,
