@@ -26,11 +26,7 @@ export interface ClusterConfig {
  * `WORKERS=auto` sizes to the CPUs the container may use; a number pins the
  * public HTTP count; unset, `1`, `off` and `false` keep one process.
  */
-export function resolveWorkers(
-  value: string | undefined,
-  platform = process.platform,
-  cpus?: () => number,
-): number {
+export function resolveWorkers(value: string | undefined, platform = process.platform, cpus?: () => number): number {
   if (platform !== 'linux') return 1
   const setting = (value ?? '').trim().toLowerCase()
   if (!setting || setting === '1' || setting === 'off' || setting === 'false') return 1
@@ -59,11 +55,7 @@ export function workerPortsEnabled(env: Record<string, string | undefined> = pro
  * lands on different event loops without doubling the process count. A number
  * pins the pool size; the effective value never exceeds the public workers.
  */
-export function resolveWriterShards(
-  value: string | undefined,
-  publicWorkers: number,
-  enabled = true,
-): number {
+export function resolveWriterShards(value: string | undefined, publicWorkers: number, enabled = true): number {
   if (!enabled || publicWorkers <= 1) return 1
   const setting = (value ?? '').trim().toLowerCase()
   if (!setting || setting === 'auto') {
@@ -94,29 +86,19 @@ export function clusterProcessCount(publicWorkers: number, withWriter = true, wr
  * are `publicOffset..N`) and 0 when every process serves public traffic
  * (`WRITER_PORT=0`).
  */
-export function workerPort(
-  basePort: number,
-  workerIndex: number,
-  perWorkerPorts: boolean,
-  publicOffset = 1,
-): number {
+export function workerPort(basePort: number, workerIndex: number, perWorkerPorts: boolean, publicOffset = 1): number {
   if (!perWorkerPorts) return basePort
   return basePort + Math.max(0, workerIndex - publicOffset)
 }
 
-export function clusterConfig(
-  env: Record<string, string | undefined> = process.env,
-  platform = process.platform,
-): ClusterConfig {
+export function clusterConfig(env: Record<string, string | undefined> = process.env, platform = process.platform): ClusterConfig {
   // Set by the supervisor on every child; it also stops a child from becoming
   // a supervisor itself when WORKERS is still in the environment.
   if (env.BUNWRITE_WORKER !== undefined && env.BUNWRITE_WORKER !== '') {
     const index = Math.max(0, Math.floor(Number(env.BUNWRITE_WORKER) || 0))
     const total = Math.max(1, Math.floor(Number(env.BUNWRITE_CLUSTER_SIZE) || 1))
     const enabled = writerEnabled(env)
-    const writerShards = enabled
-      ? Math.min(total, Math.max(1, Math.floor(Number(env.BUNWRITE_WRITER_SHARDS) || 1)))
-      : 1
+    const writerShards = enabled ? Math.min(total, Math.max(1, Math.floor(Number(env.BUNWRITE_WRITER_SHARDS) || 1))) : 1
     const publicWorkers = enabled && total > 1 ? Math.max(1, total - writerShards) : total
     return { workers: total, publicWorkers, writerShards, workerIndex: index, supervisor: false }
   }

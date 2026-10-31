@@ -5,7 +5,7 @@
  * `_api_keys`.
  */
 import type { BackupsConfig, CacheConfig, Config, OAuthConfig, OAuthProviderId, S3Config, SmtpConfig } from '~/config'
-import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
+import { OAUTH_PROVIDERS } from '~/config'
 import type { VersionMonitor } from '~/cluster/versions'
 import type { RenderConfig } from '~/render/service'
 import type { SqlDatabase } from '~/db/driver'
@@ -23,19 +23,7 @@ export interface ProjectSettings {
 }
 
 export type SettingKey =
-  | 'project'
-  | 'smtp'
-  | 'google'
-  | 'facebook'
-  | 'github'
-  | 'apple'
-  | 'functions'
-  | 'logs'
-  | 's3'
-  | 'backups'
-  | 'render'
-  | 'cache'
-  | 'database'
+  'project' | 'smtp' | 'google' | 'facebook' | 'github' | 'apple' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache' | 'database'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',
@@ -142,9 +130,7 @@ export class SettingsService {
 
   /** Load `_settings` over the synchronous SQLite path (constructor). */
   private loadSync(): void {
-    this.applyStored(
-      this.db.sqlite!.query<{ key: string; value: string }, []>('SELECT key, value FROM _settings').all(),
-    )
+    this.applyStored(this.db.sqlite!.query<{ key: string; value: string }, []>('SELECT key, value FROM _settings').all())
   }
 
   /** Load `_settings` through the driver port and re-apply every setting. */
@@ -245,7 +231,13 @@ export class SettingsService {
       this.config.oauth[id] = fallback ? { ...fallback } : null
       return
     }
-    const merged = { authUrl: meta.authUrl, tokenUrl: meta.tokenUrl, ...(meta.userinfoUrl ? { userinfoUrl: meta.userinfoUrl } : {}), ...fallback, ...stored } as OAuthConfig
+    const merged = {
+      authUrl: meta.authUrl,
+      tokenUrl: meta.tokenUrl,
+      ...(meta.userinfoUrl ? { userinfoUrl: meta.userinfoUrl } : {}),
+      ...fallback,
+      ...stored,
+    } as OAuthConfig
     merged.clientId ??= ''
     merged.clientSecret ??= ''
     this.config.oauth[id] = merged
@@ -307,10 +299,16 @@ export class SettingsService {
     const secret = `standard_${randomSecret(64)}`
     const id = uniqueId()
     const stamp = now()
-    await this.db.driver.run(
-      'INSERT INTO _api_keys (id, name, secret_hash, hint, scopes, expire, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, name.trim(), sha256(secret), secret.slice(0, 16), scopes ? JSON.stringify(scopes) : null, expire, stamp, stamp],
-    )
+    await this.db.driver.run('INSERT INTO _api_keys (id, name, secret_hash, hint, scopes, expire, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+      id,
+      name.trim(),
+      sha256(secret),
+      secret.slice(0, 16),
+      scopes ? JSON.stringify(scopes) : null,
+      expire,
+      stamp,
+      stamp,
+    ])
     return { key: (await this.listKeys()).find((k) => k.id === id)!, secret }
   }
 

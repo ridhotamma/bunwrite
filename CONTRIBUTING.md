@@ -7,9 +7,15 @@ Thanks for helping improve Bunwrite.
 ```bash
 bun install
 bun run typecheck
+bun run lint
+bun run format:check
 bun test
 bun run dev
 ```
+
+Read [docs/CONVENTIONS.md](docs/CONVENTIONS.md) before changing the data
+layer. It covers formatting, module boundaries, the database port, async rules
+and the refactor rollout.
 
 The console is at `/console`. On a fresh database, create an admin with:
 
@@ -21,7 +27,7 @@ bun run console:admin you@example.com
 
 - Keep changes focused and explain the behaviour they add or fix.
 - Add or update a test for behaviour changes. The test suite talks to the server through the real Appwrite SDKs.
-- Run `bun run typecheck` and `bun test` before opening a pull request.
+- Run `bun run typecheck`, `bun run lint`, `bun run format:check` and `bun test` before opening a pull request.
 - Do not commit real credentials, production data, or `.env` files.
 
 ## Releasing the SDK and CLI

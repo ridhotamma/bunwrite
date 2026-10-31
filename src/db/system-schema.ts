@@ -69,7 +69,11 @@ export const organizationMembers = sqliteTable(
     joinedAt: text('joined_at'),
     ...timestamps,
   },
-  (t) => [uniqueIndex('_organization_members_email').on(t.organizationId, t.email), index('_organization_members_org').on(t.organizationId), uniqueIndex('_organization_members_invite').on(t.inviteHash)],
+  (t) => [
+    uniqueIndex('_organization_members_email').on(t.organizationId, t.email),
+    index('_organization_members_org').on(t.organizationId),
+    uniqueIndex('_organization_members_invite').on(t.inviteHash),
+  ],
 )
 
 export const databases = sqliteTable('_databases', {
@@ -490,7 +494,10 @@ export const vcsRepositories = sqliteTable(
       .default(sql`'[]'`),
     ...timestamps,
   },
-  (t) => [uniqueIndex('_vcs_repositories_resource').on(t.projectId, t.resourceType, t.resourceId), index('_vcs_repositories_provider').on(t.providerRepositoryId)],
+  (t) => [
+    uniqueIndex('_vcs_repositories_resource').on(t.projectId, t.resourceType, t.resourceId),
+    index('_vcs_repositories_provider').on(t.providerRepositoryId),
+  ],
 )
 
 /** Control database only: the one Bunwrite comment kept up to date on each pull request. */

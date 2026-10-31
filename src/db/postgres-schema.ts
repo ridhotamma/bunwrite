@@ -228,9 +228,7 @@ export function postgresVersionTriggerStatements(): string[] {
     for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
       const name = `_meta_${table}_${event.toLowerCase()}`
       statements.push(`DROP TRIGGER IF EXISTS ${q(name)} ON ${q(table)}`)
-      statements.push(
-        `CREATE TRIGGER ${q(name)} AFTER ${event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION bunwrite_bump_version(${literal(version)})`,
-      )
+      statements.push(`CREATE TRIGGER ${q(name)} AFTER ${event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION bunwrite_bump_version(${literal(version)})`)
     }
   }
   return statements
@@ -244,9 +242,7 @@ export function postgresCollectionVersionStatements(databaseId: string, collecti
     const suffix = event === 'INSERT' ? 'ai' : event === 'UPDATE' ? 'au' : 'ad'
     const name = `${table}__version_${suffix}`
     statements.push(`DROP TRIGGER IF EXISTS ${q(name)} ON ${q(table)}`)
-    statements.push(
-      `CREATE TRIGGER ${q(name)} AFTER ${event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION bunwrite_bump_version(${key})`,
-    )
+    statements.push(`CREATE TRIGGER ${q(name)} AFTER ${event} ON ${q(table)} FOR EACH ROW EXECUTE FUNCTION bunwrite_bump_version(${key})`)
   }
   return statements
 }
@@ -314,9 +310,7 @@ export function postgresDocumentIndexStatements(table: string, indexes: Index[],
   for (const index of indexes) {
     if (index.type === 'fulltext') {
       const expression = index.attributes.map((key) => `coalesce(${q(key)}, '')`).join(` || ' ' || `)
-      statements.push(
-        `CREATE INDEX IF NOT EXISTS ${q(ftsTableName(table, index.key))} ON ${q(table)} USING GIN (to_tsvector('english', ${expression}))`,
-      )
+      statements.push(`CREATE INDEX IF NOT EXISTS ${q(ftsTableName(table, index.key))} ON ${q(table)} USING GIN (to_tsvector('english', ${expression}))`)
       continue
     }
     const columns = index.attributes.map((key, i) => {

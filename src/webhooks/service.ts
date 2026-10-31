@@ -72,7 +72,9 @@ export function webhookModel(w: WebhookRow) {
 
 /** The signature Appwrite sends, so receivers can reuse their check. */
 export function webhookSignature(url: string, body: string, secret: string): string {
-  return createHmac('sha1', secret).update(url + body).digest('base64')
+  return createHmac('sha1', secret)
+    .update(url + body)
+    .digest('base64')
 }
 
 function validUrl(value: unknown): string {
@@ -87,7 +89,8 @@ function validUrl(value: unknown): string {
 }
 
 function validName(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
+  if (typeof value !== 'string' || !value.trim() || value.length > 128)
+    throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
   return value
 }
 

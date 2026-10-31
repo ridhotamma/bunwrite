@@ -79,22 +79,22 @@ export class LeaderLease {
 
     let won = false
     try {
-      this.db.sqlite.transaction(() => {
-        // Only take an expired lease or one this process already holds. The
-        // first statement is a write, so it takes SQLite's write lock and the
-        // read below sees a settled row.
-        this.db.sqlite
-          .query(
-            `INSERT INTO _cluster_leases (name, owner, expires_at) VALUES (?, ?, ?)
+      this.db.sqlite
+        .transaction(() => {
+          // Only take an expired lease or one this process already holds. The
+          // first statement is a write, so it takes SQLite's write lock and the
+          // read below sees a settled row.
+          this.db.sqlite
+            .query(
+              `INSERT INTO _cluster_leases (name, owner, expires_at) VALUES (?, ?, ?)
              ON CONFLICT(name) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
              WHERE _cluster_leases.expires_at < ? OR _cluster_leases.owner = excluded.owner`,
-          )
-          .run(this.name, this.owner, stamp + this.ttlMs, stamp)
-        const row = this.db.sqlite
-          .query<{ owner: string }, [string]>('SELECT owner FROM _cluster_leases WHERE name = ?')
-          .get(this.name)
-        won = row?.owner === this.owner
-      }).immediate()
+            )
+            .run(this.name, this.owner, stamp + this.ttlMs, stamp)
+          const row = this.db.sqlite.query<{ owner: string }, [string]>('SELECT owner FROM _cluster_leases WHERE name = ?').get(this.name)
+          won = row?.owner === this.owner
+        })
+        .immediate()
     } catch (error) {
       console.error('[cluster] leader lease failed:', error)
       won = false

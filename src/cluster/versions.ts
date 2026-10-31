@@ -11,8 +11,7 @@ export type VersionKey = (typeof VERSION_KEYS)[number]
 export type VersionChanges = Record<VersionKey, boolean>
 
 /** The `_meta` key a collection's document triggers bump on every write. */
-export const collectionVersionKey = (databaseId: string, collectionId: string): string =>
-  `collection:${databaseId}/${collectionId}`
+export const collectionVersionKey = (databaseId: string, collectionId: string): string => `collection:${databaseId}/${collectionId}`
 
 const NO_CHANGES: VersionChanges = {
   schema: false,

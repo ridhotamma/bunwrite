@@ -9,7 +9,10 @@ import { webhookModel } from './service'
 export function webhookRoutes(router: Router<AppContext>): void {
   router.get('/webhooks', async ({ ctx, params }) => {
     requireKey(ctx, 'webhooks.read')
-    const { total, items } = page((await ctx.webhooks.list()).map(webhookModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'url'] })
+    const { total, items } = page((await ctx.webhooks.list()).map(webhookModel), list(params.queries), {
+      search: str(params.search),
+      searchFields: ['$id', 'name', 'url'],
+    })
     return json({ total, webhooks: items })
   })
 

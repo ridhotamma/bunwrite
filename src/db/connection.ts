@@ -48,6 +48,10 @@ const MIGRATION_LOCK_WAIT_MS = 60_000
  */
 function installTransactionRetry(sqlite: Database): void {
   const native = sqlite.transaction.bind(sqlite)
+  // `bun:sqlite`'s transaction overloads cannot be reproduced without `any`;
+  // this is the one place that needs it, and the public type is preserved by
+  // the cast at the end.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   type AnyTx = ((...args: any[]) => any) & {
     deferred: (...args: any[]) => any
     immediate: (...args: any[]) => any
@@ -69,6 +73,7 @@ function installTransactionRetry(sqlite: Database): void {
     wrapped.exclusive = (...args: any[]) => run(tx.exclusive, args)
     return wrapped
   }) as typeof sqlite.transaction
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /**
@@ -95,7 +100,7 @@ function withMigrationLock<T>(path: string, run: () => T): T {
       } catch {
         // The holder removed it between the two calls: try again.
       }
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for the database migration lock at ${lock}.`)
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for the database migration lock at ${lock}.`, { cause: error })
       Bun.sleepSync(25)
     }
   }

@@ -14,14 +14,7 @@ import type { Database, SQLQueryBindings } from 'bun:sqlite'
 
 import { busyBackoff, isBusyError } from './errors'
 import { sqliteDialect } from './dialect'
-import {
-  capabilitiesOf,
-  type Bindings,
-  type DriverCapabilities,
-  type ExecuteResult,
-  type SqlDriver,
-  type SqlTransaction,
-} from './driver'
+import { capabilitiesOf, type Bindings, type DriverCapabilities, type ExecuteResult, type SqlDriver, type SqlTransaction } from './driver'
 
 export interface SqliteDriverOptions {
   /** The connection to wrap. The driver never closes it unless `close()` is called. */

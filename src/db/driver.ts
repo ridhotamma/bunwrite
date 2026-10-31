@@ -1,3 +1,5 @@
+import type { Database as SqliteDatabase } from 'bun:sqlite'
+
 /**
  * The database port.
  *
@@ -36,7 +38,6 @@ export function parseDatabaseBackend(value: string | undefined, url?: string): D
   if (scheme.startsWith('mongodb://') || scheme.startsWith('mongodb+srv://')) return 'mongodb'
   return 'sqlite'
 }
-
 
 /** Values a statement may bind. Mirrors what `bun:sqlite` accepts. */
 export type BindValue = string | number | bigint | boolean | null | Uint8Array
@@ -118,7 +119,7 @@ export interface SqlDatabase {
    * SQLite-only paths (PRAGMAs, synchronous DDL, backups) use it; portable
    * code must use `driver`.
    */
-  readonly sqlite?: import('bun:sqlite').Database
+  readonly sqlite?: SqliteDatabase
 }
 
 /** A SQL driver: SQLite or Postgres. */
@@ -225,10 +226,7 @@ export function uniqueViolation(error: unknown): UniqueViolation | null {
     if (!/UNIQUE constraint failed|duplicate key value violates unique constraint|E11000 duplicate key/i.test(message)) return null
   }
   const message = error instanceof Error ? error.message : String(error)
-  const constraint =
-    /constraint "([^"]+)"/.exec(message)?.[1] ??
-    /index: (\S+)/.exec(message)?.[1] ??
-    /UNIQUE constraint failed: ([^.\s]+)/.exec(message)?.[1]
+  const constraint = /constraint "([^"]+)"/.exec(message)?.[1] ?? /index: (\S+)/.exec(message)?.[1] ?? /UNIQUE constraint failed: ([^.\s]+)/.exec(message)?.[1]
   return { constraint }
 }
 

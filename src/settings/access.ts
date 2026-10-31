@@ -19,8 +19,25 @@ import { err } from '~/lib/errors'
 import type { SettingsService } from './service'
 
 export const SERVICE_IDS = [
-  'account', 'avatars', 'databases', 'tablesdb', 'locale', 'health', 'project', 'storage', 'teams', 'users',
-  'vcs', 'sites', 'functions', 'proxy', 'graphql', 'migrations', 'messaging', 'advisor', 'oauth2',
+  'account',
+  'avatars',
+  'databases',
+  'tablesdb',
+  'locale',
+  'health',
+  'project',
+  'storage',
+  'teams',
+  'users',
+  'vcs',
+  'sites',
+  'functions',
+  'proxy',
+  'graphql',
+  'migrations',
+  'messaging',
+  'advisor',
+  'oauth2',
 ] as const
 export const PROTOCOL_IDS = ['rest', 'graphql', 'websocket'] as const
 export const AUTH_METHOD_IDS = ['email-password', 'magic-url', 'email-otp', 'anonymous', 'invites', 'jwt', 'phone'] as const
@@ -177,17 +194,20 @@ export class AccessService {
   }
 
   async setService(id: string, enabled: boolean): Promise<void> {
-    if (!(SERVICE_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`serviceId\` param: must be one of ${SERVICE_IDS.join(', ')}`)
+    if (!(SERVICE_IDS as readonly string[]).includes(id))
+      throw err('general_argument_invalid', `Invalid \`serviceId\` param: must be one of ${SERVICE_IDS.join(', ')}`)
     await this.write((s) => (s.services[id as ServiceId] = enabled))
   }
 
   async setProtocol(id: string, enabled: boolean): Promise<void> {
-    if (!(PROTOCOL_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`protocolId\` param: must be one of ${PROTOCOL_IDS.join(', ')}`)
+    if (!(PROTOCOL_IDS as readonly string[]).includes(id))
+      throw err('general_argument_invalid', `Invalid \`protocolId\` param: must be one of ${PROTOCOL_IDS.join(', ')}`)
     await this.write((s) => (s.protocols[id as ProtocolId] = enabled))
   }
 
   async setAuthMethod(id: string, enabled: boolean): Promise<void> {
-    if (!(AUTH_METHOD_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`methodId\` param: must be one of ${AUTH_METHOD_IDS.join(', ')}`)
+    if (!(AUTH_METHOD_IDS as readonly string[]).includes(id))
+      throw err('general_argument_invalid', `Invalid \`methodId\` param: must be one of ${AUTH_METHOD_IDS.join(', ')}`)
     await this.write((s) => (s.authMethods[id as AuthMethodId] = enabled))
   }
 
@@ -273,7 +293,8 @@ export class AccessService {
     }
     const count = (key: string, max: number) => {
       const n = Number(params[key])
-      if (!Number.isInteger(n) || n < 0 || n > max) throw err('general_argument_invalid', `Invalid \`${key}\` param: Value must be a valid range between 0 and ${max.toLocaleString('en')}`)
+      if (!Number.isInteger(n) || n < 0 || n > max)
+        throw err('general_argument_invalid', `Invalid \`${key}\` param: Value must be a valid range between 0 and ${max.toLocaleString('en')}`)
       return n
     }
     switch (id) {
@@ -398,12 +419,13 @@ export class AccessService {
 
 function validPhoneNumber(value: unknown): string {
   if (typeof value !== 'string' || !/^\+[1-9]\d{6,14}$/.test(value)) {
-    throw err('general_argument_invalid', 'Invalid `number` param: Phone number must start with a \'+\' and can have a maximum of fifteen digits.')
+    throw err('general_argument_invalid', "Invalid `number` param: Phone number must start with a '+' and can have a maximum of fifteen digits.")
   }
   return value
 }
 
 function validOtp(value: unknown): string {
-  if (typeof value !== 'string' || !/^\d{6}$/.test(value)) throw err('general_argument_invalid', 'Invalid `otp` param: Value must be a valid string of 6 digits.')
+  if (typeof value !== 'string' || !/^\d{6}$/.test(value))
+    throw err('general_argument_invalid', 'Invalid `otp` param: Value must be a valid string of 6 digits.')
   return value
 }

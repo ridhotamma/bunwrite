@@ -167,10 +167,11 @@ export class RequestLogService {
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
     const total = await this.db.driver.get<{ n: number }>(`SELECT count(*) AS n FROM _request_logs ${clause}`, params)
-    const logs = await this.db.driver.all<RequestLogRow>(
-      `SELECT ${COLUMNS} FROM _request_logs ${clause} ORDER BY seq DESC LIMIT ? OFFSET ?`,
-      [...params, filter.limit, (Math.max(1, filter.page) - 1) * filter.limit],
-    )
+    const logs = await this.db.driver.all<RequestLogRow>(`SELECT ${COLUMNS} FROM _request_logs ${clause} ORDER BY seq DESC LIMIT ? OFFSET ?`, [
+      ...params,
+      filter.limit,
+      (Math.max(1, filter.page) - 1) * filter.limit,
+    ])
     return { total: Number(total?.n ?? 0), logs }
   }
 

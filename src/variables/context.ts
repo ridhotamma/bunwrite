@@ -21,7 +21,9 @@ export const CONTEXT_LABELS: Record<VariableContext, string> = { '': 'All deploy
 
 /** '' for absent, empty or "all"; otherwise live or preview. */
 export function variableContext(value: unknown): VariableContext {
-  const text = String(value ?? '').trim().toLowerCase()
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase()
   if (!text || text === 'all') return ''
   if (text === 'live' || text === 'preview') return text
   throw err('general_argument_invalid', 'Invalid `context` param: use "", "live" or "preview".')

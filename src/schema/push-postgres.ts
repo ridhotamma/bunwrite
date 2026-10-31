@@ -29,6 +29,46 @@ const q = (name: string) => `"${name.replace(/"/g, '""')}"`
 
 const flag = (value: boolean | number) => (value ? 1 : 0)
 
+/** The subset of a project config this push reads for buckets and functions. */
+interface BucketConfig {
+  $id: string
+  name?: string
+  enabled?: boolean
+  fileSecurity?: boolean
+  $permissions?: string[]
+  maximumFileSize?: number
+  allowedFileExtensions?: string[]
+  compression?: string
+  encryption?: boolean
+  antivirus?: boolean
+  transformations?: boolean
+}
+
+interface FunctionConfig {
+  $id: string
+  name?: string
+  runtime?: string
+  entrypoint?: string
+  path?: string
+  execute?: string[]
+  events?: string[]
+  schedule?: string
+  timeout?: number
+  enabled?: boolean
+  scopes?: string[]
+  commands?: string
+  logging?: boolean
+  buildSpecification?: string
+  runtimeSpecification?: string
+  deploymentRetention?: number
+}
+
+interface ProjectConfig {
+  buckets?: BucketConfig[]
+  functions?: FunctionConfig[]
+  [key: string]: unknown
+}
+
 interface ExistingCollection {
   name: string
   enabled: number
@@ -39,7 +79,7 @@ interface ExistingCollection {
 }
 
 /** Apply databases, collections, buckets and functions from a config file. */
-export async function pushConfigPostgres(driver: PostgresDriver, config: any, options: PushOptions = {}): Promise<void> {
+export async function pushConfigPostgres(driver: PostgresDriver, config: ProjectConfig, options: PushOptions = {}): Promise<void> {
   const log = options.log ?? (() => {})
   const { databases, collections } = readConfig(config)
   const stamp = now()
@@ -48,12 +88,7 @@ export async function pushConfigPostgres(driver: PostgresDriver, config: any, op
     for (const database of databases) {
       const existing = await tx.get<{ seq: number }>('SELECT seq FROM _databases WHERE id = ?', [database.id])
       if (existing) {
-        await tx.run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [
-          database.name,
-          flag(database.enabled),
-          stamp,
-          database.id,
-        ])
+        await tx.run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [database.name, flag(database.enabled), stamp, database.id])
       } else {
         await tx.run('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
           database.id,
@@ -90,12 +125,7 @@ export async function pushConfigPostgres(driver: PostgresDriver, config: any, op
   })
 }
 
-async function pushCollectionPostgres(
-  driver: SqlExecutor,
-  collection: ConfigCollection,
-  stamp: string,
-  log: (line: string) => void,
-): Promise<void> {
+async function pushCollectionPostgres(driver: SqlExecutor, collection: ConfigCollection, stamp: string, log: (line: string) => void): Promise<void> {
   const database = await driver.get<{ seq: number }>('SELECT seq FROM _databases WHERE id = ?', [collection.databaseId])
   if (!database) throw new Error(`Collection ${collection.id} points at unknown database ${collection.databaseId}`)
   const table = tableName(database.seq, collection.id)
@@ -195,7 +225,7 @@ async function dropCollectionTables(driver: SqlExecutor, table: string): Promise
 }
 
 /** Buckets and functions are the same rows as on SQLite; only the driver differs. */
-async function pushBuckets(driver: SqlExecutor, buckets: any[], stamp: string, log: (line: string) => void): Promise<void> {
+async function pushBuckets(driver: SqlExecutor, buckets: BucketConfig[], stamp: string, log: (line: string) => void): Promise<void> {
   for (const b of buckets) {
     const values = [
       b.name ?? b.$id,
@@ -229,7 +259,7 @@ async function pushBuckets(driver: SqlExecutor, buckets: any[], stamp: string, l
 
 async function pushFunctions(
   driver: SqlExecutor,
-  functions: any[],
+  functions: FunctionConfig[],
   stamp: string,
   log: (line: string) => void,
   baseDir: string | undefined,

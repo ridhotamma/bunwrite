@@ -63,16 +63,14 @@ export class WriteBatcher {
   submit<T>(run: (events: DocEvent[]) => Promise<T> | T): Promise<WriteResult<T>> {
     if (!this.enabled) {
       const events: DocEvent[] = []
-      return this.store
-        .runBatch([() => run(events)])
-        .then((outcomes) => {
-          const outcome = outcomes[0]
-          if (!outcome) throw new Error('Write batch produced no result')
-          if (!outcome.ok) throw outcome.error
-          this.batches++
-          this.writes++
-          return { value: outcome.value as T, events }
-        })
+      return this.store.runBatch([() => run(events)]).then((outcomes) => {
+        const outcome = outcomes[0]
+        if (!outcome) throw new Error('Write batch produced no result')
+        if (!outcome.ok) throw outcome.error
+        this.batches++
+        this.writes++
+        return { value: outcome.value as T, events }
+      })
     }
 
     return new Promise<WriteResult<T>>((resolve, reject) => {

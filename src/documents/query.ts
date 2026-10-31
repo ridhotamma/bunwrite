@@ -39,10 +39,28 @@ export interface Compiled {
 }
 
 const FILTERS = new Set([
-  'equal', 'notEqual', 'lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual',
-  'between', 'notBetween', 'isNull', 'isNotNull', 'startsWith', 'notStartsWith',
-  'endsWith', 'notEndsWith', 'contains', 'containsAny', 'containsAll', 'notContains',
-  'search', 'notSearch', 'and', 'or',
+  'equal',
+  'notEqual',
+  'lessThan',
+  'lessThanEqual',
+  'greaterThan',
+  'greaterThanEqual',
+  'between',
+  'notBetween',
+  'isNull',
+  'isNotNull',
+  'startsWith',
+  'notStartsWith',
+  'endsWith',
+  'notEndsWith',
+  'contains',
+  'containsAny',
+  'containsAll',
+  'notContains',
+  'search',
+  'notSearch',
+  'and',
+  'or',
 ])
 const OTHERS = new Set(['select', 'limit', 'offset', 'cursorAfter', 'cursorBefore', 'orderAsc', 'orderDesc', 'orderRandom'])
 

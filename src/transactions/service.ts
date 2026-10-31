@@ -10,36 +10,28 @@
  * Reads sent with a `transactionId` see the staged writes: the operations are
  * replayed inside a savepoint, the read runs, and the savepoint is rolled back.
  *
- * The store carries the transaction implicitly, so `apply` can call the
- * normal write methods and they join the commit transaction.
+ * Replay lives in `replay.ts`; the store carries the transaction implicitly,
+ * so the normal write methods join the commit transaction.
  */
-import { assertCallerScope, keyCaller, type Caller } from '~/auth/caller'
+import { assertCallerScope, type Caller } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission } from '~/auth/permissions'
 import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, now } from '~/lib/datetime'
 import { BunwriteError, err } from '~/lib/errors'
 import { resolveId, uniqueId } from '~/lib/ids'
 import { encodeAttributes, type Doc } from '~/documents/codec'
-import { ConflictError, type DocumentBackend, type Guard } from '~/documents/store'
+import { ConflictError, type DocumentBackend } from '~/documents/store'
 import type { Registry } from '~/schema/registry'
 import type { Collection } from '~/schema/types'
+import { documentsOf, numberOf, queriesOf, recordOf, stringOf } from './payload'
+import { commitLogs, replayStaged } from './replay'
 
 export const TTL_MIN = 60
 export const TTL_MAX = 3600
 export const TTL_DEFAULT = 300
 export const MAX_OPERATIONS = 1000
 
-export type Action =
-  | 'create'
-  | 'update'
-  | 'upsert'
-  | 'delete'
-  | 'increment'
-  | 'decrement'
-  | 'bulkCreate'
-  | 'bulkUpdate'
-  | 'bulkUpsert'
-  | 'bulkDelete'
+export type Action = 'create' | 'update' | 'upsert' | 'delete' | 'increment' | 'decrement' | 'bulkCreate' | 'bulkUpdate' | 'bulkUpsert' | 'bulkDelete'
 
 interface TxRow {
   seq: number
@@ -52,7 +44,7 @@ interface TxRow {
   updated_at: string
 }
 
-interface LogRow {
+export interface LogRow {
   seq: number
   database_id: string
   collection_id: string
@@ -67,7 +59,8 @@ export interface StageInput {
   collectionId: string
   documentId?: string | null
   action: Action
-  data: Record<string, any>
+  /** Payload from the request; each action narrows the fields it uses. */
+  data: Record<string, unknown>
 }
 
 export function txModel(row: TxRow) {
@@ -146,7 +139,8 @@ export class TransactionService {
       (l) =>
         l.database_id === collection.databaseId &&
         l.collection_id === collection.id &&
-        ((l.action === 'create' || l.action === 'upsert') && l.document_id === documentId),
+        (l.action === 'create' || l.action === 'upsert') &&
+        l.document_id === documentId,
     )
   }
 
@@ -158,10 +152,7 @@ export class TransactionService {
     assertCallerScope(caller, 'documents.write')
     const tx = await this.pending(caller, transactionId)
     if (tx.operations + 1 > MAX_OPERATIONS) {
-      throw err(
-        'transaction_limit_exceeded',
-        `Transaction already has ${tx.operations} operations, adding 1 would exceed the maximum of ${MAX_OPERATIONS}`,
-      )
+      throw err('transaction_limit_exceeded', `Transaction already has ${tx.operations} operations, adding 1 would exceed the maximum of ${MAX_OPERATIONS}`)
     }
     const collection = this.registry.collection(input.databaseId, input.collectionId, caller.privileged)
     const data = await this.prepare(caller, tx, collection, input)
@@ -176,17 +167,15 @@ export class TransactionService {
     })
   }
 
-  private async prepare(caller: Caller, tx: TxRow, collection: Collection, input: StageInput): Promise<Record<string, any>> {
+  private async prepare(caller: Caller, tx: TxRow, collection: Collection, input: StageInput): Promise<Record<string, unknown>> {
     const { action, data } = input
-    const stripDates = (d: Record<string, any>) => {
+    const stripDates = (d: Record<string, unknown>) => {
       if (caller.privileged) return d
       const { $createdAt, $updatedAt, ...rest } = d
       return rest
     }
     const userDefaults = () =>
-      caller.privileged || !caller.user
-        ? []
-        : [`read("user:${caller.user.id}")`, `update("user:${caller.user.id}")`, `delete("user:${caller.user.id}")`]
+      caller.privileged || !caller.user ? [] : [`read("user:${caller.user.id}")`, `update("user:${caller.user.id}")`, `delete("user:${caller.user.id}")`]
     const resolvePerms = (p: unknown) => {
       const list = aggregatePermissions(p)
       if (list && !caller.privileged) {
@@ -215,20 +204,20 @@ export class TransactionService {
         canCreate()
         const id = resolveId(input.documentId, 'Document ID')
         input.documentId = id
-        const payload = stripDates(data.data ?? {})
+        const payload = stripDates(recordOf(data.data))
         encodeAttributes(collection, payload, 'create')
         return { data: payload, permissions: resolvePerms(data.permissions) ?? userDefaults() }
       }
       case 'update': {
         await requireExisting('update')
-        const payload = stripDates(data.data ?? {})
+        const payload = stripDates(recordOf(data.data))
         encodeAttributes(collection, payload, 'update')
         return { data: payload, permissions: resolvePerms(data.permissions) }
       }
       case 'upsert': {
         const existing = await this.store.checkStagedWrite(caller, collection, input.documentId!, 'update')
         if (!existing) canCreate()
-        const payload = stripDates(data.data ?? {})
+        const payload = stripDates(recordOf(data.data))
         encodeAttributes(collection, payload, existing ? 'update' : 'create')
         return { data: payload, permissions: resolvePerms(data.permissions) ?? (existing ? null : userDefaults()) }
       }
@@ -238,12 +227,12 @@ export class TransactionService {
       case 'increment':
       case 'decrement':
         await requireExisting('update')
-        return { attribute: data.attribute, value: data.value ?? 1, bound: data.bound ?? null }
+        return { attribute: stringOf(data.attribute), value: numberOf(data.value) ?? 1, bound: numberOf(data.bound) }
       case 'bulkCreate':
       case 'bulkUpsert':
         bulkOnly()
         return {
-          documents: (data.documents ?? []).map((d: Record<string, any>) => {
+          documents: documentsOf(data.documents).map((d) => {
             const id = action === 'bulkCreate' ? resolveId(d.$id ?? 'unique()', 'Document ID') : d.$id
             const { $id, $permissions, ...rest } = d
             encodeAttributes(collection, rest, action === 'bulkCreate' ? 'create' : 'update')
@@ -252,51 +241,11 @@ export class TransactionService {
         }
       case 'bulkUpdate':
         bulkOnly()
-        encodeAttributes(collection, data.data ?? {}, 'update')
-        return { data: data.data ?? {}, queries: data.queries ?? [] }
+        encodeAttributes(collection, recordOf(data.data), 'update')
+        return { data: recordOf(data.data), queries: queriesOf(data.queries) }
       case 'bulkDelete':
         bulkOnly()
-        return { queries: data.queries ?? [] }
-    }
-  }
-
-  /** Apply one staged operation. */
-  private async apply(log: LogRow, guard?: Guard): Promise<void> {
-    const caller = keyCaller()
-    const collection = this.registry.collection(log.database_id, log.collection_id, true)
-    const data = JSON.parse(log.data ?? '{}')
-    const id = log.document_id!
-    const options = { guard }
-    const store = this.store
-    switch (log.action) {
-      case 'create':
-        await store.createDocument(caller, collection, { id, data: data.data, permissions: data.permissions }, options)
-        break
-      case 'update':
-        await store.updateDocument(caller, collection, id, data.data, data.permissions, options)
-        break
-      case 'upsert':
-        await store.upsertDocument(caller, collection, id, data.data, data.permissions, options)
-        break
-      case 'delete':
-        await store.deleteDocument(caller, collection, id, options)
-        break
-      case 'increment':
-      case 'decrement':
-        await store.incrementAttribute(caller, collection, id, data.attribute, data.value, data.bound, log.action === 'increment' ? 1 : -1, options)
-        break
-      case 'bulkCreate':
-        await store.createDocuments(caller, collection, data.documents, options)
-        break
-      case 'bulkUpsert':
-        await store.upsertDocuments(caller, collection, data.documents, options)
-        break
-      case 'bulkUpdate':
-        await store.updateDocuments(caller, collection, data.data, data.queries, options)
-        break
-      case 'bulkDelete':
-        await store.deleteDocuments(caller, collection, data.queries, options)
-        break
+        return { queries: queriesOf(data.queries) }
     }
   }
 
@@ -306,33 +255,11 @@ export class TransactionService {
     const tx = await this.find(caller, transactionId)
     const logs = tx.status === 'pending' ? await this.logs(tx) : []
     if (logs.length === 0) return read()
-    const events = this.store.events.length
-    // A staged write is not real: never fill (or read) the list cache here.
-    this.store.beginStagedRead()
-    try {
-      return await this.store.preview(async () => {
-        for (const log of logs) {
-          try {
-            await this.apply(log)
-          } catch {
-            // A staged write that cannot apply (yet) is simply not visible.
-          }
-        }
-        return await read()
-      })
-    } finally {
-      this.store.endStagedRead()
-      // Replayed writes were never real; nobody may hear about them.
-      this.store.events.length = events
-    }
+    return replayStaged(this.registry, this.store, logs, read)
   }
 
   private async setStatus(seq: number, status: string): Promise<TxRow> {
-    return (await this.db.driver.get<TxRow>('UPDATE _transactions SET status = ?, updated_at = ? WHERE seq = ? RETURNING *', [
-      status,
-      now(),
-      seq,
-    ]))!
+    return (await this.db.driver.get<TxRow>('UPDATE _transactions SET status = ?, updated_at = ? WHERE seq = ? RETURNING *', [status, now(), seq]))!
   }
 
   async update(caller: Caller, id: string, commit: boolean, rollback: boolean) {
@@ -353,10 +280,7 @@ export class TransactionService {
 
     const logs = await this.logs(tx)
     try {
-      await this.store.runInTransaction(async () => {
-        const touched = new Set<string>()
-        for (const log of logs) await this.apply(log, { before: log.created_at, touched })
-      })
+      await commitLogs(this.registry, this.store, logs)
     } catch (error) {
       await this.setStatus(tx.seq, 'failed')
       if (error instanceof ConflictError) throw err('transaction_conflict')
@@ -370,11 +294,7 @@ export class TransactionService {
   /** Remove transactions that expired or finished more than an hour ago. */
   async prune(): Promise<number> {
     const cutoff = addSeconds(-TTL_MAX)
-    const result = await this.db.driver.run('DELETE FROM _transactions WHERE expires_at < ? OR (status != ? AND updated_at < ?)', [
-      cutoff,
-      'pending',
-      cutoff,
-    ])
+    const result = await this.db.driver.run('DELETE FROM _transactions WHERE expires_at < ? OR (status != ? AND updated_at < ?)', [cutoff, 'pending', cutoff])
     return result.changes
   }
 }

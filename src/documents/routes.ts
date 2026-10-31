@@ -69,11 +69,17 @@ const cacheControl = (ctx: AppContext, collection: Collection): string => {
 }
 
 export function documentRoutes(router: Router<AppContext>): void {
-  const collectionOf = (ctx: AppContext, path: Record<string, string>) =>
-    ctx.registry.collection(path.databaseId!, path.collectionId!, ctx.caller.privileged)
+  const collectionOf = (ctx: AppContext, path: Record<string, string>) => ctx.registry.collection(path.databaseId!, path.collectionId!, ctx.caller.privileged)
 
   /** Stage `action` when a transactionId is present; returns true if it was staged. */
-  const staged = async (ctx: AppContext, params: Params, path: Record<string, string>, action: Action, documentId: string | null, data: Record<string, any>) => {
+  const staged = async (
+    ctx: AppContext,
+    params: Params,
+    path: Record<string, string>,
+    action: Action,
+    documentId: string | null,
+    data: Record<string, unknown>,
+  ) => {
     const transactionId = str(params.transactionId)
     if (!transactionId) return false
     const input = { databaseId: path.databaseId!, collectionId: path.collectionId!, documentId, action, data }
@@ -88,9 +94,7 @@ export function documentRoutes(router: Router<AppContext>): void {
     const includeTotal = bool(params.total, true)
     const transactionId = str(params.transactionId)
     if (transactionId) {
-      const result = await ctx.transactions.withStaged(ctx.caller, transactionId, () =>
-        ctx.store.listDocuments(ctx.caller, collection, queries, includeTotal),
-      )
+      const result = await ctx.transactions.withStaged(ctx.caller, transactionId, () => ctx.store.listDocuments(ctx.caller, collection, queries, includeTotal))
       return json(result)
     }
     const version = await ctx.store.collectionVersion(collection)
@@ -107,9 +111,7 @@ export function documentRoutes(router: Router<AppContext>): void {
     const queries = list(params.queries)
     const transactionId = str(params.transactionId)
     if (transactionId) {
-      const doc = await ctx.transactions.withStaged(ctx.caller, transactionId, () =>
-        ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries),
-      )
+      const doc = await ctx.transactions.withStaged(ctx.caller, transactionId, () => ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries))
       return json(doc)
     }
     const version = await ctx.store.collectionVersion(collection)
@@ -148,12 +150,7 @@ export function documentRoutes(router: Router<AppContext>): void {
       return json(mockDocument(collection, path.stagedId!, data), 201)
     }
     const { value: doc, events } = await ctx.writes.submit((sink) =>
-      ctx.store.createDocumentInTx(
-        ctx.caller,
-        collection,
-        { id: params.documentId, data, permissions: params.permissions ?? null },
-        { events: sink },
-      ),
+      ctx.store.createDocumentInTx(ctx.caller, collection, { id: params.documentId, data, permissions: params.permissions ?? null }, { events: sink }),
     )
     ctx.events.push(...events)
     return json(doc, 201)
@@ -234,9 +231,7 @@ export function documentRoutes(router: Router<AppContext>): void {
     const revision = expectedRevision(request, params.revision)
     assertNoRevision(revision, str(params.transactionId))
     if (await staged(ctx, params, path, 'delete', path.documentId!, {})) return noContent()
-    const { events } = await ctx.writes.submit((sink) =>
-      ctx.store.deleteDocumentInTx(ctx.caller, collection, path.documentId!, { events: sink, revision }),
-    )
+    const { events } = await ctx.writes.submit((sink) => ctx.store.deleteDocumentInTx(ctx.caller, collection, path.documentId!, { events: sink, revision }))
     ctx.events.push(...events)
     return noContent()
   })
@@ -252,16 +247,10 @@ export function documentRoutes(router: Router<AppContext>): void {
         return json(mockDocument(collection, path.documentId!, { [path.attribute!]: value }))
       }
       const { value: doc, events } = await ctx.writes.submit((sink) =>
-        ctx.store.incrementAttributeInTx(
-          ctx.caller,
-          collection,
-          path.documentId!,
-          path.attribute!,
-          value,
-          bound,
-          action === 'increment' ? 1 : -1,
-          { events: sink, revision },
-        ),
+        ctx.store.incrementAttributeInTx(ctx.caller, collection, path.documentId!, path.attribute!, value, bound, action === 'increment' ? 1 : -1, {
+          events: sink,
+          revision,
+        }),
       )
       ctx.events.push(...events)
       return json(doc)
@@ -282,22 +271,24 @@ export function transactionRoutes(router: Router<AppContext>): void {
   })
   router.post('/databases/transactions/:transactionId/operations', async ({ ctx, params, path }) => {
     for (const raw of list(params.operations)) {
-      const op = obj(raw) as Record<string, any>
+      const op = obj(raw)
       const action = op.action as Action
-      const data = op.data ?? {}
-      const input: Record<string, any> =
+      const data = op.data
+      const record = data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {}
+      const input: Record<string, unknown> =
         action === 'create' || action === 'update' || action === 'upsert'
-          ? { data: { ...data, $permissions: undefined }, permissions: data.$permissions }
+          ? { data: { ...record, $permissions: undefined }, permissions: record.$permissions }
           : action === 'increment' || action === 'decrement'
-            ? { attribute: data.attribute ?? data.column, value: data.value ?? 1, bound: data.max ?? data.min ?? null }
+            ? { attribute: record.attribute ?? record.column, value: record.value ?? 1, bound: record.max ?? record.min ?? null }
             : action === 'bulkCreate' || action === 'bulkUpsert'
-              ? { documents: Array.isArray(data) ? data : data.documents ?? [] }
-              : { data: data.data ?? {}, queries: data.queries ?? [] }
-      if (input.data) delete input.data.$permissions
+              ? { documents: Array.isArray(data) ? data : (record.documents ?? []) }
+              : { data: record.data ?? {}, queries: record.queries ?? [] }
+      const payload = input.data
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) delete (payload as Record<string, unknown>).$permissions
       await ctx.transactions.stage(ctx.caller, path.transactionId!, {
-        databaseId: op.databaseId,
-        collectionId: op.collectionId ?? op.tableId,
-        documentId: op.documentId ?? op.rowId ?? null,
+        databaseId: String(op.databaseId ?? ''),
+        collectionId: String(op.collectionId ?? op.tableId ?? ''),
+        documentId: (op.documentId ?? op.rowId ?? null) as string | null,
         action,
         data: input,
       })

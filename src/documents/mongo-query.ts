@@ -129,9 +129,7 @@ function compileFilter(collection: Collection, query: Query): MongoFilter {
     case 'notBetween': {
       if (values.length < 2) throw invalidQuery(`${m} queries require exactly two values.`)
       const [low, high] = [castValue(t, values[0]), castValue(t, values[1])]
-      return m === 'between'
-        ? { [f]: { $gte: low, $lte: high } }
-        : { $or: [{ [f]: { $lt: low } }, { [f]: { $gt: high } }] }
+      return m === 'between' ? { [f]: { $gte: low, $lte: high } } : { $or: [{ [f]: { $lt: low } }, { [f]: { $gt: high } }] }
     }
     case 'isNull':
       return { [f]: null }
@@ -203,13 +201,15 @@ export function compileMongoQueries(collection: Collection, rawQueries: unknown[
       }
       case 'limit': {
         const n = values[0]
-        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) throw invalidQuery('Invalid limit: Value must be a valid range between 1 and 9,223,372,036,854,775,807')
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1)
+          throw invalidQuery('Invalid limit: Value must be a valid range between 1 and 9,223,372,036,854,775,807')
         plan.limit = n
         break
       }
       case 'offset': {
         const n = values[0]
-        if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) throw invalidQuery('Invalid offset: Value must be a valid range between 0 and 9,223,372,036,854,775,807')
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 0)
+          throw invalidQuery('Invalid offset: Value must be a valid range between 0 and 9,223,372,036,854,775,807')
         plan.skip = n
         break
       }

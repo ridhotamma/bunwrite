@@ -20,14 +20,16 @@ import {
 } from './driver'
 
 /** The pieces of the `mongodb` package this driver uses. */
+interface MongoCursor<T> {
+  sort(sort: Record<string, 1 | -1>): MongoCursor<T>
+  skip(n: number): MongoCursor<T>
+  limit(n: number): MongoCursor<T>
+  project(projection: Record<string, 0 | 1>): MongoCursor<T>
+  toArray(): Promise<T[]>
+}
+
 interface MongoCollectionLike<T = Record<string, unknown>> {
-  find(filter: Record<string, unknown>, options?: Record<string, unknown>): {
-    sort(sort: Record<string, 1 | -1>): {
-      skip(n: number): { limit(n: number): { project(p: Record<string, 0 | 1>): { toArray(): Promise<T[]> } } }
-    }
-    project(p: Record<string, 0 | 1>): { toArray(): Promise<T[]> }
-    toArray(): Promise<T[]>
-  }
+  find(filter: Record<string, unknown>, options?: Record<string, unknown>): MongoCursor<T>
   findOne(filter: Record<string, unknown>): Promise<T | null>
   insertOne(document: T): Promise<{ insertedId: unknown }>
   insertMany(documents: T[]): Promise<{ insertedCount: number }>
@@ -71,10 +73,7 @@ function loadMongo(): Promise<MongoModule> {
     .then((module) => module as unknown as MongoModule)
     .catch((error) => {
       modulePromise = null
-      throw new Error(
-        'The MongoDB backend needs the optional `mongodb` package. Install it with `bun add mongodb` and restart.',
-        { cause: error },
-      )
+      throw new Error('The MongoDB backend needs the optional `mongodb` package. Install it with `bun add mongodb` and restart.', { cause: error })
     })
   return modulePromise
 }
@@ -116,7 +115,7 @@ class MongoCollection<T extends Record<string, unknown>> implements DocumentColl
   constructor(private readonly collection: MongoCollectionLike<T>) {}
 
   async find(filter: Record<string, unknown>, options: DocumentFindOptions = {}): Promise<T[]> {
-    let cursor: any = this.collection.find(filter)
+    let cursor: MongoCursor<T> = this.collection.find(filter)
     if (options.sort) cursor = cursor.sort(options.sort)
     if (options.skip) cursor = cursor.skip(options.skip)
     if (options.limit) cursor = cursor.limit(options.limit)
@@ -144,11 +143,7 @@ class MongoCollection<T extends Record<string, unknown>> implements DocumentColl
     // `_id` is immutable in MongoDB; a caller that passes a document it just
     // read must not make the update fail.
     const { _id: _ignored, ...rest } = patch
-    const result = await this.collection.findOneAndUpdate(
-      filter,
-      { $set: rest },
-      { returnDocument: 'after', includeResultMetadata: false },
-    )
+    const result = await this.collection.findOneAndUpdate(filter, { $set: rest }, { returnDocument: 'after', includeResultMetadata: false })
     return unwrapFindOneAndUpdate(result)
   }
 
@@ -163,11 +158,7 @@ class MongoCollection<T extends Record<string, unknown>> implements DocumentColl
 
   async upsert(filter: Record<string, unknown>, document: T): Promise<{ value: T; created: boolean }> {
     const { _id: _ignored, ...rest } = document
-    const result = await this.collection.findOneAndUpdate(
-      filter,
-      { $set: rest },
-      { upsert: true, returnDocument: 'after', includeResultMetadata: true },
-    )
+    const result = await this.collection.findOneAndUpdate(filter, { $set: rest }, { upsert: true, returnDocument: 'after', includeResultMetadata: true })
     const updated = result as { value?: T | null; lastErrorObject?: { updatedExisting?: boolean } } | T | null
     const value = unwrapFindOneAndUpdate<T>(updated)
     if (!value) throw new DatabaseConnectionError('MongoDB upsert returned no document')

@@ -118,19 +118,21 @@ export class VariablesService {
     if (await this.byId(scope, id)) throw err('variable_already_exists')
     if (await this.byKey(scope, key, context)) throw err('variable_already_exists')
     const stamp = now()
-    await this.sql.run(
-      'INSERT INTO _variables (id, scope, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, scope, key, value, secret ? 1 : 0, context, stamp, stamp],
-    )
+    await this.sql.run('INSERT INTO _variables (id, scope, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
+      id,
+      scope,
+      key,
+      value,
+      secret ? 1 : 0,
+      context,
+      stamp,
+      stamp,
+    ])
     return this.get(scope, id)
   }
 
   /** Update by variable ID; the key and context must not collide with another variable in the scope. */
-  async update(
-    scope: string,
-    id: string,
-    params: { key?: string; value?: string; secret?: boolean; context?: VariableContext },
-  ): Promise<VariableRow> {
+  async update(scope: string, id: string, params: { key?: string; value?: string; secret?: boolean; context?: VariableContext }): Promise<VariableRow> {
     const current = await this.get(scope, id)
     const key = params.key ?? current.key
     const context = params.context ?? (current.context as VariableContext)
@@ -143,10 +145,15 @@ export class VariablesService {
       const rival = await this.byKey(scope, key, context)
       if (rival && rival.id !== id) throw err('variable_already_exists')
     }
-    await this.sql.run(
-      'UPDATE _variables SET key = ?, value = ?, secret = ?, context = ?, updated_at = ? WHERE scope = ? AND id = ?',
-      [key, params.value ?? current.value, secret ? 1 : 0, context, now(), scope, id],
-    )
+    await this.sql.run('UPDATE _variables SET key = ?, value = ?, secret = ?, context = ?, updated_at = ? WHERE scope = ? AND id = ?', [
+      key,
+      params.value ?? current.value,
+      secret ? 1 : 0,
+      context,
+      now(),
+      scope,
+      id,
+    ])
     return this.get(scope, id)
   }
 

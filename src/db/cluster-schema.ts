@@ -116,9 +116,7 @@ function ensureCollectionVersionTriggers(sqlite: Database): void {
  */
 function ensureDocumentRevisions(sqlite: Database): void {
   const collections = sqlite
-    .query<{ id: string; database_seq: number }, []>(
-      'SELECT c.id AS id, d.seq AS database_seq FROM _collections c JOIN _databases d ON d.id = c.database_id',
-    )
+    .query<{ id: string; database_seq: number }, []>('SELECT c.id AS id, d.seq AS database_seq FROM _collections c JOIN _databases d ON d.id = c.database_id')
     .all()
   for (const collection of collections) {
     const table = tableName(collection.database_seq, collection.id)
@@ -129,9 +127,11 @@ function ensureDocumentRevisions(sqlite: Database): void {
 }
 
 export function ensureClusterSchema(sqlite: Database): void {
-  sqlite.transaction(() => {
-    for (const statement of [...TABLES, ...TRIGGERS]) sqlite.run(statement)
-    ensureCollectionVersionTriggers(sqlite)
-    ensureDocumentRevisions(sqlite)
-  }).immediate()
+  sqlite
+    .transaction(() => {
+      for (const statement of [...TABLES, ...TRIGGERS]) sqlite.run(statement)
+      ensureCollectionVersionTriggers(sqlite)
+      ensureDocumentRevisions(sqlite)
+    })
+    .immediate()
 }

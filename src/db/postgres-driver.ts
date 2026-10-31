@@ -210,9 +210,7 @@ export class PostgresDriver implements SqlDriver {
 
   /** Run a `LISTEN`-based notification, used by the realtime bus on Postgres. */
   listen(channel: string, onNotify: (payload: string) => void): Promise<() => Promise<void>> {
-    return this.client
-      .listen(channel, onNotify)
-      .then((subscription) => () => subscription.unlisten())
+    return this.client.listen(channel, onNotify).then((subscription) => () => subscription.unlisten())
   }
 
   async close(): Promise<void> {

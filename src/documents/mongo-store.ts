@@ -17,18 +17,28 @@
  */
 import type { Caller } from '~/auth/caller'
 import { assertCallerScope } from '~/auth/caller'
-import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
+import type { PermissionType } from '~/auth/permissions'
 import { collectionVersionKey } from '~/cluster/versions'
 import { UnsupportedFeatureError, uniqueViolation } from '~/db/driver'
 import type { MongoDriver } from '~/db/mongo-driver'
-import { normalizeDate, now } from '~/lib/datetime'
-import { err, invalidStructure } from '~/lib/errors'
+import { now } from '~/lib/datetime'
+import { err } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
 import type { Collection } from '~/schema/types'
 import { encodeAttributes, type Doc } from './codec'
 import { compileMongoQueries, mongoCursorFilter, mongoReadFilter, type MongoFilter } from './mongo-query'
-import type { BatchOutcome, DocEvent, DocumentBackend, Guard, NewDocument, WriteOptions } from './store'
-import { ConflictError } from './store'
+import {
+  assertBulkPermission,
+  assertCreatePermission,
+  assertRevision,
+  assertUnchangedSince,
+  canAccess,
+  defaultPermissions,
+  documentDate,
+  resolvePermissions,
+} from './access'
+import { ConflictError } from './errors'
+import type { BatchOutcome, DocEvent, DocumentBackend, NewDocument, WriteOptions } from './store'
 
 type Row = Record<string, unknown> & {
   _id: string
@@ -138,56 +148,6 @@ export class MongoDocumentStore implements DocumentBackend {
     return doc
   }
 
-  private resolvePermissions(caller: Caller, permissions: unknown, fallback: string[] | null): string[] | null {
-    const aggregated = aggregatePermissions(permissions)
-    if (aggregated === null) return fallback
-    if (!caller.privileged) {
-      for (const permission of aggregated) {
-        const { role } = parsePermission(permission)
-        if (!caller.roles.has(role)) throw err('user_unauthorized', `Permissions must be one of: (${[...caller.roles].join(', ')})`)
-      }
-    }
-    return aggregated
-  }
-
-  private defaultPermissions(caller: Caller): string[] {
-    if (caller.privileged || !caller.user) return []
-    const id = caller.user.id
-    return [`read("user:${id}")`, `update("user:${id}")`, `delete("user:${id}")`]
-  }
-
-  private dates(caller: Caller, data: Record<string, unknown>, key: '$createdAt' | '$updatedAt', fallback: string): string {
-    const value = data[key]
-    if (!caller.privileged || value === undefined || value === null) return fallback
-    const date = normalizeDate(value)
-    if (!date) throw invalidStructure(`Attribute "${key}" has invalid format. Value must be valid date between 0000-01-01 and 9999-12-31.`)
-    return date
-  }
-
-  private can(caller: Caller, collection: Collection, row: Row, type: PermissionType): boolean {
-    if (caller.privileged || grants(collection.permissions, type, caller.roles)) return true
-    const permissions = Array.isArray(row._permissions) ? row._permissions : []
-    return collection.documentSecurity && grants(permissions, type, caller.roles)
-  }
-
-  private guardCheck(collection: Collection, row: Row, options: WriteOptions): void {
-    const guard = options.guard
-    if (!guard) return
-    const key = `${collection.table}/${row._id}`
-    if (!guard.touched.has(key) && String(row._updatedAt ?? '') > guard.before) {
-      throw new ConflictError('Document was updated after the transaction operation')
-    }
-  }
-
-  private revisionCheck(row: Row, options: WriteOptions): void {
-    const expected = options.revision
-    if (expected === undefined || expected === '*') return
-    const current = Number(row._rev ?? 1)
-    if (current !== expected) {
-      throw err('document_update_conflict', `Document '${row._id}' is at revision ${current}, not ${expected}. Fetch it again and retry.`)
-    }
-  }
-
   private touch(collection: Collection, id: string, options: WriteOptions): void {
     options.guard?.touched.add(`${collection.table}/${id}`)
   }
@@ -205,8 +165,8 @@ export class MongoDocumentStore implements DocumentBackend {
   private async requireRow(caller: Caller, collection: Collection, id: string, type: PermissionType): Promise<Row> {
     const row = await this.row(collection, id)
     if (!row) throw err('document_not_found', undefined, [id])
-    if (!this.can(caller, collection, row, type)) {
-      if (!this.can(caller, collection, row, 'read')) throw err('document_not_found', undefined, [id])
+    if (!canAccess(caller, collection, Array.isArray(row._permissions) ? row._permissions : [], type)) {
+      if (!canAccess(caller, collection, Array.isArray(row._permissions) ? row._permissions : [], 'read')) throw err('document_not_found', undefined, [id])
       throw err('user_unauthorized')
     }
     return row
@@ -241,7 +201,8 @@ export class MongoDocumentStore implements DocumentBackend {
   ): Promise<{ total: number; documents: Doc[] }> {
     assertCallerScope(caller, 'documents.read')
     const plan = compileMongoQueries(collection, rawQueries)
-    if (plan.random) throw new UnsupportedFeatureError('orderRandom on MongoDB', 'Random order needs an aggregation $sample and is not supported by this backend yet.')
+    if (plan.random)
+      throw new UnsupportedFeatureError('orderRandom on MongoDB', 'Random order needs an aggregation $sample and is not supported by this backend yet.')
     const sort = plan.sort ?? { _seq: 1 }
     let filter = this.mergeFilter(plan.filter, mongoReadFilter(caller, collection))
     const countFilter = filter
@@ -277,15 +238,15 @@ export class MongoDocumentStore implements DocumentBackend {
   private async insertRow(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions): Promise<Row> {
     const id = resolveId(input.id, 'Document ID')
     const data = input.data ?? {}
-    const permissions = this.resolvePermissions(caller, input.permissions, this.defaultPermissions(caller))!
+    const permissions = resolvePermissions(caller, input.permissions, defaultPermissions(caller))!
     const stamp = now()
     const values = this.encode(collection, data, 'create')
     const row: Row = {
       ...values,
       _id: id,
       _seq: await this.driver.nextSequence(collection.table),
-      _createdAt: this.dates(caller, data, '$createdAt', stamp),
-      _updatedAt: this.dates(caller, data, '$updatedAt', stamp),
+      _createdAt: documentDate(caller, data, '$createdAt', stamp),
+      _updatedAt: documentDate(caller, data, '$updatedAt', stamp),
       _permissions: permissions,
       _rev: 1,
     }
@@ -305,10 +266,6 @@ export class MongoDocumentStore implements DocumentBackend {
     return row
   }
 
-  private assertCreate(caller: Caller, collection: Collection): void {
-    if (!caller.privileged && !grants(collection.permissions, 'create', caller.roles)) throw err('user_unauthorized')
-  }
-
   private async updateRow(
     caller: Caller,
     collection: Collection,
@@ -317,24 +274,24 @@ export class MongoDocumentStore implements DocumentBackend {
     permissions: unknown,
     options: WriteOptions,
   ): Promise<Row> {
-    this.guardCheck(collection, row, options)
-    this.revisionCheck(row, options)
+    if (options.guard) assertUnchangedSince(collection, row._id, row._updatedAt, options.guard.touched, options.guard.before)
+    assertRevision(row._id, Number(row._rev ?? 1), options.revision)
     const values = this.encode(collection, data, 'update')
     const oldPermissions = Array.isArray(row._permissions) ? row._permissions : []
-    const newPermissions = this.resolvePermissions(caller, permissions, null)
+    const newPermissions = resolvePermissions(caller, permissions, null)
     const changes: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(values)) {
       if (JSON.stringify(row[key] ?? null) !== JSON.stringify(value ?? null)) changes[key] = value
     }
     const permsChanged = newPermissions !== null && JSON.stringify(newPermissions) !== JSON.stringify(oldPermissions)
-    const createdAt = this.dates(caller, data, '$createdAt', String(row._createdAt ?? ''))
+    const createdAt = documentDate(caller, data, '$createdAt', String(row._createdAt ?? ''))
     if (createdAt !== row._createdAt) changes._createdAt = createdAt
     const explicitUpdatedAt = caller.privileged && data.$updatedAt != null
     if (Object.keys(changes).length === 0 && !permsChanged && !explicitUpdatedAt) {
       this.touch(collection, row._id, options)
       return row
     }
-    changes._updatedAt = this.dates(caller, data, '$updatedAt', now())
+    changes._updatedAt = documentDate(caller, data, '$updatedAt', now())
     changes._rev = Number(row._rev ?? 1) + 1
     if (permsChanged) changes._permissions = newPermissions
     const updated = (await this.collection(collection).update({ _id: row._id }, changes)) as Row | null
@@ -346,8 +303,8 @@ export class MongoDocumentStore implements DocumentBackend {
   }
 
   private async deleteRow(collection: Collection, row: Row, options: WriteOptions): Promise<void> {
-    this.guardCheck(collection, row, options)
-    this.revisionCheck(row, options)
+    if (options.guard) assertUnchangedSince(collection, row._id, row._updatedAt, options.guard.touched, options.guard.before)
+    assertRevision(row._id, Number(row._rev ?? 1), options.revision)
     await this.collection(collection).delete({ _id: row._id })
     this.touch(collection, row._id, options)
     this.record(collection, 'delete', row, options)
@@ -361,13 +318,13 @@ export class MongoDocumentStore implements DocumentBackend {
 
   async createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
-    this.assertCreate(caller, collection)
+    assertCreatePermission(caller, collection)
     return this.decode(collection, await this.insertRow(caller, collection, input, options))
   }
 
   async createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
-    this.assertBulk(caller)
+    assertBulkPermission(caller)
     const created: Doc[] = []
     for (const document of documents) {
       const { $id, $permissions, ...data } = document
@@ -386,38 +343,66 @@ export class MongoDocumentStore implements DocumentBackend {
     return created
   }
 
-  async updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<Doc> {
+  async updateDocument(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    data: Record<string, unknown>,
+    permissions: unknown,
+    options: WriteOptions = {},
+  ): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
     return this.updateDocumentInTx(caller, collection, id, data, permissions, options)
   }
 
-  async updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<Doc> {
+  async updateDocumentInTx(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    data: Record<string, unknown>,
+    permissions: unknown,
+    options: WriteOptions = {},
+  ): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
     if (Object.keys(data ?? {}).length === 0 && (permissions === null || permissions === undefined)) throw err('document_missing_payload')
     const row = await this.requireRow(caller, collection, id, 'update')
     return this.decode(collection, await this.updateRow(caller, collection, row, data ?? {}, permissions, options))
   }
 
-  async upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<{ doc: Doc; created: boolean }> {
+  async upsertDocument(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    data: Record<string, unknown>,
+    permissions: unknown,
+    options: WriteOptions = {},
+  ): Promise<{ doc: Doc; created: boolean }> {
     assertCallerScope(caller, 'documents.write')
     return this.upsertDocumentInTx(caller, collection, id, data, permissions, options)
   }
 
-  async upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<{ doc: Doc; created: boolean }> {
+  async upsertDocumentInTx(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    data: Record<string, unknown>,
+    permissions: unknown,
+    options: WriteOptions = {},
+  ): Promise<{ doc: Doc; created: boolean }> {
     assertCallerScope(caller, 'documents.write')
     const row = await this.row(collection, id)
     if (row) {
-      if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
+      if (!canAccess(caller, collection, Array.isArray(row._permissions) ? row._permissions : [], 'update')) throw err('user_unauthorized')
       return { doc: this.decode(collection, await this.updateRow(caller, collection, row, data ?? {}, permissions, options)), created: false }
     }
     if (options.revision !== undefined) throw err('document_update_conflict', `Document '${id}' does not exist, but the request requires an existing revision.`)
-    this.assertCreate(caller, collection)
+    assertCreatePermission(caller, collection)
     return { doc: this.decode(collection, await this.insertRow(caller, collection, { id, data: data ?? {}, permissions }, options)), created: true }
   }
 
   async upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
-    this.assertBulk(caller)
+    assertBulkPermission(caller)
     const result: Doc[] = []
     for (const document of documents) {
       const { $id, $permissions, ...data } = document
@@ -463,14 +448,18 @@ export class MongoDocumentStore implements DocumentBackend {
     if ((attribute.type !== 'integer' && attribute.type !== 'double') || attribute.array) {
       throw err('attribute_type_invalid', `Attribute "${key}" must be an integer or float.`)
     }
-    if (typeof by !== 'number' || !Number.isFinite(by) || by <= 0) throw err('general_argument_invalid', 'Invalid `value` param: Value must be a number greater than 0.')
+    if (typeof by !== 'number' || !Number.isFinite(by) || by <= 0)
+      throw err('general_argument_invalid', 'Invalid `value` param: Value must be a number greater than 0.')
     const row = await this.requireRow(caller, collection, id, 'update')
-    this.guardCheck(collection, row, options)
-    this.revisionCheck(row, options)
+    if (options.guard) assertUnchangedSince(collection, row._id, row._updatedAt, options.guard.touched, options.guard.before)
+    assertRevision(row._id, Number(row._rev ?? 1), options.revision)
     const current = (row[key] as number | null) ?? 0
     const next = current + direction * by
     if (bound !== null && bound !== undefined && (direction === 1 ? next > bound : next < bound)) {
-      throw err('attribute_limit_exceeded', direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`)
+      throw err(
+        'attribute_limit_exceeded',
+        direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`,
+      )
     }
     const updated = (await this.collection(collection).update(
       { _id: row._id },
@@ -496,13 +485,15 @@ export class MongoDocumentStore implements DocumentBackend {
     return this.incrementAttribute(caller, collection, id, key, by, bound, direction, options)
   }
 
-  private assertBulk(caller: Caller): void {
-    if (!caller.privileged) throw err('general_unauthorized_scope')
-  }
-
-  async updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options: WriteOptions = {}): Promise<Doc[]> {
+  async updateDocuments(
+    caller: Caller,
+    collection: Collection,
+    data: Record<string, unknown>,
+    rawQueries: unknown[],
+    options: WriteOptions = {},
+  ): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
-    this.assertBulk(caller)
+    assertBulkPermission(caller)
     const { $permissions, ...rest } = data ?? {}
     const rows = await this.bulkRows(caller, collection, rawQueries)
     const updated: Doc[] = []
@@ -512,7 +503,7 @@ export class MongoDocumentStore implements DocumentBackend {
 
   async deleteDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
-    this.assertBulk(caller)
+    assertBulkPermission(caller)
     const rows = await this.bulkRows(caller, collection, rawQueries)
     const deleted: Doc[] = []
     for (const row of rows) {
@@ -536,8 +527,8 @@ export class MongoDocumentStore implements DocumentBackend {
     assertCallerScope(caller, type === 'read' ? 'documents.read' : 'documents.write')
     const row = await this.row(collection, id)
     if (!row) return null
-    if (!this.can(caller, collection, row, type)) {
-      if (!this.can(caller, collection, row, 'read')) throw err('document_not_found', undefined, [id])
+    if (!canAccess(caller, collection, Array.isArray(row._permissions) ? row._permissions : [], type)) {
+      if (!canAccess(caller, collection, Array.isArray(row._permissions) ? row._permissions : [], 'read')) throw err('document_not_found', undefined, [id])
       throw err('user_unauthorized')
     }
     return this.decode(collection, row)

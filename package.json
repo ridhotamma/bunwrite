@@ -42,7 +42,10 @@
     "stress:realtime": "bun scripts/stress/realtime.ts",
     "sdk:sync": "bun scripts/sdk-sync.ts",
     "sdk:build": "cd packages/sdk && bun run build",
-    "cli:build": "cd packages/cli && bun run build"
+    "cli:build": "cd packages/cli && bun run build",
+    "format": "prettier --write \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
+    "format:check": "prettier --check \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
+    "lint": "eslint \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\""
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",
@@ -52,12 +55,17 @@
     "sharp": "0.35.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bun": "latest",
     "@types/nodemailer": "8.0.2",
     "appwrite": "27.0.0",
     "appwrite-cli": "22.0.0",
     "drizzle-kit": "^0.31.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.13.0",
     "node-appwrite": "29.0.0",
-    "typescript": "^5.9.0"
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.72.1"
   }
 }
