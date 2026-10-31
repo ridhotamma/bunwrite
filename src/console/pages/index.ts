@@ -7,6 +7,7 @@ import { organizationPages } from './organization'
 import { overviewPages } from './overview'
 import { projectPages } from './projects'
 import { schemaPages } from './schema'
+import { securityPages } from './security'
 import { settingsPages } from './settings'
 import { sitePages } from './sites'
 import { vcsPages } from './vcs'
@@ -29,6 +30,7 @@ export function registerConsolePages(router: ConsoleRouter): void {
   vcsPages(router)
   logPages(router)
   settingsPages(router)
+  securityPages(router)
   apiPages(router)
   webhookPages(router)
   schemaPages(router)

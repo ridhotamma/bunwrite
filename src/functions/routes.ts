@@ -1,5 +1,5 @@
 import type { AppContext } from '~/app'
-import { requireKey } from '~/auth/routes'
+import { requireKey, requireScope } from '~/auth/routes'
 import { apiHeader } from '~/lib/compat'
 import { normalizeDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -304,6 +304,7 @@ export function functionRoutes(router: Router<AppContext>): void {
   })
 
   router.post('/functions/:functionId/executions', async ({ ctx, path, params }) => {
+    requireScope(ctx, 'execution.write')
     const f = ctx.functions.fn(path.functionId!)
     ctx.functions.assertCanExecute(ctx.caller, f)
     const headers = params.headers && typeof params.headers === 'object' ? (params.headers as Record<string, string>) : {}

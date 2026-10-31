@@ -202,8 +202,8 @@ has one writer, so these are the only ways past it:
   project they resolved (`WRITER_SHARDS`). This helps only when writes are
   spread over several project databases. It does not help a single hot project,
   which is the usual case.
-- [ ] **Postgres for the document path.** The largest change: raw SQL, Drizzle
-  dialect, SQLite triggers, FTS, `RETURNING` behavior, transaction staging and
+- [ ] **A server database for the document path.** The largest change: raw SQL,
+  dialect, triggers, FTS, `RETURNING` behavior, transaction staging and
   migration tooling all need porting. This is the only option here that gives
   several writers for one project.
 - [ ] **Turso Cloud `BEGIN CONCURRENT`.** Real parallel writers, but a hosted
@@ -212,7 +212,7 @@ has one writer, so these are the only ways past it:
   without a broad refactor.
 
 Do not promise 10k writes/s on one SQLite file. Measure the ceiling first; if
-writes dominate and sharding by project does not apply, plan the Postgres
+writes dominate and sharding by project does not apply, plan a server-database
 migration separately.
 
 ### 6. Fewer calls from the app (pesanle frontend repo)

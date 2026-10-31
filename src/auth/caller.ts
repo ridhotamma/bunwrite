@@ -14,7 +14,7 @@ import { err } from '~/lib/errors'
 import { sha256 } from '~/lib/ids'
 import type { Config } from '~/config'
 import { verifyJwt } from './jwt'
-import { apiKeyValid } from '~/settings/service'
+import { resolveApiKey } from '~/settings/service'
 
 export interface UserRow {
   seq: number
@@ -35,14 +35,27 @@ export interface Caller {
   user: UserRow | null
   sessionId: string | null
   roles: Set<string>
+  /** API-key scopes; null means every scope (env keys, console admins, internal calls). */
+  scopes: Set<string> | null
 }
 
 export function guestCaller(): Caller {
-  return { kind: 'guest', privileged: false, user: null, sessionId: null, roles: new Set(['any', 'guests']) }
+  return { kind: 'guest', privileged: false, user: null, sessionId: null, roles: new Set(['any', 'guests']), scopes: null }
 }
 
-export function keyCaller(): Caller {
-  return { kind: 'key', privileged: true, user: null, sessionId: null, roles: new Set(['any']) }
+export function keyCaller(scopes: string[] | null = null): Caller {
+  return { kind: 'key', privileged: true, user: null, sessionId: null, roles: new Set(['any']), scopes: scopes ? new Set(scopes) : null }
+}
+
+/** Whether a caller may use a scope. Non-key callers are handled by their own permission checks. */
+export function callerHasScope(caller: Caller, scope: string): boolean {
+  return caller.scopes === null || caller.scopes.has(scope)
+}
+
+/** Refuse a scoped API key that lacks `scope`; users and guests keep their own checks. */
+export function assertCallerScope(caller: Caller, scope: string): void {
+  if (caller.kind !== 'key' || callerHasScope(caller, scope)) return
+  throw err('general_unauthorized_scope', `User (role: applications) missing scopes (["${scope}"])`)
 }
 
 export function rolesForUser(db: Db, user: UserRow): Set<string> {
@@ -64,7 +77,7 @@ export function rolesForUser(db: Db, user: UserRow): Set<string> {
 }
 
 export function userCaller(db: Db, user: UserRow, sessionId: string | null): Caller {
-  return { kind: 'user', privileged: false, user, sessionId, roles: rolesForUser(db, user) }
+  return { kind: 'user', privileged: false, user, sessionId, roles: rolesForUser(db, user), scopes: null }
 }
 
 /** Read the session secret from the session header, the project's session cookie, or X-Fallback-Cookies (either naming). */
@@ -176,7 +189,7 @@ function cachedSession(db: Db, secret: string, authVersion?: number): CachedSess
 export function sessionCaller(db: Db, secret: string, authVersion?: number): Caller | null {
   const found = cachedSession(db, secret, authVersion)
   if (!found) return null
-  return { kind: 'user', privileged: false, user: found.user, sessionId: found.sessionId, roles: new Set(found.roles) }
+  return { kind: 'user', privileged: false, user: found.user, sessionId: found.sessionId, roles: new Set(found.roles), scopes: null }
 }
 
 function findUser(db: Db, id: string): UserRow | null {
@@ -207,8 +220,9 @@ export async function resolveCaller(
 ): Promise<Caller> {
   const key = apiHeader(request, 'key')
   if (key) {
-    if (!apiKeyValid(db, config, key, versions)) throw err('general_unauthorized_scope', 'Invalid API key.')
-    return keyCaller()
+    const identity = resolveApiKey(db, config, key, versions)
+    if (!identity) throw err('general_unauthorized_scope', 'Invalid API key.')
+    return keyCaller(identity.scopes)
   }
 
   // A JWT in the query string is accepted for the realtime socket only, as on Appwrite.

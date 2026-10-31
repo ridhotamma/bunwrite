@@ -193,7 +193,12 @@ export function createApp(source: Services | ProjectResolver) {
    */
   function consoleWriteProject(request: Request, url: URL): string {
     const pathname = url.pathname.replace(/\/$/, '') || '/'
-    if (pathname === '/console' || pathname.startsWith('/console/projects') || pathname.startsWith('/console/organization')) {
+    if (
+      pathname === '/console' ||
+      pathname.startsWith('/console/projects') ||
+      pathname.startsWith('/console/organization') ||
+      pathname.startsWith('/console/security')
+    ) {
       return control.config.projectId
     }
     const cookie = parseCookies(request.headers.get('cookie') ?? '')['console_project']

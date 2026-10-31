@@ -15,11 +15,11 @@ import { err } from '~/lib/errors'
 import type { Mail } from './mailer'
 
 /** Templates this server sends, with Appwrite's IDs. */
-export const TEMPLATE_IDS = ['verification', 'recovery', 'otpSession', 'invitation'] as const
+export const TEMPLATE_IDS = ['verification', 'recovery', 'otpSession', 'invitation', 'mfaChallenge'] as const
 export type TemplateId = (typeof TEMPLATE_IDS)[number]
 
 /** Appwrite templates for features this server does not have. */
-const UNSENT_IDS = ['magicSession', 'mfaChallenge', 'sessionAlert']
+const UNSENT_IDS = ['magicSession', 'sessionAlert']
 
 /** Only English is sent; other locales are refused rather than silently ignored. */
 export const TEMPLATE_LOCALE = 'en'
@@ -88,6 +88,16 @@ const DEFAULTS: Record<TemplateId, { subject: string; message: string }> = {
       signOff,
     ].join('\n'),
   },
+  mfaChallenge: {
+    subject: 'Your {{project}} console sign-in code',
+    message: [
+      paragraph('Hello {{user}},'),
+      paragraph('Enter this code to finish signing in to the <strong>{{project}}</strong> console. It expires in 10 minutes.'),
+      paragraph('<span style="font-size:28px;letter-spacing:6px;font-weight:700">{{otp}}</span>'),
+      paragraph("If you didn't ask to sign in, change your password and ignore this message."),
+      signOff,
+    ].join('\n'),
+  },
 }
 
 const SAMPLE_LINK = 'https://example.com/link?userId=user123&secret=sample'
@@ -120,6 +130,13 @@ export const TEMPLATES: TemplateInfo[] = [
     description: 'Sent when someone is invited to join a team.',
     variables: ['user', 'project', 'team', 'owner', 'redirect'],
     sample: { user: 'Ada Lovelace', team: 'Editors', owner: 'Grace Hopper', redirect: SAMPLE_LINK },
+  },
+  {
+    id: 'mfaChallenge',
+    name: 'Console MFA',
+    description: 'Sent to a console admin who turned on email two-factor sign-in.',
+    variables: ['user', 'project', 'otp'],
+    sample: { user: 'admin@example.com', otp: '123456' },
   },
 ]
 

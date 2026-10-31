@@ -1,4 +1,3 @@
-import { restoreDatabase } from '~/backups/restore'
 import type { Services } from '~/services'
 import type { FunctionRow } from '~/functions/service'
 import type { SiteRow } from '~/sites/service'
@@ -40,8 +39,6 @@ export interface ProjectResolver {
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
   /** Keep the registry in step with a project's Settings page. */
   update(id: string, fields: { name?: string; orgId?: string }): ProjectInfo
-  /** Replace a project's database with a validated, plain SQLite backup. */
-  restore(id: string, restoredPath: string): Promise<void>
   /** Delete a non-default project and its database, uploads and backups. */
   delete(id: string): Promise<void>
 }
@@ -83,10 +80,6 @@ export function singleProjectResolver(services: Services): ProjectResolver {
         services.config.orgId = fields.orgId
       }
       return info
-    },
-    restore: async (id, restoredPath) => {
-      if (id !== info.id) throw new Error('Unknown project.')
-      restoreDatabase(services, restoredPath)
     },
     delete: async () => {
       throw new Error('The default project cannot be deleted.')

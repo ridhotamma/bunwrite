@@ -95,7 +95,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
     projectVariables: (context) => variables.projectEnvironment(context),
   })
   const requestLogs = new RequestLogService(db, config)
-  const backups = new BackupService(db, config)
+  const backups = new BackupService(config)
   const queue = new QueueService(db)
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })

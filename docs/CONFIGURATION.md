@@ -147,11 +147,12 @@ terminator per host.
 | --- | --- | --- |
 | `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the default project. |
 | `STORAGE_PATH` | `./data/storage` | Uploaded files when S3 storage is off. |
-| `BACKUPS_PATH` | `./data/backups` | Local database snapshots when backup S3 storage is off. |
-| `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. Console restore can take this key from the form when the server key is unset. |
+| `BACKUPS_PATH` | `./data/backups` | Local whole-instance backup archives when backup S3 storage is off. |
+| `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. Restores read it from the environment or `.env`, or from `--key`. |
 
 Additional projects live under `data/projects/<project-id>/`, each with its own
-database, storage, backups and functions folder.
+database, storage and functions folder. One archive covers every database;
+there is no per-project backup.
 
 ### Continuous replication and failover
 
@@ -181,8 +182,8 @@ Litestream; back up `STORAGE_PATH` or the uploads bucket separately. See
 [DEPLOY.md](DEPLOY.md#continuous-backup-and-failover).
 
 S3 for uploads and backups is configured in **Console → Settings → File storage**
-and **Settings → Backups**, not in `.env`. Backups contain the database only;
-back up `STORAGE_PATH` or the uploads bucket separately.
+and **Settings → Backups**, not in `.env`. An archive contains every database
+but no uploaded files; back up `STORAGE_PATH` or the uploads bucket separately.
 
 ## Server processes
 
@@ -225,8 +226,9 @@ Reads run in parallel, so expect roughly 3–3.5× read throughput on four cores
 `FUNCTIONS_CONCURRENCY` applies per process, and request-log batches are per
 process; rate limits are shared through SQLite. Each worker keeps its own
 `SQLITE_CACHE_MB` page cache and maps up to `SQLITE_MMAP_MB` of the database
-file; the OS shares the mapped pages. Restoring a backup replaces the project's
-SQLite file in place, so restart the container or service after a restore.
+file; the OS shares the mapped pages. Restoring an archive replaces the control
+database and every project database, so stop the server and run
+`bunwrite restore` instead of restoring in place.
 
 ## Console
 

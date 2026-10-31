@@ -27,7 +27,7 @@ can copy, inspect and restore.
 
 Bunwrite takes the other trade-off. One Bun server serves the API, realtime,
 functions, sites and console; function runs are short-lived child processes.
-SQLite is the source of truth. A backup is a consistent snapshot of one file.
+SQLite is the source of truth. A backup is one consistent archive of every database.
 And because invoices are a common reason to reach for a backend, HTML-to-PDF and
 HTML-to-image rendering are built in instead of being another service or a
 Puppeteer dependency in your app.
@@ -51,16 +51,16 @@ you can back up, Bunwrite is for you.
 - **Environments.** Keep staging and production as separate projects, on one
   server or several. The CLI's `bunwrite env` keeps each environment's
   variables in `.env` files, and previews can have their own values.
-- **Backups as a feature.** Create, download and delete consistent snapshots in
-  the console; run daily automatic backups; keep them on local disk or in any
-  S3-compatible bucket. No separate backup service.
+- **Backups as a feature.** Create, download and delete one consistent archive
+  of the whole instance in the console; run daily automatic backups; keep them
+  on local disk or in any S3-compatible bucket. No separate backup service.
 - **Invoices and images built in.** Render HTML to PDF or PNG/JPG/WebP/AVIF/GIF
   with headless Chromium, then return the file or save it to a bucket. No
   Puppeteer or Playwright in your app.
 - **Multiple projects.** Each project has its own database, users, teams,
-  storage, functions, backups and API keys; switch projects in the console.
+  storage, functions and API keys; switch projects in the console.
 - **Admin console included.** Manage databases, users, teams, files, functions,
-  webhooks, schema, storage, backups and logs without a separate dashboard.
+  webhooks, schema, storage and logs without a separate dashboard.
 - **Functions without Docker.** Node and Python functions run in child
   processes with Appwrite's `context` API. Each gets
   `<function-id>.<FUNCTIONS_DOMAIN>` plus any number of custom domains. In the
@@ -142,6 +142,13 @@ After the first start, the database is the source of truth. Manage the project,
 API keys, allowed origins, email, OAuth sign-in and other application settings
 in the console. The optional "First start only" values at the end of
 `.env.example` can seed an empty database, then are ignored.
+
+API keys on the **API** page are scoped to the operations an app needs
+(`documents.read`, `users.write`, `files.write`, …); use full access only for a
+trusted integration that genuinely needs every API. Console admins can turn on
+**email MFA** on **Security**: sign-in then emails a single-use six-digit code.
+If an admin loses that mailbox, run `bun run console:admin <email> --no-mfa` on
+the server. Environment `API_KEYS` remain full access.
 
 ### 3. Install the Bunwrite CLI
 
@@ -230,7 +237,7 @@ See [Connect an app](#connect-an-app).
 ### 8. Turn on optional features
 
 - **Backups:** open **Settings → Backups** in the console and create a manual
-  snapshot or enable daily automatic backups. See [Backups](#backups).
+  archive or enable daily automatic backups. See [Backups](#backups).
 - **HTML rendering:** install Chromium, then enable it under **Settings → HTML
   rendering**. See [HTML rendering for invoices](#html-rendering-for-invoices).
 - **S3 storage:** configure the bucket under **Settings → File storage**, or in
@@ -470,10 +477,10 @@ phone.
 | Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs; deployment retention and bulk delete |
 | Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
-| Backups | Database snapshots; daily auto backups; optional S3 destination |
+| Backups | Whole-instance database archives; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
 | Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |
-| API | Project endpoint, project ID and server API keys |
+| API | Project endpoint, project ID and scoped server API keys |
 
 Settings live in the database and take effect immediately when saved in the
 console. Each setting shows whether it is customised or still at its default and
@@ -486,7 +493,8 @@ dashboard. The project switcher in the sidebar changes which project every page
 edits. Apps select a project with the `X-Bunwrite-Project` (or `X-Appwrite-Project`) header. The first
 project is the existing database; additional projects live under
 `data/projects/<project-id>/`. Users, databases, storage, functions, request
-logs, backups, settings and API keys are scoped to the selected project.
+logs, settings and API keys are scoped to the selected project. Backups cover
+the whole instance and are managed by organization owners.
 
 Organization owners can invite teammates by email. The invitation creates the
 console account after it is accepted; until then the member is listed as
@@ -495,83 +503,78 @@ so they can be shared directly.
 
 ## Backups
 
-Backups are a first-class feature, not a database export pipeline. The database
-is a SQLite file, and Bunwrite can snapshot it while the server is running.
+A backup is one archive of every SQLite database Bunwrite owns: the control
+database and every project database, laid out like the Litestream replica.
+
+```
+backup-<timestamp>.archive.zst
+  manifest.json
+  bunwrite.sqlite
+  projects/<project-id>/bunwrite.sqlite
+```
 
 ### From the console
 
-**Settings → Backups** lets you:
+**Settings → Backups** (organization owners) lets you:
 
-- create a manual snapshot;
+- create a manual archive;
 - download it;
-- delete old snapshots;
+- delete old archives;
 - turn on daily automatic backups at 02:00 UTC and choose how many to keep
   (1–100);
-- keep backups on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
+- keep archives on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
   bucket.
 
-Snapshots use SQLite's `VACUUM INTO`, so they are consistent even while requests
-are being handled. Each project has its own database and backup folder.
+Each database is copied with SQLite's `VACUUM INTO`, so the archive is
+consistent even while requests are being handled. One archive covers the whole
+instance; there is no per-project backup.
 
-Backups are compressed with zstd (`.sqlite.zst`). A backup is a full copy of the
-database, including stored secrets such as the GitHub App key and secret
-variables, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
-(`.sqlite.zst.enc`):
+Archives are compressed with zstd (`.archive.zst`). They include every project's
+stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
+(`.archive.zst.enc`):
 
 ```bash
 openssl rand -base64 32   # put the result in BACKUP_ENCRYPTION_KEY
 ```
 
 Keep a copy of the key somewhere other than the server. Without it an encrypted
-backup cannot be opened, and anyone who has it can open every backup.
+archive cannot be opened, and anyone who has it can open every backup.
 
 ### From cron
 
-`bun run snapshot [dir]` writes a consistent copy of the default project
-database and keeps the newest `KEEP` snapshots (default 7):
+`bun run snapshot [dir]` writes one archive and keeps the newest `KEEP`
+`snapshot-*` archives (default 7). It reads `DATABASE_PATH` for the control
+database; project databases are found from `_projects` and `data/projects/`:
 
 ```bash
 bun run snapshot /var/backups/bunwrite
 ```
 
-It reads `DATABASE_PATH`; for another project, point that at
-`data/projects/<project-id>/bunwrite.sqlite`:
-
-```bash
-DATABASE_PATH=./data/projects/my-project/bunwrite.sqlite bun run snapshot /var/backups/bunwrite
-```
-
 ### Restoring
 
-In the console, open **Settings → Backups → Restore backup** and upload the
-`.sqlite`, `.sqlite.zst` or `.sqlite.zst.enc` file. The server decrypts it,
-checks SQLite's integrity and confirms the project ID before replacing the
-current database; nothing changes if any check fails. Encrypted backups use the
-server's `BACKUP_ENCRYPTION_KEY`, or the key you enter in the form. The server
-reloads the restored database without restarting, and backups do not include
-uploaded files.
+Restore is offline, because it replaces the control database.
 
-You can also restore by hand:
-
-1. Turn a `.sqlite.zst` or `.sqlite.zst.enc` backup into a `.sqlite` file. This
-   reads `BACKUP_ENCRYPTION_KEY` from the environment or `.env`:
+1. Stop Bunwrite.
+2. Run the archive through the CLI. It decrypts and decompresses it, checks
+   every database (`PRAGMA integrity_check`, Bunwrite tables, project ID) before
+   replacing anything, and keeps the previous files as
+   `*.before-restore-<timestamp>`:
 
    ```bash
-   bun run backup:open backup-2026-10-29T02-00-00-000Z.sqlite.zst.enc
+   bun run restore backup-2026-10-31T02-00-00-000Z.archive.zst
    ```
 
-   (`bunwrite backup:open <file>` with the compiled binary; a `.sqlite.zst`
-   backup also opens with `zstd -d`.)
-2. Stop Bunwrite.
-3. Replace `data/bunwrite.sqlite` (or the project's
-   `data/projects/<project-id>/bunwrite.sqlite`) with the `.sqlite` file.
-4. Remove the old `-wal` and `-shm` files that belonged to the replaced
-   database.
-5. Start Bunwrite and check the console and API.
+   Use `bunwrite restore <file>` with the compiled binary. Add `--dry-run` to
+   check an archive without writing. Encrypted archives read
+   `BACKUP_ENCRYPTION_KEY` from the environment or `.env`, or `--key`.
+3. Start Bunwrite and check the console and API.
 
-Backups contain the database only. Uploaded files live under `STORAGE_PATH` or
-in your S3 bucket, so back those up separately. Test a restore before you need
-it.
+A failure while swapping puts the previous files back. Uploaded files, function
+code and site builds are not in the archive; back up `STORAGE_PATH` or the
+uploads bucket separately. Test a restore before you need it.
+
+Older per-project backups (`.sqlite.zst`, `.sqlite.zst.enc`) can still be opened
+into a plain database with `bunwrite backup:open <file>`, then restored by hand.
 
 ### Continuous replication and failover
 
@@ -751,9 +754,10 @@ The full production-gap list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 - Every document includes a `$revision` field (see
   [Optimistic concurrency](#optimistic-concurrency)); Appwrite has no equivalent
   and its SDK types do not declare it, so TypeScript needs a cast to read it.
-- Not implemented: `regex`, geo, vector and `exists` queries; MFA; phone/SMS
-  login; magic URLs; sending messages (topics are stored only); server-side
-  rendered Sites and site builds (sites are served as uploaded).
+- Not implemented: `regex`, geo, vector and `exists` queries; project-user MFA
+  (console admins have optional email MFA); phone/SMS login; magic URLs;
+  sending messages (topics are stored only); server-side rendered Sites and
+  site builds (sites are served as uploaded).
 - Switched-off services, protocols and sign-in methods stop clients; API keys
   and console admins are exempt, as on Appwrite. The password dictionary and
   history, session alert and invalidation, membership privacy and email-domain
@@ -785,10 +789,11 @@ The full production-gap list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 | `bun run dev` | Watch-mode API + console |
 | `bun run build` | Build the standalone `dist/bunwrite` executable |
 | `bun run demo` | Self-contained demo with sample data |
-| `bun run console:admin <email> [--remove]` | Create, reset or remove a console admin |
+| `bun run console:admin <email> [--no-mfa|--remove]` | Create, reset, clear email MFA for, or remove a console admin |
 | `bun run schema:push <bunwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
 | `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
-| `bun run snapshot [dir]` | Consistent copy of the default project database while the server runs; keeps `KEEP` (default 7) |
+| `bun run snapshot [dir]` | One archive of every database while the server runs; keeps `KEEP` (default 7) |
+| `bun run restore <file>` | Restore every database from an archive; stop the server first |
 | `bun run autotune` | Show the resource limits detected from the host/cgroup |
 | `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
 | `bun run stress:booking` | Seed and load-test a booking-app read/write mix |
@@ -873,8 +878,10 @@ cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy, TLS_MODE=acme|exter
 docker compose up -d --build
 ```
 
-Before going live, enable **Settings → Backups** and back up uploaded files
-(`STORAGE_PATH` or the S3 bucket) separately. See [Backups](#backups).
+Before going live, enable **Settings → Backups**, keep the encryption key off
+the server, and back up uploaded files (`STORAGE_PATH` or the S3 bucket)
+separately. Restore with `bunwrite restore` while the server is stopped. See
+[Backups](#backups).
 For continuous SQLite replication and restore onto a replacement host, set
 `LITESTREAM_REPLICA_URL`; see
 [Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).

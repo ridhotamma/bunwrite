@@ -18,7 +18,7 @@
  */
 import type { ServerWebSocket } from 'bun'
 
-import { sessionCaller, type Caller } from '~/auth/caller'
+import { callerHasScope, sessionCaller, type Caller } from '~/auth/caller'
 import { accountModel, type UserRowFull } from '~/auth/models'
 import { grants } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
@@ -81,6 +81,7 @@ function channelsOf(e: DocEvent): string[] {
 }
 
 function canRead(caller: Caller, e: DocEvent): boolean {
+  if (caller.kind === 'key' && !callerHasScope(caller, 'documents.read')) return false
   if (caller.privileged || grants(e.collection.permissions, 'read', caller.roles)) return true
   return e.collection.documentSecurity && grants((e.document.$permissions as string[]) ?? [], 'read', caller.roles)
 }

@@ -331,6 +331,8 @@ export interface Config {
   backupsPrefix?: string
   /** Local folder for backups when backup S3 storage is off. */
   backupsPath: string
+  /** True only for the control instance; its BackupService archives every project. */
+  instanceBackups: boolean
   /** Encrypts backups (BACKUP_ENCRYPTION_KEY). Read from the environment only, so it is never inside a backup. */
   backupEncryptionKey?: string
   /** HTML to PDF and image rendering (POST /v1/pdf, /v1/image). */
@@ -513,6 +515,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     backups: { enabled: false, keep: 7, s3: emptyS3() },
     backupsPrefix: '',
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
+    instanceBackups: true,
     backupEncryptionKey: env.BACKUP_ENCRYPTION_KEY || undefined,
     render: { enabled: env.RENDER_ENABLED === 'true', allowRemote: env.RENDER_ALLOW_REMOTE === 'true' },
     cache: {

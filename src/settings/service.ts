@@ -12,6 +12,7 @@ import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
+import { storedApiKeyScopes } from './scopes'
 
 export interface ProjectSettings {
   projectName: string
@@ -56,6 +57,8 @@ export interface ApiKeyRow {
   id: string
   name: string
   hint: string
+  /** Allowed scopes; null means full access (legacy keys). */
+  scopes: string[] | null
   expire: string | null
   accessed_at: string | null
   created_at: string
@@ -245,18 +248,23 @@ export class SettingsService {
   // ---------------------------------------------------------- API keys
 
   listKeys(): ApiKeyRow[] {
-    return this.db.sqlite.query<ApiKeyRow, []>('SELECT id, name, hint, expire, accessed_at, created_at FROM _api_keys ORDER BY seq').all()
+    return this.db.sqlite
+      .query<Omit<ApiKeyRow, 'scopes'> & { scopes: string | null }, []>(
+        'SELECT id, name, hint, scopes, expire, accessed_at, created_at FROM _api_keys ORDER BY seq',
+      )
+      .all()
+      .map((row) => ({ ...row, scopes: storedApiKeyScopes(row.scopes) }))
   }
 
-  /** Returns the secret once; only its hash is kept. */
-  createKey(name: string, expire: string | null): { key: ApiKeyRow; secret: string } {
+  /** Returns the secret once; only its hash is kept. `scopes` null keeps full access. */
+  createKey(name: string, expire: string | null, scopes: string[] | null = null): { key: ApiKeyRow; secret: string } {
     if (!name.trim()) throw err('general_argument_invalid', 'A key needs a name.')
     const secret = `standard_${randomSecret(64)}`
     const id = uniqueId()
     const stamp = now()
     this.db.sqlite
-      .query('INSERT INTO _api_keys (id, name, secret_hash, hint, expire, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(id, name.trim(), sha256(secret), secret.slice(0, 16), expire, stamp, stamp)
+      .query('INSERT INTO _api_keys (id, name, secret_hash, hint, scopes, expire, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, name.trim(), sha256(secret), secret.slice(0, 16), scopes ? JSON.stringify(scopes) : null, expire, stamp, stamp)
     return { key: this.listKeys().find((k) => k.id === id)!, secret }
   }
 
@@ -269,6 +277,7 @@ interface CachedApiKey {
   id: string
   expire: string | null
   accessedAt: string | null
+  scopes: string[] | null
 }
 
 interface ApiKeyCache {
@@ -308,9 +317,18 @@ function apiKeyCache(db: Db, version = readKeysVersion(db)): ApiKeyCache {
   return cache
 }
 
-/** Is this API key (X-Bunwrite-Key or X-Appwrite-Key) acceptable? Programmatic keys, the functions' internal key, or a live console key. */
-export function apiKeyValid(db: Db, config: Config, key: string, versions?: VersionMonitor): boolean {
-  if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) return true
+export interface ApiKeyIdentity {
+  /** `_api_keys.id`, or null for an environment/internal key. */
+  id: string | null
+  /** Allowed scopes; null means full access. */
+  scopes: string[] | null
+}
+
+/** Resolve an API key and its scopes; null when it is unknown, expired or internal-only. */
+export function resolveApiKey(db: Db, config: Config, key: string, versions?: VersionMonitor): ApiKeyIdentity | null {
+  if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) {
+    return { id: null, scopes: null }
+  }
 
   const hash = sha256(key)
   const cache = apiKeyCache(db, versions?.keysVersion())
@@ -319,28 +337,36 @@ export function apiKeyValid(db: Db, config: Config, key: string, versions?: Vers
   if (hit) {
     if (hit.expire && hit.expire < stamp) {
       cache.entries.delete(hash)
-      return false
+      return null
     }
     // Record use at most once a minute, the same as the uncached path.
     if (!hit.accessedAt || hit.accessedAt.slice(0, 16) !== stamp.slice(0, 16)) {
       db.sqlite.query('UPDATE _api_keys SET accessed_at = ? WHERE id = ?').run(stamp, hit.id)
       hit.accessedAt = stamp
     }
-    return true
+    return { id: hit.id, scopes: hit.scopes }
   }
 
   const row = db.sqlite
-    .query<{ id: string; expire: string | null; accessed_at: string | null }, [string]>('SELECT id, expire, accessed_at FROM _api_keys WHERE secret_hash = ?')
+    .query<{ id: string; scopes: string | null; expire: string | null; accessed_at: string | null }, [string]>(
+      'SELECT id, scopes, expire, accessed_at FROM _api_keys WHERE secret_hash = ?',
+    )
     .get(hash)
-  if (!row) return false
-  if (row.expire && row.expire < stamp) return false
+  if (!row) return null
+  if (row.expire && row.expire < stamp) return null
 
   if (cache.entries.size >= API_KEY_CACHE_MAX) cache.entries.clear()
-  const entry: CachedApiKey = { id: row.id, expire: row.expire, accessedAt: row.accessed_at }
+  const scopes = storedApiKeyScopes(row.scopes)
+  const entry: CachedApiKey = { id: row.id, expire: row.expire, accessedAt: row.accessed_at, scopes }
   cache.entries.set(hash, entry)
   if (!row.accessed_at || row.accessed_at.slice(0, 16) !== stamp.slice(0, 16)) {
     db.sqlite.query('UPDATE _api_keys SET accessed_at = ? WHERE id = ?').run(stamp, row.id)
     entry.accessedAt = stamp
   }
-  return true
+  return { id: row.id, scopes }
+}
+
+/** Is this API key (X-Bunwrite-Key or X-Appwrite-Key) acceptable? Programmatic keys, the functions' internal key, or a live console key. */
+export function apiKeyValid(db: Db, config: Config, key: string, versions?: VersionMonitor): boolean {
+  return resolveApiKey(db, config, key, versions) !== null
 }

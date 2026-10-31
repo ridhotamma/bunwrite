@@ -1,21 +1,19 @@
 import { Database } from 'bun:sqlite'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createApp } from '~/app'
+import { readArchive, writeArchive } from '~/backups/archive'
 import { decrypt, encrypt, packBackup, unpackBackup } from '~/backups/format'
-import { inspectBackup } from '~/backups/restore'
+import { createInstanceBackup } from '~/backups/instance'
+import { inspectBackup, inspectDatabase, restoreInstance } from '~/backups/restore'
 import { BackupService } from '~/backups/service'
-import { ConsoleAuth } from '~/console/auth'
 import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { PRIVATE_ENV } from '~/lib/private-env'
-import { singleProjectResolver } from '~/projects/types'
-import { createServices } from '~/services'
-import { PROJECT, startServer, testConfig } from './helpers'
+import { PROJECT, testConfig } from './helpers'
 
 const KEY = 'correct horse battery staple'
 
@@ -70,7 +68,7 @@ describe('backup encryption format', () => {
   })
 })
 
-describe('backup files', () => {
+describe('single-database backup files', () => {
   let dir: string
   let db: Db
 
@@ -123,221 +121,258 @@ describe('backup files', () => {
     expect(countNotes(join(dir, 'b.sqlite'))).toBe(2000)
   })
 
-  test('the service writes encrypted backups when a key is set, and lists older ones', async () => {
-    const backupsPath = mkdtempSync(join(tmpdir(), 'bunwrite-backup-service-'))
-    try {
-      const plain = new BackupService(db, testConfig({ backupsPath }))
-      const compressed = await plain.create('manual')
-      expect(compressed.name).toEndWith('.sqlite.zst')
-
-      const encrypted = new BackupService(db, testConfig({ backupsPath, backupEncryptionKey: KEY }))
-      const created = await encrypted.create('manual')
-      expect(created.name).toEndWith('.sqlite.zst.enc')
-      expect(statSync(join(backupsPath, created.name)).mode & 0o777).toBe(0o600)
-
-      writeFileSync(join(backupsPath, 'backup-old.sqlite'), 'legacy')
-      const names = (await encrypted.list()).map((b) => b.name).sort()
-      expect(names).toEqual([compressed.name, created.name, 'backup-old.sqlite'].sort())
-      // No plain-text snapshot or temp file is left behind.
-      expect(readdirSync(backupsPath).filter((f) => f.endsWith('.tmp'))).toEqual([])
-
-      const res = await encrypted.serve(created.name)
-      expect(res.headers.get('content-type')).toBe('application/octet-stream')
-      const out = join(backupsPath, 'restored.sqlite')
-      writeFileSync(join(backupsPath, 'download.sqlite.zst.enc'), Buffer.from(await res.arrayBuffer()))
-      await unpackBackup(join(backupsPath, 'download.sqlite.zst.enc'), out, KEY)
-      expect(countNotes(out)).toBe(2000)
-
-      const weak = new BackupService(db, testConfig({ backupsPath, backupEncryptionKey: 'short' }))
-      await expect(weak.create('manual')).rejects.toThrow(/at least 16/)
-    } finally {
-      rmSync(backupsPath, { recursive: true, force: true })
-    }
-  })
-
   test('functions and sites never inherit the key', () => {
     expect(PRIVATE_ENV).toContain('BACKUP_ENCRYPTION_KEY')
   })
 })
 
-describe('restoring backups', () => {
-  const siteSettings = {
-    name: 'Restore site',
-    enabled: true,
-    framework: 'other',
-    outputDirectory: '',
-    fallbackFile: '',
-    domains: [],
-    apiFunctionId: '',
-    installCommand: '',
-    buildCommand: '',
-    startCommand: '',
-    buildRuntime: '',
-    adapter: 'static',
-    pruneMode: 'auto',
+/** A control database with one extra project, both carrying a marker row. */
+function makeInstance(root: string) {
+  const controlPath = join(root, 'bunwrite.sqlite')
+  const control = bootstrapDb(controlPath, PROJECT)
+  control.sqlite
+    .query('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run('other', 'Other', 'org_test', now(), now())
+  const projectPath = join(root, 'projects', 'other', 'bunwrite.sqlite')
+  mkdirSync(join(root, 'projects', 'other'), { recursive: true })
+  const project = bootstrapDb(projectPath, 'other')
+  marker(control, 'control-before')
+  marker(project, 'project-before')
+  return { controlPath, control, projectPath, project }
+}
+
+function bootstrapDb(path: string, projectId: string): Db {
+  const db = openDb(path)
+  bootstrapInstance(db, {
+    ORG_ID: 'org_test',
+    PROJECT_ID: projectId,
+    PROJECT_NAME: `Project ${projectId}`,
+    SECRET: 's'.repeat(40),
+  })
+  return db
+}
+
+function marker(db: Db, value?: string): string {
+  if (value !== undefined) {
+    db.sqlite
+      .query("INSERT INTO _settings (key, value, updated_at) VALUES ('marker', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(value, now())
   }
+  return (db.sqlite.query("SELECT value FROM _settings WHERE key = 'marker'").get() as { value: string } | null)?.value ?? ''
+}
 
-  const marker = (services: ReturnType<typeof createServices>) =>
-    (services.db.sqlite.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'restore-marker'").get() ?? { value: '' }).value
-
-  const stop = (services: ReturnType<typeof createServices>) => {
-    services.functions.stop()
-    services.sites.stop()
-    services.backups.stop()
-    services.queue.stop()
-    services.render.stop()
+const readMarker = (path: string): string => {
+  const db = openDb(path)
+  try {
+    return marker(db)
+  } finally {
+    db.sqlite.close()
   }
+}
 
-  test('restores an uploaded backup and refreshes the services reading it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backup-restore-'))
-    const current = join(dir, 'current.sqlite')
-    const backupsPath = join(dir, 'backups')
-    const db = openDb(current)
-    bootstrapInstance(db, { ORG_ID: 'org_test', PROJECT_ID: PROJECT, PROJECT_NAME: 'Test Project', SECRET: 's'.repeat(40) })
-    const services = createServices(testConfig({ databasePath: current, backupsPath }), db)
-    const resolver = singleProjectResolver(services)
+describe('instance archives', () => {
+  test('round-trips every database, with and without encryption', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-archive-'))
+    const { controlPath, control, projectPath, project } = makeInstance(root)
     try {
-      services.db.sqlite.query("INSERT INTO _settings (key, value, updated_at) VALUES ('restore-marker', 'before', ?)").run(now())
-      const backup = await services.backups.create('manual')
-      expect(backup.name).toEndWith('.sqlite.zst')
+      // writeArchive does not checkpoint, so snapshot first like the service does.
+      const snapshots = join(root, 'snapshots')
+      mkdirSync(snapshots, { recursive: true })
+      const controlSnapshot = join(snapshots, 'control.sqlite')
+      const projectSnapshot = join(snapshots, 'project.sqlite')
+      control.sqlite.run(`VACUUM INTO '${controlSnapshot.replace(/'/g, "''")}'`)
+      project.sqlite.run(`VACUUM INTO '${projectSnapshot.replace(/'/g, "''")}'`)
+      const entries = [
+        { path: 'bunwrite.sqlite', source: controlSnapshot },
+        { path: 'projects/other/bunwrite.sqlite', source: projectSnapshot },
+      ]
+      const plain = join(root, 'plain.archive.zst')
+      const manifest = await writeArchive({ output: plain, entries, control: 'bunwrite.sqlite', projects: ['other'] })
+      expect(manifest.projects).toEqual(['other'])
+      expect(manifest.files.map((file) => file.path)).toEqual(entries.map((entry) => entry.path))
 
-      // Data created after the backup must not survive the restore.
-      services.sites.create('restore-site', siteSettings)
-      services.db.sqlite.query("UPDATE _settings SET value = 'after' WHERE key = 'restore-marker'").run()
-      expect(marker(services)).toBe('after')
-      expect(services.sites.list().map((site) => site.id)).toContain('restore-site')
+      const out = join(root, 'out')
+      mkdirSync(out)
+      const read = await readArchive({ input: plain, destDir: out })
+      expect(read.files).toHaveLength(2)
+      expect(readMarker(join(out, 'bunwrite.sqlite'))).toBe('control-before')
+      expect(readMarker(join(out, 'projects/other/bunwrite.sqlite'))).toBe('project-before')
 
-      const file = new File([readFileSync(join(backupsPath, backup.name))], backup.name)
-      const restored = await services.backups.restore(file, undefined, (path) => resolver.restore(PROJECT, path))
-      expect(restored).toMatchObject({ name: backup.name, projectId: PROJECT })
-      expect(marker(services)).toBe('before')
-      expect(services.sites.list()).toHaveLength(0)
+      const sealed = join(root, 'sealed.archive.zst.enc')
+      await writeArchive({ output: sealed, entries, control: 'bunwrite.sqlite', projects: ['other'], secret: KEY })
+      await expect(readArchive({ input: sealed, destDir: join(root, 'missing-key') })).rejects.toThrow(/BACKUP_ENCRYPTION_KEY/)
+      await expect(readArchive({ input: sealed, destDir: join(root, 'wrong-key'), secret: 'wrong key, long enough!!!!' })).rejects.toThrow(/Cannot decrypt/)
+      const open = join(root, 'open')
+      mkdirSync(open)
+      await readArchive({ input: sealed, destDir: open, secret: KEY })
+      expect(readMarker(join(open, 'bunwrite.sqlite'))).toBe('control-before')
+
+      // One changed byte fails the SHA-256 check.
+      const bytes = readFileSync(plain)
+      bytes[bytes.length - 32]! ^= 1
+      const tampered = join(root, 'tampered.archive.zst')
+      writeFileSync(tampered, bytes)
+      await expect(readArchive({ input: tampered, destDir: join(root, 'tampered') })).rejects.toThrow()
     } finally {
-      stop(services)
-      services.db.sqlite.close()
-      rmSync(dir, { recursive: true, force: true })
+      control.sqlite.close()
+      project.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test('needs the encryption key, and leaves the database untouched when it is wrong', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backup-restore-enc-'))
-    const current = join(dir, 'current.sqlite')
-    const backupsPath = join(dir, 'backups')
-    const db = openDb(current)
-    bootstrapInstance(db, { ORG_ID: 'org_test', PROJECT_ID: PROJECT, PROJECT_NAME: 'Test Project', SECRET: 's'.repeat(40) })
-    const services = createServices(testConfig({ databasePath: current, backupsPath, backupEncryptionKey: KEY }), db)
-    const resolver = singleProjectResolver(services)
+  test('createInstanceBackup includes the control and every project database', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-backup-'))
+    const { controlPath, control, projectPath, project } = makeInstance(root)
     try {
-      services.db.sqlite.query("INSERT INTO _settings (key, value, updated_at) VALUES ('restore-marker', 'before', ?)").run(now())
-      const backup = await services.backups.create('manual')
-      expect(backup.name).toEndWith('.sqlite.zst.enc')
+      const outputDir = join(root, 'backups')
+      const created = await createInstanceBackup({ databasePath: controlPath, outputDir, secret: KEY })
+      expect(created.name).toMatch(/^backup-.*\.archive\.zst\.enc$/)
+      expect(created.manifest.projects).toEqual(['other'])
+      expect(created.manifest.control).toBe('bunwrite.sqlite')
+      expect(existsSync(join(outputDir, created.name))).toBe(true)
+      expect(statSync(join(outputDir, created.name)).mode & 0o777).toBe(0o600)
 
-      services.sites.create('restore-site', siteSettings)
-      services.db.sqlite.query("UPDATE _settings SET value = 'after' WHERE key = 'restore-marker'").run()
-      const bytes = readFileSync(join(backupsPath, backup.name))
-
-      await expect(
-        services.backups.restore(new File([bytes], backup.name), 'wrong key, but long enough', (path) => resolver.restore(PROJECT, path)),
-      ).rejects.toThrow(/Cannot decrypt/)
-      expect(marker(services)).toBe('after')
-      expect(services.sites.list().map((site) => site.id)).toContain('restore-site')
-
-      await services.backups.restore(new File([bytes], backup.name), KEY, (path) => resolver.restore(PROJECT, path))
-      expect(marker(services)).toBe('before')
-      expect(services.sites.list()).toHaveLength(0)
+      const out = join(root, 'out')
+      mkdirSync(out)
+      await readArchive({ input: join(outputDir, created.name), destDir: out, secret: KEY })
+      expect(readMarker(join(out, 'bunwrite.sqlite'))).toBe('control-before')
+      expect(readMarker(join(out, 'projects/other/bunwrite.sqlite'))).toBe('project-before')
     } finally {
-      stop(services)
-      services.db.sqlite.close()
-      rmSync(dir, { recursive: true, force: true })
+      control.sqlite.close()
+      project.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test('refuses a backup that belongs to another project', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backup-restore-other-'))
-    const current = join(dir, 'current.sqlite')
-    const other = join(dir, 'other.sqlite')
-    const otherBackup = join(dir, 'other-backup.sqlite')
-    const db = openDb(current)
-    bootstrapInstance(db, { ORG_ID: 'org_test', PROJECT_ID: PROJECT, PROJECT_NAME: 'Test Project', SECRET: 's'.repeat(40) })
-    const services = createServices(testConfig({ databasePath: current, backupsPath: join(dir, 'backups') }), db)
-    const otherDb = openDb(other)
-    bootstrapInstance(otherDb, { ORG_ID: 'org_other', PROJECT_ID: 'another-project', PROJECT_NAME: 'Other', SECRET: 'o'.repeat(40) })
-    otherDb.sqlite.run(`VACUUM INTO '${otherBackup.replace(/'/g, "''")}'`)
-    otherDb.sqlite.close()
-    let applied = false
+  test('refuses unsafe paths and a project list that disagrees with the control database', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-bad-'))
+    const { controlPath, control, project } = makeInstance(root)
     try {
-      expect(() => inspectBackup(otherBackup, PROJECT)).toThrow(/belongs to project "another-project"/)
-      const file = new File([readFileSync(otherBackup)], 'other.sqlite')
       await expect(
-        services.backups.restore(file, undefined, () => {
-          applied = true
+        writeArchive({
+          output: join(root, 'escape.archive.zst'),
+          entries: [{ path: '../escape.sqlite', source: controlPath }],
+          control: 'bunwrite.sqlite',
+          projects: [],
         }),
-      ).rejects.toThrow(/belongs to project "another-project"/)
-      expect(applied).toBe(false)
-      expect((services.db.sqlite.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'instance'").get())?.value).toContain(PROJECT)
-    } finally {
-      stop(services)
-      services.db.sqlite.close()
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
+      ).rejects.toThrow(/unsafe path/)
 
-  test('the console restores an uploaded backup and keeps serving', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backup-restore-console-'))
-    const current = join(dir, 'current.sqlite')
-    const backupsPath = join(dir, 'backups')
-    const db = openDb(current)
-    bootstrapInstance(db, { ORG_ID: 'org_test', PROJECT_ID: PROJECT, PROJECT_NAME: 'Test Project', SECRET: 's'.repeat(40) })
-    const config = testConfig({ databasePath: current, backupsPath })
-    const services = createServices(config, db)
-    const app = createApp(services)
-    const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket })
-    config.publicEndpoint = `http://localhost:${server.port}/v1`
-    config.port = server.port!
-    try {
-      const backup = await services.backups.create('manual')
-      services.sites.create('will-disappear', siteSettings)
-      expect(services.sites.list().map((site) => site.id)).toContain('will-disappear')
-
-      const auth = new ConsoleAuth(services.db)
-      await auth.upsert('restore@example.com', 'console-password')
-      const cookie = `bunwrite_console=${(await auth.login('restore@example.com', 'console-password'))!}; console_project=${PROJECT}`
-      const form = new FormData()
-      form.append('backup', new File([readFileSync(join(backupsPath, backup.name))], backup.name))
-      const res = await fetch(`http://localhost:${server.port}/console/settings/backups/restore`, {
-        method: 'POST',
-        body: form,
-        headers: { cookie },
-        redirect: 'manual',
+      const snapshot = join(root, 'control.sqlite')
+      control.sqlite.run(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`)
+      const archive = join(root, 'mismatch.archive.zst')
+      await writeArchive({
+        output: archive,
+        entries: [{ path: 'bunwrite.sqlite', source: snapshot }],
+        control: 'bunwrite.sqlite',
+        projects: [],
       })
-      expect(res.status).toBe(303)
-      expect(res.headers.get('location')).toContain('/console/settings/backups?ok=')
-      expect(services.sites.list()).toHaveLength(0)
-      expect((await fetch(`http://localhost:${server.port}/v1/health`)).status).toBe(200)
+      await expect(restoreInstance({ databasePath: controlPath, archive })).rejects.toThrow(/project list does not match/)
     } finally {
-      server.stop(true)
-      stop(services)
-      services.db.sqlite.close()
-      rmSync(dir, { recursive: true, force: true })
+      control.sqlite.close()
+      project.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('restoring whole-instance archives', () => {
+  test('replaces every database, keeps the old files, and supports a dry run', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-restore-'))
+    const { controlPath, control, projectPath, project } = makeInstance(root)
+    try {
+      const outputDir = join(root, 'backups')
+      await createInstanceBackup({ databasePath: controlPath, outputDir })
+      const archive = join(outputDir, readdirSync(outputDir)[0]!)
+      marker(control, 'control-after')
+      marker(project, 'project-after')
+      control.sqlite.close()
+      project.sqlite.close()
+
+      const dry = await restoreInstance({ databasePath: controlPath, archive, dryRun: true })
+      expect(dry.outcomes.map((outcome) => outcome.result)).toEqual(['planned', 'planned'])
+      expect(readMarker(controlPath)).toBe('control-after')
+
+      const restored = await restoreInstance({ databasePath: controlPath, archive })
+      expect(restored.outcomes).toHaveLength(2)
+      expect(restored.previous).toHaveLength(2)
+      expect(restored.previous.every((path) => existsSync(path))).toBe(true)
+      expect(readMarker(controlPath)).toBe('control-before')
+      expect(readMarker(projectPath)).toBe('project-before')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test('the backups page has the upload restore form', async () => {
-    const server = startServer()
+  test('a wrong key changes nothing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-restore-key-'))
+    const { controlPath, control, project } = makeInstance(root)
     try {
-      const base = server.endpoint.replace(/\/v1$/, '')
-      const auth = new ConsoleAuth(server.db)
-      await auth.upsert('backups@example.com', 'console-password')
-      const cookie = `bunwrite_console=${(await auth.login('backups@example.com', 'console-password'))!}; console_project=${PROJECT}`
-      const res = await fetch(`${base}/console/settings/backups`, { headers: { cookie }, redirect: 'manual' })
-      expect(res.status).toBe(200)
-      const page = await res.text()
-      expect(page).toContain('action="/console/settings/backups/restore"')
-      expect(page).toContain('name="backup"')
-      expect(page).toContain('name="backupKey"')
-      expect(page).toContain('Restore database')
+      const outputDir = join(root, 'backups')
+      await createInstanceBackup({ databasePath: controlPath, outputDir, secret: KEY })
+      const archive = join(outputDir, readdirSync(outputDir)[0]!)
+      marker(control, 'control-after')
+      control.sqlite.close()
+      project.sqlite.close()
+
+      await expect(restoreInstance({ databasePath: controlPath, archive, key: 'wrong key, long enough!!!!' })).rejects.toThrow(/Cannot decrypt/)
+      expect(readMarker(controlPath)).toBe('control-after')
     } finally {
-      server.stop()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('refuses a database that belongs to another project', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-other-'))
+    const otherPath = join(root, 'other.sqlite')
+    const other = bootstrapDb(otherPath, 'another-project')
+    try {
+      expect(() => inspectBackup(otherPath, PROJECT)).toThrow(/belongs to project "another-project"/)
+      expect(inspectDatabase(otherPath).projectId).toBe('another-project')
+    } finally {
+      other.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('backup service', () => {
+  test('writes whole-instance backups, lists them and serves them', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-backup-service-'))
+    const { controlPath, control, project } = makeInstance(root)
+    const backupsPath = join(root, 'backups')
+    try {
+      const plain = new BackupService(testConfig({ databasePath: controlPath, backupsPath }))
+      const compressed = await plain.create('manual')
+      expect(compressed.name).toMatch(/\.archive\.zst$/)
+
+      const encrypted = new BackupService(
+        testConfig({ databasePath: controlPath, backupsPath, backupEncryptionKey: KEY }),
+      )
+      const created = await encrypted.create('manual')
+      expect(created.name).toMatch(/\.archive\.zst\.enc$/)
+      expect(statSync(join(backupsPath, created.name)).mode & 0o777).toBe(0o600)
+
+      const names = (await encrypted.list()).map((backup) => backup.name).sort()
+      expect(names).toEqual([compressed.name, created.name].sort())
+      expect(readdirSync(backupsPath).filter((file) => file.startsWith('.'))).toEqual([])
+
+      const res = await encrypted.serve(created.name)
+      expect(res.headers.get('content-type')).toBe('application/x-bunwrite-archive')
+      const download = join(root, 'download.archive.zst.enc')
+      writeFileSync(download, Buffer.from(await res.arrayBuffer()))
+      const out = join(root, 'out')
+      mkdirSync(out)
+      await readArchive({ input: download, destDir: out, secret: KEY })
+      expect(readMarker(join(out, 'bunwrite.sqlite'))).toBe('control-before')
+
+      const weak = new BackupService(
+        testConfig({ databasePath: controlPath, backupsPath, backupEncryptionKey: 'short' }),
+      )
+      await expect(weak.create('manual')).rejects.toThrow(/at least 16/)
+    } finally {
+      control.sqlite.close()
+      project.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })

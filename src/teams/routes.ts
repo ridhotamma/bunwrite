@@ -1,4 +1,5 @@
 import type { AppContext } from '~/app'
+import { requireScope } from '~/auth/routes'
 import { membershipModel, teamModel } from '~/auth/models'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, str } from '~/lib/http'
@@ -7,20 +8,24 @@ import type { Router } from '~/lib/router'
 
 export function teamRoutes(router: Router<AppContext>): void {
   router.get('/teams', ({ ctx, params }) => {
+    requireScope(ctx, 'teams.read')
     const { total, teams } = ctx.teams.list(ctx.caller, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, teams: teams.map(teamModel) })
   })
 
-  router.post('/teams', ({ ctx, params }) =>
-    json(teamModel(ctx.teams.create(ctx.caller, { teamId: params.teamId, name: params.name, roles: params.roles })), 201),
-  )
+  router.post('/teams', ({ ctx, params }) => {
+    requireScope(ctx, 'teams.write')
+    return json(teamModel(ctx.teams.create(ctx.caller, { teamId: params.teamId, name: params.name, roles: params.roles })), 201)
+  })
 
   router.get('/teams/:teamId', ({ ctx, path }) => {
+    requireScope(ctx, 'teams.read')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
     return json(teamModel(ctx.teams.team(path.teamId!)))
   })
 
   router.put('/teams/:teamId', ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.write')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
     if (typeof params.name !== 'string' || !params.name || params.name.length > 128) {
       throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
@@ -29,17 +34,20 @@ export function teamRoutes(router: Router<AppContext>): void {
   })
 
   router.delete('/teams/:teamId', ({ ctx, path }) => {
+    requireScope(ctx, 'teams.write')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
     ctx.teams.delete(path.teamId!)
     return noContent()
   })
 
   router.get('/teams/:teamId/prefs', ({ ctx, path }) => {
+    requireScope(ctx, 'teams.read')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
     return json(JSON.parse(ctx.teams.team(path.teamId!).prefs))
   })
 
   router.put('/teams/:teamId/prefs', ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.write')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
     const prefs = params.prefs
     if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) {
@@ -50,12 +58,14 @@ export function teamRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/teams/:teamId/memberships', ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.read')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
     const { total, memberships } = ctx.teams.listMemberships({ teamId: path.teamId! }, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, memberships: memberships.map(membershipModel) })
   })
 
   router.post('/teams/:teamId/memberships', async ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.write')
     // Invitations from a user need a link to send; API-key memberships are confirmed at once.
     if (!ctx.caller.privileged) ctx.access.assertAuthMethod('invites')
     const url = ctx.caller.privileged ? str(params.url) : assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
@@ -78,20 +88,24 @@ export function teamRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/teams/:teamId/memberships/:membershipId', ({ ctx, path }) => {
+    requireScope(ctx, 'teams.read')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
     return json(membershipModel(ctx.teams.membership(path.teamId!, path.membershipId!)))
   })
 
-  router.patch('/teams/:teamId/memberships/:membershipId', ({ ctx, path, params }) =>
-    json(membershipModel(ctx.teams.updateMembership(ctx.caller, path.teamId!, path.membershipId!, params.roles))),
-  )
+  router.patch('/teams/:teamId/memberships/:membershipId', ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.write')
+    return json(membershipModel(ctx.teams.updateMembership(ctx.caller, path.teamId!, path.membershipId!, params.roles)))
+  })
 
   router.delete('/teams/:teamId/memberships/:membershipId', ({ ctx, path }) => {
+    requireScope(ctx, 'teams.write')
     ctx.teams.deleteMembership(ctx.caller, path.teamId!, path.membershipId!)
     return noContent()
   })
 
-  router.patch('/teams/:teamId/memberships/:membershipId/status', ({ ctx, path, params }) =>
-    json(membershipModel(ctx.teams.confirmMembership(path.teamId!, path.membershipId!, params.userId, params.secret))),
-  )
+  router.patch('/teams/:teamId/memberships/:membershipId/status', ({ ctx, path, params }) => {
+    requireScope(ctx, 'teams.write')
+    return json(membershipModel(ctx.teams.confirmMembership(path.teamId!, path.membershipId!, params.userId, params.secret)))
+  })
 }

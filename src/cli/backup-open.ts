@@ -1,7 +1,10 @@
 /**
- * Turn a downloaded backup back into a SQLite file you can restore:
+ * Open a legacy per-project backup (`.sqlite.zst` / `.sqlite.zst.enc`) into a
+ * plain `.sqlite` file. Kept for upgrades: current releases write one
+ * whole-instance `.archive.zst`, restored by `bunwrite restore`.
+ *
  * `bun run backup:open <file> [out.sqlite]`. Encrypted backups need the
- * BACKUP_ENCRYPTION_KEY they were made with, read from the environment or .env.
+ * BACKUP_ENCRYPTION_KEY they were made with, from the environment or `.env`.
  */
 import { existsSync } from 'node:fs'
 
@@ -9,11 +12,11 @@ import { unpackBackup } from '~/backups/format'
 
 const [input, given] = process.argv.slice(2)
 if (!input) {
-  console.error('Usage: backup:open <backup file> [output.sqlite]')
+  console.error('Usage: backup:open <legacy per-project backup> [output.sqlite]')
   process.exit(1)
 }
 if (!/\.sqlite\.zst(\.enc)?$/.test(input)) {
-  console.error(`${input} is not a compressed backup (.sqlite.zst or .sqlite.zst.enc). A .sqlite backup can be restored as it is.`)
+  console.error(`${input} is not a legacy compressed backup (.sqlite.zst or .sqlite.zst.enc). Use bunwrite restore for an .archive.zst.`)
   process.exit(1)
 }
 if (!existsSync(input)) {

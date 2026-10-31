@@ -1,9 +1,11 @@
 /**
- * Backup file format: the SQLite snapshot is compressed with zstd and, when
- * BACKUP_ENCRYPTION_KEY is set, encrypted.
+ * Backup compression and encryption, shared by single-database files and
+ * whole-instance archives.
  *
- *   backup-<stamp>.sqlite.zst       zstd only; `zstd -d` opens it
- *   backup-<stamp>.sqlite.zst.enc   zstd, then encrypted (format below)
+ *   backup-<stamp>.sqlite.zst       legacy single database; `zstd -d` opens it
+ *   backup-<stamp>.sqlite.zst.enc   legacy, zstd then encrypted (format below)
+ *   backup-<stamp>.archive.zst      every database (see ./archive.ts)
+ *   backup-<stamp>.archive.zst.enc  every database, zstd then encrypted
  *   backup-<stamp>.sqlite           older, uncompressed backups
  *
  * Encrypted file:
@@ -24,6 +26,10 @@ import { createZstdCompress, createZstdDecompress } from 'node:zlib'
 export const ENCRYPTED_EXT = '.sqlite.zst.enc'
 export const COMPRESSED_EXT = '.sqlite.zst'
 export const PLAIN_EXT = '.sqlite'
+
+/** Whole-instance archives: the control database plus every project database. */
+export const ARCHIVE_ENCRYPTED_EXT = '.archive.zst.enc'
+export const ARCHIVE_COMPRESSED_EXT = '.archive.zst'
 
 /** Shortest BACKUP_ENCRYPTION_KEY accepted; `openssl rand -base64 32` gives 44 characters. */
 export const MIN_KEY_LENGTH = 16
@@ -195,6 +201,7 @@ export async function unpackBackup(input: string, output: string, secret?: strin
 }
 
 export function contentType(name: string): string {
+  if (name.endsWith('.archive.zst.enc') || name.endsWith('.archive.zst')) return 'application/x-bunwrite-archive'
   if (name.endsWith('.enc')) return 'application/octet-stream'
   if (name.endsWith('.zst')) return 'application/zstd'
   return 'application/x-sqlite3'

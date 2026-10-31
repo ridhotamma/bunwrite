@@ -6,6 +6,7 @@ import { bool, json, list, noContent, num, str } from '~/lib/http'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import type { RouteContext, Router } from '~/lib/router'
 import { signJwt } from './jwt'
+import { callerHasScope } from './caller'
 import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type SessionRow, type UserRowFull } from './models'
 import { verifyPassword } from './passwords'
 import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from './service'
@@ -44,6 +45,15 @@ function me(ctx: AppContext): UserRowFull {
 
 export function requireKey(ctx: AppContext, scope: string): void {
   if (!ctx.caller.privileged) missingScope(ctx, scope)
+  if (!callerHasScope(ctx.caller, scope)) missingScope(ctx, scope)
+}
+
+/**
+ * Enforce a scope for API-key callers only. Routes that users may also call
+ * keep their normal permission checks; a key must still hold the scope.
+ */
+export function requireScope(ctx: AppContext, scope: string): void {
+  if (ctx.caller.kind === 'key' && !callerHasScope(ctx.caller, scope)) missingScope(ctx, scope)
 }
 
 const cookieName = (ctx: AppContext, request: Request) => sessionCookieName(ctx.config, request, ctx.config.projectId)
@@ -110,6 +120,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account', async (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     method(ctx, 'email-password')
     limit(route, 'account-create', '')
@@ -193,6 +204,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/sessions/email', async (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     method(ctx, 'email-password')
     limit(route, 'sessions-email', params.email)
@@ -208,6 +220,7 @@ export function accountRoutes(router: Router<AppContext>): void {
   // Exchange any login token (email code, OAuth, users.createToken) for a session.
   router.post('/account/sessions/token', (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     const userId = str(params.userId) ?? ''
     limit(route, 'sessions-token', userId)
@@ -232,6 +245,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/tokens/email', async (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     method(ctx, 'email-otp')
     limit(route, 'tokens-email', params.email)
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP disabled')
@@ -268,6 +282,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/recovery', async (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     limit(route, 'recovery', params.email)
     const email = validEmail(params.email)
     const url = assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
@@ -283,6 +298,7 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.put('/account/recovery', async (route) => {
     const { ctx, params } = route
+    requireScope(ctx, 'users.write')
     limit(route, 'recovery-update', params.userId)
     const user = ctx.auth.findUser(str(params.userId) ?? '')
     if (!user) throw err('user_not_found')
@@ -321,6 +337,11 @@ export function userRoutes(router: Router<AppContext>): void {
     return ctx.auth.user(id)
   }
   const done = (ctx: AppContext, id: string) => json(userModel(ctx.auth.user(id)))
+  /** Mutating user routes need `users.write`, not only `users.read`. */
+  const writable = (ctx: AppContext, id: string) => {
+    requireKey(ctx, 'users.write')
+    return ctx.auth.user(id)
+  }
 
   // Linked OAuth accounts. Registered before /users/:userId so "identities" is not taken as an ID.
   router.get('/users/identities', ({ ctx, params }) => {
@@ -377,27 +398,27 @@ export function userRoutes(router: Router<AppContext>): void {
   })
 
   router.patch('/users/:userId/name', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.updateUser(path.userId!, { name: String(params.name ?? '').slice(0, 128) })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/email', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const email = params.email === '' ? null : validEmail(params.email)
     ctx.auth.updateUser(path.userId!, { email, email_verification: 0 })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/phone', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const phone = params.number === '' ? null : validPhone(params.number)
     ctx.auth.updateUser(path.userId!, { phone, phone_verification: 0 })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/password', async ({ ctx, path, params }) => {
-    const target = user(ctx, path.userId!)
+    const target = writable(ctx, path.userId!)
     if (params.password !== '') ctx.access.assertPasswordPersonalData(params.password, target)
     if (params.password === '') ctx.auth.updateUser(path.userId!, { password: null, password_update: now() })
     else await ctx.auth.setPassword(path.userId!, params.password)
@@ -405,25 +426,25 @@ export function userRoutes(router: Router<AppContext>): void {
   })
 
   router.patch('/users/:userId/status', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.updateUser(path.userId!, { status: bool(params.status, true) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/verification', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.updateUser(path.userId!, { email_verification: bool(params.emailVerification, false) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/verification/phone', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.updateUser(path.userId!, { phone_verification: bool(params.phoneVerification, false) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
   router.put('/users/:userId/labels', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const labels = list(params.labels)
     if (labels.length > 1000 || labels.some((l) => typeof l !== 'string' || !/^[a-zA-Z0-9]{1,36}$/.test(l))) {
       throw err('general_argument_invalid', 'Invalid `labels` param: Value must be a valid array and each element must be alphanumeric and no longer than 36 chars.')
@@ -434,7 +455,7 @@ export function userRoutes(router: Router<AppContext>): void {
 
   router.get('/users/:userId/prefs', ({ ctx, path }) => json(JSON.parse(user(ctx, path.userId!).prefs)))
   router.patch('/users/:userId/prefs', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const prefs = prefsObject(params.prefs)
     ctx.auth.updateUser(path.userId!, { prefs: JSON.stringify(prefs) })
     return json(prefs)
@@ -454,31 +475,31 @@ export function userRoutes(router: Router<AppContext>): void {
 
   router.post('/users/:userId/sessions', (route) => {
     const { ctx, path } = route
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const { session, secret } = ctx.auth.createSession(path.userId!, { provider: 'server', factors: ['server'], info: requestInfo(route.request) })
     return json(sessionModel(session, { secret }), 201)
   })
 
   router.delete('/users/:userId/sessions', ({ ctx, path }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.deleteSessions(path.userId!)
     return noContent()
   })
 
   router.delete('/users/:userId/sessions/:sessionId', ({ ctx, path }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     ctx.auth.deleteSession(path.userId!, path.sessionId!)
     return noContent()
   })
 
   router.post('/users/:userId/tokens', ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     const { token, secret } = ctx.auth.createGenericToken(path.userId!, num(params.length, 6), num(params.expire, 900))
     return json(tokenModel(token, secret), 201)
   })
 
   router.post('/users/:userId/jwts', async ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    writable(ctx, path.userId!)
     let sessionId = str(params.sessionId) ?? ''
     if (!sessionId || sessionId === 'recent') sessionId = ctx.auth.sessions(path.userId!).at(-1)?.id ?? ''
     else if (ctx.auth.session(sessionId)?.user_id !== path.userId) throw err('user_session_not_found')

@@ -1,20 +1,25 @@
 /**
- * Database backups with SQLite `VACUUM INTO` for a consistent live snapshot,
- * compressed with zstd and encrypted when BACKUP_ENCRYPTION_KEY is set (see
- * format.ts). Stored locally or in the separate backup S3 bucket; automatic
- * backups run once a day at 02:00 UTC.
+ * Whole-instance database backups.
+ *
+ * One archive holds the control database and every project database, laid out
+ * like the Litestream replica (`bunwrite.sqlite`, `projects/<id>/...`). It is
+ * compressed with zstd and encrypted when BACKUP_ENCRYPTION_KEY is set; the
+ * console and the daily timer use this service, and `bunwrite restore` reads
+ * what it writes.
+ *
+ * Only the control instance creates backups. Other project service graphs get
+ * an inert instance so the shared `Services` shape stays uniform.
  */
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import type { Config } from '~/config'
 import { isLeader } from '~/cluster/role'
-import type { Db } from '~/db/connection'
-import { BunwriteError, err } from '~/lib/errors'
-import { uniqueId } from '~/lib/ids'
+import { err } from '~/lib/errors'
 import { s3Call, s3Client } from '~/storage/s3'
-import { checkKey, COMPRESSED_EXT, contentType, ENCRYPTED_EXT, MIN_KEY_LENGTH, packBackup, unpackBackup } from './format'
-import { databaseFile, inspectBackup } from './restore'
+import { ARCHIVE_COMPRESSED_EXT, ARCHIVE_ENCRYPTED_EXT, contentType, MIN_KEY_LENGTH } from './format'
+import { createInstanceBackup } from './instance'
 
 export interface BackupFile {
   name: string
@@ -22,26 +27,20 @@ export interface BackupFile {
   modified: string
 }
 
-export interface RestoreResult {
-  name: string
-  size: number
-  projectId: string
-}
-
-const NAME_RE = /^[A-Za-z0-9._-]+\.sqlite(\.zst(\.enc)?)?$/
+const NAME_RE = /^[A-Za-z0-9._-]+\.archive\.zst(\.enc)?$/
 const AUTO_PREFIX = 'auto-'
 
 export class BackupService {
   private active = false
-  /** A restore is being checked or applied; do not start a backup meanwhile. */
-  private restoring = false
   private timer: ReturnType<typeof setInterval> | null = null
   private lastAutoDay = ''
 
-  constructor(
-    private db: Db,
-    private config: Config,
-  ) {}
+  constructor(private config: Config) {}
+
+  /** Only the control instance owns whole-instance backups. */
+  private get enabled(): boolean {
+    return this.config.instanceBackups !== false
+  }
 
   private get s3() {
     return this.config.backups.s3
@@ -61,6 +60,7 @@ export class BackupService {
   }
 
   async list(): Promise<BackupFile[]> {
+    if (!this.enabled) return []
     if (this.s3.enabled) {
       const files = await s3Call(this.s3, async () => {
         const client = s3Client(this.s3)
@@ -94,28 +94,30 @@ export class BackupService {
   }
 
   async create(kind: 'manual' | 'auto' = 'manual'): Promise<BackupFile> {
-    if (this.active || this.restoring) throw err('general_argument_invalid', 'A backup or restore is already running.')
+    if (!this.enabled) throw err('general_argument_invalid', 'Backups are managed from the default project.')
+    if (this.active) throw err('general_argument_invalid', 'A backup is already running.')
     const key = this.config.backupEncryptionKey
     if (key && key.length < MIN_KEY_LENGTH) {
       throw err('general_argument_invalid', `BACKUP_ENCRYPTION_KEY must be at least ${MIN_KEY_LENGTH} characters.`)
     }
     this.active = true
-    const dir = this.config.backupsPath
-    mkdirSync(dir, { recursive: true })
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const name = `${kind === 'auto' ? AUTO_PREFIX : 'backup-'}${stamp}${key ? ENCRYPTED_EXT : COMPRESSED_EXT}`
-    // The raw snapshot is plain text; it only lives here until it is packed.
-    const snapshot = join(dir, `.${name}.snapshot.tmp`)
-    const temp = join(dir, `.${name}.tmp`)
+    // A remote backup is built locally first; keep that copy out of the
+    // backups folder so a failed upload does not show up in the list.
+    const remote = this.s3.enabled
+    const dir = remote ? mkdtempSync(join(tmpdir(), 'bunwrite-backup-')) : this.config.backupsPath
     try {
-      this.db.sqlite.run(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`)
-      await packBackup(snapshot, temp, key)
-      rmSync(snapshot, { force: true })
-      const size = statSync(temp).size
-      if (this.s3.enabled) {
-        await s3Call(this.s3, () => s3Client(this.s3).file(this.s3Key(name)).write(Bun.file(temp), { type: contentType(name) }))
-      } else {
-        renameSync(temp, join(dir, name))
+      mkdirSync(dir, { recursive: true })
+      const created = await createInstanceBackup({
+        databasePath: this.config.databasePath,
+        outputDir: dir,
+        prefix: kind === 'auto' ? AUTO_PREFIX : 'backup-',
+        secret: key || undefined,
+        log: (line) => console.log(line),
+      })
+      if (remote) {
+        await s3Call(this.s3, () =>
+          s3Client(this.s3).file(this.s3Key(created.name)).write(Bun.file(created.path), { type: contentType(created.name) }),
+        )
       }
       if (kind === 'auto') {
         try {
@@ -124,73 +126,22 @@ export class BackupService {
           console.error('[backups] failed to prune old automatic backups:', error)
         }
       }
-      return { name, size, modified: new Date().toISOString() }
+      return { name: created.name, size: created.size, modified: new Date().toISOString() }
     } finally {
-      rmSync(snapshot, { force: true })
-      rmSync(temp, { force: true })
+      if (remote) rmSync(dir, { recursive: true, force: true })
       this.active = false
     }
   }
 
-  /**
-   * Decrypt and check an uploaded backup, then hand the plain SQLite file to
-   * `apply` (which swaps it into this project). Nothing is replaced unless the
-   * whole file opens, passes SQLite's integrity check, and belongs to this
-   * project.
-   */
-  async restore(file: Blob, key: string | undefined, apply: (path: string) => Promise<void> | void): Promise<RestoreResult> {
-    if (this.active || this.restoring) throw err('general_argument_invalid', 'A backup or restore is already running.')
-    const database = databaseFile(this.config)
-    if (!database) throw err('general_argument_invalid', 'Restoring a backup needs a file-backed database.')
-    const name = basename(String((file as File).name || 'backup.sqlite').replace(/\\/g, '/'))
-    if (!this.validName(name)) throw err('general_argument_invalid', 'Choose a Bunwrite backup: .sqlite, .sqlite.zst or .sqlite.zst.enc.')
-    if (!file.size) throw err('general_argument_invalid', 'The backup file is empty.')
-
-    this.restoring = true
-    const dir = dirname(database)
-    mkdirSync(dir, { recursive: true })
-    const token = uniqueId()
-    const suffix = name.endsWith(ENCRYPTED_EXT) ? ENCRYPTED_EXT : name.endsWith(COMPRESSED_EXT) ? COMPRESSED_EXT : '.sqlite'
-    const upload = join(dir, `.restore-${token}.upload${suffix}`)
-    const restored = join(dir, `.restore-${token}.sqlite`)
-    const encrypted = name.endsWith(ENCRYPTED_EXT)
-    let secret = ''
-    let ready = false
-    try {
-      if (!(await Bun.write(upload, file))) throw new Error('The backup file is empty.')
-      chmodSync(upload, 0o600)
-      if (encrypted) {
-        secret = (key ?? '').trim() || this.config.backupEncryptionKey || ''
-        if (!secret) {
-          throw err('general_argument_invalid', 'This backup is encrypted. Enter its BACKUP_ENCRYPTION_KEY, or set it on the server.')
-        }
-        checkKey(secret)
-      }
-      await unpackBackup(upload, restored, secret || undefined)
-      const projectId = inspectBackup(restored, this.config.projectId)
-      const size = statSync(restored).size
-      ready = true
-      await apply(restored)
-      return { name, size, projectId }
-    } catch (error) {
-      // Validation errors are the caller's to fix; a failure while swapping the
-      // live database is a server error and keeps its original type.
-      if (ready || error instanceof BunwriteError) throw error
-      throw err('general_argument_invalid', `${name}: ${error instanceof Error ? error.message : String(error)}`)
-    } finally {
-      rmSync(upload, { force: true })
-      rmSync(restored, { force: true })
-      this.restoring = false
-    }
-  }
-
   async delete(name: string): Promise<void> {
+    if (!this.enabled) throw err('general_argument_invalid', 'Backups are managed from the default project.')
     if (!this.validName(name)) throw err('general_argument_invalid', 'Invalid backup name.')
     if (this.s3.enabled) await s3Call(this.s3, () => s3Client(this.s3).delete(this.s3Key(name)))
     else rmSync(join(this.config.backupsPath, name), { force: true })
   }
 
   async serve(name: string): Promise<Response> {
+    if (!this.enabled) throw err('general_argument_invalid', 'Backups are managed from the default project.')
     if (!this.validName(name)) throw err('general_argument_invalid', 'Invalid backup name.')
     const headers = {
       'content-type': contentType(name),
@@ -218,7 +169,7 @@ export class BackupService {
   }
 
   start(): void {
-    if (this.timer) return
+    if (!this.enabled || this.timer) return
     this.timer = setInterval(() => void this.tick(new Date()), 60_000)
     this.timer.unref()
   }
@@ -231,6 +182,7 @@ export class BackupService {
   /** Daily at 02:00 UTC; exposed for tests through the optional date argument. */
   async tick(now = new Date()): Promise<void> {
     // One backup a day across the cluster, not one per worker.
+    if (!this.enabled) return
     if (!isLeader()) return
     if (!this.config.backups.enabled) return
     const day = now.toISOString().slice(0, 10)

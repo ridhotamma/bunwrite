@@ -10,7 +10,7 @@
  * Reads sent with a `transactionId` see the staged writes: the operations are
  * replayed inside a savepoint, the read runs, and the savepoint is rolled back.
  */
-import { keyCaller, type Caller } from '~/auth/caller'
+import { assertCallerScope, keyCaller, type Caller } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission } from '~/auth/permissions'
 import type { Db } from '~/db/connection'
 import { addSeconds, now } from '~/lib/datetime'
@@ -94,6 +94,7 @@ export class TransactionService {
   }
 
   create(caller: Caller, ttl: number = TTL_DEFAULT) {
+    assertCallerScope(caller, 'documents.write')
     if (!Number.isInteger(ttl) || ttl < TTL_MIN || ttl > TTL_MAX) {
       throw err('general_argument_invalid', `Invalid \`ttl\` param: Value must be a valid range between ${TTL_MIN} and ${TTL_MAX.toLocaleString('en-US')}`)
     }
@@ -109,10 +110,12 @@ export class TransactionService {
   }
 
   get(caller: Caller, id: string) {
+    assertCallerScope(caller, 'documents.read')
     return txModel(this.find(caller, id))
   }
 
   list(caller: Caller) {
+    assertCallerScope(caller, 'documents.read')
     const rows = caller.privileged
       ? this.db.sqlite.query<TxRow, []>('SELECT * FROM _transactions ORDER BY seq').all()
       : this.db.sqlite.query<TxRow, [string]>('SELECT * FROM _transactions WHERE user_id = ? ORDER BY seq').all(caller.user?.id ?? '')
@@ -120,6 +123,7 @@ export class TransactionService {
   }
 
   delete(caller: Caller, id: string): void {
+    assertCallerScope(caller, 'documents.write')
     const row = this.find(caller, id)
     this.db.sqlite.query('DELETE FROM _transactions WHERE seq = ?').run(row.seq)
   }
@@ -149,6 +153,7 @@ export class TransactionService {
    * replay with full privileges: IDs and permissions are resolved now.
    */
   stage(caller: Caller, transactionId: string, input: StageInput): void {
+    assertCallerScope(caller, 'documents.write')
     const tx = this.pending(caller, transactionId)
     if (tx.operations + 1 > MAX_OPERATIONS) {
       throw err(
@@ -333,6 +338,7 @@ export class TransactionService {
   }
 
   update(caller: Caller, id: string, commit: boolean, rollback: boolean) {
+    assertCallerScope(caller, 'documents.write')
     if (commit === rollback) {
       throw err('general_argument_invalid', 'Exactly one of `commit` or `rollback` must be true.')
     }

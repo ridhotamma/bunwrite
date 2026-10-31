@@ -8,6 +8,7 @@ import { mkdirSync, openSync, writeSync, closeSync, renameSync, rmSync, statSync
 import { dirname, join } from 'node:path'
 
 import type { Caller } from '~/auth/caller'
+import { assertCallerScope } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
@@ -322,6 +323,7 @@ export class StorageService {
 
   /** A file the caller may act on; unreadable files look missing. */
   file(caller: Caller, bucketId: string, fileId: string, type: PermissionType = 'read', complete = false): { bucket: BucketRow; file: FileRow } {
+    assertCallerScope(caller, type === 'read' ? 'files.read' : 'files.write')
     const bucket = this.bucket(bucketId, caller.privileged)
     const file = this.row(bucketId, fileId)
     if (!file || (complete && file.chunks_uploaded < file.chunks_total)) throw err('storage_file_not_found')
@@ -331,6 +333,7 @@ export class StorageService {
   }
 
   listFiles(caller: Caller, bucketId: string, queries: unknown[], search?: string, includeTotal = true) {
+    assertCallerScope(caller, 'files.read')
     const bucket = this.bucket(bucketId, caller.privileged)
     const scope = [JSON.stringify({ method: 'equal', attribute: 'bucketId', values: [bucketId] })]
     const { total, seqs } = listSeqs(this.store, FILES, queries, {
@@ -368,6 +371,7 @@ export class StorageService {
   }
 
   async createFile(caller: Caller, bucketId: string, input: UploadInput) {
+    assertCallerScope(caller, 'files.write')
     const bucket = this.bucket(bucketId, caller.privileged)
     if (!caller.privileged && !grants(JSON.parse(bucket.permissions), 'create', caller.roles)) throw err('user_unauthorized')
     const file = input.file

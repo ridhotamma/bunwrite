@@ -121,7 +121,7 @@ through another.
 | `src/instance/` | First-run organization/project IDs, signing secret, initial API key and one-time env seed |
 | `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
-| `src/backups/` | SQLite snapshots, local/S3 backup storage, daily automatic backups |
+| `src/backups/` | Whole-instance archives (control + every project database), local/S3 storage, daily automatic backups, offline restore |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
 | `src/lib/compat.ts` | Both naming families: reads `X-Bunwrite-*` and `X-Appwrite-*` headers and both session cookies; `API_COMPAT` picks the webhook headers, function variables and default cookie the server sends |
@@ -335,14 +335,18 @@ created with, so the execution returned to the caller is the one that runs.
 - Uploads are stored under `STORAGE_PATH`, or in an S3-compatible bucket when
   enabled in **Settings → File storage**. Switching storage does not migrate
   existing files; that is a manual step.
-- Backups are consistent SQLite snapshots made with `VACUUM INTO` in
-  `BACKUPS_PATH`, or in a separate S3 bucket when enabled in
-  **Settings → Backups**. Manual backups can be created, downloaded, deleted
-  and restored there; automatic backups run daily at 02:00 UTC and keep the
-  configured number. An uploaded backup is decrypted and checked (SQLite
-  integrity, project ID) before the live database file is replaced and the
-  services' caches are reloaded. Database snapshots do not include uploaded
-  files.
+- A backup is one archive of every database Bunwrite owns, laid out like the
+  Litestream replica: the control database and `projects/<id>/bunwrite.sqlite`
+  for each project. Databases are copied with `VACUUM INTO`, compressed with
+  zstd, and encrypted when `BACKUP_ENCRYPTION_KEY` is set. Manual archives can
+  be created, downloaded and deleted in **Settings → Backups** (organization
+  owners only); automatic archives run daily at 02:00 UTC and keep the
+  configured number. Stored in `BACKUPS_PATH` or a separate S3 bucket.
+- Restore is offline: `bunwrite restore <archive>` validates the manifest,
+  checksums, SQLite integrity and every project ID, then swaps the files and
+  keeps the previous ones as `*.before-restore-<timestamp>`. The control
+  database is part of the archive, so a running server cannot be updated in
+  place. Archives do not include uploaded files, function code or site builds.
 
 ## Settings and schema: who wins
 
@@ -362,6 +366,12 @@ created with, so the execution returned to the caller is the one that runs.
 - Secrets (sessions, tokens, invites, console sessions, API keys) are stored as
   sha256. Passwords use argon2id with Appwrite's parameters, and imported
   bcrypt/sha/md5/scrypt hashes still verify.
+- Console API keys carry scopes (`documents.read`, `users.write`, `files.write`,
+  …). A key with no stored scopes is full access, which covers keys created
+  before scopes and environment `API_KEYS`.
+- Console admins can turn on email MFA on **Security**. The password step then
+  creates a single-use, 10-minute challenge and emails a six-digit code; only
+  hashes of the challenge and code are stored. SMTP is required.
 - The console cookie is `HttpOnly`, `SameSite=Strict` and scoped to `/console`.
   POSTs with a foreign `Origin` are refused.
   - Console sign-in is limited to 10 tries per 15 minutes per IP.

@@ -139,8 +139,8 @@ describe('custom templates through the Project API', () => {
 describe('console editor', () => {
   test('the Email templates tab lists the templates and opens the first', async () => {
     const html = await page('/console/settings/templates')
-    for (const name of ['Verification', 'Reset password', 'OTP session', 'Invite user']) expect(html).toContain(name)
-    expect(html).toContain('4 templates')
+    for (const name of ['Verification', 'Reset password', 'OTP session', 'Invite user', 'Console MFA']) expect(html).toContain(name)
+    expect(html).toContain('5 templates')
     expect(html).toContain('name="subject"')
     expect(html).toContain('data-copy-var="{{redirect}}"')
     expect(html).toContain('<iframe class="template-frame" sandbox="allow-same-origin"')

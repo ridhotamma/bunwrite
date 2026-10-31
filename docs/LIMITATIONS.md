@@ -23,10 +23,10 @@ Related documents:
 | Area | Current state | Risk |
 | --- | --- | --- |
 | High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
-| API key permissions | Project-wide keys without scopes | **High** |
-| Backups | Off by default; snapshots plus optional Litestream PITR | **High/Medium** |
+| API key permissions | Console keys can be scoped per API group; env `API_KEYS` and old keys stay full access | **Low/Medium** |
+| Backups | Off by default; whole-instance archives plus optional Litestream PITR | **High/Medium** |
 | Function isolation | Shared CPU/memory/network, no quotas | **High** |
-| Console authentication | Password only, no MFA | **High** |
+| Console authentication | Password plus optional email MFA; no hardware keys or admin audit trail | **Medium** |
 | Appwrite compatibility | Partial; some settings are stored but not applied | **High/Medium** |
 | Deployments and migrations | Restart-based, startup migrations, live DDL | **Medium** |
 | Write throughput | One writer per database; the writer pool scales only across projects | **Medium** |
@@ -60,37 +60,43 @@ Litestream plus `bunwrite failover` for host-loss recovery, and plan a
 replicated-SQLite design (for example LiteFS) if automatic failover is
 required.
 
-### 2. API keys are all-or-nothing
+### 2. API key scopes are available, but environment keys bypass them
 
-`_api_keys` has no scopes. `requireKey()` only checks whether the caller is
-privileged, so every valid API key can perform every API-key action in the
-project: users, databases, storage, functions, settings and console-facing
-platform APIs.
+Console-created keys carry scopes such as `documents.read`, `users.write` or
+`files.write`, and `requireKey()` / `requireScope()` refuse anything outside
+them with `general_unauthorized_scope`. A key with no scopes means full access,
+so older keys keep working.
 
-- A leaked key is effectively full project admin.
-- Environment `API_KEYS` behave the same way.
-- Appwrite's scoped API keys are not implemented.
-- Rotation, expiry and separate keys per integration are the only current
-  mitigations.
+- Keys made from the console offer a full-access checkbox; most keys should be
+  scoped instead.
+- Environment `API_KEYS` and the functions' internal key are always full access.
+  They cannot be scoped.
+- A scoped key is still a server credential: it is not tied to a user, an IP or
+  a session, and cannot be limited to one collection or bucket (only to the API
+  group).
+- Rotation and expiry remain the way to retire a credential; there is no
+  per-request approval.
 
-This is one of the highest-value gaps to close before exposing Bunwrite to
-third-party integrations.
+Legacy full-access keys are the remaining reason this is not fully closed.
+Create scoped keys for new integrations and remove unused environment keys.
 
 ### 3. Backups are off by default and are not point-in-time recovery
 
-`backups.enabled` defaults to `false`. When enabled, Bunwrite takes periodic
-SQLite snapshots. The optional Litestream integration provides continuous WAL
-replication and point-in-time restore to object storage, but it is not enabled
-by default and covers databases only, not uploaded files.
+`backups.enabled` defaults to `false`. When enabled, Bunwrite writes one archive
+of the control database and every project database. The optional Litestream
+integration provides continuous WAL replication and point-in-time restore to
+object storage, but it is not enabled by default and covers databases only, not
+uploaded files.
 
-- Without Litestream, losing the host loses everything written since the last snapshot.
-- Database backups do not include uploaded files; back up `STORAGE_PATH` or the
-  S3 bucket separately.
-- Backup encryption is optional (`BACKUP_ENCRYPTION_KEY`). Without it, backups
-  are plaintext; if the key is lost, encrypted backups cannot be opened.
-- Restore is a manual file replacement or `bunwrite failover`, not an online
-  operation.
-- There is no built-in restore verification or scheduled restore drill.
+- Without Litestream, losing the host loses everything written since the last archive.
+- Archives do not include uploaded files, function code or site builds; back up
+  `STORAGE_PATH` and the functions/sites folders separately.
+- Backup encryption is optional (`BACKUP_ENCRYPTION_KEY`). Without it, archives
+  are plaintext; if the key is lost, encrypted archives cannot be opened.
+- Restore is offline (`bunwrite restore <archive>` with the server stopped), not
+  an online operation.
+- There is no scheduled restore drill; `restore --dry-run` checks an archive but
+  does not run automatically.
 
 See [DEPLOY.md](DEPLOY.md) for the backup and restore procedure.
 
@@ -113,19 +119,30 @@ CPU, memory and network.
 Do not run untrusted third-party code here. Appwrite's per-function container
 isolation is not implemented.
 
-### 5. Console authentication is password-only
+### 5. Console authentication is password plus optional email MFA
 
-Console admins sign in with email and password. There is no second factor,
-hardware-key support or console-specific audit trail.
+Console admins sign in with email and password. An admin can turn on email MFA
+on **Security**: after the password, Bunwrite emails a single-use six-digit code.
+There is no TOTP/authenticator app, hardware-key support or console-specific
+audit trail.
 
-- The console login is rate-limited, but a stolen password is enough.
+- With MFA off, a stolen password is enough. Turn it on for every production
+  admin.
+- Email MFA depends on SMTP. If mail delivery stops, sign-in is blocked until an
+  operator runs `bunwrite console:admin <email> --no-mfa` on the server.
+- The console login and code step are rate-limited, but the code is delivered by
+  email, so the admin mailbox is part of the trust boundary.
+- The console shows MFA state; it does not provide recovery codes or an
+  admin-level "reset another admin's MFA" button.
 - The first-run setup is restricted to loopback; remote deployments should
   create the first admin with `bunwrite console:admin` or a one-time env seed.
 - Admin sessions are bearer cookies; protect the console host and use HTTPS.
 - There is no admin action audit log separate from request logs.
 
-MFA settings exist in the project policy model but are not enforced as a
-sign-in factor.
+Project-user MFA is still not implemented; this feature protects the console,
+not end users. The Appwrite CLI's console sign-in also cannot complete the email
+step; with MFA on, use the browser console, or an API key for everything except
+the console-only project settings commands.
 
 ### 6. Deployments and migrations are restart-based
 
@@ -152,8 +169,9 @@ feature look enabled when it is not enforced.
 Current known gaps:
 
 - Queries: `regex`, geo, vector and `exists` are not implemented.
-- Auth: MFA, phone/SMS sign-in and magic URLs are not implemented (magic-url
-  token types exist in the token model, but the full client flow is not there).
+- Auth: project-user MFA (TOTP or email), phone/SMS sign-in and magic URLs are
+  not implemented (magic-url token types exist in the token model, but the full
+  client flow is not there). Console admins have optional email MFA.
 - Messaging: topics are stored, but sending messages is not implemented.
 - GraphQL: the protocol/service toggle exists, but there is no GraphQL route in
   this codebase.
@@ -361,21 +379,22 @@ Not a safe drop-in for:
 
 - multi-tenant SaaS running untrusted function code,
 - deployments that require HA or zero-downtime,
-- apps that depend on full Appwrite behavior, MFA, scoped keys or messaging,
+- apps that depend on full Appwrite behavior, project-user MFA or messaging,
 - one hot project that needs more than one SQLite writer.
 
 ## Suggested order of work
 
-1. **Scoped API keys and console MFA.** Least privilege and admin account
-   protection have the highest security return.
+1. **Scoped API keys and console MFA.** Console keys can be scoped and admins
+   can opt into email MFA. Remaining work: scope environment keys or retire
+   them, add TOTP/recovery codes, and an admin audit log.
 2. **Backups: PITR, restore drills, storage backup guidance.** Make data loss
    recoverable before scaling traffic.
 3. **Function resource isolation.** Per-function CPU/memory/network limits, or
    an external runner.
 4. **HA and write scaling for one hot project.** A replicated-SQLite design
-   (for example LiteFS) for automatic failover, and Postgres or another engine
-   for several writers on one database. Multi-project write scaling already
-   ships as the project-sharded writer pool (`WRITER_SHARDS`).
+   (for example LiteFS) for automatic failover. Multi-project write scaling
+   already ships as the project-sharded writer pool (`WRITER_SHARDS`); a single
+   hot project still has one writer.
 5. **Observability.** Metrics, readiness checks, disk/WAL/backup alerts.
 6. **Compatibility gaps.** Query operators, messaging, webhooks, GraphQL, and
    the stored-but-not-applied policies.

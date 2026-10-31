@@ -143,6 +143,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
       s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
     },
     backupsPath: './data/test-backups',
+    instanceBackups: true,
     render: { enabled: false, allowRemote: false },
     cache: { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30, publicMaxAge: 0 },
     compression: true,
@@ -151,13 +152,19 @@ export function testConfig(over: Partial<Config> = {}): Config {
   }
 }
 
-export function startServer(schema: unknown = testSchema, over: Partial<Config> = {}, baseDir?: string, serve: { idleTimeout?: number } = {}): TestServer {
-  const db = openDb(':memory:')
+export function startServer(
+  schema: unknown = testSchema,
+  over: Partial<Config> = {},
+  baseDir?: string,
+  serve: { idleTimeout?: number } = {},
+  databasePath = ':memory:',
+): TestServer {
+  const db = openDb(databasePath)
   pushConfig(db, schema, { baseDir })
   const mailer = new MemoryMailer()
   // Every test server gets its own deployment folder, even though they all use
   // an in-memory database and the same project ID.
-  const config = testConfig({ instanceKey: uniqueId(), ...over })
+  const config = testConfig({ databasePath, instanceKey: uniqueId(), ...over })
   const services = createServices(config, db, { mailer })
   const app = createApp(services)
   const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket, ...serve })

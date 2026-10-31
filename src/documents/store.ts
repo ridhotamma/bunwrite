@@ -6,6 +6,7 @@
 import type { SQLQueryBindings } from 'bun:sqlite'
 
 import type { Caller } from '~/auth/caller'
+import { assertCallerScope } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
 import { collectionVersionKey } from '~/cluster/versions'
 import { q, type Db } from '~/db/connection'
@@ -150,6 +151,7 @@ export class DocumentStore {
   }
 
   getDocument(caller: Caller, collection: Collection, id: string, rawQueries: unknown[] = []): Doc {
+    assertCallerScope(caller, 'documents.read')
     const compiled = compileCached(collection, rawQueries)
     if (compiled.where.length || compiled.orders.length || compiled.cursor) {
       throw err('general_query_invalid', 'Invalid query: Only select queries are allowed when getting a document.')
@@ -216,6 +218,7 @@ export class DocumentStore {
     includeTotal = true,
     version?: number,
   ): { total: number; documents: Doc[] } {
+    assertCallerScope(caller, 'documents.read')
     const compiled = compileCached(collection, rawQueries)
     // Views (users, teams, memberships, files, executions) have no write
     // triggers, so their lists must not be cached. Random pages differ every
@@ -278,6 +281,7 @@ export class DocumentStore {
 
   /** All documents in a collection the caller may read, without the list cap. */
   countDocuments(caller: Caller, collection: Collection): number {
+    assertCallerScope(caller, 'documents.read')
     const params: SqlValue[] = []
     const filter = this.readFilter(caller, collection, params)
     const sql = `SELECT count(*) AS n FROM ${q(collection.table)} t${filter ? ` WHERE ${filter}` : ''}`
@@ -514,16 +518,19 @@ export class DocumentStore {
   // ---------------------------------------------------------------- writes
 
   createDocument(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     return this.tx(() => this.createDocumentInTx(caller, collection, input, options))
   }
 
   /** `createDocument` without its own transaction; for `runBatch` and staged writes. */
   createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     this.assertCreate(caller, collection)
     return decodeRow(collection, this.insertRow(caller, collection, input, options))
   }
 
   createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
+    assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
     return this.tx(() =>
       documents.map((d) => {
@@ -534,11 +541,13 @@ export class DocumentStore {
   }
 
   updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     return this.tx(() => this.updateDocumentInTx(caller, collection, id, data, permissions, options))
   }
 
   /** `updateDocument` without its own transaction; for `runBatch` and staged writes. */
   updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     if (Object.keys(data ?? {}).length === 0 && (permissions === null || permissions === undefined)) {
       throw err('document_missing_payload')
     }
@@ -547,11 +556,13 @@ export class DocumentStore {
   }
 
   upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
+    assertCallerScope(caller, 'documents.write')
     return this.tx(() => this.upsertDocumentInTx(caller, collection, id, data, permissions, options))
   }
 
   /** `upsertDocument` without its own transaction; for `runBatch` and staged writes. */
   upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
+    assertCallerScope(caller, 'documents.write')
     const row = this.row(collection, id)
     if (row) {
       if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
@@ -565,6 +576,7 @@ export class DocumentStore {
   }
 
   upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
+    assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
     return this.tx(() =>
       documents.map((d) => {
@@ -580,11 +592,13 @@ export class DocumentStore {
   }
 
   deleteDocument(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     return this.tx(() => this.deleteDocumentInTx(caller, collection, id, options))
   }
 
   /** `deleteDocument` without its own transaction; for `runBatch` and staged writes. */
   deleteDocumentInTx(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
+    assertCallerScope(caller, 'documents.write')
     const row = this.requireRow(caller, collection, id, 'delete')
     this.deleteRow(collection, row, options)
     return decodeRow(collection, row)
@@ -614,6 +628,7 @@ export class DocumentStore {
     direction: 1 | -1,
     options: WriteOptions = {},
   ): Doc {
+    assertCallerScope(caller, 'documents.write')
     const a = collection.attributeMap.get(key)
     if (!a) throw err('attribute_not_found', undefined, [key])
     if ((a.type !== 'integer' && a.type !== 'double') || a.array) {
@@ -660,6 +675,7 @@ export class DocumentStore {
   }
 
   updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options: WriteOptions = {}): Doc[] {
+    assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
     const { $permissions, ...rest } = data ?? {}
     return this.tx(() =>
@@ -670,6 +686,7 @@ export class DocumentStore {
   }
 
   deleteDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], options: WriteOptions = {}): Doc[] {
+    assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
     return this.tx(() =>
       this.bulkRows(caller, collection, rawQueries).map((row) => {
@@ -681,6 +698,7 @@ export class DocumentStore {
 
   /** Read-only existence and permission check used when staging transaction writes. */
   checkStagedWrite(caller: Caller, collection: Collection, id: string, type: PermissionType): Doc | null {
+    assertCallerScope(caller, type === 'read' ? 'documents.read' : 'documents.write')
     const row = this.row(collection, id)
     if (!row) return null
     if (!this.can(caller, collection, row, type)) {

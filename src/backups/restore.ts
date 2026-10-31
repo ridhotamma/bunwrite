@@ -1,16 +1,20 @@
 /**
- * Put a validated backup database back in place. The live SQLite connection is
- * closed, the current file is kept until the replacement opens successfully,
- * then every service that cached rows from the old database is refreshed.
+ * Database validation and the offline restore of a whole-instance archive.
+ *
+ * A global backup replaces the control database, so it cannot be swapped into
+ * a running server the way a per-project backup used to be. `bunwrite restore`
+ * runs while Bunwrite is stopped: it extracts the archive to a staging folder,
+ * checks every database, then moves the current files aside and puts the
+ * restored ones in place. The previous files stay as `*.before-restore-<stamp>`.
  */
 import { Database } from 'bun:sqlite'
-import { existsSync, renameSync, rmSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 
 import type { Config } from '~/config'
-import { openDb } from '~/db/connection'
-import { err } from '~/lib/errors'
-import type { Services } from '~/services'
+import { dataDirOf, projectFolder, projectPaths } from '~/projects/paths'
+import { readArchive, type ArchiveManifest } from './archive'
 
 /** The database file to replace, or null for the in-memory test database. */
 export function databaseFile(config: Config): string | null {
@@ -18,11 +22,8 @@ export function databaseFile(config: Config): string | null {
   return resolve(config.databasePath)
 }
 
-/**
- * Check that a decrypted file is a Bunwrite database for `projectId` before it
- * can replace the live one. Returns the project ID it belongs to.
- */
-export function inspectBackup(path: string, projectId: string): string {
+/** Integrity and shape only; use `inspectBackup` when the project must match too. */
+export function inspectDatabase(path: string): { projectId: string; projects: string[] } {
   const db = new Database(path, { readonly: true })
   try {
     const check = db.query<{ integrity_check: string }, []>('PRAGMA integrity_check').get()
@@ -33,127 +34,178 @@ export function inspectBackup(path: string, projectId: string): string {
       if (!tables.has(table)) throw new Error('The file is not a Bunwrite database.')
     }
     const row = db.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'instance'").get()
-    if (!row) throw new Error('The backup has no instance record.')
+    if (!row) throw new Error('The database has no instance record.')
     let stored: { projectId?: unknown }
     try {
       stored = JSON.parse(row.value) as { projectId?: unknown }
     } catch {
-      throw new Error('The backup instance record is not valid JSON.')
+      throw new Error('The database instance record is not valid JSON.')
     }
-    const found = typeof stored.projectId === 'string' ? stored.projectId : ''
-    if (!found) throw new Error('The backup has no project ID.')
-    if (found !== projectId) throw new Error(`This backup belongs to project "${found}", not "${projectId}".`)
-    return found
+    const projectId = typeof stored.projectId === 'string' ? stored.projectId : ''
+    if (!projectId) throw new Error('The database has no project ID.')
+    const projects = db.query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq').all().map((entry) => entry.id)
+    return { projectId, projects }
   } finally {
     db.close()
   }
 }
 
-/** Stop timers and child processes that could hold the old database open. */
-function stopServices(services: Services): void {
-  services.functions.stop()
-  services.sites.stop()
-  services.backups.stop()
-  services.queue.stop()
-  services.render.stop()
-  services.render.shutdown(true)
+/**
+ * Check that a decrypted database is a Bunwrite database for `projectId`
+ * before it can replace a live one. Returns the project ID it belongs to.
+ */
+export function inspectBackup(path: string, projectId: string): string {
+  const found = inspectDatabase(path)
+  if (found.projectId !== projectId) {
+    throw new Error(`This backup belongs to project "${found.projectId}", not "${projectId}".`)
+  }
+  return found.projectId
 }
 
-/** Start what `stopServices` stopped, in the same order as a project start. */
-function startServices(services: Services): void {
-  services.functions.start()
-  services.backups.start()
-  services.queue.start()
-  services.render.start()
+export interface InstanceRestoreOptions {
+  databasePath: string
+  archive: string
+  key?: string
+  dryRun?: boolean
+  log?: (line: string) => void
 }
 
-/** Forget rows cached from the replaced database, then re-read persisted settings. */
-function refreshServices(services: Services): void {
-  services.registry.reload()
-  services.proxy.reload()
-  services.sites.reload()
-  services.access.reload()
-  services.settings.refreshAll()
-  // The restored database has its own version counters and bus sequence; start
-  // from those instead of dragging the old ones along.
-  services.versions.reset()
-  services.realtime.resetBus()
-  services.store.clearCaches()
+export interface RestoreOutcome {
+  target: 'control' | 'project'
+  id?: string
+  path: string
+  result: 'restored' | 'planned'
+}
+
+export interface InstanceRestoreResult {
+  manifest: ArchiveManifest
+  outcomes: RestoreOutcome[]
+  /** Files kept as `*.before-restore-<stamp>` after a real restore. */
+  previous: string[]
+}
+
+interface Swapped {
+  target: string
+  old?: string
+}
+
+function replaceDatabase(target: string, source: string, stamp: string): Swapped {
+  let old: string | undefined
+  if (existsSync(target)) {
+    old = `${target}.before-restore-${stamp}`
+    rmSync(old, { force: true })
+    renameSync(target, old)
+  }
+  try {
+    for (const suffix of ['-wal', '-shm', '-journal']) rmSync(`${target}${suffix}`, { force: true })
+    renameSync(source, target)
+  } catch (error) {
+    // The old file is already aside; put it back before surfacing the error.
+    if (old && !existsSync(target)) {
+      try {
+        renameSync(old, target)
+      } catch {
+        /* the rollback in restoreInstance reports the paths */
+      }
+    }
+    throw error
+  }
+  return { target, old }
+}
+
+function rollback(swapped: Swapped[]): void {
+  for (const { target, old } of [...swapped].reverse()) {
+    try {
+      rmSync(target, { force: true })
+      for (const suffix of ['-wal', '-shm', '-journal']) rmSync(`${target}${suffix}`, { force: true })
+      if (old) renameSync(old, target)
+    } catch (error) {
+      console.error(`[restore] could not roll back ${target}:`, error)
+    }
+  }
 }
 
 /**
- * Replace `services`' database with `restoredPath` and reopen it in place. The
- * `Db` object is shared by every service, so replacing its connection and ORM
- * lets the running server pick up the restored data without a process restart.
+ * Validate and restore a whole-instance archive. Every database is checked
+ * before the first live file is touched, and a failure while swapping puts the
+ * previous files back.
  */
-export function restoreDatabase(services: Services, restoredPath: string): void {
-  const databasePath = databaseFile(services.config)
-  if (!databasePath) throw err('general_argument_invalid', 'Restoring a backup needs a file-backed database.')
-  if (!existsSync(databasePath)) throw err('general_argument_invalid', 'The project database file could not be found.')
-  if (!existsSync(restoredPath)) throw err('general_argument_invalid', 'The uploaded backup could not be read.')
-
-  const old = `${databasePath}.before-restore`
-  const sidecars = [`${databasePath}-wal`, `${databasePath}-shm`, `${databasePath}-journal`]
-  const removeSidecars = () => {
-    for (const path of sidecars) rmSync(path, { force: true })
+export async function restoreInstance(options: InstanceRestoreOptions): Promise<InstanceRestoreResult> {
+  const log = options.log ?? ((line: string) => console.log(line))
+  const archive = resolve(options.archive)
+  if (!existsSync(archive)) throw new Error(`Backup archive not found: ${archive}`)
+  const databasePath = resolve(options.databasePath)
+  if (databasePath === ':memory:' || databasePath.startsWith('file::memory:')) {
+    throw new Error('Cannot restore an in-memory database.')
   }
 
-  stopServices(services)
-  try {
-    services.requestLogs.flush()
-    services.db.sqlite.close()
-  } catch (error) {
-    startServices(services)
-    throw error
-  }
+  const dataDir = dataDirOf(databasePath)
+  const stagingParent = options.dryRun ? tmpdir() : dataDir
+  mkdirSync(stagingParent, { recursive: true })
+  const staging = mkdtempSync(join(stagingParent, '.restore-'))
 
-  let next: ReturnType<typeof openDb> | undefined
-  let moved = false
   try {
-    rmSync(old, { force: true })
-    renameSync(databasePath, old)
-    moved = true
-    removeSidecars()
-    renameSync(restoredPath, databasePath)
-    next = openDb(databasePath)
-    services.db.sqlite = next.sqlite
-    services.db.orm = next.orm
-    refreshServices(services)
-    startServices(services)
-    try {
-      rmSync(old, { force: true })
-    } catch (error) {
-      console.warn('[backups] restored the database but could not remove the old copy:', error)
+    log(`restore: reading ${archive}`)
+    const manifest = await readArchive({ input: archive, destDir: staging, secret: options.key })
+
+    const controlSource = join(staging, manifest.control)
+    if (!existsSync(controlSource)) throw new Error(`Backup archive is missing ${manifest.control}.`)
+    const control = inspectDatabase(controlSource)
+    const listed = [...manifest.projects].sort()
+    const stored = [...control.projects].sort()
+    if (listed.length !== stored.length || listed.some((id, index) => id !== stored[index])) {
+      throw new Error('Backup archive project list does not match its control database.')
     }
-  } catch (error) {
-    // Put the old database back and reopen it, so a bad upload never leaves
-    // the server without a working connection.
-    try {
-      stopServices(services)
+
+    const projects = manifest.projects.map((id) => {
+      const path = `projects/${projectFolder(id)}/bunwrite.sqlite`
+      const source = join(staging, path)
+      if (!existsSync(source)) throw new Error(`Backup archive is missing ${path}.`)
       try {
-        next?.sqlite.close()
-      } catch {
-        /* the new connection may not have opened */
+        inspectBackup(source, id)
+      } catch (error) {
+        throw new Error(`Backup for project "${id}" is invalid: ${error instanceof Error ? error.message : String(error)}`)
       }
-      if (moved) {
-        rmSync(databasePath, { force: true })
-        removeSidecars()
-        if (existsSync(old)) renameSync(old, databasePath)
+      return { id, source, target: projectPaths(dataDir, id).database }
+    })
+
+    const targets: RestoreOutcome[] = [
+      { target: 'control', path: databasePath, result: options.dryRun ? 'planned' : 'restored' },
+      ...projects.map((project) => ({
+        target: 'project' as const,
+        id: project.id,
+        path: project.target,
+        result: options.dryRun ? ('planned' as const) : ('restored' as const),
+      })),
+    ]
+
+    if (options.dryRun) {
+      for (const outcome of targets) {
+        log(`restore: would restore ${outcome.target}${outcome.id ? ` ${outcome.id}` : ''} to ${outcome.path}`)
       }
-      const reopened = openDb(databasePath)
-      services.db.sqlite = reopened.sqlite
-      services.db.orm = reopened.orm
-      refreshServices(services)
-      startServices(services)
-    } catch (rollback) {
-      console.error('[backups] could not roll back the database after a failed restore:', rollback)
+      return { manifest, outcomes: targets, previous: [] }
     }
-    throw error
-  } finally {
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const swapped: Swapped[] = []
     try {
-      rmSync(restoredPath, { force: true })
-    } catch {
-      /* a rename may already have moved it */
+      log(`restore: replacing control database ${databasePath}`)
+      swapped.push(replaceDatabase(databasePath, controlSource, stamp))
+      for (const project of projects) {
+        log(`restore: replacing project ${project.id}`)
+        mkdirSync(dirname(project.target), { recursive: true })
+        swapped.push(replaceDatabase(project.target, project.source, stamp))
+      }
+    } catch (error) {
+      rollback(swapped)
+      throw error
     }
+    return {
+      manifest,
+      outcomes: targets,
+      previous: swapped.flatMap((entry) => (entry.old ? [entry.old] : [])),
+    }
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
   }
 }

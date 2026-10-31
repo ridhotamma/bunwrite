@@ -1,24 +1,35 @@
 /**
- * Consistent copy of the live database, safe while the server runs:
- * `bun run snapshot [dir]` writes <dir>/bunwrite-<timestamp>.sqlite and keeps the newest KEEP (default 7).
- * Copy the folder off the VPS (rclone to R2, for example); a disk failure takes both otherwise.
+ * Whole-instance backup from cron: `bun run snapshot [dir]` writes one archive
+ * with the control database and every project database, laid out like the
+ * Litestream replica. It keeps the newest KEEP `snapshot-*` archives (default
+ * 7) and leaves console/automatic backups alone.
+ *
+ * Copy the folder off the VPS (rclone to R2, for example); a disk failure takes
+ * both otherwise. Uploaded files are not included.
  */
-import { Database } from 'bun:sqlite'
 import { mkdirSync, readdirSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
-const source = process.env.DATABASE_PATH ?? './data/bunwrite.sqlite'
-const dir = process.argv[2] ?? process.env.SNAPSHOT_DIR ?? './data/snapshots'
-const keep = Number(process.env.KEEP ?? 7)
+import { createInstanceBackup } from '~/backups/instance'
+
+const databasePath = resolve(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+const dir = resolve(process.argv[2] ?? process.env.SNAPSHOT_DIR ?? process.env.BACKUPS_PATH ?? './data/backups')
+const keep = Math.max(1, Number(process.env.KEEP ?? 7) || 7)
 
 mkdirSync(dir, { recursive: true })
-const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-const target = join(dir, `bunwrite-${stamp}.sqlite`)
-const db = new Database(source, { readonly: true })
-db.run(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
-db.close()
-console.log(`snapshot: ${target}`)
+const created = await createInstanceBackup({
+  databasePath,
+  outputDir: dir,
+  prefix: 'snapshot-',
+  secret: process.env.BACKUP_ENCRYPTION_KEY || undefined,
+  log: (line) => console.log(line),
+})
+console.log(`snapshot: ${created.path}`)
 
-const old = readdirSync(dir).filter((f) => /^bunwrite-.*\.sqlite$/.test(f)).sort().reverse().slice(keep)
-for (const f of old) rmSync(join(dir, f))
+const old = readdirSync(dir)
+  .filter((file) => /^snapshot-.*\.archive\.zst(\.enc)?$/.test(file))
+  .sort()
+  .reverse()
+  .slice(keep)
+for (const file of old) rmSync(join(dir, file))
 if (old.length) console.log(`removed ${old.length} old snapshot(s)`)

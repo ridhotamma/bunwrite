@@ -8,29 +8,41 @@ export interface SignInOptions {
   setup?: boolean
   email?: string
   error?: string
+  /** A pending email MFA sign-in; renders the code form instead of the password form. */
+  mfaChallenge?: string
+  notice?: string
   projectName: string
   instance?: Pick<BootstrapInfo, 'orgId' | 'projectId' | 'apiKey'>
 }
 
-/** The sign-in page, and the first-admin setup page when no admin exists. */
+/** The sign-in page, the email-code step, and the first-admin setup page when no admin exists. */
 export function signInPage(auth: ConsoleAuth, options: SignInOptions): Response {
   const setup = options.setup ?? false
   const email = options.email ?? ''
   const error = options.error
+  const mfa = options.mfaChallenge
   return page(
     bare(
-      setup ? 'Create admin' : 'Sign in',
+      setup ? 'Create admin' : mfa ? 'Verify sign-in' : 'Sign in',
       html`<div class="auth">
         <div class="brand"><img src="/logo-dark.png" alt="" width="28" height="28"><span>${options.projectName} console</span></div>
         <div class="card">
-          <h2>${setup ? 'Create the first admin' : 'Sign in'}</h2>
+          <h2>${setup ? 'Create the first admin' : mfa ? 'Check your email' : 'Sign in'}</h2>
           ${setup ? html`<p class="hint">Only shown on this machine while no admin exists.</p>` : ''}
+          ${options.notice ? html`<p class="hint">${options.notice}</p>` : ''}
           ${error ? alert('critical', html`${error}`) : ''}
-          <form method="post" action="${setup ? '/console/setup' : '/console/login'}">
-            <label>Email<input type="email" name="email" value="${email}" autocomplete="username" required autofocus></label>
-            <label>Password<input type="password" name="password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="8" required></label>
-            <button class="primary" style="width:100%;justify-content:center">${setup ? 'Create admin' : 'Sign in'}</button>
-          </form>
+          ${mfa
+            ? html`<form method="post" action="/console/login/mfa">
+                <input type="hidden" name="challenge" value="${mfa}">
+                <label>Email code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
+                <button class="primary" style="width:100%;justify-content:center">Verify and sign in</button>
+              </form>
+              <p class="hint" style="margin:12px 0 0"><a href="/console/login">Start over</a></p>`
+            : html`<form method="post" action="${setup ? '/console/setup' : '/console/login'}">
+                <label>Email<input type="email" name="email" value="${email}" autocomplete="username" required autofocus></label>
+                <label>Password<input type="password" name="password" autocomplete="${setup ? 'new-password' : 'current-password'}" minlength="8" required></label>
+                <button class="primary" style="width:100%;justify-content:center">${setup ? 'Create admin' : 'Sign in'}</button>
+              </form>`}
         </div>
         ${setup && options.instance
           ? html`<div class="card">

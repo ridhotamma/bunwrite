@@ -401,9 +401,11 @@ Upgrade with `git pull && docker compose up -d --build`.
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - Enable daily database backups and optional S3 backup storage in
-  **Settings → Backups**. Backups are per project; database snapshots do not
-  include uploaded files. `bunwrite snapshot` is available for cron-driven
-  copies of the default project.
+  **Settings → Backups**. One archive contains the control database and every
+  project database; it does not include uploaded files. `bunwrite snapshot` is
+  available for cron-driven archives. Restore with `bunwrite restore <archive>`
+  while the server is stopped; it validates every database first and keeps the
+  previous files as `*.before-restore-<timestamp>`.
 - Request logs are stored per project and go to stdout and the console. Set
   `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
 
@@ -506,5 +508,5 @@ sudo systemctl restart bunwrite
 
 If the bundled unit or `deploy/bunwrite-autotune.sh` changed, copy the unit
 again and run `sudo systemctl daemon-reload` before restarting. Drizzle
-migrations run automatically at startup. Back up the database and
+migrations run automatically at startup. Back up the databases and
 `/opt/bunwrite/.env` before a major upgrade.

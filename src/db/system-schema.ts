@@ -603,7 +603,22 @@ export const consoleAdmins = sqliteTable('_console_admins', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   email: text('email').notNull().unique(),
   password: text('password').notNull(),
+  /** Sign-in also needs a code emailed to the admin. */
+  mfa: integer('mfa', { mode: 'boolean' }).notNull().default(false),
   ...timestamps,
+})
+
+/** Pending email MFA sign-ins: only hashes of the challenge and code are stored. */
+export const consoleMfaChallenges = sqliteTable('_console_mfa_challenges', {
+  seq: integer('seq').primaryKey({ autoIncrement: true }),
+  adminId: integer('admin_id')
+    .notNull()
+    .references(() => consoleAdmins.seq, { onDelete: 'cascade' }),
+  secretHash: text('secret_hash').notNull().unique(),
+  codeHash: text('code_hash').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  expire: text('expire').notNull(),
+  createdAt: text('created_at').notNull(),
 })
 
 export const consoleSessions = sqliteTable('_console_sessions', {
@@ -631,6 +646,8 @@ export const apiKeys = sqliteTable('_api_keys', {
   secretHash: text('secret_hash').notNull().unique(),
   /** First characters, so a key can be recognised in the list. */
   hint: text('hint').notNull(),
+  /** Allowed scopes; null means full access (legacy keys and env API_KEYS). */
+  scopes: json<string[]>('scopes'),
   expire: text('expire'),
   accessedAt: text('accessed_at'),
   ...timestamps,

@@ -6,7 +6,6 @@
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 
-import { restoreDatabase } from '~/backups/restore'
 import type { Config, SmtpConfig } from '~/config'
 import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
@@ -117,6 +116,7 @@ export class ProjectManager implements ProjectResolver {
       databasePath: paths.database,
       storagePath: paths.storage,
       backupsPath: paths.backups,
+      instanceBackups: false,
       functionsDir: paths.functions,
       functionsEnvFile: undefined,
       schemaPath: undefined,
@@ -277,22 +277,6 @@ export class ProjectManager implements ProjectResolver {
     return runtime.info
   }
 
-  /**
-   * Replace a project's database with a validated backup. For the control
-   * database, also re-read the project list, since the backup may be older or
-   * newer than the projects that were open in this process.
-   */
-  async restore(id: string, restoredPath: string): Promise<void> {
-    const runtime = this.runtimes.get(id)
-    if (!runtime) throw err('general_argument_invalid', 'Unknown project.')
-    const control = runtime.services === this.control
-    restoreDatabase(runtime.services, restoredPath)
-    if (!control) return
-    this.ensureDefault()
-    this.reloadProjects()
-    this.control.versions.reset()
-  }
-
   /** Reconcile the open project runtimes with the control database. */
   private reloadProjects(): void {
     const rows = this.db.sqlite.query<ProjectRow, []>('SELECT id, name, org_id, created_at, updated_at FROM _projects ORDER BY seq').all()
@@ -354,11 +338,6 @@ export class ProjectManager implements ProjectResolver {
       } catch (error) {
         console.error(`[projects] could not delete bucket ${bucket.id} in ${id}:`, error)
       }
-    }
-    try {
-      for (const backup of await runtime.services.backups.list()) await runtime.services.backups.delete(backup.name)
-    } catch (error) {
-      console.error(`[projects] could not delete backups for ${id}:`, error)
     }
 
     runtime.services.requestLogs.flush()

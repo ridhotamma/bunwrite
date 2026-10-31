@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { Query } from 'node-appwrite'
 
 import { ConsoleAuth } from '~/console/auth'
-import { adminClient, DB, PROJECT, startServer, type TestServer } from './helpers'
+import { adminClient, DB, PROJECT, startServer, testConfig, type TestServer } from './helpers'
 
 let server: TestServer
 let base: string
@@ -529,42 +529,53 @@ describe('settings through the console', () => {
 
   test('backups can be created, downloaded and deleted locally', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backups-'))
-    const original = server.config.backupsPath
-    server.config.backupsPath = dir
+    const fileServer = startServer(undefined, { backupsPath: join(dir, 'backups') }, undefined, {}, join(dir, 'bunwrite.sqlite'))
+    const fileBase = fileServer.endpoint.replace(/\/v1$/, '')
+    const auth = new ConsoleAuth(fileServer.db)
+    await auth.upsert('backup@example.com', 'console-password')
+    const fileCookie = `bunwrite_console=${(await auth.login('backup@example.com', 'console-password'))!}; console_project=${PROJECT}`
+    const post = (path: string, fields: Record<string, string | string[]>) => {
+      const body = new URLSearchParams()
+      for (const [k, v] of Object.entries(fields)) for (const one of ([] as string[]).concat(v)) body.append(k, one)
+      return fetch(`${fileBase}${path}`, { method: 'POST', body, redirect: 'manual', headers: { cookie: fileCookie, 'content-type': 'application/x-www-form-urlencoded' } })
+    }
+    const read = (path: string) => fetch(`${fileBase}${path}`, { headers: { cookie: fileCookie }, redirect: 'manual' })
     try {
-      const created = await form('/console/settings/backups/create', {})
-      expect(flash(created).get('ok')).toContain('Created backup-')
-      const backups = await server.services.backups.list()
+      const created = await post('/console/settings/backups/create', {})
+      expect(new URL(created.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('Created backup-')
+      const backups = await fileServer.services.backups.list()
       expect(backups).toHaveLength(1)
-      const page = await (await get('/console/settings/backups')).text()
+      const page = await (await read('/console/settings/backups')).text()
       expect(page).toContain(backups[0]!.name)
-      expect(backups[0]!.name).toEndWith('.sqlite.zst')
+      expect(backups[0]!.name).toEndWith('.archive.zst')
       expect(page).toContain('compressed but not encrypted')
-      const download = await get(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
+      const download = await read(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
       expect(download.status).toBe(200)
-      expect(download.headers.get('content-disposition')).toContain('.sqlite')
-      await form(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
-      expect(await server.services.backups.list()).toHaveLength(0)
+      expect(download.headers.get('content-disposition')).toContain('.archive.zst')
+      await post(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
+      expect(await fileServer.services.backups.list()).toHaveLength(0)
     } finally {
-      server.config.backupsPath = original
+      fileServer.stop()
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
   test('automatic backups run once a day', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-auto-backups-'))
-    const originalPath = server.config.backupsPath
-    const original = server.config.backups
-    server.config.backupsPath = dir
-    server.config.backups = { enabled: true, keep: 1, s3: original.s3 }
+    const fileServer = startServer(
+      undefined,
+      { backupsPath: join(dir, 'backups'), backups: { enabled: true, keep: 1, s3: testConfig().backups.s3 } },
+      undefined,
+      {},
+      join(dir, 'bunwrite.sqlite'),
+    )
     try {
       const at = new Date(Date.UTC(2026, 9, 27, 2, 0))
-      await server.services.backups.tick(at)
-      await server.services.backups.tick(at)
-      expect((await server.services.backups.list()).filter((b) => b.name.startsWith('auto-'))).toHaveLength(1)
+      await fileServer.services.backups.tick(at)
+      await fileServer.services.backups.tick(at)
+      expect((await fileServer.services.backups.list()).filter((b) => b.name.startsWith('auto-'))).toHaveLength(1)
     } finally {
-      server.config.backupsPath = originalPath
-      server.config.backups = original
+      fileServer.stop()
       rmSync(dir, { recursive: true, force: true })
     }
   })
@@ -616,7 +627,7 @@ describe('settings through the console', () => {
     expect(page).toContain('href="/console/api"')
     expect(page).not.toContain('Console members')
 
-    const res = await form('/console/api/keys', { name: 'CI', expire: '' })
+    const res = await form('/console/api/keys', { name: 'CI', expire: '', full: 'on' })
     const html = await res.text()
     expect(html).toContain('id="api-key-dialog"')
     expect(html).toContain('data-open')
@@ -625,6 +636,11 @@ describe('settings through the console', () => {
     expect(list).not.toContain(secret)
     expect(list).toContain('data-confirm=')
     expect(list).not.toContain('hx-confirm=')
+
+    // The form can also create a scoped key.
+    const scoped = await form('/console/api/keys', { name: 'Reader', expire: '', scopes: 'documents.read' })
+    expect(await scoped.text()).toContain('id="api-key-dialog"')
+    expect(await (await get('/console/api')).text()).toContain('1 scope')
     const client = adminClient(server.endpoint)
     client.client.setKey(secret)
     expect((await client.databases.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.limit(1)] })).total).toBeGreaterThanOrEqual(0)

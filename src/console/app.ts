@@ -53,6 +53,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
   registerConsolePages(router)
 
   const secure = () => control.config.publicEndpoint.startsWith('https')
+  const sendMfa = (email: string, code: string) =>
+    control.mailer.send(control.templates.render('mfaChallenge', email, { user: email, otp: code }))
 
   return {
     async handle(request: Request, server?: Server<any>): Promise<Response | null> {
@@ -106,19 +108,24 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           }
           const password = String(form.password ?? '')
           try {
-            let secret: string | null
-            if (existing) {
-              secret = await auth.login(member.email, password)
-              if (!secret) throw new Error('Incorrect email or password.')
-              organizations.accept(member.id)
-            } else {
+            if (!existing) {
               await auth.upsert(member.email, password)
               organizations.accept(member.id, String(form.name ?? ''))
-              secret = await auth.login(member.email, password)
+            }
+            const result = await auth.authenticate(member.email, password)
+            if (result.status === 'invalid') throw new Error('Incorrect email or password.')
+            if (existing) organizations.accept(member.id)
+            if (result.status === 'mfa') {
+              await sendMfa(result.email, result.code)
+              return signInPage(auth, {
+                projectName: control.config.projectName,
+                mfaChallenge: result.challenge,
+                notice: 'Enter the code we emailed you to finish signing in.',
+              })
             }
             return new Response(null, {
               status: 303,
-              headers: { location: '/console', 'set-cookie': auth.cookie(secret!, secure()) },
+              headers: { location: '/console', 'set-cookie': auth.cookie(result.secret, secure()) },
             })
           } catch (error) {
             return page(
@@ -182,11 +189,44 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           } catch {
             return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
           }
-          const secret = await auth.login(email, String(form.password ?? ''))
-          if (!secret) return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
-          return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
+          const result = await auth.authenticate(email, String(form.password ?? ''))
+          if (result.status === 'invalid') {
+            return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
+          }
+          if (result.status === 'mfa') {
+            try {
+              await sendMfa(result.email, result.code)
+            } catch (error) {
+              return signInPage(auth, { email, error: `Could not send the sign-in code: ${error instanceof Error ? error.message : String(error)}`, projectName: control.config.projectName })
+            }
+            return signInPage(auth, {
+              projectName: control.config.projectName,
+              mfaChallenge: result.challenge,
+              notice: 'Enter the code we emailed you to finish signing in.',
+            })
+          }
+          return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(result.secret, secure()) } })
         }
         return signInPage(auth, { projectName: control.config.projectName })
+      }
+
+      if (url.pathname === '/console/login/mfa' && request.method === 'POST') {
+        const form = await readForm(request)
+        const challenge = String(form.challenge ?? '')
+        try {
+          limiter.hit(`console-mfa:${ip}`, 10, 900)
+        } catch {
+          return signInPage(auth, { mfaChallenge: challenge, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
+        }
+        const secret = auth.verifyMfa(challenge, String(form.code ?? ''))
+        if (!secret) {
+          return signInPage(auth, {
+            mfaChallenge: challenge,
+            error: 'That code is not valid or has expired. Sign in again to get a new one.',
+            projectName: control.config.projectName,
+          })
+        }
+        return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
       }
 
       const admin = auth.admin(request)
@@ -203,7 +243,11 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       const cookieProject = parseCookies(request.headers.get('cookie') ?? '')['console_project']
       const selected = cookieProject ? projects.get(cookieProject) : null
       const pathname = url.pathname.replace(/\/$/, '') || '/console'
-      const projectRoute = pathname !== '/console' && !pathname.startsWith('/console/projects') && !pathname.startsWith('/console/organization')
+      const projectRoute =
+        pathname !== '/console' &&
+        !pathname.startsWith('/console/projects') &&
+        !pathname.startsWith('/console/organization') &&
+        !pathname.startsWith('/console/security')
       if (projectRoute && !selected) return go(request, '/console')
 
       const current = selected ?? projects.defaultProject()

@@ -122,23 +122,24 @@ function storageCard(ctx: ConsoleContext): Html {
 }
 
 async function backupsCards(ctx: ConsoleContext): Promise<Html> {
-  const c = ctx.services.config
+  const control = ctx.projects.control
+  const c = control.config
   let backups: BackupFile[] = []
   let error = ''
   try {
-    backups = await ctx.services.backups.list()
+    backups = await control.backups.list()
   } catch (problem) {
     error = problem instanceof Error ? problem.message : String(problem)
   }
   const encryption = c.backupEncryptionKey
-    ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Open one with <code>bunwrite backup:open &lt;file&gt;</code>.`)
-    : alert('warning', html`Backups are compressed but not encrypted, and they include stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
+    ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one with <code>bunwrite restore &lt;file&gt;</code>.`)
+    : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
   return html`
     ${error ? alert('critical', html`${error}`) : ''}
     ${encryption}
     ${settingsSection(
       'Backups',
-      'Database snapshots you can download. Automatic backups run once a day at 02:00 UTC.',
+      'One archive covers the control database and every project database. Automatic backups run once a day at 02:00 UTC.',
       html`<div class="toolbar"><h2 style="margin:0">Saved backups</h2>
           <form method="post" action="${SETTINGS}/backups/create" class="inline" style="margin-left:auto"><button class="primary">Create backup</button></form>
         </div>
@@ -161,26 +162,31 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
       { id: 'backups', flush: true },
     )}
     ${settingsSection(
-      'Restore backup',
-      'Replace this project’s database with an uploaded backup. A .sqlite, .sqlite.zst or .sqlite.zst.enc file is checked before anything changes. Backups do not include uploaded files.',
-      html`<form method="post" action="${SETTINGS}/backups/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
-          data-confirm="Restore this backup? The current database will be replaced. This cannot be undone." data-confirm-label="Restore" data-confirm-tone="critical">
-        <label>Backup file<input type="file" name="backup" accept=".sqlite,.zst,.enc,application/octet-stream,application/zstd,application/x-sqlite3" required>
-          <small>Use a file downloaded from this server or the same Bunwrite version.</small></label>
-        <label>Encryption key <span class="subdued">(only for encrypted backups)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
-          <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
-        <div class="foot"><button class="critical">Restore database</button></div>
-      </form>`,
+      'Restoring',
+      'Restore replaces the control database and every project database, so it runs with the server stopped.',
+      html`<p>Stop Bunwrite, then run the downloaded archive through the CLI:</p>
+        <pre class="mono">bunwrite restore backup-2026-10-31T02-00-00-000Z.archive.zst</pre>
+        <p>Every database is checked before anything is replaced. The previous files stay next to the restored ones as <code>*.before-restore-&lt;timestamp&gt;</code>. Add <code>--dry-run</code> to check an archive without writing.</p>
+        <p>Uploaded files, function code and site builds are not in the archive. Back up <code>STORAGE_PATH</code> or the uploads bucket separately.</p>`,
       { id: 'backup-restore' },
     )}
-    ${card(ctx, 'backup-options', 'Backup options', 'backups', 'Choose whether automatic backups run, how many to keep, and where they are stored.', html`
-      <form method="post" action="${SETTINGS}/backups">
+    ${settingsSection(
+      'Backup options',
+      'Whole-instance backups: enable the daily run, choose how many to keep, and where they are stored.',
+      html`<form method="post" action="${SETTINGS}/backups">
         <label class="check"><input type="checkbox" name="backupsEnabled" ${c.backups.enabled ? 'checked' : ''}>Enable auto backups</label>
         <div class="fields"><label>Keep automatic backups<input name="backupsKeep" type="number" min="1" max="100" value="${c.backups.keep}"></label></div>
         <label class="check"><input type="checkbox" name="backupS3Enabled" ${c.backups.s3.enabled ? 'checked' : ''}>Store backups in S3 storage</label>
         ${s3Fields('backupS3', c.backups.s3)}
         <div class="foot"><button>Save</button></div>
-      </form>`)}`
+      </form>`,
+      {
+        id: 'backup-options',
+        badge: control.settings.overridden('backups')
+          ? html`${badge('Custom', 'info')} ${destroy(`${SETTINGS}/backups/reset`, 'Reset', 'Reset backup settings to the defaults?')}`
+          : badge('Default'),
+      },
+    )}`
 }
 
 function projectVariablesCard(ctx: ConsoleContext): Html {
@@ -298,15 +304,17 @@ export function inlineStatus(message: string, tone: 'success' | 'critical'): Htm
 
 const TAB_BY_KEY = Object.fromEntries(TABS.map((tab) => [tab.key, tab])) as Record<SettingsTab, (typeof TABS)[number]>
 
-function settingsNav(active: SettingsTab): Html {
+function settingsNav(active: SettingsTab, canManageBackups: boolean): Html {
   return html`<nav class="settings-nav" aria-label="Settings sections">
     ${SETTING_GROUPS.map(
       (group) => html`<div class="settings-nav-group">
         <div class="settings-nav-label">${group.label}</div>
-        ${group.tabs.map((key) => {
-          const tab = TAB_BY_KEY[key]
-          return html`<a href="${tab.href}" class="${key === active ? 'on' : ''}" ${key === active ? html`aria-current="page"` : ''}>${tab.label}</a>`
-        })}
+        ${group.tabs
+          .filter((key) => key !== 'backups' || canManageBackups)
+          .map((key) => {
+            const tab = TAB_BY_KEY[key]
+            return html`<a href="${tab.href}" class="${key === active ? 'on' : ''}" ${key === active ? html`aria-current="page"` : ''}>${tab.label}</a>`
+          })}
       </div>`,
     )}
   </nav>`
@@ -351,7 +359,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
   }
   return html`${header('Settings')}
     <div class="settings-layout">
-      ${settingsNav(tab)}
+      ${settingsNav(tab, ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email) === 'owner')}
       <div class="settings-content">${body}</div>
     </div>`
 }
