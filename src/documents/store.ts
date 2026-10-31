@@ -1,15 +1,24 @@
 /**
- * Document reads and writes with Appwrite's permission rules. Everything here
- * is synchronous on purpose: bun:sqlite is synchronous, so one request's
- * database work can never interleave with another's.
+ * Document reads and writes with Appwrite's permission rules.
+ *
+ * Everything goes through the driver port, so the store runs on SQLite and
+ * Postgres. Transactions are explicit at the public boundary and implicit
+ * inside: `AsyncLocalStorage` carries the current transaction, so a method
+ * called from `runInTransaction` (or from `WriteBatcher`) automatically uses
+ * the same connection without threading a `tx` argument through every helper.
+ *
+ * The list cache and the write batching still assume one process owns the
+ * cache; that was already true for SQLite and is unchanged.
  */
-import type { SQLQueryBindings } from 'bun:sqlite'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { Caller } from '~/auth/caller'
 import { assertCallerScope } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
 import { collectionVersionKey } from '~/cluster/versions'
-import { q, type Db } from '~/db/connection'
+import { q } from '~/db/connection'
+import type { SqlDatabase, SqlExecutor, SqlTransaction } from '~/db/driver'
+import { uniqueViolation } from '~/db/driver'
 import { normalizeDate, now } from '~/lib/datetime'
 import { BunwriteError, err, invalidStructure } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
@@ -25,13 +34,6 @@ const LIST_CACHE_ENTRIES = 200
 const LIST_CACHE_DOCS = 5000
 const LIST_CACHE_MAX_LIMIT = 200
 
-/**
- * Bun's bundled SQLite on Linux supports RETURNING with FTS triggers. macOS
- * uses the system build (3.39), which fails inside a transaction when an FTS
- * trigger fires, so it keeps the insert-then-read fallback.
- */
-const RETURNING = process.platform === 'linux'
-
 type Row = Record<string, unknown> & { _seq: number; _id: string; _updatedAt: string; _permissions: string; _rev: number }
 
 /**
@@ -44,6 +46,13 @@ export interface Guard {
 }
 
 export class ConflictError extends Error {}
+
+/** Thrown inside a rolled-back transaction to carry a value back out. */
+class RollbackSignal extends Error {
+  constructor(readonly value: unknown) {
+    super('rollback')
+  }
+}
 
 export interface WriteOptions {
   guard?: Guard
@@ -77,9 +86,42 @@ export interface NewDocument {
   permissions: unknown
 }
 
-const bindings = (params: SqlValue[]) => params as SQLQueryBindings[]
+/**
+ * The document operations the routes, the write batcher and the transaction
+ * service use. `DocumentStore` implements it for SQL; `MongoDocumentStore`
+ * implements it for MongoDB.
+ */
+export interface DocumentBackend {
+  events: DocEvent[]
+  drainEvents(): DocEvent[]
+  beginStagedRead(): void
+  endStagedRead(): void
+  clearCaches(): void
+  collectionVersion(collection: Collection): Promise<number>
+  runInTransaction<T>(fn: () => Promise<T>): Promise<T>
+  preview<T>(fn: () => Promise<T>): Promise<T>
+  runBatch<T>(operations: Array<() => Promise<T> | T>): Promise<Array<BatchOutcome<T>>>
+  getDocument(caller: Caller, collection: Collection, id: string, rawQueries?: unknown[]): Promise<Doc>
+  listDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], includeTotal?: boolean, version?: number): Promise<{ total: number; documents: Doc[] }>
+  countDocuments(caller: Caller, collection: Collection): Promise<number>
+  createDocument(caller: Caller, collection: Collection, input: NewDocument, options?: WriteOptions): Promise<Doc>
+  createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options?: WriteOptions): Promise<Doc>
+  createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options?: WriteOptions): Promise<Doc[]>
+  updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options?: WriteOptions): Promise<Doc>
+  updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options?: WriteOptions): Promise<Doc>
+  upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options?: WriteOptions): Promise<{ doc: Doc; created: boolean }>
+  upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options?: WriteOptions): Promise<{ doc: Doc; created: boolean }>
+  upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options?: WriteOptions): Promise<Doc[]>
+  deleteDocument(caller: Caller, collection: Collection, id: string, options?: WriteOptions): Promise<Doc>
+  deleteDocumentInTx(caller: Caller, collection: Collection, id: string, options?: WriteOptions): Promise<Doc>
+  incrementAttribute(caller: Caller, collection: Collection, id: string, key: string, by: number, bound: number | null, direction: 1 | -1, options?: WriteOptions): Promise<Doc>
+  incrementAttributeInTx(caller: Caller, collection: Collection, id: string, key: string, by: number, bound: number | null, direction: 1 | -1, options?: WriteOptions): Promise<Doc>
+  updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options?: WriteOptions): Promise<Doc[]>
+  deleteDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], options?: WriteOptions): Promise<Doc[]>
+  checkStagedWrite(caller: Caller, collection: Collection, id: string, type: PermissionType): Promise<Doc | null>
+}
 
-export class DocumentStore {
+export class DocumentStore implements DocumentBackend {
   /** Changes made by the current request; the app publishes them once it succeeds. */
   events: DocEvent[] = []
 
@@ -87,8 +129,24 @@ export class DocumentStore {
   private cachedDocs = 0
   private stagedReads = 0
   private readonly listVersions = new Map<string, string>()
+  /** The transaction this async call belongs to, if any. */
+  private readonly context = new AsyncLocalStorage<SqlTransaction>()
 
-  constructor(private db: Db) {}
+  constructor(private db: SqlDatabase) {}
+
+  /** The current transaction, or the pool for a plain statement. */
+  private exec(): SqlExecutor {
+    return this.context.getStore() ?? this.db.driver
+  }
+
+  /**
+   * SQLite on macOS uses the system build (3.39), which fails inside a
+   * transaction when an FTS trigger fires, so it keeps the insert-then-read
+   * fallback. Postgres always supports RETURNING.
+   */
+  private get returning(): boolean {
+    return this.db.dialect === 'postgres' || process.platform === 'linux'
+  }
 
   drainEvents(): DocEvent[] {
     const events = this.events
@@ -112,11 +170,41 @@ export class DocumentStore {
     this.cachedDocs = 0
   }
 
+  /**
+   * Run `fn` atomically. Reuses an enclosing transaction so callers can compose
+   * `...InTx` methods, `WriteBatcher` and transaction commits freely.
+   */
+  async runInTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.context.getStore()) return fn()
+    return this.db.driver.transaction(async (tx) => this.context.run(tx, fn))
+  }
+
+  /**
+   * Run `fn` with the transaction's staged writes visible, then roll the work
+   * back. Used by reads that carry a `transactionId`.
+   */
+  async preview<T>(fn: () => Promise<T>): Promise<T> {
+    const body = async () => {
+      const value = await fn()
+      throw new RollbackSignal(value)
+    }
+    const current = this.context.getStore()
+    try {
+      if (current) {
+        return await current.savepoint('bunwrite_preview', async () => this.context.run(current, body))
+      }
+      return await this.db.driver.transaction(async (tx) => this.context.run(tx, body))
+    } catch (error) {
+      if (error instanceof RollbackSignal) return error.value as T
+      throw error
+    }
+  }
+
   /** Bumped by the document table's triggers on every insert, update or delete. */
-  collectionVersion(collection: Collection): number {
-    const row = this.db.sqlite
-      .query<{ value: number }, [string]>('SELECT value FROM _meta WHERE key = ?')
-      .get(collectionVersionKey(collection.databaseId, collection.id))
+  async collectionVersion(collection: Collection): Promise<number> {
+    const row = await this.exec().get<{ value: number }>('SELECT value FROM _meta WHERE key = ?', [
+      collectionVersionKey(collection.databaseId, collection.id),
+    ])
     return Number(row?.value ?? 0)
   }
 
@@ -137,12 +225,12 @@ export class DocumentStore {
     return `t._seq IN (SELECT doc FROM ${q(collection.permsTable)} WHERE type = 'read' AND role IN (${roles.map(() => '?').join(', ')}))`
   }
 
-  private row(collection: Collection, id: string): Row | null {
-    return (this.db.sqlite.query(`SELECT * FROM ${q(collection.table)} WHERE _id = ?`).get(id) as Row | null) ?? null
+  private async row(collection: Collection, id: string): Promise<Row | null> {
+    return this.exec().get<Row>(`SELECT * FROM ${q(collection.table)} WHERE _id = ?`, [id])
   }
 
-  private rowBySeq(collection: Collection, seq: number): Row {
-    return this.db.sqlite.query(`SELECT * FROM ${q(collection.table)} WHERE _seq = ?`).get(seq) as Row
+  private async rowBySeq(collection: Collection, seq: number): Promise<Row> {
+    return (await this.exec().get<Row>(`SELECT * FROM ${q(collection.table)} WHERE _seq = ?`, [seq]))!
   }
 
   private can(caller: Caller, collection: Collection, row: Row, type: PermissionType): boolean {
@@ -150,23 +238,21 @@ export class DocumentStore {
     return collection.documentSecurity && grants(JSON.parse(row._permissions), type, caller.roles)
   }
 
-  getDocument(caller: Caller, collection: Collection, id: string, rawQueries: unknown[] = []): Doc {
+  async getDocument(caller: Caller, collection: Collection, id: string, rawQueries: unknown[] = []): Promise<Doc> {
     assertCallerScope(caller, 'documents.read')
-    const compiled = compileCached(collection, rawQueries)
+    const compiled = compileCached(collection, rawQueries, this.db.dialect)
     if (compiled.where.length || compiled.orders.length || compiled.cursor) {
       throw err('general_query_invalid', 'Invalid query: Only select queries are allowed when getting a document.')
     }
     const params: SqlValue[] = [id]
     const filter = this.readFilter(caller, collection, params)
-    const row = this.db.sqlite
-      .query(`SELECT * FROM ${q(collection.table)} t WHERE t._id = ?${filter ? ` AND ${filter}` : ''}`)
-      .get(...bindings(params)) as Row | null
+    const row = await this.exec().get<Row>(`SELECT * FROM ${q(collection.table)} t WHERE t._id = ?${filter ? ` AND ${filter}` : ''}`, params)
     if (!row) throw err('document_not_found', undefined, [id])
     return decodeRow(collection, row, compiled.select)
   }
 
   /** Matching rows for `compiled`, honouring cursor, order, limit and offset. */
-  private select(caller: Caller, collection: Collection, compiled: Compiled): Row[] {
+  private async select(caller: Caller, collection: Collection, compiled: Compiled): Promise<Row[]> {
     const params: SqlValue[] = []
     const where = [...compiled.where]
     params.push(...compiled.params)
@@ -180,7 +266,7 @@ export class DocumentStore {
     const effective = compiled.cursor?.before ? orders.map((o) => ({ ...o, desc: !o.desc })) : orders
 
     if (compiled.cursor) {
-      const cursorRow = this.row(collection, compiled.cursor.id)
+      const cursorRow = await this.row(collection, compiled.cursor.id)
       if (!cursorRow) {
         throw err('general_cursor_not_found', `Document '${compiled.cursor.id}' for the 'cursor' value not found.`)
       }
@@ -195,11 +281,11 @@ export class DocumentStore {
       (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
       ` ORDER BY ${orderSql} LIMIT ? OFFSET ?`
     params.push(compiled.limit, compiled.offset)
-    const rows = this.db.sqlite.query(sql).all(...bindings(params)) as Row[]
+    const rows = await this.exec().all<Row>(sql, params)
     return compiled.cursor?.before ? rows.reverse() : rows
   }
 
-  private count(caller: Caller, collection: Collection, compiled: Compiled): number {
+  private async count(caller: Caller, collection: Collection, compiled: Compiled): Promise<number> {
     const params: SqlValue[] = [...compiled.params]
     const where = [...compiled.where]
     const filter = this.readFilter(caller, collection, params)
@@ -207,26 +293,27 @@ export class DocumentStore {
     const sql =
       `SELECT COUNT(*) AS n FROM (SELECT 1 FROM ${q(collection.table)} t` +
       (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
-      ` LIMIT ${COUNT_LIMIT})`
-    return (this.db.sqlite.query(sql).get(...bindings(params)) as { n: number }).n
+      ` LIMIT ${COUNT_LIMIT}) AS limited`
+    const row = await this.exec().get<{ n: number }>(sql, params)
+    return Number(row?.n ?? 0)
   }
 
-  listDocuments(
+  async listDocuments(
     caller: Caller,
     collection: Collection,
     rawQueries: unknown[],
     includeTotal = true,
     version?: number,
-  ): { total: number; documents: Doc[] } {
+  ): Promise<{ total: number; documents: Doc[] }> {
     assertCallerScope(caller, 'documents.read')
-    const compiled = compileCached(collection, rawQueries)
+    const compiled = compileCached(collection, rawQueries, this.db.dialect)
     // Views (users, teams, memberships, files, executions) have no write
     // triggers, so their lists must not be cached. Random pages differ every
     // time, and a large page is not worth keeping.
     if (this.stagedReads > 0 || !collection.databaseId || compiled.random || compiled.limit > LIST_CACHE_MAX_LIMIT) {
       return this.listWith(caller, collection, compiled, includeTotal)
     }
-    const stamp = `${version ?? this.collectionVersion(collection)}:${collection.updatedAt}`
+    const stamp = `${version ?? (await this.collectionVersion(collection))}:${collection.updatedAt}`
     this.purgeListCache(collection.table, stamp)
     const key = `${collection.table}\u0000${stamp}\u0000${caller.privileged ? '*' : [...caller.roles].sort().join(',')}\u0000${includeTotal ? 1 : 0}\u0000${JSON.stringify(rawQueries)}`
     const hit = this.listCache.get(key)
@@ -236,20 +323,20 @@ export class DocumentStore {
       this.listCache.set(key, hit)
       return { total: hit.total, documents: hit.documents }
     }
-    const result = this.listWith(caller, collection, compiled, includeTotal)
+    const result = await this.listWith(caller, collection, compiled, includeTotal)
     this.rememberList(key, result)
     return result
   }
 
-  private listWith(
+  private async listWith(
     caller: Caller,
     collection: Collection,
     compiled: Compiled,
     includeTotal: boolean,
-  ): { total: number; documents: Doc[] } {
-    const rows = this.select(caller, collection, compiled)
+  ): Promise<{ total: number; documents: Doc[] }> {
+    const rows = await this.select(caller, collection, compiled)
     return {
-      total: includeTotal ? this.count(caller, collection, compiled) : 0,
+      total: includeTotal ? await this.count(caller, collection, compiled) : 0,
       documents: rows.map((r) => decodeRow(collection, r, compiled.select)),
     }
   }
@@ -280,12 +367,13 @@ export class DocumentStore {
   }
 
   /** All documents in a collection the caller may read, without the list cap. */
-  countDocuments(caller: Caller, collection: Collection): number {
+  async countDocuments(caller: Caller, collection: Collection): Promise<number> {
     assertCallerScope(caller, 'documents.read')
     const params: SqlValue[] = []
     const filter = this.readFilter(caller, collection, params)
     const sql = `SELECT count(*) AS n FROM ${q(collection.table)} t${filter ? ` WHERE ${filter}` : ''}`
-    return (this.db.sqlite.query(sql).get(...bindings(params)) as { n: number }).n
+    const row = await this.exec().get<{ n: number }>(sql, params)
+    return Number(row?.n ?? 0)
   }
 
   // ---------------------------------------------------------------- write helpers
@@ -320,13 +408,12 @@ export class DocumentStore {
     return date
   }
 
-  private writePerms(collection: Collection, seq: number, permissions: string[]): void {
-    const sqlite = this.db.sqlite
-    sqlite.query(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`).run(seq)
-    const insert = sqlite.query(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`)
+  private async writePerms(collection: Collection, seq: number, permissions: string[]): Promise<void> {
+    const exec = this.exec()
+    await exec.run(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`, [seq])
     for (const p of permissions) {
       const { type, role } = parsePermission(p)
-      insert.run(seq, type, role)
+      await exec.run(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`, [seq, type, role])
     }
   }
 
@@ -361,13 +448,18 @@ export class DocumentStore {
   }
 
   private uniqueError(error: unknown, collection: Collection, id: string): unknown {
-    const message = error instanceof Error ? error.message : ''
-    if (!message.includes('UNIQUE constraint failed')) return error
-    if (message.includes(`${collection.table}._id`)) return err('document_already_exists', undefined, [id])
-    return err('document_unique_constraint_violation')
+    const violation = uniqueViolation(error)
+    if (!violation) return error
+    const constraint = violation.constraint ?? ''
+    const onId =
+      constraint === `${collection.table}__id_key` ||
+      constraint.endsWith('__id_key') ||
+      /(?:^|[.\s:])_id$/.test(constraint) ||
+      (error instanceof Error && error.message.includes(`${collection.table}._id`))
+    return onId ? err('document_already_exists', undefined, [id]) : err('document_unique_constraint_violation')
   }
 
-  private insertRow(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions): Row {
+  private async insertRow(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions): Promise<Row> {
     const id = resolveId(input.id, 'Document ID')
     const data = input.data ?? {}
     const permissions = this.resolvePermissions(caller, input.permissions, this.defaultPermissions(caller))!
@@ -386,19 +478,17 @@ export class DocumentStore {
     let row: Row
     try {
       const sql = `INSERT INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
-      if (RETURNING) {
-        row = this.db.sqlite.query(`${sql} RETURNING *`).get(...bindings(params)) as Row
+      if (this.returning) {
+        row = (await this.exec().get<Row>(`${sql} RETURNING *`, params))!
       } else {
-        const result = this.db.sqlite.query(sql).run(...bindings(params))
-        row = this.rowBySeq(collection, Number(result.lastInsertRowid))
+        const result = await this.exec().run(sql, params)
+        row = await this.rowBySeq(collection, Number(result.lastInsertId))
       }
     } catch (error) {
-      if (options.guard && error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError(error.message)
-      }
+      if (options.guard && uniqueViolation(error)) throw new ConflictError(error instanceof Error ? error.message : String(error))
       throw this.uniqueError(error, collection, id)
     }
-    this.writePerms(collection, row._seq, permissions)
+    await this.writePerms(collection, row._seq, permissions)
     this.touch(collection, id, options)
     this.record(collection, 'create', row, options)
     return row
@@ -409,14 +499,14 @@ export class DocumentStore {
   }
 
   /** Update an existing row in place. Skips the write when nothing changes, like Appwrite. */
-  private updateRow(
+  private async updateRow(
     caller: Caller,
     collection: Collection,
     row: Row,
     data: Record<string, unknown>,
     permissions: unknown,
     options: WriteOptions,
-  ): Row {
+  ): Promise<Row> {
     this.guardCheck(collection, row, options)
     this.revisionCheck(row, options)
     const values = encodeAttributes(collection, data, 'update')
@@ -436,39 +526,37 @@ export class DocumentStore {
     changes._updatedAt = this.dates(caller, data, '$updatedAt', now())
     if (permsChanged) changes._permissions = JSON.stringify(newPermissions)
     const keys = Object.keys(changes)
-    const params = bindings([...keys.map((k) => changes[k]!), row._seq])
+    const params: SqlValue[] = [...keys.map((k) => changes[k]!), row._seq]
     const sql = `UPDATE ${q(collection.table)} SET ${keys.map((k) => `${q(k)} = ?`).join(', ')}, ${q('_rev')} = ${q('_rev')} + 1 WHERE _seq = ?`
     let updated: Row
     try {
-      if (RETURNING) {
-        updated = this.db.sqlite.query(`${sql} RETURNING *`).get(...params) as Row
+      if (this.returning) {
+        updated = (await this.exec().get<Row>(`${sql} RETURNING *`, params))!
       } else {
-        this.db.sqlite.query(sql).run(...params)
-        updated = this.rowBySeq(collection, row._seq)
+        await this.exec().run(sql, params)
+        updated = await this.rowBySeq(collection, row._seq)
       }
     } catch (error) {
-      if (options.guard && error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError(error.message)
-      }
+      if (options.guard && uniqueViolation(error)) throw new ConflictError(error instanceof Error ? error.message : String(error))
       throw this.uniqueError(error, collection, row._id)
     }
-    if (permsChanged) this.writePerms(collection, row._seq, newPermissions!)
+    if (permsChanged) await this.writePerms(collection, row._seq, newPermissions!)
     this.touch(collection, row._id, options)
     this.record(collection, 'update', updated, options)
     return updated
   }
 
-  private deleteRow(collection: Collection, row: Row, options: WriteOptions): void {
+  private async deleteRow(collection: Collection, row: Row, options: WriteOptions): Promise<void> {
     this.guardCheck(collection, row, options)
     this.revisionCheck(row, options)
-    this.db.sqlite.query(`DELETE FROM ${q(collection.table)} WHERE _seq = ?`).run(row._seq)
-    this.db.sqlite.query(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`).run(row._seq)
+    await this.exec().run(`DELETE FROM ${q(collection.table)} WHERE _seq = ?`, [row._seq])
+    await this.exec().run(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`, [row._seq])
     this.touch(collection, row._id, options)
     this.record(collection, 'delete', row, options)
   }
 
-  private requireRow(caller: Caller, collection: Collection, id: string, type: PermissionType): Row {
-    const row = this.row(collection, id)
+  private async requireRow(caller: Caller, collection: Collection, id: string, type: PermissionType): Promise<Row> {
+    const row = await this.row(collection, id)
     if (!row) throw err('document_not_found', undefined, [id])
     if (!this.can(caller, collection, row, type)) {
       // Hide documents the caller cannot even read.
@@ -478,133 +566,132 @@ export class DocumentStore {
     return row
   }
 
-  private tx<T>(fn: () => T): T {
-    return this.db.sqlite.transaction(fn).immediate()
-  }
-
   /**
    * Run independent writes in one transaction. Every operation gets a
    * savepoint, so a failing write rolls back only itself and the rest still
    * commit. Operations must use the `...InTx` methods; they must not open
    * their own transaction.
-   *
-   * One transaction per batch means one WAL commit and one checkpoint's worth
-   * of work for N writes, which is what `WriteBatcher` uses under load.
    */
-  runBatch<T>(operations: Array<() => T>): Array<BatchOutcome<T>> {
+  async runBatch<T>(operations: Array<() => Promise<T> | T>): Promise<Array<BatchOutcome<T>>> {
     if (operations.length === 0) return []
-    return this.tx(() =>
-      operations.map((operation, index) => {
-        // Savepoint names are internal and never touch user input.
-        const savepoint = `bunwrite_batch_${index}`
-        this.db.sqlite.run(`SAVEPOINT ${savepoint}`)
+    return this.runInTransaction(async () => {
+      const tx = this.context.getStore()!
+      const outcomes: Array<BatchOutcome<T>> = []
+      for (let index = 0; index < operations.length; index++) {
         try {
-          const value = operation()
-          this.db.sqlite.run(`RELEASE ${savepoint}`)
-          return { ok: true as const, value }
+          const value = await tx.savepoint(`bunwrite_batch_${index}`, async () => operations[index]!())
+          outcomes.push({ ok: true, value })
         } catch (error) {
-          try {
-            this.db.sqlite.run(`ROLLBACK TO ${savepoint}`)
-            this.db.sqlite.run(`RELEASE ${savepoint}`)
-          } catch {
-            // The transaction is no longer usable; the outer rollback reports it.
-          }
-          return { ok: false as const, error }
+          outcomes.push({ ok: false, error })
         }
-      }),
-    )
+      }
+      return outcomes
+    })
   }
 
   // ---------------------------------------------------------------- writes
 
-  createDocument(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
+  async createDocument(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
-    return this.tx(() => this.createDocumentInTx(caller, collection, input, options))
+    return this.runInTransaction(async () => this.createDocumentInTx(caller, collection, input, options))
   }
 
   /** `createDocument` without its own transaction; for `runBatch` and staged writes. */
-  createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Doc {
+  async createDocumentInTx(caller: Caller, collection: Collection, input: NewDocument, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
     this.assertCreate(caller, collection)
-    return decodeRow(collection, this.insertRow(caller, collection, input, options))
+    return decodeRow(collection, await this.insertRow(caller, collection, input, options))
   }
 
-  createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
+  async createDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
-    return this.tx(() =>
-      documents.map((d) => {
+    return this.runInTransaction(async () => {
+      const created: Doc[] = []
+      for (const d of documents) {
         const { $id, $permissions, ...data } = d
-        return decodeRow(collection, this.insertRow(caller, collection, { id: $id ?? 'unique()', data: { ...data, $createdAt: d.$createdAt, $updatedAt: d.$updatedAt }, permissions: $permissions ?? null }, options))
-      }),
-    )
+        created.push(
+          decodeRow(
+            collection,
+            await this.insertRow(caller, collection, { id: $id ?? 'unique()', data: { ...data, $createdAt: d.$createdAt, $updatedAt: d.$updatedAt }, permissions: $permissions ?? null }, options),
+          ),
+        )
+      }
+      return created
+    })
   }
 
-  updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
+  async updateDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
-    return this.tx(() => this.updateDocumentInTx(caller, collection, id, data, permissions, options))
+    return this.runInTransaction(async () => this.updateDocumentInTx(caller, collection, id, data, permissions, options))
   }
 
   /** `updateDocument` without its own transaction; for `runBatch` and staged writes. */
-  updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Doc {
+  async updateDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
     if (Object.keys(data ?? {}).length === 0 && (permissions === null || permissions === undefined)) {
       throw err('document_missing_payload')
     }
-    const row = this.requireRow(caller, collection, id, 'update')
-    return decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options))
+    const row = await this.requireRow(caller, collection, id, 'update')
+    return decodeRow(collection, await this.updateRow(caller, collection, row, data ?? {}, permissions, options))
   }
 
-  upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
+  async upsertDocument(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<{ doc: Doc; created: boolean }> {
     assertCallerScope(caller, 'documents.write')
-    return this.tx(() => this.upsertDocumentInTx(caller, collection, id, data, permissions, options))
+    return this.runInTransaction(async () => this.upsertDocumentInTx(caller, collection, id, data, permissions, options))
   }
 
   /** `upsertDocument` without its own transaction; for `runBatch` and staged writes. */
-  upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): { doc: Doc; created: boolean } {
+  async upsertDocumentInTx(caller: Caller, collection: Collection, id: string, data: Record<string, unknown>, permissions: unknown, options: WriteOptions = {}): Promise<{ doc: Doc; created: boolean }> {
     assertCallerScope(caller, 'documents.write')
-    const row = this.row(collection, id)
+    const row = await this.row(collection, id)
     if (row) {
       if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
-      return { doc: decodeRow(collection, this.updateRow(caller, collection, row, data ?? {}, permissions, options)), created: false }
+      return { doc: decodeRow(collection, await this.updateRow(caller, collection, row, data ?? {}, permissions, options)), created: false }
     }
     if (options.revision !== undefined) {
       throw err('document_update_conflict', `Document '${id}' does not exist, but the request requires an existing revision.`)
     }
     this.assertCreate(caller, collection)
-    return { doc: decodeRow(collection, this.insertRow(caller, collection, { id, data: data ?? {}, permissions }, options)), created: true }
+    return { doc: decodeRow(collection, await this.insertRow(caller, collection, { id, data: data ?? {}, permissions }, options)), created: true }
   }
 
-  upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Doc[] {
+  async upsertDocuments(caller: Caller, collection: Collection, documents: Record<string, unknown>[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
-    return this.tx(() =>
-      documents.map((d) => {
+    return this.runInTransaction(async () => {
+      const result: Doc[] = []
+      for (const d of documents) {
         const { $id, $permissions, ...data } = d
         if (typeof $id !== 'string' || !$id) {
-          return decodeRow(collection, this.insertRow(caller, collection, { id: 'unique()', data, permissions: $permissions ?? null }, options))
+          result.push(decodeRow(collection, await this.insertRow(caller, collection, { id: 'unique()', data, permissions: $permissions ?? null }, options)))
+          continue
         }
-        const row = this.row(collection, $id)
-        if (row) return decodeRow(collection, this.updateRow(caller, collection, row, data, $permissions ?? null, options))
-        return decodeRow(collection, this.insertRow(caller, collection, { id: $id, data, permissions: $permissions ?? null }, options))
-      }),
-    )
+        const row = await this.row(collection, $id)
+        result.push(
+          row
+            ? decodeRow(collection, await this.updateRow(caller, collection, row, data, $permissions ?? null, options))
+            : decodeRow(collection, await this.insertRow(caller, collection, { id: $id, data, permissions: $permissions ?? null }, options)),
+        )
+      }
+      return result
+    })
   }
 
-  deleteDocument(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
+  async deleteDocument(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
-    return this.tx(() => this.deleteDocumentInTx(caller, collection, id, options))
+    return this.runInTransaction(async () => this.deleteDocumentInTx(caller, collection, id, options))
   }
 
   /** `deleteDocument` without its own transaction; for `runBatch` and staged writes. */
-  deleteDocumentInTx(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Doc {
+  async deleteDocumentInTx(caller: Caller, collection: Collection, id: string, options: WriteOptions = {}): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
-    const row = this.requireRow(caller, collection, id, 'delete')
-    this.deleteRow(collection, row, options)
+    const row = await this.requireRow(caller, collection, id, 'delete')
+    await this.deleteRow(collection, row, options)
     return decodeRow(collection, row)
   }
 
-  incrementAttribute(
+  async incrementAttribute(
     caller: Caller,
     collection: Collection,
     id: string,
@@ -613,12 +700,12 @@ export class DocumentStore {
     bound: number | null,
     direction: 1 | -1,
     options: WriteOptions = {},
-  ): Doc {
-    return this.tx(() => this.incrementAttributeInTx(caller, collection, id, key, by, bound, direction, options))
+  ): Promise<Doc> {
+    return this.runInTransaction(() => this.incrementAttributeInTx(caller, collection, id, key, by, bound, direction, options))
   }
 
   /** `incrementAttribute` without its own transaction; for `runBatch` and staged writes. */
-  incrementAttributeInTx(
+  async incrementAttributeInTx(
     caller: Caller,
     collection: Collection,
     id: string,
@@ -627,7 +714,7 @@ export class DocumentStore {
     bound: number | null,
     direction: 1 | -1,
     options: WriteOptions = {},
-  ): Doc {
+  ): Promise<Doc> {
     assertCallerScope(caller, 'documents.write')
     const a = collection.attributeMap.get(key)
     if (!a) throw err('attribute_not_found', undefined, [key])
@@ -637,7 +724,7 @@ export class DocumentStore {
     if (typeof by !== 'number' || !Number.isFinite(by) || by <= 0) {
       throw err('general_argument_invalid', 'Invalid `value` param: Value must be a number greater than 0.')
     }
-    const row = this.requireRow(caller, collection, id, 'update')
+    const row = await this.requireRow(caller, collection, id, 'update')
     this.guardCheck(collection, row, options)
     this.revisionCheck(row, options)
     const current = (row[key] as number | null) ?? 0
@@ -646,13 +733,13 @@ export class DocumentStore {
       throw err('attribute_limit_exceeded', direction === 1 ? `Attribute value exceeds maximum limit: ${bound}` : `Attribute value exceeds minimum limit: ${bound}`)
     }
     const stamp = now()
-    const sql = `UPDATE ${q(collection.table)} SET ${q(key)} = ?, _updatedAt = ?, ${q('_rev')} = ${q('_rev')} + 1 WHERE _seq = ?`
+    const sql = `UPDATE ${q(collection.table)} SET ${q(key)} = ?, ${q('_updatedAt')} = ?, ${q('_rev')} = ${q('_rev')} + 1 WHERE _seq = ?`
     let updated: Row
-    if (RETURNING) {
-      updated = this.db.sqlite.query(`${sql} RETURNING *`).get(next, stamp, row._seq) as Row
+    if (this.returning) {
+      updated = (await this.exec().get<Row>(`${sql} RETURNING *`, [next, stamp, row._seq]))!
     } else {
-      this.db.sqlite.query(sql).run(next, stamp, row._seq)
-      updated = this.rowBySeq(collection, row._seq)
+      await this.exec().run(sql, [next, stamp, row._seq])
+      updated = await this.rowBySeq(collection, row._seq)
     }
     this.touch(collection, id, options)
     this.record(collection, 'update', updated, options)
@@ -664,9 +751,9 @@ export class DocumentStore {
   }
 
   /** Rows a bulk operation applies to: the filters and limit, ignoring select. */
-  private bulkRows(caller: Caller, collection: Collection, rawQueries: unknown[]): Row[] {
+  private async bulkRows(caller: Caller, collection: Collection, rawQueries: unknown[]): Promise<Row[]> {
     const queries: Query[] = parseQueries(rawQueries)
-    const compiled = compileCached(collection, rawQueries)
+    const compiled = compileCached(collection, rawQueries, this.db.dialect)
     // Compiled queries are shared; copy before replacing the limit.
     const effective = queries.some((query) => query.method === 'limit')
       ? compiled
@@ -674,32 +761,36 @@ export class DocumentStore {
     return this.select(caller, collection, effective)
   }
 
-  updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options: WriteOptions = {}): Doc[] {
+  async updateDocuments(caller: Caller, collection: Collection, data: Record<string, unknown>, rawQueries: unknown[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
     const { $permissions, ...rest } = data ?? {}
-    return this.tx(() =>
-      this.bulkRows(caller, collection, rawQueries).map((row) =>
-        decodeRow(collection, this.updateRow(caller, collection, row, rest, $permissions ?? null, options)),
-      ),
-    )
+    return this.runInTransaction(async () => {
+      const rows = await this.bulkRows(caller, collection, rawQueries)
+      const updated: Doc[] = []
+      for (const row of rows) updated.push(decodeRow(collection, await this.updateRow(caller, collection, row, rest, $permissions ?? null, options)))
+      return updated
+    })
   }
 
-  deleteDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], options: WriteOptions = {}): Doc[] {
+  async deleteDocuments(caller: Caller, collection: Collection, rawQueries: unknown[], options: WriteOptions = {}): Promise<Doc[]> {
     assertCallerScope(caller, 'documents.write')
     this.assertBulk(caller)
-    return this.tx(() =>
-      this.bulkRows(caller, collection, rawQueries).map((row) => {
-        this.deleteRow(collection, row, options)
-        return decodeRow(collection, row)
-      }),
-    )
+    return this.runInTransaction(async () => {
+      const rows = await this.bulkRows(caller, collection, rawQueries)
+      const deleted: Doc[] = []
+      for (const row of rows) {
+        await this.deleteRow(collection, row, options)
+        deleted.push(decodeRow(collection, row))
+      }
+      return deleted
+    })
   }
 
   /** Read-only existence and permission check used when staging transaction writes. */
-  checkStagedWrite(caller: Caller, collection: Collection, id: string, type: PermissionType): Doc | null {
+  async checkStagedWrite(caller: Caller, collection: Collection, id: string, type: PermissionType): Promise<Doc | null> {
     assertCallerScope(caller, type === 'read' ? 'documents.read' : 'documents.write')
-    const row = this.row(collection, id)
+    const row = await this.row(collection, id)
     if (!row) return null
     if (!this.can(caller, collection, row, type)) {
       if (!this.can(caller, collection, row, 'read')) throw err('document_not_found', undefined, [id])

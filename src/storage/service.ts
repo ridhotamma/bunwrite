@@ -332,11 +332,11 @@ export class StorageService {
     return { bucket, file }
   }
 
-  listFiles(caller: Caller, bucketId: string, queries: unknown[], search?: string, includeTotal = true) {
+  async listFiles(caller: Caller, bucketId: string, queries: unknown[], search?: string, includeTotal = true) {
     assertCallerScope(caller, 'files.read')
     const bucket = this.bucket(bucketId, caller.privileged)
     const scope = [JSON.stringify({ method: 'equal', attribute: 'bucketId', values: [bucketId] })]
-    const { total, seqs } = listSeqs(this.store, FILES, queries, {
+    const { total, seqs } = await listSeqs(this.store, FILES, queries, {
       scope,
       includeTotal,
       search: search ? { term: search, fields: ['name', '$id'] } : undefined,

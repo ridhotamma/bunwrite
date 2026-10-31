@@ -376,9 +376,9 @@ export function userRoutes(router: Router<AppContext>): void {
     })
   })
 
-  router.get('/users', ({ ctx, params }) => {
+  router.get('/users', async ({ ctx, params }) => {
     requireKey(ctx, 'users.read')
-    const { total, users } = ctx.auth.listUsers(list(params.queries), str(params.search), bool(params.total, true))
+    const { total, users } = await ctx.auth.listUsers(list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, users: users.map(userModel) })
   })
 
@@ -461,9 +461,9 @@ export function userRoutes(router: Router<AppContext>): void {
     return json(prefs)
   })
 
-  router.get('/users/:userId/memberships', ({ ctx, path, params }) => {
+  router.get('/users/:userId/memberships', async ({ ctx, path, params }) => {
     user(ctx, path.userId!)
-    const { total, memberships } = ctx.teams.listMemberships({ userId: path.userId! }, list(params.queries), str(params.search), bool(params.total, true))
+    const { total, memberships } = await ctx.teams.listMemberships({ userId: path.userId! }, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, memberships: memberships.map(membershipModel) })
   })
 

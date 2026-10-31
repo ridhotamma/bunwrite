@@ -9,8 +9,13 @@
  * `DB_DRIVER`, `DATABASE_URL`, `DATABASE_SCHEMA` (Postgres) or
  * `MONGO_DATABASE`, `DATABASE_POOL_MAX`, `DATABASE_SSL`.
  */
+import { dirname, resolve } from 'node:path'
+
 import { databaseOptionsOf, describeDatabase, openDatabase, parseDatabaseBackend, type DatabaseOptions } from '~/db'
 import { configFromEnv } from '~/config'
+import { pushConfig } from '~/schema/push'
+import { pushConfigPostgres } from '~/schema/push-postgres'
+import type { PostgresDriver } from '~/db/postgres-driver'
 
 interface Flags {
   driver?: string
@@ -20,6 +25,8 @@ interface Flags {
   ssl?: boolean
   'no-bootstrap'?: boolean
   json?: boolean
+  schema?: string
+  prune?: boolean
 }
 
 function parseFlags(argv: string[]): { command: string; flags: Flags } {
@@ -33,7 +40,7 @@ function parseFlags(argv: string[]): { command: string; flags: Flags } {
     }
     const [rawKey, inline] = value.slice(2).split('=', 2) as [string, string | undefined]
     const key = rawKey === 'mongodb' ? 'driver' : rawKey
-    if (key === 'ssl' || key === 'no-bootstrap' || key === 'json') {
+    if (key === 'ssl' || key === 'no-bootstrap' || key === 'json' || key === 'prune') {
       flags[key] = true
       continue
     }
@@ -46,12 +53,14 @@ function parseFlags(argv: string[]): { command: string; flags: Flags } {
         flags.url = next
         break
       case 'database':
-      case 'schema':
       case 'namespace':
         flags.database = next
         break
       case 'pool':
         flags.pool = next
+        break
+      case 'schema':
+        flags.schema = next
         break
       default:
         throw new Error(`Unknown flag --${rawKey}`)
@@ -81,7 +90,9 @@ function optionsFrom(flags: Flags): DatabaseOptions {
 async function main(): Promise<void> {
   const { command, flags } = parseFlags(process.argv.slice(2))
   if (!['check', 'migrate', 'ping'].includes(command)) {
-    console.error(`Usage: bun src/cli/db.ts [check|migrate|ping] [--driver sqlite|postgres|mongodb] [--url URL] [--database NAME]`)
+    console.error(
+      `Usage: bun src/cli/db.ts [check|migrate|ping] [--driver sqlite|postgres|mongodb] [--url URL] [--database NAME] [--schema FILE] [--prune]`,
+    )
     process.exit(2)
   }
 
@@ -93,6 +104,22 @@ async function main(): Promise<void> {
 
   const database = await openDatabase({ ...options, bootstrap: options.bootstrap !== false || command === 'migrate' })
   try {
+    if (flags.schema) {
+      const path = resolve(flags.schema)
+      const config = await Bun.file(path).json()
+      const pushOptions = {
+        baseDir: dirname(path),
+        prune: flags.prune,
+        log: (line: string) => console.log(`[schema] ${line}`),
+      }
+      if (database.backend === 'postgres') {
+        await pushConfigPostgres(database.sql as PostgresDriver, config, pushOptions)
+      } else if (database.backend === 'sqlite' && database.sqlite) {
+        pushConfig(database.sqlite, config, pushOptions)
+      } else {
+        throw new Error('Schema push is not implemented for MongoDB yet; use a SQL backend for collections.')
+      }
+    }
     await database.ping()
     const report: Record<string, unknown> = {
       backend: database.backend,

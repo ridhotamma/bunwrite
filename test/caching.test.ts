@@ -72,7 +72,7 @@ describe('shared rate limits', () => {
 })
 
 describe('document cache invalidation', () => {
-  test('a write on one connection invalidates another connection’s list cache', () => {
+  test('a write on one connection invalidates another connection’s list cache', async () => {
     const path = tempDatabase()
     const writerDb = open(path)
     pushConfig(writerDb, testSchema)
@@ -83,21 +83,21 @@ describe('document cache invalidation', () => {
     const readerCollection = new Registry(readerDb).collection('main', 'products', true)
     const caller = keyCaller()
 
-    writer.createDocument(caller, writerCollection, { id: 'one', data: { tenantId: 't', name: 'One' }, permissions: [] })
-    expect(reader.listDocuments(caller, readerCollection, [], true).total).toBe(1)
+    await writer.createDocument(caller, writerCollection, { id: 'one', data: { tenantId: 't', name: 'One' }, permissions: [] })
+    expect((await reader.listDocuments(caller, readerCollection, [], true)).total).toBe(1)
     // Warm the reader's cache, then write elsewhere.
-    expect(reader.listDocuments(caller, readerCollection, [], true).total).toBe(1)
+    expect((await reader.listDocuments(caller, readerCollection, [], true)).total).toBe(1)
 
-    writer.createDocument(caller, writerCollection, { id: 'two', data: { tenantId: 't', name: 'Two' }, permissions: [] })
-    const afterCreate = reader.listDocuments(caller, readerCollection, [], true)
+    await writer.createDocument(caller, writerCollection, { id: 'two', data: { tenantId: 't', name: 'Two' }, permissions: [] })
+    const afterCreate = await reader.listDocuments(caller, readerCollection, [], true)
     expect(afterCreate.total).toBe(2)
 
-    writer.updateDocument(caller, writerCollection, 'one', { name: 'One updated' }, null)
-    const afterUpdate = reader.listDocuments(caller, readerCollection, [], true)
+    await writer.updateDocument(caller, writerCollection, 'one', { name: 'One updated' }, null)
+    const afterUpdate = await reader.listDocuments(caller, readerCollection, [], true)
     expect(afterUpdate.documents.find((doc) => doc.$id === 'one')!.name).toBe('One updated')
 
-    writer.deleteDocument(caller, writerCollection, 'two')
-    expect(reader.listDocuments(caller, readerCollection, [], true).total).toBe(1)
+    await writer.deleteDocument(caller, writerCollection, 'two')
+    expect((await reader.listDocuments(caller, readerCollection, [], true)).total).toBe(1)
   })
 })
 

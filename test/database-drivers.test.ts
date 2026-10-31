@@ -6,6 +6,7 @@ import { openDb } from '~/db/connection'
 import { toPostgres } from '~/db/dialect'
 import { uniqueViolation, UnsupportedFeatureError } from '~/db/driver'
 import {
+  postgresCollectionVersionStatements,
   postgresDocumentIndexStatements,
   postgresDocumentTableStatements,
   postgresSystemStatements,
@@ -21,6 +22,14 @@ import { SettingsService, resolveApiKey } from '~/settings/service'
 import { AccessService } from '~/settings/access'
 import { Registry } from '~/schema/registry'
 import { VersionMonitor } from '~/cluster/versions'
+import { DocumentStore } from '~/documents/store'
+import { TransactionService } from '~/transactions/service'
+import { normalizeAttribute, normalizeIndex, permsTableName, tableName, type Collection } from '~/schema/types'
+import { compileQueries } from '~/documents/query'
+import { pushConfigPostgres } from '~/schema/push-postgres'
+import { MongoDocumentStore } from '~/documents/mongo-store'
+import { mongoDocumentIndexes } from '~/db/mongo-schema'
+import type { Caller } from '~/auth/caller'
 import { testConfig } from './helpers'
 
 const sqlite = openDb(':memory:')
@@ -83,6 +92,38 @@ describe('postgres dialect translation', () => {
     expect(() => toPostgres(`SELECT * FROM products__fts_name WHERE products__fts_name MATCH ?`)).toThrow(
       UnsupportedFeatureError,
     )
+  })
+})
+
+describe('document query dialect', () => {
+  const attributes = [normalizeAttribute({ key: 'name', type: 'string', required: false, size: 255 })]
+  const collection: Collection = {
+    seq: 1,
+    databaseId: 'main',
+    databaseSeq: 1,
+    id: 'products',
+    name: 'Products',
+    enabled: true,
+    documentSecurity: true,
+    permissions: [],
+    attributes,
+    indexes: [normalizeIndex({ key: 'fts', type: 'fulltext', attributes: ['name'] })],
+    createdAt: '',
+    updatedAt: '',
+    table: 'd1_products',
+    permsTable: 'd1_products__perms',
+    attributeMap: new Map(attributes.map((a) => [a.key, a])),
+  }
+
+  test('search becomes a tsvector query on Postgres and MATCH on SQLite', () => {
+    const pg = compileQueries(collection, [{ method: 'search', attribute: 'name', values: ['chuck taylor'] }], 'postgres')
+    expect(pg.where[0]).toContain(`to_tsvector('english', coalesce("name", ''))`)
+    expect(pg.where[0]).toContain('@@ plainto_tsquery')
+    expect(pg.params).toEqual(['chuck', 'taylor'])
+    expect(compileQueries(collection, [{ method: 'notSearch', attribute: 'name', values: ['chuck'] }], 'postgres').where[0]).toStartWith('NOT')
+
+    const sqlite = compileQueries(collection, [{ method: 'search', attribute: 'name', values: ['chuck'] }], 'sqlite')
+    expect(sqlite.where[0]).toContain('MATCH ?')
   })
 })
 
@@ -338,6 +379,132 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     expect(registry.collections.get('main/products')?.attributeMap.has('name')).toBe(true)
   })
 
+  test('the document store and transactions run on Postgres', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const stamp = '2026-01-01T00:00:00.000+00:00'
+    const database = await driver.get<{ seq: number }>(
+      `INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES ('docs', 'Docs', 1, ?, ?) RETURNING seq`,
+      [stamp, stamp],
+    )
+    const attributes = [
+      normalizeAttribute({ key: 'name', type: 'string', required: true, size: 255 }),
+      normalizeAttribute({ key: 'price', type: 'integer', required: false, default: 0 }),
+    ]
+    const indexes = [
+      normalizeIndex({ key: 'idx_name', type: 'key', attributes: ['name'] }),
+      normalizeIndex({ key: 'idx_search', type: 'fulltext', attributes: ['name'] }),
+    ]
+    const table = tableName(database!.seq, 'items')
+    for (const sql of postgresDocumentTableStatements(table, attributes)) await driver.exec(sql)
+    for (const sql of postgresDocumentIndexStatements(table, indexes, attributes)) await driver.exec(sql)
+    for (const sql of postgresCollectionVersionStatements('docs', 'items', table)) await driver.exec(sql)
+    await driver.run(
+      `INSERT INTO _collections (database_id, id, name, enabled, document_security, permissions, attributes, indexes, created_at, updated_at)
+       VALUES ('docs', 'items', 'Items', 1, 1, '[]', ?, ?, ?, ?)`,
+      [JSON.stringify(attributes), JSON.stringify(indexes), stamp, stamp],
+    )
+
+    const registry = new Registry(handle)
+    await registry.load()
+    const collection = registry.collection('docs', 'items', true)
+    expect(collection.table).toBe(table)
+    expect(collection.permsTable).toBe(permsTableName(table))
+
+    const store = new DocumentStore(handle)
+    const caller = keyCaller()
+    const created = await store.createDocument(caller, collection, { id: 'p1', data: { name: 'One', price: 3 }, permissions: [] })
+    expect(created.$id).toBe('p1')
+    expect((await store.getDocument(caller, collection, 'p1')).name).toBe('One')
+    expect((await store.listDocuments(caller, collection, [])).total).toBe(1)
+    // The per-collection version trigger exists on Postgres too.
+    expect(await store.collectionVersion(collection)).toBeGreaterThan(0)
+
+    const updated = await store.updateDocument(caller, collection, 'p1', { name: 'Two' }, null, { revision: Number(created.$revision) })
+    expect(updated.name).toBe('Two')
+    await expect(store.updateDocument(caller, collection, 'p1', { name: 'Nope' }, null, { revision: Number(created.$revision) })).rejects.toBeDefined()
+    expect((await store.incrementAttribute(caller, collection, 'p1', 'price', 2, 10, 1)).price).toBe(5)
+
+    // A batch keeps one failing operation from rolling back the others.
+    const outcomes = await store.runBatch([
+      () => store.createDocumentInTx(caller, collection, { id: 'p2', data: { name: 'Batch' }, permissions: [] }),
+      () => store.createDocumentInTx(caller, collection, { id: 'p1', data: { name: 'Dup' }, permissions: [] }),
+    ])
+    expect(outcomes.map((outcome) => (outcome.ok ? 'ok' : 'fail'))).toEqual(['ok', 'fail'])
+    expect((await store.listDocuments(caller, collection, [])).total).toBe(2)
+
+    // Transactions: staged create is visible only inside withStaged, then commits.
+    const transactions = new TransactionService(handle, registry, store)
+    const tx = await transactions.create(caller)
+    await transactions.stage(caller, tx.$id, {
+      databaseId: 'docs',
+      collectionId: 'items',
+      documentId: 't1',
+      action: 'create',
+      data: { data: { name: 'Staged' }, permissions: [] },
+    })
+    const staged = await transactions.withStaged(caller, tx.$id, () => store.listDocuments(caller, collection, []))
+    expect(staged.total).toBe(3)
+    expect((await store.listDocuments(caller, collection, [])).total).toBe(2)
+    await transactions.update(caller, tx.$id, true, false)
+    expect((await store.getDocument(caller, collection, 't1')).name).toBe('Staged')
+
+    // Full-text search compiles to a tsvector query on Postgres.
+    const searched = await store.listDocuments(caller, collection, [
+      JSON.stringify({ method: 'search', attribute: 'name', values: ['staged'] }),
+    ])
+    expect(searched.documents.map((doc) => doc.$id)).toEqual(['t1'])
+    const notSearched = await store.listDocuments(caller, collection, [
+      JSON.stringify({ method: 'notSearch', attribute: 'name', values: ['staged'] }),
+    ])
+    expect(notSearched.documents.map((doc) => doc.$id).sort()).toEqual(['p1', 'p2'])
+  })
+
+  test('the Postgres schema push creates and updates collections', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const config = {
+      tablesDB: [{ $id: 'shop', name: 'Shop', enabled: true }],
+      tables: [
+        {
+          $id: 'orders',
+          databaseId: 'shop',
+          name: 'Orders',
+          enabled: true,
+          rowSecurity: true,
+          $permissions: [],
+          columns: [
+            { key: 'label', type: 'string', required: false, array: false, size: 100 },
+            { key: 'qty', type: 'integer', required: false, array: false, default: 0 },
+          ],
+          indexes: [{ key: 'idx_label', type: 'key', attributes: ['label'], orders: ['ASC'] }],
+        },
+      ],
+      buckets: [],
+      functions: [],
+    }
+    await pushConfigPostgres(driver, config)
+    let registry = new Registry(handle)
+    await registry.load()
+    const first = registry.collection('shop', 'orders', true)
+    const store = new DocumentStore(handle)
+    await store.createDocument(keyCaller(), first, { id: 'o1', data: { label: 'first', qty: 2 }, permissions: [] })
+    expect((await store.getDocument(keyCaller(), first, 'o1')).label).toBe('first')
+
+    // A second push adds a column without dropping the table or its rows.
+    config.tables[0]!.columns.push({ key: 'note', type: 'string', required: false, array: false, size: 100 } as never)
+    await pushConfigPostgres(driver, config)
+    registry = new Registry(handle)
+    await registry.load()
+    const second = registry.collection('shop', 'orders', true)
+    expect(second.attributeMap.has('note')).toBe(true)
+    const created = await store.createDocument(keyCaller(), second, { id: 'o2', data: { label: 'second', note: 'n' }, permissions: [] })
+    expect(created.note).toBe('n')
+    expect((await store.listDocuments(keyCaller(), second, [])).total).toBe(2)
+
+    // Prune removes collections that are no longer in the config.
+    await pushConfigPostgres(driver, { ...config, tables: [] }, { prune: true })
+    expect(await driver.get(`SELECT 1 FROM _collections WHERE database_id = 'shop' AND id = 'orders'`)).toBeNull()
+  })
+
   test('drops the scratch schema', async () => {
     await database.close()
     const cleanup = await openDatabase({ backend: 'postgres', url: postgresUrl!, bootstrap: false })
@@ -365,6 +532,77 @@ describe.skipIf(!mongoUrl)('mongodb driver (integration)', () => {
     expect(await driver.nextSequence('products')).toBe(2)
     // The unique `id` index created by the bootstrap rejects a duplicate.
     await expect(users.insert({ id: 'u1', name: 'Dup' })).rejects.toBeDefined()
+  })
+
+  test('the MongoDB document store runs CRUD, permissions and queries', async () => {
+    const store = new MongoDocumentStore(driver)
+    const attributes = [
+      normalizeAttribute({ key: 'name', type: 'string', required: false, size: 255 }),
+      normalizeAttribute({ key: 'price', type: 'integer', required: false, default: 0 }),
+      normalizeAttribute({ key: 'tags', type: 'string', array: true, required: false, size: 32 }),
+      normalizeAttribute({ key: 'active', type: 'boolean', required: false, default: true }),
+    ]
+    const indexes = [normalizeIndex({ key: 'fts', type: 'fulltext', attributes: ['name'] })]
+    const collection: Collection = {
+      seq: 1,
+      databaseId: 'main',
+      databaseSeq: 1,
+      id: 'products',
+      name: 'Products',
+      enabled: true,
+      documentSecurity: true,
+      permissions: [],
+      attributes,
+      indexes,
+      createdAt: '',
+      updatedAt: '',
+      table: 'main_products',
+      permsTable: '',
+      attributeMap: new Map(attributes.map((a) => [a.key, a])),
+    }
+    for (const index of mongoDocumentIndexes(collection.table, indexes, attributes)) {
+      await driver.collection(collection.table).createIndex(index)
+    }
+
+    const admin = keyCaller()
+    const created = await store.createDocument(admin, collection, {
+      id: 'm1',
+      data: { name: 'Chuck Taylor', price: 10, tags: ['shoe', 'canvas'], active: true },
+      permissions: ['read("user:u1")', 'update("user:u1")', 'delete("user:u1")'],
+    })
+    expect(created.$id).toBe('m1')
+    expect(created.tags).toEqual(['shoe', 'canvas'])
+    expect(created.active).toBe(true)
+    expect((await store.getDocument(admin, collection, 'm1')).name).toBe('Chuck Taylor')
+    expect(await store.collectionVersion(collection)).toBeGreaterThan(0)
+
+    const u1 = { kind: 'user', privileged: false, user: { id: 'u1' }, sessionId: null, roles: new Set(['any', 'users', 'user:u1']), scopes: null } as unknown as Caller
+    const u2 = { kind: 'user', privileged: false, user: { id: 'u2' }, sessionId: null, roles: new Set(['any', 'users', 'user:u2']), scopes: null } as unknown as Caller
+
+    // Filters: equal, range, array contains, boolean, startsWith, search.
+    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'equal', attribute: 'active', values: [true] })])).total).toBe(1)
+    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'greaterThan', attribute: 'price', values: [5] })])).total).toBe(1)
+    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'contains', attribute: 'tags', values: ['canvas'] })])).total).toBe(1)
+    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'startsWith', attribute: 'name', values: ['chuck'] })])).total).toBe(1)
+    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'search', attribute: 'name', values: ['chuck'] })])).total).toBe(1)
+    // Document permissions: only u1 can read the row when a filter is applied.
+    expect((await store.listDocuments(u1, collection, [])).total).toBe(1)
+    expect((await store.listDocuments(u2, collection, [])).total).toBe(0)
+    await store.updateDocument(admin, collection, 'm1', { price: 12 }, null, { revision: 1 })
+    expect((await store.incrementAttribute(admin, collection, 'm1', 'price', 3, null, 1)).price).toBe(15)
+    await expect(store.updateDocument(admin, collection, 'm1', { price: 1 }, null, { revision: 1 })).rejects.toBeDefined()
+
+    const outcomes = await store.runBatch([
+      () => store.createDocument(admin, collection, { id: 'm2', data: { name: 'Second' }, permissions: [] }),
+      () => store.createDocument(admin, collection, { id: 'm1', data: { name: 'Dup' }, permissions: [] }),
+    ])
+    expect(outcomes.map((outcome) => (outcome.ok ? 'ok' : 'fail'))).toEqual(['ok', 'fail'])
+    expect(await store.countDocuments(admin, collection)).toBe(2)
+
+    await store.deleteDocument(admin, collection, 'm2')
+    expect(await store.countDocuments(admin, collection)).toBe(1)
+    // Staged reads are not supported without sessions.
+    await expect(store.preview(async () => 1)).rejects.toBeDefined()
   })
 
   test('drops the scratch database', async () => {

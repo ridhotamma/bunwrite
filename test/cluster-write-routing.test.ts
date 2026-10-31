@@ -294,7 +294,7 @@ describe('write forwarding', () => {
 
     // The writer's connection sees the document, and it was written once.
     const collection = writerServices.registry.collection('main', 'products', true)
-    expect(writerServices.store.countDocuments(keyCaller(), collection)).toBe(1)
+    expect(await writerServices.store.countDocuments(keyCaller(), collection)).toBe(1)
     const listed = await fetch(url, { headers })
     expect(listed.status).toBe(200)
     expect(((await listed.json()) as { total: number }).total).toBe(1)

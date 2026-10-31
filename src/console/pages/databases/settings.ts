@@ -7,9 +7,9 @@ import { destroy, icon, settingsSection } from '~/console/ui'
 import { COL, DB, collectionHeader, collectionUrl, countDocuments, loadCollection, tabs } from './shared'
 
 export function collectionSettingsPages(router: ConsoleRouter): void {
-  router.get(`${COL}/settings`, ({ ctx, path }) => {
+  router.get(`${COL}/settings`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    const documents = countDocuments(ctx, c)
+    const documents = await countDocuments(ctx, c)
     return ctx.render(
       c.name,
       'databases',

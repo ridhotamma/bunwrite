@@ -354,7 +354,7 @@ export async function verifyAgainstAppwrite(
   for (const collection of registry.collections.values()) {
     const queries = [JSON.stringify({ method: 'orderAsc', attribute: '$sequence' }), JSON.stringify({ method: 'limit', values: [sample] })]
     const remote = await source.get<{ total: number; documents: Doc[] }>(`/databases/${collection.databaseId}/collections/${collection.id}/documents`, queries)
-    const local = store.listDocuments(keyCaller(), collection, queries)
+    const local = await store.listDocuments(keyCaller(), collection, queries)
     if (remote.total !== local.total) mismatches.push(`${collection.id}: total ${remote.total} vs ${local.total}`)
     remote.documents.forEach((doc, i) => {
       checked++

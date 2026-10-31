@@ -535,7 +535,7 @@ export class FunctionService {
     return row
   }
 
-  listExecutions(functionId: string, queries: unknown[], includeTotal = true) {
+  async listExecutions(functionId: string, queries: unknown[], includeTotal = true) {
     this.fn(functionId)
     const scope = [
       JSON.stringify({
@@ -544,7 +544,7 @@ export class FunctionService {
         values: [functionId],
       }),
     ]
-    const { total, seqs } = listSeqs(this.store, EXECUTIONS, queries, {
+    const { total, seqs } = await listSeqs(this.store, EXECUTIONS, queries, {
       scope,
       includeTotal,
     })

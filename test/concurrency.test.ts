@@ -198,7 +198,7 @@ describe('If-Match', () => {
 })
 
 describe('upgrading an existing database', () => {
-  test('tables created before $revision get the column with revision 1', () => {
+  test('tables created before $revision get the column with revision 1', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-rev-'))
     dirs.push(dir)
     const path = join(dir, 'bunwrite.sqlite')
@@ -209,7 +209,7 @@ describe('upgrading an existing database', () => {
     const before = createServices(testConfig({ databasePath: path }), first)
     services.push(before)
     const collection = before.registry.collection('main', 'products', true)
-    expect(before.store.createDocument(keyCaller(), collection, { id: 'legacy', data: product(), permissions: null }).$revision).toBe(1)
+    expect((await before.store.createDocument(keyCaller(), collection, { id: 'legacy', data: product(), permissions: null })).$revision).toBe(1)
 
     // Simulate a table written by a Bunwrite version without revisions.
     first.sqlite.run(`ALTER TABLE ${q(collection.table)} DROP COLUMN _rev`)
@@ -220,6 +220,6 @@ describe('upgrading an existing database', () => {
     const after = createServices(testConfig({ databasePath: path }), reopened)
     services.push(after)
     const upgraded = after.registry.collection('main', 'products', true)
-    expect(after.store.getDocument(keyCaller(), upgraded, 'legacy').$revision).toBe(1)
+    expect((await after.store.getDocument(keyCaller(), upgraded, 'legacy')).$revision).toBe(1)
   })
 })

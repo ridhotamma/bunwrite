@@ -298,9 +298,9 @@ export function functionRoutes(router: Router<AppContext>): void {
     })
   })
 
-  router.get('/functions/:functionId/executions', ({ ctx, path, params }) => {
+  router.get('/functions/:functionId/executions', async ({ ctx, path, params }) => {
     requireKey(ctx, 'execution.read')
-    return json(ctx.functions.listExecutions(path.functionId!, list(params.queries), bool(params.total, true)))
+    return json(await ctx.functions.listExecutions(path.functionId!, list(params.queries), bool(params.total, true)))
   })
 
   router.post('/functions/:functionId/executions', async ({ ctx, path, params }) => {

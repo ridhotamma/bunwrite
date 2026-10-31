@@ -197,10 +197,10 @@ export class AuthService {
     }).immediate()
   }
 
-  listUsers(queries: unknown[], search?: string, includeTotal = true): { total: number; users: UserRowFull[] } {
+  async listUsers(queries: unknown[], search?: string, includeTotal = true): Promise<{ total: number; users: UserRowFull[] }> {
     const options: ListOptions = { includeTotal }
     if (search) options.search = { term: search, fields: ['name', 'email', 'phone', '$id'] }
-    const { total, seqs } = listSeqs(this.store, USERS, queries, options)
+    const { total, seqs } = await listSeqs(this.store, USERS, queries, options)
     return { total, users: this.bySeq<UserRowFull>('_users', seqs) }
   }
 

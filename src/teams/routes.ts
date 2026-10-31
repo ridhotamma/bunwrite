@@ -7,9 +7,9 @@ import { assertRedirect, withQuery } from '~/lib/origins'
 import type { Router } from '~/lib/router'
 
 export function teamRoutes(router: Router<AppContext>): void {
-  router.get('/teams', ({ ctx, params }) => {
+  router.get('/teams', async ({ ctx, params }) => {
     requireScope(ctx, 'teams.read')
-    const { total, teams } = ctx.teams.list(ctx.caller, list(params.queries), str(params.search), bool(params.total, true))
+    const { total, teams } = await ctx.teams.list(ctx.caller, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, teams: teams.map(teamModel) })
   })
 
@@ -57,10 +57,10 @@ export function teamRoutes(router: Router<AppContext>): void {
     return json(prefs)
   })
 
-  router.get('/teams/:teamId/memberships', ({ ctx, path, params }) => {
+  router.get('/teams/:teamId/memberships', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.read')
     ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
-    const { total, memberships } = ctx.teams.listMemberships({ teamId: path.teamId! }, list(params.queries), str(params.search), bool(params.total, true))
+    const { total, memberships } = await ctx.teams.listMemberships({ teamId: path.teamId! }, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, memberships: memberships.map(membershipModel) })
   })
 

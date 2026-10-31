@@ -9,6 +9,7 @@ import { normalizeDate } from '~/lib/datetime'
 import { invalidQuery } from '~/lib/errors'
 import { ftsTableName, type Attribute, type Collection } from '~/schema/types'
 import type { SqlValue } from './codec'
+import type { SqlDialect } from '~/db/driver'
 
 export interface Query {
   method: string
@@ -126,7 +127,17 @@ function ftsExpression(text: string): string | null {
   return words.map((w) => `"${w}"`).join(' OR ')
 }
 
-function compileFilter(collection: Collection, query: Query, params: SqlValue[]): string {
+/**
+ * Postgres full-text expression over the columns of a fulltext index. It must
+ * match the expression the GIN index was built on in `postgres-schema.ts`, or
+ * the planner cannot use the index.
+ */
+function postgresTsExpression(attributes: string[]): string {
+  const parts = attributes.map((key) => `coalesce(${q(key)}, '')`)
+  return `to_tsvector('english', ${parts.join(` || ' ' || `)})`
+}
+
+function compileFilter(collection: Collection, query: Query, params: SqlValue[], dialect: SqlDialect): string {
   const values = query.values ?? []
   const m = query.method
 
@@ -134,7 +145,7 @@ function compileFilter(collection: Collection, query: Query, params: SqlValue[])
     if (values.length === 0) throw invalidQuery(`${m === 'and' ? 'And' : 'Or'} queries require at least one query.`)
     const parts = parseQueries(values).map((nested) => {
       if (!FILTERS.has(nested.method)) throw invalidQuery(`Nested queries can only be filters, got ${nested.method}.`)
-      return compileFilter(collection, nested, params)
+      return compileFilter(collection, nested, params, dialect)
     })
     return `(${parts.join(m === 'and' ? ' AND ' : ' OR ')})`
   }
@@ -215,7 +226,20 @@ function compileFilter(collection: Collection, query: Query, params: SqlValue[])
     case 'notSearch': {
       const index = collection.indexes.find((i) => i.type === 'fulltext' && i.attributes.includes(t.key))
       if (!index) throw invalidQuery(`Searching by attribute "${t.key}" requires a fulltext index.`)
-      const expr = ftsExpression(String(one()))
+      const raw = String(one())
+      const words = raw.match(/[\p{L}\p{N}]+/gu)
+      if (!words || words.length === 0) return m === 'search' ? '0' : '1'
+      if (dialect === 'postgres') {
+        // OR between words, like FTS5 and Appwrite. plainto_tsquery is safe
+        // with bound parameters and stems each word.
+        const expr = postgresTsExpression(index.attributes)
+        const parts = words.map((word) => {
+          params.push(word)
+          return `(${expr} @@ plainto_tsquery('english', ?))`
+        })
+        return m === 'search' ? `(${parts.join(' OR ')})` : `NOT (${parts.join(' OR ')})`
+      }
+      const expr = ftsExpression(raw)
       if (!expr) return m === 'search' ? '0' : '1'
       const fts = q(ftsTableName(collection.table, index.key))
       params.push(index.attributes.length > 1 ? `{${t.key}} : (${expr})` : expr)
@@ -226,7 +250,7 @@ function compileFilter(collection: Collection, query: Query, params: SqlValue[])
 }
 
 /** Compile queries. Filters land in `where`/`params`; the rest is returned as settings. */
-export function compileQueries(collection: Collection, queries: Query[]): Compiled {
+export function compileQueries(collection: Collection, queries: Query[], dialect: SqlDialect = 'sqlite'): Compiled {
   const out: Compiled = {
     where: [],
     params: [],
@@ -291,7 +315,7 @@ export function compileQueries(collection: Collection, queries: Query[]): Compil
         out.random = true
         break
       default:
-        out.where.push(compileFilter(collection, query, out.params))
+        out.where.push(compileFilter(collection, query, out.params, dialect))
     }
   }
   if (out.random && out.cursor) throw invalidQuery('Random order cannot be combined with cursors.')
@@ -307,8 +331,8 @@ export function compileQueries(collection: Collection, queries: Query[]): Compil
 const compiledQueries = new WeakMap<Collection, Map<string, Compiled>>()
 const MAX_COMPILED_QUERIES = 256
 
-export function compileCached(collection: Collection, rawQueries: unknown[]): Compiled {
-  const key = JSON.stringify(rawQueries)
+export function compileCached(collection: Collection, rawQueries: unknown[], dialect: SqlDialect = 'sqlite'): Compiled {
+  const key = `${dialect}\u0000${JSON.stringify(rawQueries)}`
   let cache = compiledQueries.get(collection)
   if (!cache) {
     cache = new Map()
@@ -316,7 +340,7 @@ export function compileCached(collection: Collection, rawQueries: unknown[]): Co
   }
   const hit = cache.get(key)
   if (hit) return hit
-  const compiled = compileQueries(collection, parseQueries(rawQueries))
+  const compiled = compileQueries(collection, parseQueries(rawQueries), dialect)
   if (cache.size >= MAX_COMPILED_QUERIES) cache.clear()
   cache.set(key, compiled)
   return compiled

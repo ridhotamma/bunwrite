@@ -97,7 +97,9 @@ export interface MongoDriverOptions {
 const mongoCapabilities = capabilitiesOf({
   dialect: 'mongodb',
   sql: false,
-  transactions: true,
+  // Multi-document transactions need a replica set and a session-aware driver;
+  // the store runs each operation on its own until that is wired in.
+  transactions: false,
   savepoints: false,
   returning: false,
   ddl: false,

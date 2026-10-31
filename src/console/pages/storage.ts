@@ -197,11 +197,11 @@ export function storagePages(router: ConsoleRouter): void {
     return ctx.go(bucketUrl(b.id), { tone: 'success', text: 'Bucket created' })
   })
 
-  router.get(`${STORAGE}/:bucket`, ({ ctx, path, url }) => {
+  router.get(`${STORAGE}/:bucket`, async ({ ctx, path, url }) => {
     const b = ctx.services.storage.bucket(path.bucket!, true)
     const search = url.searchParams.get('search') ?? ''
     const { page, limit } = pageParams(url)
-    const { total, files } = ctx.services.storage.listFiles(keyCaller(), b.id, listQueries(page, limit), search || undefined)
+    const { total, files } = await ctx.services.storage.listFiles(keyCaller(), b.id, listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
     const body = files.length
       ? html`<div class="scroll"><table><thead><tr><th>Name</th><th class="hide-sm">Type</th><th class="num">Size</th><th class="hide-sm">Uploaded</th><th></th></tr></thead><tbody>

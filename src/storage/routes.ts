@@ -64,8 +64,8 @@ export function storageRoutes(router: Router<AppContext>): void {
     return noContent()
   })
 
-  router.get(FILES, ({ ctx, path, params }) =>
-    json(ctx.storage.listFiles(ctx.caller, path.bucketId!, list(params.queries), str(params.search), bool(params.total, true))),
+  router.get(FILES, async ({ ctx, path, params }) =>
+    json(await ctx.storage.listFiles(ctx.caller, path.bucketId!, list(params.queries), str(params.search), bool(params.total, true))),
   )
 
   router.post(FILES, async ({ ctx, path, params, request }) =>

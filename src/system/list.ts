@@ -4,7 +4,7 @@
  * document query compiler handles filters, ordering, cursors and totals.
  */
 import { keyCaller } from '~/auth/caller'
-import type { DocumentStore } from '~/documents/store'
+import type { DocumentBackend } from '~/documents/store'
 import { BunwriteError, err } from '~/lib/errors'
 import { normalizeAttribute, type Attribute, type Collection } from '~/schema/types'
 
@@ -74,14 +74,14 @@ export interface ListOptions {
 }
 
 /** Run Appwrite queries against a view; returns the matching row `seq`s in order, and the total. */
-export function listSeqs(store: DocumentStore, collection: Collection, queries: unknown[], options: ListOptions = {}): { total: number; seqs: number[] } {
+export async function listSeqs(store: DocumentBackend, collection: Collection, queries: unknown[], options: ListOptions = {}): Promise<{ total: number; seqs: number[] }> {
   const all = [...(options.scope ?? []), ...queries]
   const term = options.search?.term?.trim()
   if (term && options.search) {
     all.push(q('or', undefined, options.search.fields.map((f) => JSON.parse(q('contains', f, [term])))))
   }
   try {
-    const result = store.listDocuments(keyCaller(), collection, all, options.includeTotal ?? true)
+    const result = await store.listDocuments(keyCaller(), collection, all, options.includeTotal ?? true)
     return { total: result.total, seqs: result.documents.map((d) => Number(d.$sequence)) }
   } catch (error) {
     if (error instanceof BunwriteError && error.type === 'general_query_invalid') {

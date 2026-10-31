@@ -16,7 +16,7 @@ export function overviewPages(router: ConsoleRouter): void {
 async function overview(ctx: ConsoleContext): Promise<Html> {
   const { services } = ctx
   let documents = 0
-  for (const c of services.registry.collections.values()) documents += services.store.countDocuments(keyCaller(), c)
+  for (const c of services.registry.collections.values()) documents += await services.store.countDocuments(keyCaller(), c)
   const files = services.storage.totals()
   let dbBytes = 0
   try {

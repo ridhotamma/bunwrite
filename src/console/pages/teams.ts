@@ -40,10 +40,10 @@ function addMemberDialog(t: { id: string; name: string }): Html {
 }
 
 export function teamPages(router: ConsoleRouter): void {
-  router.get(TEAMS, ({ ctx, url }) => {
+  router.get(TEAMS, async ({ ctx, url }) => {
     const search = url.searchParams.get('search') ?? ''
     const { page, limit } = pageParams(url)
-    const { total, teams } = ctx.services.teams.list(keyCaller(), listQueries(page, limit), search || undefined)
+    const { total, teams } = await ctx.services.teams.list(keyCaller(), listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
     const create = html`<a class="btn primary" href="${TEAMS}/new">${icon('plus')}<span>Create team</span></a>`
     const body = teams.length
@@ -86,9 +86,9 @@ export function teamPages(router: ConsoleRouter): void {
     return ctx.go(teamUrl(team.id), { tone: 'success', text: 'Team created' })
   })
 
-  router.get(`${TEAMS}/:id`, ({ ctx, path }) => {
+  router.get(`${TEAMS}/:id`, async ({ ctx, path }) => {
     const t = ctx.services.teams.team(path.id!)
-    const members = ctx.services.teams.listMemberships({ teamId: t.id }, [JSON.stringify({ method: 'limit', values: [500] })]).memberships.map(membershipModel)
+    const members = (await ctx.services.teams.listMemberships({ teamId: t.id }, [JSON.stringify({ method: 'limit', values: [500] })])).memberships.map(membershipModel)
     const base = teamUrl(t.id)
     const add = html`<a class="btn primary" href="${base}/members/new" data-dialog-open="#add-member">${icon('plus')}<span>Add member</span></a>`
     return ctx.render(

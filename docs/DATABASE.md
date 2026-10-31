@@ -64,6 +64,9 @@ bun run db:ping         # connection check
 
 bun run db:check --driver postgres --url postgres://localhost/bunwrite --database bunwrite
 bun run db:check --driver mongodb --url mongodb://localhost:27017 --database bunwrite --json
+
+# Apply a project config (collections, buckets, functions) to the backend.
+bun run db:migrate --schema appwrite.config.json --prune
 ```
 
 The CLI reads the same environment variables as the server. `--no-bootstrap`
@@ -226,13 +229,24 @@ Transactions on MongoDB require a replica set (`mongodb://…?replicaSet=…`).
 Permission tables have no Mongo counterpart: document permissions live in the
 document's `_permissions` field, which is what the permission filter expects.
 
-### Not available on MongoDB yet
+### MongoDB document backend
 
-- SQL-shaped services: a repository layer must replace the queries in
-  `DocumentStore`, auth, teams, storage, functions and the console before those
-  features can run on Mongo. The driver gives that layer its primitives.
-- The cross-process event bus and cache-version triggers (they are SQL tables /
-  triggers). Use Mongo change streams or an external bus in that layer.
+`MongoDocumentStore` implements `DocumentBackend`: CRUD, bulk writes, filters,
+sorting, cursors, projections, permissions, revisions and text search. Its
+limits are explicit:
+
+- `runInTransaction` runs the callback directly and `runBatch` does not roll
+  back earlier operations. Multi-document transactions need a replica set and
+  a session-aware driver; the current driver does not open sessions.
+- Staged transaction reads (`preview`) are rejected with
+  `UnsupportedFeatureError`.
+- `orderRandom` is rejected (it needs an aggregation `$sample`).
+- The list cache and cache-version triggers are SQL features; Mongo has no
+  cross-process version counter, only `_doc_versions` for ETags.
+
+The remaining SQL-shaped services (auth, teams, storage, functions and the
+console) still need their own repository layer before those features can run on
+Mongo.
 
 ## Migration order
 
@@ -251,9 +265,22 @@ SQLite test suite green:
    constructor; a network backend calls `services.ready()` before serving.
    `test/database-drivers.test.ts` covers the overlay, API keys, access
    switches, version counters and the registry against Postgres.
-3. `documents/store.ts` + `documents/batcher.ts` + `transactions/service.ts` —
-   the data plane. This is the step that makes the document API portable, and
-   the one that needs the Mongo repository.
+3. **Done.** `documents/store.ts`, `documents/batcher.ts` and
+   `transactions/service.ts` use the port and an `AsyncLocalStorage` transaction
+   context, so document CRUD, bulk writes, `runBatch` savepoints, optimistic
+   revisions, permissions, staged transaction reads and commit conflict
+   detection run on SQLite and Postgres. `Query.search` compiles to
+   `to_tsvector`/`plainto_tsquery` on Postgres (matching the GIN index) and to
+   FTS5 `MATCH` on SQLite. `bun run db:migrate --schema …` creates and updates
+   collection tables, indexes and version triggers on Postgres via
+   `push-postgres.ts`.
+   `MongoDocumentStore` (`documents/mongo-store.ts`) implements the same
+   `DocumentBackend` for MongoDB with its own Appwrite-query → Mongo-filter
+   compiler. It stores documents natively (booleans, arrays, `_permissions` as
+   an array) and supports CRUD, bulk operations, filters, text search,
+   permissions, revisions and `runBatch`; staged transaction reads, random
+   order and multi-document transactions need a replica set/session support and
+   are rejected explicitly rather than silently emulated.
 4. `auth/*`, `teams/*`, `storage/*`, `functions/*`.
 5. Console pages and the cluster/backup features, which can stay SQLite-only
    behind `db.capabilities`.

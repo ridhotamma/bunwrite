@@ -61,16 +61,17 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     return ctx.go(databaseUrl(id), { tone: 'success', text: 'Database created' })
   })
 
-  router.get(`${DB}/:db`, ({ ctx, path, url }) => {
+  router.get(`${DB}/:db`, async ({ ctx, path, url }) => {
     const d = ctx.services.registry.database(path.db!, true)
     const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
     const all = [...ctx.services.registry.collections.values()].filter((c) => c.databaseId === d.id).sort((a, b) => a.name.localeCompare(b.name))
     const collections = query ? all.filter((c) => `${c.name} ${c.id}`.toLowerCase().includes(query)) : all
+    const counts = new Map(await Promise.all(collections.map(async (c) => [c.id, await countDocuments(ctx, c)] as const)))
     const create = html`<a class="btn primary" href="${DB}/${d.id}/new">${icon('plus')}<span>Create collection</span></a>`
     const body = collections.length
       ? html`<div class="scroll"><table><thead><tr><th>Collection</th><th class="num">Documents</th><th class="num hide-sm">Attributes</th><th class="hide-sm">Security</th></tr></thead><tbody>
         ${collections.map((c) => html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents'"><td><a href="${collectionUrl(c)}/documents">${c.name}</a><div class="mono subdued cell-sub">${c.id}</div></td>
-          <td class="num">${countDocuments(ctx, c).toLocaleString('en-US')}</td><td class="num hide-sm">${c.attributes.length}</td>
+          <td class="num">${(counts.get(c.id) ?? 0).toLocaleString('en-US')}</td><td class="num hide-sm">${c.attributes.length}</td>
           <td class="hide-sm subdued">${c.documentSecurity ? 'Row security' : 'Collection permissions'}</td></tr>`)}
         </tbody></table></div>`
       : query

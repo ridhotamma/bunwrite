@@ -163,7 +163,7 @@ export async function startServer(): Promise<void> {
         lease?.stop()
         server?.stop()
         writes?.stop()
-        services.writes.drain()
+        await services.writes.drain()
         await services.requestLogs.flush()
         await projects.close()
         db.sqlite.close()

@@ -215,7 +215,8 @@ const VERSIONED: [string, string][] = [
 export const POSTGRES_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION bunwrite_bump_version() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  UPDATE "_meta" SET "value" = "value" + 1 WHERE "key" = TG_ARGV[0];
+  INSERT INTO "_meta" ("key", "value") VALUES (TG_ARGV[0], 1)
+  ON CONFLICT ("key") DO UPDATE SET "value" = "_meta"."value" + 1;
   RETURN NULL;
 END;
 $$`

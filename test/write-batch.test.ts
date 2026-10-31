@@ -49,7 +49,7 @@ describe('write batching', () => {
 
     expect(services.writes.batches).toBe(1)
     expect(services.writes.writes).toBe(25)
-    expect(services.store.countDocuments(caller, collection)).toBe(25)
+    expect(await services.store.countDocuments(caller, collection)).toBe(25)
     // Every request gets exactly its own document and event.
     expect(results.map((result) => result.value.$id).sort()).toEqual([...ids].sort())
     expect(results.every((result) => result.events.length === 1)).toBe(true)
@@ -71,8 +71,8 @@ describe('write batching', () => {
     const settled = await Promise.allSettled(attempts)
 
     expect(settled.map((result) => result.status)).toEqual(['fulfilled', 'rejected', 'fulfilled'])
-    expect(services.store.countDocuments(caller, collection)).toBe(3)
-    expect(services.store.getDocument(caller, collection, 'after').$id).toBe('after')
+    expect(await services.store.countDocuments(caller, collection)).toBe(3)
+    expect((await services.store.getDocument(caller, collection, 'after')).$id).toBe('after')
   })
 
   test('a duplicate unique index fails alone too', async () => {
@@ -92,7 +92,7 @@ describe('write batching', () => {
 
     expect(settled[0]!.status).toBe('rejected')
     expect(settled[1]!.status).toBe('fulfilled')
-    expect(services.store.getDocument(caller, collection, 'c').slug).toBe('other')
+    expect((await services.store.getDocument(caller, collection, 'c')).slug).toBe('other')
   })
 
   test('disable with WRITE_BATCH_MS=0 and still apply each write', async () => {
@@ -117,11 +117,11 @@ describe('write batching', () => {
       services.store.createDocumentInTx(caller, collection, { id: 'drained', data: product('drained'), permissions: null }, { events }),
     )
     expect(services.writes.pending).toBe(1)
-    services.writes.drain()
+    await services.writes.drain()
     const result = await pending
 
     expect(result.value.$id).toBe('drained')
-    expect(services.store.getDocument(caller, collection, 'drained').$id).toBe('drained')
+    expect((await services.store.getDocument(caller, collection, 'drained')).$id).toBe('drained')
   })
 
   test('concurrent HTTP creates share one transaction', async () => {

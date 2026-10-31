@@ -30,10 +30,10 @@ const userTabs = (id: string, on: 'profile' | 'settings') =>
   )
 
 export function userPages(router: ConsoleRouter): void {
-  router.get(USERS, ({ ctx, url }) => {
+  router.get(USERS, async ({ ctx, url }) => {
     const search = url.searchParams.get('search') ?? ''
     const { page, limit } = pageParams(url)
-    const { total, users } = ctx.services.auth.listUsers(listQueries(page, limit), search || undefined)
+    const { total, users } = await ctx.services.auth.listUsers(listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
     const create = html`<a class="btn primary" href="${USERS}/new">${icon('plus')}<span>Create user</span></a>`
     const body = users.length
@@ -119,9 +119,9 @@ export function userPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${USERS}/:id/settings`, ({ ctx, path }) => {
+  router.get(`${USERS}/:id/settings`, async ({ ctx, path }) => {
     const u = ctx.services.auth.user(path.id!)
-    const memberships = ctx.services.teams.listMemberships({ userId: u.id }, [JSON.stringify({ method: 'limit', values: [100] })]).memberships.map(membershipModel)
+    const memberships = (await ctx.services.teams.listMemberships({ userId: u.id }, [JSON.stringify({ method: 'limit', values: [100] })])).memberships.map(membershipModel)
     const identities = ctx.services.auth.identities(u.id)
     const base = userUrl(u.id)
     return ctx.render(

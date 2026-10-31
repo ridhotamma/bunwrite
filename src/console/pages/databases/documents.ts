@@ -16,7 +16,7 @@ function publish(ctx: ConsoleContext): void {
 
 /** Document list and form handlers. Markup lives in console/views. */
 export function documentPages(router: ConsoleRouter): void {
-  router.get(`${COL}/documents`, ({ ctx, path, url }) => {
+  router.get(`${COL}/documents`, async ({ ctx, path, url }) => {
     const c = loadCollection(ctx, path)
     const filter = url.searchParams.get('q') ?? ''
     const { page, limit, offset } = pageParams(url)
@@ -36,7 +36,7 @@ export function documentPages(router: ConsoleRouter): void {
     queries.push(JSON.stringify({ method: 'orderDesc', attribute: '$sequence' }))
     let result = { total: 0, documents: [] as Record<string, unknown>[] }
     try {
-      if (!filterError) result = ctx.services.store.listDocuments(keyCaller(), c, queries)
+      if (!filterError) result = await ctx.services.store.listDocuments(keyCaller(), c, queries)
     } catch (error) {
       filterError = error instanceof Error ? error.message : String(error)
     }
@@ -61,9 +61,9 @@ export function documentPages(router: ConsoleRouter): void {
     return ctx.render('Create document', 'databases', documentFormView(ctx, c, null))
   })
 
-  router.post(`${COL}/documents`, ({ ctx, path }) => {
+  router.post(`${COL}/documents`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    const doc = ctx.services.store.createDocument(keyCaller(), c, {
+    const doc = await ctx.services.store.createDocument(keyCaller(), c, {
       id: value(ctx.form, 'id') || 'unique()',
       data: parseData(ctx.form.data),
       permissions: lines(ctx.form.permissions),
@@ -72,22 +72,22 @@ export function documentPages(router: ConsoleRouter): void {
     return ctx.go(documentUrl(c, doc.$id), { tone: 'success', text: 'Document created' })
   })
 
-  router.get(`${COL}/documents/:doc`, ({ ctx, path }) => {
+  router.get(`${COL}/documents/:doc`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    const doc = ctx.services.store.getDocument(keyCaller(), c, path.doc!)
+    const doc = await ctx.services.store.getDocument(keyCaller(), c, path.doc!)
     return ctx.render(String(doc.$id), 'databases', documentFormView(ctx, c, doc))
   })
 
-  router.post(`${COL}/documents/:doc`, ({ ctx, path }) => {
+  router.post(`${COL}/documents/:doc`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.services.store.updateDocument(keyCaller(), c, path.doc!, parseData(ctx.form.data), lines(ctx.form.permissions))
+    await ctx.services.store.updateDocument(keyCaller(), c, path.doc!, parseData(ctx.form.data), lines(ctx.form.permissions))
     publish(ctx)
     return ctx.go(documentUrl(c, path.doc!), { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${COL}/documents/:doc/delete`, ({ ctx, path }) => {
+  router.post(`${COL}/documents/:doc/delete`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.services.store.deleteDocument(keyCaller(), c, path.doc!)
+    await ctx.services.store.deleteDocument(keyCaller(), c, path.doc!)
     publish(ctx)
     return ctx.go(`${collectionUrl(c)}/documents`, { tone: 'success', text: 'Document deleted' })
   })

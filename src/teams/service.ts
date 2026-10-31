@@ -89,7 +89,7 @@ export class TeamService {
     }
   }
 
-  list(caller: Caller, queries: unknown[], search?: string, includeTotal = true): { total: number; teams: TeamRow[] } {
+  async list(caller: Caller, queries: unknown[], search?: string, includeTotal = true): Promise<{ total: number; teams: TeamRow[] }> {
     const scope: string[] = []
     if (!caller.privileged) {
       if (!caller.user) throw err('general_unauthorized_scope', 'User (role: guests) missing scopes (["teams.read"])')
@@ -97,7 +97,7 @@ export class TeamService {
       scope.push(JSON.stringify({ method: 'equal', attribute: '$id', values: ids.length ? ids : ['\u0000'] }))
     }
     const options = { scope, includeTotal, search: search ? { term: search, fields: ['name', '$id'] } : undefined }
-    const { total, seqs } = listSeqs(this.store, TEAMS, queries, options)
+    const { total, seqs } = await listSeqs(this.store, TEAMS, queries, options)
     const rows = this.auth.bySeq<TeamRow & { seq: number }>('_teams', seqs)
     return { total, teams: rows.map((r) => this.team(r.id)) }
   }
@@ -145,11 +145,11 @@ export class TeamService {
     }).immediate()
   }
 
-  listMemberships(scope: { teamId?: string; userId?: string }, queries: unknown[], search?: string, includeTotal = true) {
+  async listMemberships(scope: { teamId?: string; userId?: string }, queries: unknown[], search?: string, includeTotal = true) {
     const filters: string[] = []
     if (scope.teamId) filters.push(scopeEqual('teamId', scope.teamId))
     if (scope.userId) filters.push(scopeEqual('userId', scope.userId))
-    const { total, seqs } = listSeqs(this.store, MEMBERSHIPS, queries, {
+    const { total, seqs } = await listSeqs(this.store, MEMBERSHIPS, queries, {
       scope: filters,
       includeTotal,
       search: search ? { term: search, fields: ['userName', 'userEmail', 'teamName', '$id'] } : undefined,

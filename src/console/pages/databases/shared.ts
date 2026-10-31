@@ -10,7 +10,7 @@ export const COL = `${DB}/:db/collections/:col`
 export const collectionUrl = (c: { databaseId: string; id: string }) =>
   `${DB}/${encodeURIComponent(c.databaseId)}/collections/${encodeURIComponent(c.id)}`
 
-export function countDocuments(ctx: ConsoleContext, c: Collection): number {
+export function countDocuments(ctx: ConsoleContext, c: Collection): Promise<number> {
   return ctx.services.store.countDocuments(keyCaller(), c)
 }
 
