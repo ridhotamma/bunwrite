@@ -9,6 +9,7 @@ export const TABS = [
   { key: 'templates', label: 'Email templates', href: `${SETTINGS}/templates` },
   { key: 'storage', label: 'File storage', href: `${SETTINGS}/storage` },
   { key: 'cache', label: 'Caching', href: `${SETTINGS}/cache` },
+  { key: 'database', label: 'Database', href: `${SETTINGS}/database` },
   { key: 'functions', label: 'Functions', href: `${SETTINGS}/functions` },
   { key: 'variables', label: 'Variables', href: `${SETTINGS}/variables` },
   { key: 'git', label: 'Git', href: `${SETTINGS}/git` },
@@ -21,7 +22,7 @@ export type SettingsTab = (typeof TABS)[number]['key']
 /** The settings sub-navigation, grouped so the list stays scannable. */
 export const SETTING_GROUPS: { label: string; tabs: SettingsTab[] }[] = [
   { label: 'Project', tabs: ['general', 'email', 'templates'] },
-  { label: 'Infrastructure', tabs: ['storage', 'cache', 'render'] },
+  { label: 'Infrastructure', tabs: ['storage', 'cache', 'database', 'render'] },
   { label: 'Platform', tabs: ['functions', 'variables', 'git', 'logs'] },
 ]
 
@@ -38,6 +39,7 @@ export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   backups: 'general',
   render: 'render',
   cache: 'cache',
+  database: 'database',
 }
 
 export const tabPath = (tab: SettingsTab) => `${SETTINGS}/${tab}`

@@ -218,6 +218,13 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('cache'), { tone: 'success', text: 'Preview cache cleared' })
   })
 
+  router.post(`${SETTINGS}/database`, ({ ctx }) => {
+    const mode = String(ctx.form.synchronous ?? '').trim().toUpperCase()
+    if (mode !== 'NORMAL' && mode !== 'FULL') throw err('general_argument_invalid', 'Synchronous mode must be NORMAL or FULL.')
+    ctx.services.settings.set('database', { synchronous: mode })
+    return ctx.go(tabPath('database'), { tone: 'success', text: `Database durability set to ${mode}` })
+  })
+
   router.post(`${SETTINGS}/:key/reset`, ({ ctx, path }) => {
     const key = path.key as SettingKey
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')

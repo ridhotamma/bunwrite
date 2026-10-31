@@ -528,6 +528,25 @@ describe('settings through the console', () => {
     expect(server.config.s3.enabled).toBe(false)
   })
 
+  test('database durability is a per-project setting with a reset', async () => {
+    const page = await (await get('/console/settings/database')).text()
+    expect(page).toContain('Commit durability')
+    expect(page).toContain('NORMAL')
+    expect(page).toContain('FULL')
+
+    const bad = await form('/console/settings/database', { synchronous: 'OFF' })
+    expect(flash(bad).get('err')).toContain('NORMAL or FULL')
+
+    const saved = await form('/console/settings/database', { synchronous: 'FULL' })
+    expect(flash(saved).get('ok')).toBe('Database durability set to FULL')
+    expect(server.config.sqliteSynchronous).toBe('FULL')
+    expect((server.db.sqlite.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous).toBe(2)
+
+    await form('/console/settings/database/reset', {})
+    expect(server.config.sqliteSynchronous).toBe('NORMAL')
+    expect((server.db.sqlite.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous).toBe(1)
+  })
+
   test('backups can be created, downloaded and deleted locally', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backups-'))
     const fileServer = startServer(undefined, { backupsPath: join(dir, 'backups') }, undefined, {}, join(dir, 'bunwrite.sqlite'))

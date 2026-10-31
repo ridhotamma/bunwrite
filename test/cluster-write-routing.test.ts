@@ -175,6 +175,8 @@ describe('writer role', () => {
     expect(configFromEnv({ HTTP_IDLE_TIMEOUT: '900' }).httpIdleTimeout).toBe(255)
     expect(configFromEnv({ SQLITE_BUSY_TIMEOUT_MS: '1500' }).busyTimeoutMs).toBe(1500)
     expect(configFromEnv({ SQLITE_READER_BUSY_TIMEOUT_MS: '250' }).readerBusyTimeoutMs).toBe(250)
+    expect(configFromEnv({}).sqliteSynchronous).toBe('NORMAL')
+    expect(configFromEnv({ SQLITE_SYNCHRONOUS: 'FULL' }).sqliteSynchronous).toBe('FULL')
   })
 
   test('per-worker ports move the writer out of the public range', () => {

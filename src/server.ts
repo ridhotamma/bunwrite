@@ -19,6 +19,9 @@ export async function startServer(): Promise<void> {
   if (tuning) console.log(`[autotune] ${tuning.summary}`)
 
   const config = configFromEnv()
+  // `createServices` applies the default project's stored settings over
+  // `config`; keep the environment value as the default for other projects.
+  const sqliteSynchronous = config.sqliteSynchronous
   // In a cluster, the first process indices are writers that never accept
   // public traffic. Each owns a hash of project IDs, so one project's write
   // load cannot stall the others' writes. A blocking checkpoint still only
@@ -34,7 +37,7 @@ export async function startServer(): Promise<void> {
   const sandbox = setupSandbox(databasePath)
   if (sandbox) console.log('[functions] isolation on: each function builds and runs as its own user')
 
-  const db = openDb(databasePath, tuning?.sqliteCacheMb, undefined, undefined, busyTimeoutMs)
+  const db = openDb(databasePath, tuning?.sqliteCacheMb, undefined, undefined, busyTimeoutMs, config.sqliteSynchronous)
   const instance = bootstrapInstance(db)
   config.orgId = instance.orgId
   config.projectId = instance.projectId
@@ -61,7 +64,7 @@ export async function startServer(): Promise<void> {
   }
 
   const services = createServices(config, db)
-  const projects = createProjectManager({ config, db, services })
+  const projects = createProjectManager({ config, db, services, sqliteSynchronous })
 
   // Take (or lose) the scheduler lease before anything is started, so the
   // timers already know whether this process should do the work.

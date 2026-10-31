@@ -14,6 +14,9 @@ export const MB = 1024 * 1024
 
 export type ResourceSource = 'cgroup' | 'host' | 'override'
 
+/** SQLite's `synchronous` pragma: NORMAL is fast, FULL fsyncs every commit. */
+export type SqliteSynchronous = 'NORMAL' | 'FULL'
+
 export interface DetectedResources {
   cpus: number
   memoryMb: number
@@ -277,6 +280,22 @@ export function configuredWalAutocheckpoint(env: Env = process.env): number {
   // because a cluster gives the writer its own process.
   if (env.SQLITE_WAL_AUTOCHECKPOINT === undefined || env.SQLITE_WAL_AUTOCHECKPOINT === '' || !Number.isFinite(value) || value < 0) return 10000
   return Math.round(value)
+}
+
+/**
+ * `SQLITE_SYNCHRONOUS`: NORMAL (the default) skips an fsync on every commit;
+ * a power loss or OS crash may roll back recent transactions. FULL fsyncs each
+ * commit, so an acknowledged write is on disk before the response is sent.
+ * Use FULL for payments, ledgers and other financial records.
+ */
+export function configuredSqliteSynchronous(env: Env = process.env): SqliteSynchronous {
+  const raw = env.SQLITE_SYNCHRONOUS?.trim()
+  if (!raw) return 'NORMAL'
+  const value = raw.toUpperCase()
+  if (value === 'NORMAL' || value === 'FULL') return value
+  // Silently falling back would tell an operator they have FULL durability
+  // when they do not, so a typo stops startup instead.
+  throw new Error(`SQLITE_SYNCHRONOUS must be NORMAL or FULL, got "${raw}".`)
 }
 
 /**

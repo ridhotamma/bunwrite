@@ -120,6 +120,21 @@ function storageCard(ctx: ConsoleContext): Html {
     </form>`)
 }
 
+function databaseCard(ctx: ConsoleContext): Html {
+  const mode = ctx.services.config.sqliteSynchronous
+  return card(ctx, 'database', 'Commit durability', 'database', 'How the project database acknowledges writes. It is independent of the other projects on this server.', html`
+    <form method="post" action="${SETTINGS}/database">
+      <label>Synchronous mode
+        <select name="synchronous">
+          <option value="NORMAL" ${mode === 'NORMAL' ? 'selected' : ''}>NORMAL — fast; recent commits can be lost on power failure</option>
+          <option value="FULL" ${mode === 'FULL' ? 'selected' : ''}>FULL — fsync every commit; for payments and ledgers</option>
+        </select>
+      </label>
+      ${alert('warning', html`<b>NORMAL</b> keeps the database consistent, but a power loss or OS crash can roll back transactions committed since the last checkpoint. Use <b>FULL</b> for orders, payments, accounting ledgers and any write that must be on disk before the response is sent. FULL adds an fsync to every commit and lowers write throughput.`)}
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`)
+}
+
 function projectVariablesCard(ctx: ConsoleContext): Html {
   const projectVars = ctx.services.variables.list(PROJECT_SCOPE)
   return card(ctx, 'project-vars', 'Global variables', null, 'Available to every site and function. A site or function variable with the same name wins.', variableList(projectVars, {
@@ -275,6 +290,9 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
     case 'cache':
       body = cacheCards(ctx)
+      break
+    case 'database':
+      body = databaseCard(ctx)
       break
     case 'render':
       body = renderCards(ctx)

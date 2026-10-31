@@ -348,11 +348,24 @@ Explicit values always win.
 | `SQLITE_CACHE_MB` | auto, 8–64 | SQLite page cache in MB. |
 | `SQLITE_MMAP_MB` | `256` | Memory-mapped database window per connection in MB; `0` disables mmap. |
 | `SQLITE_WAL_AUTOCHECKPOINT` | `10000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. A larger WAL means fewer synchronous checkpoints on the writer. |
+| `SQLITE_SYNCHRONOUS` | `NORMAL` | Default durability for project databases. `NORMAL` skips an fsync per commit; `FULL` fsyncs every commit. Each project can override it in Console → Settings → Database. See the durability note below. |
 | `SQLITE_BUSY_TIMEOUT_MS` | `5000` | How long the writer waits for SQLite's lock before failing. |
 | `SQLITE_READER_BUSY_TIMEOUT_MS` | `500` | How long a public worker waits for a lock before failing fast. Keep this short: a synchronous wait blocks that process's event loop. |
 | `MAX_REQUEST_BODY_MB` | auto, 16–256 | Largest accepted HTTP request body. |
 | `BUN_JSC_forceRAMSize` | unset | JS heap size in bytes. Startup-only; the Docker entrypoint and systemd wrapper set it. |
 | `MALLOC_ARENA_MAX` | unset | glibc malloc arena count. Startup-only; set by the deployment wrapper. |
+
+`SQLITE_SYNCHRONOUS` is case-insensitive and accepts only `NORMAL` or `FULL`;
+any other value stops startup so a typo cannot silently weaken durability.
+`NORMAL` uses WAL and skips the fsync on each commit: an application crash is
+safe, but a power loss or OS crash can roll back transactions committed since
+the last checkpoint. The database stays consistent either way. Use `FULL` for
+payments, accounting ledgers, or any write that must be on disk before the
+response is returned; it adds one fsync per commit.
+
+The environment value is the default for every project. A project can override
+it in Console → Settings → Database; the stored value wins until it is reset,
+and other worker processes pick it up on the next settings refresh.
 
 ## Caching and compression
 

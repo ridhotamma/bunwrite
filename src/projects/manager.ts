@@ -18,6 +18,7 @@ import type { FunctionRow } from '~/functions/service'
 import { pruneRateLimits } from '~/lib/limits'
 import { createServices, type Services } from '~/services'
 import type { SiteRow } from '~/sites/service'
+import type { SqliteSynchronous } from '~/system/autotune'
 import { dataDirOf, projectPaths, type ProjectPaths } from './paths'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
 
@@ -35,6 +36,11 @@ export interface ProjectManagerOptions {
   services: Services
   /** Root for `projects/<id>/...`; defaults to the control database's folder. */
   dataDir?: string
+  /**
+   * Environment default for new project databases. The default project's
+   * console setting must not become the default for every other project.
+   */
+  sqliteSynchronous?: SqliteSynchronous
 }
 
 const infoOf = (row: ProjectRow): ProjectInfo => ({
@@ -50,6 +56,8 @@ export class ProjectManager implements ProjectResolver {
   private readonly config: Config
   private readonly db: Db
   private readonly dataDir: string
+  /** Env default for project databases, before a project's console override. */
+  private readonly sqliteSynchronous: SqliteSynchronous
   private readonly runtimes = new Map<string, ProjectRuntime>()
   /** The default project's current SMTP; other projects use it unless they store their own. */
   private readonly serverSmtp = (): SmtpConfig | null =>
@@ -60,6 +68,7 @@ export class ProjectManager implements ProjectResolver {
     this.config = options.config
     this.db = options.db
     this.dataDir = options.dataDir ?? dataDirOf(options.config.databasePath)
+    this.sqliteSynchronous = options.sqliteSynchronous ?? options.config.sqliteSynchronous
     this.ensureDefault()
     this.load()
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
@@ -114,6 +123,7 @@ export class ProjectManager implements ProjectResolver {
       orgId: instance.orgId,
       projectName: instance.projectName,
       databasePath: paths.database,
+      sqliteSynchronous: this.sqliteSynchronous,
       storagePath: paths.storage,
       backupsPath: paths.backups,
       instanceBackups: false,
@@ -144,7 +154,7 @@ export class ProjectManager implements ProjectResolver {
     mkdirSync(paths.backups, { recursive: true })
     mkdirSync(paths.functions, { recursive: true })
     if (!existsSync(paths.database)) console.warn(`[projects] database missing for ${info.id}; creating a new empty project`)
-    const db = openDb(paths.database)
+    const db = openDb(paths.database, undefined, undefined, undefined, undefined, this.sqliteSynchronous)
     const instance = bootstrapInstance(
       db,
       { ORG_ID: info.orgId, PROJECT_ID: info.id, PROJECT_NAME: info.name, SECRET: randomSecret(32) },
@@ -229,7 +239,7 @@ export class ProjectManager implements ProjectResolver {
       mkdirSync(paths.storage, { recursive: true })
       mkdirSync(paths.backups, { recursive: true })
       mkdirSync(paths.functions, { recursive: true })
-      db = openDb(paths.database)
+      db = openDb(paths.database, undefined, undefined, undefined, undefined, this.sqliteSynchronous)
       const instance = bootstrapInstance(
         db,
         { ORG_ID: input.orgId, PROJECT_ID: id, PROJECT_NAME: name, SECRET: randomSecret(32) },

@@ -92,6 +92,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     httpIdleTimeout: 30,
     busyTimeoutMs: 5000,
     readerBusyTimeoutMs: 500,
+    sqliteSynchronous: 'NORMAL',
     cacheCheckMs: 0,
     realtimeBusPollMs: 100,
     // The suite checks Appwrite compatibility through Appwrite's SDKs; test/compat.test.ts covers Bunwrite's names.

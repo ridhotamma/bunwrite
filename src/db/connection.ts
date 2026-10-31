@@ -8,7 +8,9 @@ import {
   configuredBusyTimeout,
   configuredSqliteCacheMb,
   configuredSqliteMmapMb,
+  configuredSqliteSynchronous,
   configuredWalAutocheckpoint,
+  type SqliteSynchronous,
 } from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
 import * as schema from './system-schema'
@@ -158,6 +160,7 @@ export function openDb(
   mmapMb = configuredSqliteMmapMb(),
   walPages = configuredWalAutocheckpoint(),
   busyTimeoutMs = configuredBusyTimeout(),
+  synchronous: SqliteSynchronous = configuredSqliteSynchronous(),
 ): Db {
   if (path !== ':memory:' && !path.startsWith('file::memory:')) {
     mkdirSync(dirname(path), { recursive: true })
@@ -175,7 +178,10 @@ export function openDb(
   withMigrationLock(path, () => {
     sqlite.run(`PRAGMA busy_timeout = ${Math.max(0, Math.round(busyTimeoutMs))}`)
     sqlite.run('PRAGMA journal_mode = WAL')
-    sqlite.run('PRAGMA synchronous = NORMAL')
+    // NORMAL skips an fsync per commit and can lose recent commits after a
+    // power loss; FULL fsyncs each commit. The whitelist keeps the pragma value
+    // from being interpolated from an arbitrary string.
+    sqlite.run(`PRAGMA synchronous = ${synchronous === 'FULL' ? 'FULL' : 'NORMAL'}`)
     sqlite.run('PRAGMA foreign_keys = ON')
     // Negative cache_size is KiB; keep at least 1 MB.
     sqlite.run(`PRAGMA cache_size = -${Math.max(1, Math.round(Number(cacheMb) || 16)) * 1000}`)

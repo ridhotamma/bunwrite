@@ -12,6 +12,7 @@ import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
+import type { SqliteSynchronous } from '~/system/autotune'
 import { storedApiKeyScopes } from './scopes'
 
 export interface ProjectSettings {
@@ -34,6 +35,7 @@ export type SettingKey =
   | 'backups'
   | 'render'
   | 'cache'
+  | 'database'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',
@@ -48,6 +50,7 @@ export const SETTING_KEYS: SettingKey[] = [
   'backups',
   'render',
   'cache',
+  'database',
 ]
 
 const cloneOAuth = (oauth: Config['oauth']): Config['oauth'] =>
@@ -87,6 +90,7 @@ export class SettingsService {
     | 'backups'
     | 'render'
     | 'cache'
+    | 'sqliteSynchronous'
   >
   private readonly listeners = new Set<(key: SettingKey) => void>()
 
@@ -111,6 +115,7 @@ export class SettingsService {
       backups: { ...config.backups, s3: { ...config.backups.s3 } },
       render: { ...config.render },
       cache: { ...config.cache },
+      sqliteSynchronous: config.sqliteSynchronous,
     }
     for (const key of SETTING_KEYS) this.apply(key)
   }
@@ -177,6 +182,15 @@ export class SettingsService {
       case 'cache': {
         const v = this.read<Partial<CacheConfig>>('cache')
         c.cache = { ...this.defaults.cache, ...v }
+        break
+      }
+      case 'database': {
+        const v = this.read<{ synchronous?: SqliteSynchronous }>('database')
+        const mode = v?.synchronous === 'FULL' ? 'FULL' : v?.synchronous === 'NORMAL' ? 'NORMAL' : this.defaults.sqliteSynchronous
+        c.sqliteSynchronous = mode
+        // The pragma is connection-local, so each process applies the project's
+        // stored value to its own connection when settings refresh.
+        this.db.sqlite.run(`PRAGMA synchronous = ${mode}`)
         break
       }
     }

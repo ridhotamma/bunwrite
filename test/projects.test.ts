@@ -247,4 +247,36 @@ describe('multiple projects', () => {
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
   })
+
+  test('each project keeps its own database durability setting', () => {
+    const control = manager.defaultProject().services
+    const other = manager.get('project-b')!.services
+    const synchronous = (db: Db) => (db.sqlite.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous
+
+    expect(synchronous(control.db)).toBe(1)
+    expect(synchronous(other.db)).toBe(1)
+
+    control.settings.set('database', { synchronous: 'FULL' })
+    expect(control.config.sqliteSynchronous).toBe('FULL')
+    expect(synchronous(control.db)).toBe(2)
+    // The default project's setting must not leak into another project.
+    expect(other.config.sqliteSynchronous).toBe('NORMAL')
+    expect(synchronous(other.db)).toBe(1)
+
+    // A project created while the default project is FULL still starts from
+    // the environment default.
+    const created = manager.create({ id: 'project-sync', name: 'Sync', orgId: 'org_test' })
+    expect(created.project.services.config.sqliteSynchronous).toBe('NORMAL')
+    expect(synchronous(created.project.services.db)).toBe(1)
+    manager.delete('project-sync')
+
+    other.settings.set('database', { synchronous: 'FULL' })
+    expect(other.config.sqliteSynchronous).toBe('FULL')
+    expect(synchronous(other.db)).toBe(2)
+
+    control.settings.reset('database')
+    other.settings.reset('database')
+    expect(synchronous(control.db)).toBe(1)
+    expect(synchronous(other.db)).toBe(1)
+  })
 })

@@ -6,7 +6,7 @@ import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 import { DEFAULT_RUNTIMES, type RuntimesConfig } from './runtimes/install'
-import { configuredBusyTimeout, configuredReaderBusyTimeout } from './system/autotune'
+import { configuredBusyTimeout, configuredReaderBusyTimeout, configuredSqliteSynchronous, type SqliteSynchronous } from './system/autotune'
 
 export interface SmtpConfig {
   host: string
@@ -230,6 +230,11 @@ export interface Config {
   busyTimeoutMs: number
   /** How long a read waits for SQLite's lock; short so a public worker never blocks for long. */
   readerBusyTimeoutMs: number
+  /**
+   * SQLite `synchronous` pragma for every database connection: NORMAL is fast,
+   * FULL fsyncs each commit. Financial workloads should use FULL.
+   */
+  sqliteSynchronous: SqliteSynchronous
   /** How often to check for settings/schema changes made by another process. */
   cacheCheckMs: number
   /** How often a worker with WebSocket clients reads the realtime bus. */
@@ -467,6 +472,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     httpIdleTimeout: Math.min(255, Math.max(0, idleTimeout)),
     busyTimeoutMs: configuredBusyTimeout(env),
     readerBusyTimeoutMs: configuredReaderBusyTimeout(env),
+    sqliteSynchronous: configuredSqliteSynchronous(env),
     cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),
