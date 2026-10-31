@@ -6,7 +6,7 @@
  */
 import type { Db } from '~/db/connection'
 
-export const VERSION_KEYS = ['schema', 'settings', 'catalog', 'projects'] as const
+export const VERSION_KEYS = ['schema', 'settings', 'catalog', 'projects', 'auth', 'keys'] as const
 export type VersionKey = (typeof VERSION_KEYS)[number]
 export type VersionChanges = Record<VersionKey, boolean>
 
@@ -14,7 +14,14 @@ export type VersionChanges = Record<VersionKey, boolean>
 export const collectionVersionKey = (databaseId: string, collectionId: string): string =>
   `collection:${databaseId}/${collectionId}`
 
-const NO_CHANGES: VersionChanges = { schema: false, settings: false, catalog: false, projects: false }
+const NO_CHANGES: VersionChanges = {
+  schema: false,
+  settings: false,
+  catalog: false,
+  projects: false,
+  auth: false,
+  keys: false,
+}
 
 export class VersionMonitor {
   private seen: Record<VersionKey, number>
@@ -28,7 +35,7 @@ export class VersionMonitor {
   }
 
   private read(): Record<VersionKey, number> {
-    const values: Record<VersionKey, number> = { schema: 0, settings: 0, catalog: 0, projects: 0 }
+    const values: Record<VersionKey, number> = { schema: 0, settings: 0, catalog: 0, projects: 0, auth: 0, keys: 0 }
     try {
       for (const row of this.db.sqlite.query<{ key: string; value: number }, []>('SELECT key, value FROM _meta').all()) {
         if ((VERSION_KEYS as readonly string[]).includes(row.key)) values[row.key as VersionKey] = Number(row.value) || 0
@@ -50,9 +57,28 @@ export class VersionMonitor {
       settings: next.settings !== this.seen.settings,
       catalog: next.catalog !== this.seen.catalog,
       projects: next.projects !== this.seen.projects,
+      auth: next.auth !== this.seen.auth,
+      keys: next.keys !== this.seen.keys,
     }
     this.seen = next
     return changes
+  }
+
+  /**
+   * Last observed counter for a cache that lives outside this class, such as
+   * sessions and API keys. It advances on `poll()`, so with `CACHE_CHECK_MS`
+   * throttling, callers reuse the same read instead of querying `_meta` again.
+   */
+  version(key: VersionKey): number {
+    return this.seen[key]
+  }
+
+  authVersion(): number {
+    return this.seen.auth
+  }
+
+  keysVersion(): number {
+    return this.seen.keys
   }
 
   /** Re-baseline after this process applied the change, or after a restore. */

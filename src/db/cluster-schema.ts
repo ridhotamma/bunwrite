@@ -22,7 +22,7 @@ const TABLES = [
     \`value\` INTEGER NOT NULL DEFAULT 0
   )`,
   `INSERT OR IGNORE INTO \`_meta\` (\`key\`, \`value\`) VALUES
-    ('schema', 0), ('settings', 0), ('catalog', 0), ('projects', 0), ('auth', 0)`,
+    ('schema', 0), ('settings', 0), ('catalog', 0), ('projects', 0), ('auth', 0), ('keys', 0)`,
   `CREATE TABLE IF NOT EXISTS \`_rate_limits\` (
     \`key\` TEXT PRIMARY KEY NOT NULL,
     \`count\` INTEGER NOT NULL,
@@ -62,6 +62,7 @@ const VERSIONED: [string, string][] = [
   ['auth', '_users'],
   ['auth', '_memberships'],
   ['auth', '_teams'],
+  ['keys', '_api_keys'],
 ]
 
 const TRIGGERS = VERSIONED.flatMap(([version, table]) =>

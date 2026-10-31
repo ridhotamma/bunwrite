@@ -12,6 +12,10 @@ export type Handler<C> = (route: RouteContext<C>) => Response | Promise<Response
 
 interface Route<C> {
   method: string
+  /** Registration order across all routes; keeps overlapping patterns deterministic. */
+  order: number
+  /** First static path segment, or null when the route starts with a parameter or wildcard. */
+  segment: string | null
   pattern: RegExp
   keys: string[]
   handler: Handler<C>
@@ -19,9 +23,28 @@ interface Route<C> {
   raw: boolean
 }
 
+interface MethodIndex<C> {
+  /** Routes whose first segment is static, keyed by that segment. */
+  bySegment: Map<string, Route<C>[]>
+  /** Routes that can match any first segment (`/:id`, `/*`, `/`). */
+  generic: Route<C>[]
+}
+
+/** Shared empty list; a lookup miss must not allocate on the request path. */
+const NO_ROUTES: Route<any>[] = []
+
+/** First path segment when it is static (`/databases/...` → `databases`), else null. */
+function staticSegment(path: string): string | null {
+  if (!path.startsWith('/')) return null
+  const end = path.indexOf('/', 1)
+  const segment = path.slice(1, end === -1 ? undefined : end)
+  return segment && !segment.startsWith(':') ? segment : null
+}
+
 /** Minimal method + path router. Patterns use `:name` segments. */
 export class Router<C> {
-  private routes: Route<C>[] = []
+  private readonly methods = new Map<string, MethodIndex<C>>()
+  private nextOrder = 0
 
   /** `:name` matches one segment; a trailing `/*` matches the rest as `path.rest`. */
   on(method: string, path: string, handler: Handler<C>, options: { raw?: boolean } = {}): this {
@@ -37,8 +60,30 @@ export class Router<C> {
         (wildcard ? '(?:/(.*))?$' : '/?$'),
     )
     if (wildcard) keys.push('rest')
+    const segment = staticSegment(base)
     const methods = method === 'ANY' ? ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] : [method]
-    for (const m of methods) this.routes.push({ method: m, pattern, keys, handler, raw: Boolean(options.raw) })
+    for (const m of methods) {
+      const route: Route<C> = {
+        method: m,
+        order: this.nextOrder++,
+        segment,
+        pattern,
+        keys,
+        handler,
+        raw: Boolean(options.raw),
+      }
+      let index = this.methods.get(m)
+      if (!index) {
+        index = { bySegment: new Map(), generic: [] }
+        this.methods.set(m, index)
+      }
+      if (segment === null) index.generic.push(route)
+      else {
+        const list = index.bySegment.get(segment)
+        if (list) list.push(route)
+        else index.bySegment.set(segment, [route])
+      }
+    }
     return this
   }
 
@@ -54,8 +99,25 @@ export class Router<C> {
   }
 
   private find(method: string, pathname: string): { handler: Handler<C>; path: Record<string, string>; raw: boolean } | null {
-    for (const route of this.routes) {
-      if (route.method !== method) continue
+    const index = this.methods.get(method)
+    if (!index) return null
+
+    const end = pathname.indexOf('/', 1)
+    const segment = pathname.slice(1, end === -1 ? undefined : end)
+    const specific = index.bySegment.get(segment) ?? (NO_ROUTES as Route<C>[])
+    const generic = index.generic
+
+    // Merge the two ordered lists so a wildcard registered before a static
+    // route still wins, exactly like the previous linear scan.
+    let si = 0
+    let gi = 0
+    while (si < specific.length || gi < generic.length) {
+      const exact = specific[si]
+      const fallback = generic[gi]
+      const route = fallback === undefined || (exact !== undefined && exact.order < fallback.order) ? exact! : fallback!
+      if (route === exact) si++
+      else gi++
+
       const m = route.pattern.exec(pathname)
       if (!m) continue
       const path: Record<string, string> = {}

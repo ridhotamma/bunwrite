@@ -6,6 +6,7 @@
  *   `any`, `users`, `user:ID`, verified variants, team and label roles.
  * - Nothing: a guest, with `any` and `guests`.
  */
+import type { VersionMonitor } from '~/cluster/versions'
 import type { Db } from '~/db/connection'
 import { apiHeader, sessionFromCookies } from '~/lib/compat'
 import { now } from '~/lib/datetime'
@@ -89,8 +90,8 @@ export function parseCookies(header: string): Record<string, string> {
   return out
 }
 
-export function findSessionUser(db: Db, secret: string): { user: UserRow; sessionId: string } | null {
-  const found = cachedSession(db, secret)
+export function findSessionUser(db: Db, secret: string, authVersion?: number): { user: UserRow; sessionId: string } | null {
+  const found = cachedSession(db, secret, authVersion)
   return found ? { user: found.user, sessionId: found.sessionId } : null
 }
 
@@ -119,7 +120,8 @@ interface SessionCache {
  */
 const sessionCaches = new WeakMap<object, SessionCache>()
 
-function authVersion(db: Db): number {
+/** Fallback for callers without a VersionMonitor, such as tests and the realtime hub. */
+function readAuthVersion(db: Db): number {
   try {
     const row = db.sqlite.query<{ value: number }, [string]>('SELECT value FROM _meta WHERE key = ?').get('auth')
     return Number(row?.value ?? 0)
@@ -128,8 +130,7 @@ function authVersion(db: Db): number {
   }
 }
 
-function sessionCache(db: Db): SessionCache {
-  const version = authVersion(db)
+function sessionCache(db: Db, version = readAuthVersion(db)): SessionCache {
   let cache = sessionCaches.get(db.sqlite)
   if (!cache) {
     cache = { version, entries: new Map() }
@@ -142,9 +143,9 @@ function sessionCache(db: Db): SessionCache {
   return cache
 }
 
-function cachedSession(db: Db, secret: string): CachedSession | null {
+function cachedSession(db: Db, secret: string, authVersion?: number): CachedSession | null {
   const hash = sha256(secret)
-  const cache = sessionCache(db)
+  const cache = sessionCache(db, authVersion)
   const hit = cache.entries.get(hash)
   if (hit && hit.expire > now() && Date.now() - hit.at < SESSION_TTL_MS) return hit
 
@@ -172,8 +173,8 @@ function cachedSession(db: Db, secret: string): CachedSession | null {
 }
 
 /** A session as a caller, including the roles computed when the session was cached. */
-export function sessionCaller(db: Db, secret: string): Caller | null {
-  const found = cachedSession(db, secret)
+export function sessionCaller(db: Db, secret: string, authVersion?: number): Caller | null {
+  const found = cachedSession(db, secret, authVersion)
   if (!found) return null
   return { kind: 'user', privileged: false, user: found.user, sessionId: found.sessionId, roles: new Set(found.roles) }
 }
@@ -198,10 +199,15 @@ export async function jwtCaller(db: Db, config: Config, jwt: string): Promise<Ca
   return userCaller(db, user, claims.sessionId || null)
 }
 
-export async function resolveCaller(db: Db, config: Config, request: Request): Promise<Caller> {
+export async function resolveCaller(
+  db: Db,
+  config: Config,
+  request: Request,
+  versions?: VersionMonitor,
+): Promise<Caller> {
   const key = apiHeader(request, 'key')
   if (key) {
-    if (!apiKeyValid(db, config, key)) throw err('general_unauthorized_scope', 'Invalid API key.')
+    if (!apiKeyValid(db, config, key, versions)) throw err('general_unauthorized_scope', 'Invalid API key.')
     return keyCaller()
   }
 
@@ -216,7 +222,7 @@ export async function resolveCaller(db: Db, config: Config, request: Request): P
 
   const secret = sessionSecret(request, config.projectId)
   if (secret) {
-    const caller = sessionCaller(db, secret)
+    const caller = sessionCaller(db, secret, versions?.authVersion())
     // An unknown or expired session is treated as a guest, like Appwrite.
     if (caller) {
       if (!caller.user!.status) throw err('user_blocked')

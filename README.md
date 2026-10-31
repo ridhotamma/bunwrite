@@ -718,6 +718,8 @@ even a caller that ignores `$revision` cannot insert a duplicate.
 
 ## Known differences from Appwrite
 
+The full production-gap list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
 - An accented first letter sorts after `Z` (`Éclair` after `Yogurt`);
   PostgreSQL sorts it with `E`.
 - Search keeps English stop words ("the", "and") that PostgreSQL drops.

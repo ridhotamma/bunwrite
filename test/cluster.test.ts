@@ -153,19 +153,19 @@ describe('cache versions', () => {
     const reader = open(path)
     const monitor = new VersionMonitor(reader, 0)
 
-    expect(monitor.poll()).toEqual({ schema: false, settings: false, catalog: false, projects: false })
+    expect(monitor.poll()).toEqual({ schema: false, settings: false, catalog: false, projects: false, auth: false, keys: false })
 
     writer.sqlite
       .query("INSERT INTO _settings (key, value, updated_at) VALUES ('smtp', '{}', '2026-01-01T00:00:00.000Z')")
       .run()
-    expect(monitor.poll()).toEqual({ schema: false, settings: true, catalog: false, projects: false })
+    expect(monitor.poll()).toEqual({ schema: false, settings: true, catalog: false, projects: false, auth: false, keys: false })
 
     writer.sqlite
       .query("INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES ('main', 'Main', 1, '2026-01-01', '2026-01-01')")
       .run()
-    expect(monitor.poll()).toEqual({ schema: true, settings: false, catalog: false, projects: false })
+    expect(monitor.poll()).toEqual({ schema: true, settings: false, catalog: false, projects: false, auth: false, keys: false })
 
-    expect(monitor.poll()).toEqual({ schema: false, settings: false, catalog: false, projects: false })
+    expect(monitor.poll()).toEqual({ schema: false, settings: false, catalog: false, projects: false, auth: false, keys: false })
   })
 
   test('reset re-baselines after this process applied the change', () => {

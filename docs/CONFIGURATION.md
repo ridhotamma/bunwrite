@@ -165,7 +165,7 @@ back up `STORAGE_PATH` or the uploads bucket separately.
 | `WORKER_PORTS` | `false` | With `WORKERS` > 1, bind one port per public worker (`PORT`, `PORT+1`, ...) instead of sharing one port with `SO_REUSEPORT`. Set the proxy upstream to the same range so it can health-check and route around a stalled worker. |
 | `MAX_INFLIGHT` | `200` | Total in-flight requests allowed across the public workers before new ones get `503` with `Retry-After: 1`. Health checks are always allowed. `0` disables shedding. |
 | `HTTP_IDLE_TIMEOUT` | `30` | Seconds Bun keeps an idle HTTP connection open (maximum 255, `0` disables). Keep it above the proxy's upstream keepalive; the bundled Caddyfile uses 5s. |
-| `CACHE_CHECK_MS` | `0` | Check for settings/schema changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. |
+| `CACHE_CHECK_MS` | `0` | Check for settings, schema, session and API-key changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. 100–250 is a good production trade-off. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
 | `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | Loopback port where the dedicated writer accepts short database writes. Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` API requests there, including `/v1/databases`, auth, teams, storage metadata, schema, variables, proxy rules, queues and settings, plus short console forms, so one process owns SQLite's write connection. Uploads, function executions and deployments, function HTTP endpoints, site deployments, render jobs, VCS work, and console forms that upload, build, back up or call out stay on the accepting worker. `0` disables the listener and forwarding; each worker then writes locally. |
 | `WRITER_HOST` | `127.0.0.1` | Interface for the writer listener. The workers are processes in the same container/network namespace, so loopback is reachable and the port is never public. |
@@ -325,7 +325,7 @@ Explicit values always win.
 | `PREVIEW_CACHE_DAYS` | `30` | Days a generated preview stays on disk; `0` keeps it until the file changes. |
 | `COMPRESSION` | `true` | Compress HTTP responses (Brotli, else gzip). Turn it off when Caddy or another proxy compresses at the edge; `docker-compose.yml` does. |
 | `WEBSOCKET_COMPRESSION` | `true` | Compress realtime WebSocket messages (perMessageDeflate); independent of HTTP compression. |
-| `CACHE_PUBLIC_MAX_AGE` | `0` | Seconds a shared cache may keep a document GET whose collection is readable by `any`; `0` keeps every response private. |
+| `CACHE_PUBLIC_MAX_AGE` | `0` | Seconds a guest's browser or a shared cache may keep a document GET whose collection is readable by `any`; `0` keeps every response private. Session and API-key responses stay private regardless. |
 
 `CACHE_FILES_MAX_AGE`, `CACHE_PREVIEWS_MAX_AGE` and `PREVIEW_CACHE_DAYS` can
 also be changed in **Console → Settings → Caching**.

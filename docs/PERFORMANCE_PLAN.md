@@ -36,6 +36,21 @@ Docker networking or the network.
   each request by default, so a schema push is visible immediately even in a
   write burst. `CACHE_CHECK_MS` can throttle the check at the cost of a short
   stale window.
+- [x] **One version read per request.** `VersionMonitor` now carries the session
+  (`auth`) and API-key (`keys`) counters too. The session and key caches reuse
+  the request's poll instead of issuing their own `_meta` SELECT.
+- [x] **Prefix-indexed router.** `Router` buckets routes by method and first
+  static segment, with a small generic list for `/:id` and `/*`. Registration
+  order is preserved, so route precedence is unchanged.
+- [x] **Cached DB-backed API keys.** Console-created keys are cached per worker
+  and invalidated by a trigger on `_api_keys` (`_meta.keys`). Environment keys
+  still skip the database entirely.
+- [x] **Verified statement reuse.** Hot reads use `db.query()`, which Bun caches
+  per `Database` (LRU). `prepare()` remains only for explicit batch work; a
+  test guards the assumption.
+- [x] **Opt-in public HTTP caching.** Guest document GETs may send a plain
+  `public, max-age` when `CACHE_PUBLIC_MAX_AGE` is set; ETag/304 handling is
+  unchanged, and session/API-key responses stay private.
 - [x] **SQLite mmap** (`SQLITE_MMAP_MB`, default 256 MB, `0` disables it).
 - [x] **WAL tuning.** `SQLITE_WAL_AUTOCHECKPOINT` (default 10000 pages) is set
   per connection, so checkpoint stalls are less frequent under several writers.
@@ -172,6 +187,29 @@ request.
   `SQLITE_LOCKED` up to five times with jittered exponential backoff. Retries
   only happen before the transaction callback runs, so events or generated IDs
   cannot be duplicated; `busy_timeout` still handles ordinary contention first.
+
+### 5b. Write scaling beyond one writer (not done)
+
+This is an architecture change, not a tuning flag. A single SQLite file still
+has one writer, so these are the only ways past it:
+
+- [ ] **Per-project writer pool.** Multiple writer processes, each responsible
+  for a hash of project IDs; the public workers choose the writer from the
+  project they resolved. This helps only when writes are spread over several
+  project databases. It does not help a single hot project, which is the usual
+  case.
+- [ ] **Postgres for the document path.** The largest change: raw SQL, Drizzle
+  dialect, SQLite triggers, FTS, `RETURNING` behavior, transaction staging and
+  migration tooling all need porting. This is the only option here that gives
+  several writers for one project.
+- [ ] **Turso Cloud `BEGIN CONCURRENT`.** Real parallel writers, but a hosted
+  `tursodb` database, an async client and an early-preview feature. It is not a
+  local-file drop-in and does not fit the current synchronous `bun:sqlite` code
+  without a broad refactor.
+
+Do not promise 10k writes/s on one SQLite file. Measure the ceiling first; if
+writes dominate and sharding by project does not apply, plan the Postgres
+migration separately.
 
 ### 6. Fewer calls from the app (pesanle frontend repo)
 

@@ -94,7 +94,7 @@ async function apiResponse(services: Services, site: SiteRow, request: Request, 
     return Response.json({ message: `The site's API function "${site.api_function_id}" does not exist.`, code: 502 }, { status: 502 })
   }
   try {
-    const caller = await resolveCaller(services.db, services.config, request)
+    const caller = await resolveCaller(services.db, services.config, request, services.versions)
     const rest = url.pathname.slice(API_PREFIX.length) || '/'
     return await functionHttpResponse(services, f, caller, request, `${rest}${url.search}`)
   } catch (error) {

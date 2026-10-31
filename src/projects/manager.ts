@@ -405,7 +405,7 @@ export class ProjectManager implements ProjectResolver {
    * Called at the start of a request; the version check is throttled.
    */
   sync(): void {
-    if (this.config.workers <= 1) return
+    // Single-process servers also use these counters for session/API-key caches.
     const changed = this.control.versions.poll()
     if (changed.schema) this.control.registry.reload()
     if (changed.settings) {

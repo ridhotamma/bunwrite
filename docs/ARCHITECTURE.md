@@ -49,10 +49,13 @@ pages. The processes coordinate through the database (`src/cluster`):
   deliver to their own sockets. `_cluster_processes` records which workers have
   clients, so nothing is appended while realtime is unused.
 - **Cache versions** — triggers on `_settings`, `_databases`, `_collections`,
-  `_sites`, `_proxy_rules` and `_projects` bump counters in `_meta`. Each
-  worker compares them on every request (set `CACHE_CHECK_MS` to throttle) and
-  reloads the affected cache, so a schema push or a settings change reaches
-  every process. The same counters carry project additions and removals.
+  `_sites`, `_proxy_rules`, `_projects`, `_sessions`/`_users`/`_memberships`/
+  `_teams` and `_api_keys` bump counters in `_meta`. Each worker compares them
+  on every request (set `CACHE_CHECK_MS` to throttle) and reloads the affected
+  cache, so a schema push, settings change, logout or revoked key reaches every
+  process. The same counters carry project additions and removals, and the
+  session/key caches reuse the request's single read instead of querying
+  `_meta` again.
 - **Dedicated writer** — process 0 opens only a loopback listener on
   `127.0.0.1:${WRITER_PORT}` and never accepts public traffic, so a synchronous
   WAL checkpoint or lock wait cannot stall client connections. Public workers

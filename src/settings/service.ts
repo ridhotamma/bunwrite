@@ -6,6 +6,7 @@
  */
 import type { BackupsConfig, CacheConfig, Config, OAuthConfig, OAuthProviderId, S3Config, SmtpConfig } from '~/config'
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
+import type { VersionMonitor } from '~/cluster/versions'
 import type { RenderConfig } from '~/render/service'
 import type { Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
@@ -264,18 +265,82 @@ export class SettingsService {
   }
 }
 
+interface CachedApiKey {
+  id: string
+  expire: string | null
+  accessedAt: string | null
+}
+
+interface ApiKeyCache {
+  version: number
+  entries: Map<string, CachedApiKey>
+}
+
+/** Enough for every key an instance is likely to use, without unbounded growth. */
+const API_KEY_CACHE_MAX = 2_000
+
+/**
+ * One cache per SQLite connection. Triggers on `_api_keys` bump `_meta.keys`,
+ * and the VersionMonitor passes that counter in, so a new or revoked key is
+ * visible on the next request without a `_api_keys` lookup per request.
+ */
+const apiKeyCaches = new WeakMap<object, ApiKeyCache>()
+
+function readKeysVersion(db: Db): number {
+  try {
+    const row = db.sqlite.query<{ value: number }, [string]>('SELECT value FROM _meta WHERE key = ?').get('keys')
+    return Number(row?.value ?? 0)
+  } catch {
+    return 0
+  }
+}
+
+function apiKeyCache(db: Db, version = readKeysVersion(db)): ApiKeyCache {
+  let cache = apiKeyCaches.get(db.sqlite)
+  if (!cache) {
+    cache = { version, entries: new Map() }
+    apiKeyCaches.set(db.sqlite, cache)
+  }
+  if (cache.version !== version) {
+    cache.entries.clear()
+    cache.version = version
+  }
+  return cache
+}
+
 /** Is this API key (X-Bunwrite-Key or X-Appwrite-Key) acceptable? Programmatic keys, the functions' internal key, or a live console key. */
-export function apiKeyValid(db: Db, config: Config, key: string): boolean {
+export function apiKeyValid(db: Db, config: Config, key: string, versions?: VersionMonitor): boolean {
   if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) return true
+
+  const hash = sha256(key)
+  const cache = apiKeyCache(db, versions?.keysVersion())
+  const stamp = now()
+  const hit = cache.entries.get(hash)
+  if (hit) {
+    if (hit.expire && hit.expire < stamp) {
+      cache.entries.delete(hash)
+      return false
+    }
+    // Record use at most once a minute, the same as the uncached path.
+    if (!hit.accessedAt || hit.accessedAt.slice(0, 16) !== stamp.slice(0, 16)) {
+      db.sqlite.query('UPDATE _api_keys SET accessed_at = ? WHERE id = ?').run(stamp, hit.id)
+      hit.accessedAt = stamp
+    }
+    return true
+  }
+
   const row = db.sqlite
     .query<{ id: string; expire: string | null; accessed_at: string | null }, [string]>('SELECT id, expire, accessed_at FROM _api_keys WHERE secret_hash = ?')
-    .get(sha256(key))
+    .get(hash)
   if (!row) return false
-  const stamp = now()
   if (row.expire && row.expire < stamp) return false
-  // Record use at most once a minute.
+
+  if (cache.entries.size >= API_KEY_CACHE_MAX) cache.entries.clear()
+  const entry: CachedApiKey = { id: row.id, expire: row.expire, accessedAt: row.accessed_at }
+  cache.entries.set(hash, entry)
   if (!row.accessed_at || row.accessed_at.slice(0, 16) !== stamp.slice(0, 16)) {
     db.sqlite.query('UPDATE _api_keys SET accessed_at = ? WHERE id = ?').run(stamp, row.id)
+    entry.accessedAt = stamp
   }
   return true
 }

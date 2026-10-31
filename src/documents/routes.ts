@@ -57,10 +57,16 @@ function assertNoRevision(revision: number | '*' | undefined, transactionId: str
 const callerTag = (caller: AppContext['caller']) => (caller.privileged ? '*' : [...caller.roles].sort().join(','))
 
 /** Public only when every anonymous caller may read the collection and the operator enabled it. */
-const cacheControl = (ctx: AppContext, collection: Collection): string =>
-  !ctx.caller.privileged && ctx.config.cache.publicMaxAge > 0 && grants(collection.permissions, 'read', new Set(['any']))
-    ? `public, max-age=${ctx.config.cache.publicMaxAge}`
-    : 'private, max-age=0, must-revalidate'
+const cacheControl = (ctx: AppContext, collection: Collection): string => {
+  const maxAge = ctx.config.cache.publicMaxAge
+  // Only an actual guest may share a response. A session user can see more
+  // documents than a guest even in a collection readable by "any" when
+  // document security is on, so their response must stay private.
+  if (ctx.caller.kind !== 'guest' || maxAge <= 0 || !grants(collection.permissions, 'read', new Set(['any']))) {
+    return 'private, max-age=0, must-revalidate'
+  }
+  return `public, max-age=${maxAge}`
+}
 
 export function documentRoutes(router: Router<AppContext>): void {
   const collectionOf = (ctx: AppContext, path: Record<string, string>) =>

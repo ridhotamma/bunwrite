@@ -80,7 +80,8 @@ export { originAllowed }
  * window after an external schema or settings change.
  */
 function syncServices(services: Services): void {
-  if (services.config.workers <= 1) return
+  // Poll in single-process mode too: session and API-key caches use the same
+  // counters, and a local write must invalidate them on the next request.
   const changed = services.versions.poll()
   if (changed.schema) services.registry.reload()
   if (changed.settings) {
@@ -178,7 +179,7 @@ export function createApp(source: Services | ProjectResolver) {
         return keyCaller()
       }
     }
-    const caller = await resolveCaller(services.db, services.config, request)
+    const caller = await resolveCaller(services.db, services.config, request, services.versions)
     meta.auth = authLabel(caller)
     return caller
   }
@@ -311,7 +312,12 @@ export function createApp(source: Services | ProjectResolver) {
       meta.auth = `function:${hostedFunction.fn.id}`
       try {
         if (hostedFunction.project.services !== control) syncServices(hostedFunction.project.services)
-        const caller = await resolveCaller(hostedFunction.project.services.db, hostedFunction.project.services.config, request)
+        const caller = await resolveCaller(
+          hostedFunction.project.services.db,
+          hostedFunction.project.services.config,
+          request,
+          hostedFunction.project.services.versions,
+        )
         return await functionHttpResponse(hostedFunction.project.services, hostedFunction.fn, caller, request, `${url.pathname}${url.search}`)
       } catch (error) {
         meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)

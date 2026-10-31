@@ -560,7 +560,7 @@ export async function ssrResponse(services: Services, site: SiteRow, request: Re
     return sitePage(502, 'No app', `The site's API function "${site.api_function_id}" does not exist.`)
   }
   try {
-    const caller = await resolveCaller(services.db, services.config, request)
+    const caller = await resolveCaller(services.db, services.config, request, services.versions)
     const url = new URL(request.url)
     return await functionHttpResponse(services, fn, caller, request, `${url.pathname}${url.search}`)
   } catch (error) {
