@@ -79,8 +79,8 @@ const columnNames = new Set((collectionDef?.columns ?? []).map((column) => colum
 const hasColumn = (name: string) => columnNames.size === 0 || columnNames.has(name)
 const database = flag('database') ?? process.env.STRESS_DATABASE ?? (collectionRaw?.databaseId as string | undefined) ?? (databases[0]?.$id as string | undefined)
 
-const project = flag('project') ?? process.env.STRESS_PROJECT ?? process.env.PROJECT_ID ?? config?.projectId
-const key = flag('key') ?? process.env.STRESS_API_KEY ?? process.env.APPWRITE_API_KEY
+const project = flag('project') ?? flag('project-id') ?? process.env.STRESS_PROJECT ?? process.env.PROJECT_ID ?? config?.projectId
+const key = flag('key') ?? flag('api-key') ?? process.env.STRESS_API_KEY ?? process.env.APPWRITE_API_KEY
 const session = flag('session') ?? process.env.STRESS_SESSION
 const jwt = flag('jwt') ?? process.env.STRESS_JWT
 const base = (flag('base') ?? process.env.STRESS_BASE ?? 'http://localhost:8080/v1').replace(/\/$/, '')
@@ -223,7 +223,7 @@ if (targetsPath) {
     randomUrl: has('random-url'),
   })
 } else {
-  targets.push({ name: 'health', url: `${base}/health` })
+  if (!has('no-health')) targets.push({ name: 'health', url: `${base}/health` })
   if (database && collection) {
     if (!project) throw new Error('Pass --project, or set PROJECT_ID, for the built-in collection targets.')
     if (!key && !session && !jwt) throw new Error('Pass --key, --session or --jwt for the built-in collection targets.')
@@ -268,6 +268,14 @@ if (targetsPath) {
   } else {
     console.log('No --database/--collection; running only the health target. Use --url or --targets for other endpoints.')
   }
+}
+
+if (targets.length === 0) {
+  throw new Error('No targets to run. Pass --database/--collection, --url or --targets, or remove --no-health.')
+}
+
+if (Math.max(...concurrency) > 2000) {
+  console.log('note: above ~2000 concurrent clients you are usually measuring the client and loopback, not the server. Use --tool oha and raise the file-descriptor limit.')
 }
 
 const tool = (flag('tool') ?? 'auto') as 'auto' | 'oha' | 'builtin'
@@ -318,7 +326,10 @@ Usage:
 Common:
   --base <url>              API root (default http://localhost:8080/v1)
   --project <id>            X-Appwrite-Project (or STRESS_PROJECT / PROJECT_ID)
+  --project-id <id>         Alias for --project
   --key <key>               API key (or STRESS_API_KEY / APPWRITE_API_KEY)
+  --api-key <key>           Alias for --key
+  --no-health               Skip the /health baseline target
   --session <secret>        X-Appwrite-Session
   --jwt <token>             X-Appwrite-JWT
   --header "Name: value"    Extra header (repeatable)

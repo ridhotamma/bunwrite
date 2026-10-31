@@ -231,6 +231,7 @@ export async function runMatrix(options: RunOptions): Promise<{ results: RunResu
     }
     for (const concurrency of levels) {
       if (interrupted) break
+      log(`  c=${concurrency} for ${options.duration}s`)
       const result = await (tool === 'oha' ? runOha(target, options, concurrency) : runBuiltin(target, options, concurrency))
       results.push(result)
       printRow(result)
