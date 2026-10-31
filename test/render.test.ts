@@ -57,7 +57,7 @@ describe('html rendering', () => {
       const off = await post(path, { html: '<p>hi</p>' })
       expect([off.status, await errorType(off)]).toEqual([403, 'general_service_disabled'])
     }
-    on()
+    await on()
     expect((await post('/pdf', { html: '<p>hi</p>' }, null)).status).toBe(401)
     expect((await post('/image', { html: '<p>hi</p>' }, null)).status).toBe(401)
     const missing = await post('/image', {})
@@ -73,7 +73,7 @@ describe('html rendering', () => {
     let hits = 0
     const assets = Bun.serve({ port: 0, fetch: () => (hits++, new Response('', { status: 404 })) })
     try {
-      on()
+      await on()
       const html = `<h1>Invoice</h1><img src="http://127.0.0.1:${assets.port}/logo.png"><script>document.title = 'ran'</script>`
       const res = await post('/pdf', { html, fileName: 'inv-1', format: 'letter', landscape: true, margin: 5, download: true })
       expect(res.status).toBe(200)
@@ -82,7 +82,7 @@ describe('html rendering', () => {
       expect(Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString()).toBe('%PDF-')
       expect(hits).toBe(0)
 
-      on(true)
+      await on(true)
       expect((await post('/image', { html })).status).toBe(200)
       expect(hits).toBeGreaterThan(0)
     } finally {
@@ -91,7 +91,7 @@ describe('html rendering', () => {
   }, 120_000)
 
   withChrome('image: viewport, full page, selector and scale', async () => {
-    on()
+    await on()
     const viewport = await post('/image', { html: CARD, width: 600, height: 400, fullPage: false })
     expect(viewport.headers.get('content-type')).toBe('image/png')
     expect(viewport.headers.get('content-disposition')).toBe('inline; filename="image.png"')
@@ -114,7 +114,7 @@ describe('html rendering', () => {
   }, 60_000)
 
   withChrome('image: every output format, and transparency', async () => {
-    on()
+    await on()
     for (const [output, format] of [['png', 'png'], ['jpg', 'jpeg'], ['jpeg', 'jpeg'], ['webp', 'webp'], ['avif', 'heif'], ['gif', 'gif']] as const) {
       const res = await post('/image', { html: CARD, selector: '#card', output })
       expect(res.status).toBe(200)
@@ -132,7 +132,7 @@ describe('html rendering', () => {
   }, 60_000)
 
   withChrome('saves PDFs and images to a bucket', async () => {
-    on()
+    await on()
     const pdf = await post('/pdf', { html: '<p>Receipt</p>', bucketId: 'invoices', fileId: 'receipt-1', fileName: 'receipt' })
     expect(pdf.status).toBe(201)
     const file = (await pdf.json()) as { $id: string; name: string; mimeType: string }
@@ -147,7 +147,7 @@ describe('html rendering', () => {
   }, 60_000)
 
   withChrome('async: queued renders are saved to the bucket', async () => {
-    on()
+    await on()
     const missing = await post('/pdf', { html: '<p>x</p>', async: true })
     expect([missing.status, await errorType(missing)]).toEqual([400, 'general_argument_invalid'])
     expect((await post('/pdf', { html: '<p>x</p>', async: true, bucketId: 'nope' })).status).toBe(404)
@@ -179,7 +179,7 @@ describe('html rendering', () => {
   }, 60_000)
 
   withChrome('a burst: direct requests over the limit get 429, queued ones all finish', async () => {
-    on()
+    await on()
     const html = '<p>burst</p>'
     const direct = await Promise.all(Array.from({ length: 26 }, () => post('/pdf', { html })))
     const statuses = direct.map((r) => r.status)
@@ -198,7 +198,7 @@ describe('html rendering', () => {
   }, 180_000)
 
   test('turning it off stops renders', async () => {
-    server.services.settings.set('render', { enabled: false, allowRemote: false })
+    await server.services.settings.set('render', { enabled: false, allowRemote: false })
     expect((await post('/pdf', { html: '<p>hi</p>' })).status).toBe(403)
     expect((await post('/image', { html: '<p>hi</p>' })).status).toBe(403)
     expect(server.services.render.status().running).toBe(false)

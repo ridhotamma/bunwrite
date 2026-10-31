@@ -137,6 +137,20 @@ function rewriteIif(sql: string): string {
   })
 }
 
+/**
+ * SQLite returns JS numbers for `count`, `sum` and `avg`; Postgres returns
+ * `int8`/`numeric` as strings to avoid precision loss. Cast the aggregates the
+ * console and the queue display so both backends hand JS the same types.
+ */
+function rewriteAggregates(code: string): string {
+  return code
+    .replace(/\bcount\s*\(\s*\*\s*\)/gi, 'count(*)::int')
+    .replace(/\bcount\s*\(\s*distinct\s+([A-Za-z_][\w.]*)\s*\)/gi, 'count(DISTINCT $1)::int')
+    .replace(/\bcount\s*\(\s*([A-Za-z_][\w.]*)\s*\)/gi, 'count($1)::int')
+    .replace(/\bsum\s*\(\s*([^()]*)\s*\)/gi, '(sum($1))::double precision')
+    .replace(/\bavg\s*\(\s*([^()]*)\s*\)/gi, '(avg($1))::double precision')
+}
+
 /** Rewrites that only change keyword spelling, never literals. */
 function rewriteKeywords(code: string): string {
   return (
@@ -180,6 +194,7 @@ export function toPostgres(sql: string): string {
   translated = rewriteGroupConcat(translated)
   translated = rewriteIif(translated)
   translated = rewriteCode(translated, rewriteKeywords)
+  translated = rewriteCode(translated, rewriteAggregates)
 
   // INSERT OR IGNORE has no direct operator; the conflict clause is appended
   // after the values list, before RETURNING.

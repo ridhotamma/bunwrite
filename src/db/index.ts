@@ -181,6 +181,7 @@ export type {
   DocumentDriver,
   DocumentFilter,
   DriverCapabilities,
+  SqlDatabase,
   SqlDriver,
   SqlExecutor,
   SqlTransaction,

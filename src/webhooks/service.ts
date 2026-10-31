@@ -5,11 +5,14 @@
  * (X-Appwrite-Webhook-* with API_COMPAT=appwrite). The signature is the base64
  * HMAC-SHA1 of the URL followed by the body, keyed by the webhook secret. Deliveries run in the background; ten failures in a row
  * turn the webhook off, as on Appwrite.
+ *
+ * All database access goes through `db.driver`, so this service runs on SQLite
+ * and Postgres alike.
  */
 import { createHmac } from 'node:crypto'
 
 import type { Caller } from '~/auth/caller'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import type { DocEvent } from '~/documents/store'
 import { webhookHeaderPrefix, type ApiCompat } from '~/lib/compat'
 import { now } from '~/lib/datetime'
@@ -103,37 +106,35 @@ export class WebhookService {
   private inflight = new Set<Promise<void>>()
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private projectId: () => string,
     /** Header names to send: Bunwrite's or Appwrite's. */
     private compat: () => ApiCompat = () => 'bunwrite',
   ) {}
 
   private get sql() {
-    return this.db.sqlite
+    return this.db.driver
   }
 
-  list(): WebhookRow[] {
-    return this.sql.query<WebhookRow, []>('SELECT * FROM _webhooks ORDER BY seq').all()
+  list(): Promise<WebhookRow[]> {
+    return this.sql.all<WebhookRow>('SELECT * FROM _webhooks ORDER BY seq')
   }
 
-  get(id: string): WebhookRow {
-    const row = this.sql.query<WebhookRow, [string]>('SELECT * FROM _webhooks WHERE id = ?').get(id)
+  async get(id: string): Promise<WebhookRow> {
+    const row = await this.sql.get<WebhookRow>('SELECT * FROM _webhooks WHERE id = ?', [id])
     if (!row) throw err('webhook_not_found')
     return row
   }
 
-  create(id: unknown, input: WebhookInput): WebhookRow {
+  async create(id: unknown, input: WebhookInput): Promise<WebhookRow> {
     const webhookId = resolveId(id, 'Webhook ID')
-    if (this.sql.query('SELECT 1 FROM _webhooks WHERE id = ?').get(webhookId)) throw err('webhook_already_exists')
+    if (await this.sql.get('SELECT 1 FROM _webhooks WHERE id = ?', [webhookId])) throw err('webhook_already_exists')
     const secret = input.secret === undefined || input.secret === null || input.secret === '' ? randomSecret(64) : text(input.secret, '')
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _webhooks (id, name, url, events, enabled, tls, auth_username, auth_password, secret, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+    await this.sql.run(
+      `INSERT INTO _webhooks (id, name, url, events, enabled, tls, auth_username, auth_password, secret, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
         webhookId,
         validName(input.name),
         validUrl(input.url),
@@ -145,19 +146,18 @@ export class WebhookService {
         secret,
         stamp,
         stamp,
-      )
+      ],
+    )
     return this.get(webhookId)
   }
 
-  update(id: string, input: WebhookInput): WebhookRow {
-    const w = this.get(id)
+  async update(id: string, input: WebhookInput): Promise<WebhookRow> {
+    const w = await this.get(id)
     const enabled = flag(input.enabled, Boolean(w.enabled))
-    this.sql
-      .query(
-        `UPDATE _webhooks SET name = ?, url = ?, events = ?, enabled = ?, tls = ?, auth_username = ?, auth_password = ?,
-         attempts = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(
+    await this.sql.run(
+      `UPDATE _webhooks SET name = ?, url = ?, events = ?, enabled = ?, tls = ?, auth_username = ?, auth_password = ?,
+       attempts = ?, updated_at = ? WHERE id = ?`,
+      [
         input.name === undefined ? w.name : validName(input.name),
         input.url === undefined ? w.url : validUrl(input.url),
         input.events === undefined ? w.events : JSON.stringify(validEvents(input.events)),
@@ -169,29 +169,30 @@ export class WebhookService {
         enabled && !w.enabled ? 0 : w.attempts,
         now(),
         id,
-      )
+      ],
+    )
     return this.get(id)
   }
 
   /** Set a new signing secret; a fresh random one when none is given. */
-  updateSecret(id: string, secret: unknown): WebhookRow {
-    this.get(id)
+  async updateSecret(id: string, secret: unknown): Promise<WebhookRow> {
+    await this.get(id)
     const value = typeof secret === 'string' && secret ? secret : randomSecret(64)
-    this.sql.query('UPDATE _webhooks SET secret = ?, updated_at = ? WHERE id = ?').run(value, now(), id)
+    await this.sql.run('UPDATE _webhooks SET secret = ?, updated_at = ? WHERE id = ?', [value, now(), id])
     return this.get(id)
   }
 
-  delete(id: string): void {
-    this.get(id)
-    this.sql.query('DELETE FROM _webhooks WHERE id = ?').run(id)
+  async delete(id: string): Promise<void> {
+    await this.get(id)
+    await this.sql.run('DELETE FROM _webhooks WHERE id = ?', [id])
   }
 
   // ------------------------------------------------------------ delivery
 
   /** Send each change to the webhooks that subscribe to it. Returns at once. */
-  dispatch(events: DocEvent[], caller: Caller): void {
+  async dispatch(events: DocEvent[], caller: Caller): Promise<void> {
     if (events.length === 0) return
-    const hooks = this.sql.query<WebhookRow, []>('SELECT * FROM _webhooks WHERE enabled = 1').all()
+    const hooks = await this.sql.all<WebhookRow>('SELECT * FROM _webhooks WHERE enabled = 1')
     if (hooks.length === 0) return
     for (const event of events) {
       const names = eventNames(event)
@@ -213,15 +214,14 @@ export class WebhookService {
     const failure = await this.post(hook, events, payload, userId)
     const stamp = now()
     if (!failure) {
-      this.sql.query("UPDATE _webhooks SET attempts = 0, logs = '' WHERE id = ?").run(hook.id)
+      await this.sql.run("UPDATE _webhooks SET attempts = 0, logs = '' WHERE id = ?", [hook.id])
       return
     }
-    this.sql
-      .query(
-        `UPDATE _webhooks SET attempts = attempts + 1, logs = ?, updated_at = ?,
-         enabled = CASE WHEN attempts + 1 >= ? THEN 0 ELSE enabled END WHERE id = ?`,
-      )
-      .run(`${stamp} ${events[0] ?? ''}: ${failure}`.slice(0, 2000), stamp, MAX_ATTEMPTS, hook.id)
+    await this.sql.run(
+      `UPDATE _webhooks SET attempts = attempts + 1, logs = ?, updated_at = ?,
+       enabled = CASE WHEN attempts + 1 >= ? THEN 0 ELSE enabled END WHERE id = ?`,
+      [`${stamp} ${events[0] ?? ''}: ${failure}`.slice(0, 2000), stamp, MAX_ATTEMPTS, hook.id],
+    )
   }
 
   /** POST one delivery and return what went wrong, or '' when the receiver accepted it. */
@@ -260,7 +260,7 @@ export class WebhookService {
    * failure count is left alone: a test never turns the webhook off.
    */
   async sendTest(id: string): Promise<{ ok: boolean; message: string }> {
-    const hook = this.get(id)
+    const hook = await this.get(id)
     const stamp = now()
     const failure = await this.post(hook, ['test'], { $id: 'test', $createdAt: stamp, $updatedAt: stamp, test: true, webhookId: hook.id }, '')
     return failure

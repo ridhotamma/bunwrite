@@ -904,8 +904,8 @@ describe('environments', () => {
       ['STRIPE_KEY', 'live', true],
       ['STRIPE_KEY', 'preview', true],
     ])
-    expect(server.services.variables.projectEnvironment('preview')).toMatchObject({ API_URL: 'https://preview.example.com', STRIPE_KEY: 'sk_test' })
-    expect(server.services.variables.projectEnvironment('live')).toMatchObject({ API_URL: 'https://api.example.com', STRIPE_KEY: 'sk_live' })
+    expect(await server.services.variables.projectEnvironment('preview')).toMatchObject({ API_URL: 'https://preview.example.com', STRIPE_KEY: 'sk_test' })
+    expect(await server.services.variables.projectEnvironment('live')).toMatchObject({ API_URL: 'https://api.example.com', STRIPE_KEY: 'sk_live' })
 
     const show = 'console.log(JSON.stringify([process.env.API_URL, process.env.STRIPE_KEY]))'
     expect((await ws.run(['run', '--env', 'staging', '--', 'bun', '-e', show])).out).toContain('["https://api.example.com","sk_live"]')

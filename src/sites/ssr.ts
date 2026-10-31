@@ -192,7 +192,7 @@ export class SsrRuntime {
     private readonly config: Config,
     private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null,
     /** Project + site variables for a site in a deploy context; empty when the service does not have them. */
-    private readonly variablesFor: (siteId: string, context: DeployContext) => Record<string, string> = () => ({}),
+    private readonly variablesFor: (siteId: string, context: DeployContext) => Record<string, string> | Promise<Record<string, string>> = () => ({}),
   ) {
     this.sandbox = config.functionsSandbox ?? null
   }
@@ -322,7 +322,7 @@ export class SsrRuntime {
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
         env: withRuntime(
-          siteRuntimeEnv(this.config, target.siteId, port, this.variablesFor(target.siteId, target.context)),
+          siteRuntimeEnv(this.config, target.siteId, port, await this.variablesFor(target.siteId, target.context)),
           runtime,
         ),
         stdout: 'pipe',

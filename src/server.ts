@@ -77,6 +77,8 @@ export async function startServer(): Promise<void> {
 
   const services = createServices(config, db)
   const projects = createProjectManager({ config, db, services, sqliteSynchronous })
+  // No-op on SQLite; loads the caches for a network backend before serving.
+  await projects.ready()
 
   // Take (or lose) the scheduler lease before anything is started, so the
   // timers already know whether this process should do the work.
@@ -98,7 +100,7 @@ export async function startServer(): Promise<void> {
 
   // Clear out old transactions, tokens, sessions and request logs every 10 minutes.
   setInterval(() => {
-    if (isLeader()) projects.prune()
+    if (isLeader()) void projects.prune()
   }, 10 * 60 * 1000).unref()
   projects.start()
 
@@ -157,14 +159,16 @@ export async function startServer(): Promise<void> {
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
-      lease?.stop()
-      server?.stop()
-      writes?.stop()
-      services.writes.drain()
-      services.requestLogs.flush()
-      projects.close()
-      db.sqlite.close()
-      process.exit(0)
+      void (async () => {
+        lease?.stop()
+        server?.stop()
+        writes?.stop()
+        services.writes.drain()
+        await services.requestLogs.flush()
+        await projects.close()
+        db.sqlite.close()
+        process.exit(0)
+      })()
     })
   }
 }

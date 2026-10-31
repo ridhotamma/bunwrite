@@ -421,9 +421,9 @@ export function sitePages(router: ConsoleRouter): void {
     })
   })
 
-  router.get(`${SITES}/:id/variables`, ({ ctx, path }) => {
+  router.get(`${SITES}/:id/variables`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    const vars = ctx.services.variables.list(siteScope(site.id))
+    const vars = await ctx.services.variables.list(siteScope(site.id))
     return ctx.render(
       `Variables · ${site.name}`,
       'sites',

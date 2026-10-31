@@ -104,6 +104,23 @@ export interface SqlTransaction extends SqlExecutor {
   savepoint<T>(name: string, fn: (tx: SqlTransaction) => Promise<T>): Promise<T>
 }
 
+/**
+ * A database that can run the SQL port. `Db` implements this on SQLite; a
+ * Postgres deployment provides the same three members. Services that only use
+ * `driver` should take this type so they can run on either backend.
+ */
+export interface SqlDatabase {
+  readonly driver: SqlDriver
+  readonly dialect: SqlDialect
+  readonly capabilities: DriverCapabilities
+  /**
+   * The synchronous `bun:sqlite` connection when `dialect === 'sqlite'`.
+   * SQLite-only paths (PRAGMAs, synchronous DDL, backups) use it; portable
+   * code must use `driver`.
+   */
+  readonly sqlite?: import('bun:sqlite').Database
+}
+
 /** A SQL driver: SQLite or Postgres. */
 export interface SqlDriver extends SqlExecutor {
   readonly kind: 'sql'

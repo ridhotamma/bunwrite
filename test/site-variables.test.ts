@@ -119,15 +119,15 @@ describe('project variables', () => {
     expect(after.variables.some((v) => v.$id === 'project-var')).toBe(false)
   })
 
-  test('the console can use the same key in the project and site scopes', () => {
-    server.services.variables.setVariable('project', 'SHARED_CONSOLE', 'project', false)
-    server.services.variables.setVariable('site:console-scope', 'SHARED_CONSOLE', 'site', false)
-    expect(server.services.variables.projectEnvironment().SHARED_CONSOLE).toBe('project')
-    expect(server.services.variables.siteEnvironment('console-scope').SHARED_CONSOLE).toBe('site')
+  test('the console can use the same key in the project and site scopes', async () => {
+    await server.services.variables.setVariable('project', 'SHARED_CONSOLE', 'project', false)
+    await server.services.variables.setVariable('site:console-scope', 'SHARED_CONSOLE', 'site', false)
+    expect((await server.services.variables.projectEnvironment()).SHARED_CONSOLE).toBe('project')
+    expect((await server.services.variables.siteEnvironment('console-scope')).SHARED_CONSOLE).toBe('site')
   })
 
-  test('project variables reach function runs too', () => {
-    server.services.variables.setVariable('project', 'FUNCTION_PROJECT', 'yes', false)
+  test('project variables reach function runs too', async () => {
+    await server.services.variables.setVariable('project', 'FUNCTION_PROJECT', 'yes', false)
     const fn = server.services.functions.create('env-fn', {
       name: 'Env',
       runtime: 'bun-1.4',
@@ -144,7 +144,7 @@ describe('project variables', () => {
       runtimeSpecification: 's-1vcpu-512mb',
       deploymentRetention: 0,
     })
-    expect(server.services.functions.env(fn, 'http').FUNCTION_PROJECT).toBe('yes')
+    expect((await server.services.functions.env(fn, 'http')).FUNCTION_PROJECT).toBe('yes')
   })
 
   test('secret values are not returned', async () => {

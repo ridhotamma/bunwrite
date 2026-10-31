@@ -220,7 +220,7 @@ export async function resolveCaller(
 ): Promise<Caller> {
   const key = apiHeader(request, 'key')
   if (key) {
-    const identity = resolveApiKey(db, config, key, versions)
+    const identity = await resolveApiKey(db, config, key, versions)
     if (!identity) throw err('general_unauthorized_scope', 'Invalid API key.')
     return keyCaller(identity.scopes)
   }

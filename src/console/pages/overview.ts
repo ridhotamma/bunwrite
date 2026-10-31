@@ -10,10 +10,10 @@ import { alert, cardHead, emptyState, formatBytes, header, stat, statusBadge, wh
 const started = Date.now()
 
 export function overviewPages(router: ConsoleRouter): void {
-  router.get('/console/overview', ({ ctx }) => ctx.render('Home', 'overview', overview(ctx)))
+  router.get('/console/overview', async ({ ctx }) => ctx.render('Home', 'overview', await overview(ctx)))
 }
 
-function overview(ctx: ConsoleContext): Html {
+async function overview(ctx: ConsoleContext): Promise<Html> {
   const { services } = ctx
   let documents = 0
   for (const c of services.registry.collections.values()) documents += services.store.countDocuments(keyCaller(), c)
@@ -32,11 +32,11 @@ function overview(ctx: ConsoleContext): Html {
   const now = new Date()
   now.setUTCMinutes(0, 0, 0)
   const hours = Array.from({ length: 24 }, (_, i) => new Date(now.getTime() - (23 - i) * 3600_000).toISOString().slice(0, 13))
-  const hourly = new Map(services.requestLogs.bandwidthByHour(since).map((row) => [row.hour, row]))
+  const hourly = new Map((await services.requestLogs.bandwidthByHour(since)).map((row) => [row.hour, row]))
   const inbound = hours.map((hour) => hourly.get(hour)?.inbound ?? 0)
   const outbound = hours.map((hour) => hourly.get(hour)?.outbound ?? 0)
   const totalBytes = [...inbound, ...outbound].reduce((sum, value) => sum + value, 0)
-  const consumers = services.requestLogs.topConsumers(since, 6)
+  const consumers = await services.requestLogs.topConsumers(since, 6)
   const traffic = html`<div class="layout" style="margin-bottom:16px">
     <div class="card">
       ${cardHead('Bandwidth over time', html`<a class="subdued" href="/console/logs">View request logs</a>`)}

@@ -79,14 +79,14 @@ export { originAllowed }
  * prepared SELECT; CACHE_CHECK_MS can throttle it at the cost of a short stale
  * window after an external schema or settings change.
  */
-function syncServices(services: Services): void {
+async function syncServices(services: Services): Promise<void> {
   // Poll in single-process mode too: session and API-key caches use the same
   // counters, and a local write must invalidate them on the next request.
-  const changed = services.versions.poll()
-  if (changed.schema) services.registry.reload()
+  const changed = await services.versions.pollAsync()
+  if (changed.schema) await services.registry.load()
   if (changed.settings) {
-    services.settings.refreshAll()
-    services.access.reload()
+    await services.settings.load()
+    await services.access.load()
   }
   if (changed.catalog) {
     services.proxy.reload()
@@ -268,7 +268,7 @@ export function createApp(source: Services | ProjectResolver) {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     const services = runtime.services
     meta.project = runtime.info.id
-    if (services !== control) syncServices(services)
+    if (services !== control) await syncServices(services)
 
     if (pathname === '/realtime') {
       const caller = await callerOf(services, request, meta)
@@ -306,7 +306,7 @@ export function createApp(source: Services | ProjectResolver) {
     const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, hub, events } })
     const published = [...events, ...services.store.drainEvents()]
     services.realtime.publish(published)
-    services.webhooks.dispatch(published, caller)
+    await services.webhooks.dispatch(published, caller)
     return response
   }
 
@@ -322,7 +322,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
-      if (hosted.project.services !== control) syncServices(hosted.project.services)
+      if (hosted.project.services !== control) await syncServices(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
     const hostedFunction = functionFor(request)
@@ -330,7 +330,7 @@ export function createApp(source: Services | ProjectResolver) {
       meta.project = hostedFunction.project.info.id
       meta.auth = `function:${hostedFunction.fn.id}`
       try {
-        if (hostedFunction.project.services !== control) syncServices(hostedFunction.project.services)
+        if (hostedFunction.project.services !== control) await syncServices(hostedFunction.project.services)
         const caller = await resolveCaller(
           hostedFunction.project.services.db,
           hostedFunction.project.services.config,
@@ -406,13 +406,13 @@ export function createApp(source: Services | ProjectResolver) {
     hub,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       // Another worker may have changed projects, schema or settings.
-      if (projects.sync) projects.sync()
-      else syncServices(control)
+      if (projects.sync) await projects.sync()
+      else await syncServices(control)
       const started = performance.now()
       const url = new URL(request.url)
       // The console resolves its own project, so refresh every runtime it may show.
       if (url.pathname.startsWith('/console')) {
-        for (const runtime of projects.list()) if (runtime.services !== control) syncServices(runtime.services)
+        for (const runtime of projects.list()) if (runtime.services !== control) await syncServices(runtime.services)
       }
       const id = requestId(request)
       const ip = rememberClientIp(request, server?.requestIP(request)?.address, trustedProxies)

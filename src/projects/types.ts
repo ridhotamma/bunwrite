@@ -35,7 +35,7 @@ export interface ProjectResolver {
   /** The project and site a request's Host header points at, if any. */
   findSite(host: string): { project: ProjectRuntime; site: SiteRow; deploymentId: string | null } | null
   /** Notice projects added, removed or changed by another process. */
-  sync?(): void
+  sync?(): void | Promise<void>
   create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
   /** Keep the registry in step with a project's Settings page. */
   update(id: string, fields: { name?: string; orgId?: string }): ProjectInfo

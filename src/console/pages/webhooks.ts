@@ -51,15 +51,15 @@ function draftOfForm(form: Record<string, any>, existing?: WebhookRow): WebhookD
 }
 
 export function webhookPages(router: ConsoleRouter): void {
-  router.get(WEBHOOKS, ({ ctx }) => ctx.render('Webhooks', 'webhooks', webhooksView(ctx.services.webhooks.list())))
+  router.get(WEBHOOKS, async ({ ctx }) => ctx.render('Webhooks', 'webhooks', webhooksView(await ctx.services.webhooks.list())))
 
   router.get(`${WEBHOOKS}/new`, ({ ctx }) => ctx.render('Create webhook', 'webhooks', webhookCreateView(envOf(ctx))))
 
-  router.post(WEBHOOKS, ({ ctx }) => {
+  router.post(WEBHOOKS, async ({ ctx }) => {
     const draft = draftOfForm(ctx.form)
     try {
       if (!draft.events.length) throw err('general_argument_invalid', 'Choose at least one event.')
-      const hook = ctx.services.webhooks.create(value(ctx.form, 'id'), {
+      const hook = await ctx.services.webhooks.create(value(ctx.form, 'id'), {
         name: draft.name,
         url: draft.url,
         events: draft.events,
@@ -77,22 +77,22 @@ export function webhookPages(router: ConsoleRouter): void {
     }
   })
 
-  router.get(`${WEBHOOKS}/:webhook`, ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.get(path.webhook!)
+  router.get(`${WEBHOOKS}/:webhook`, async ({ ctx, path }) => {
+    const hook = await ctx.services.webhooks.get(path.webhook!)
     return ctx.render(hook.name, 'webhooks', webhookView(envOf(ctx), hook, 'deliveries'))
   })
 
-  router.get(`${WEBHOOKS}/:webhook/settings`, ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.get(path.webhook!)
+  router.get(`${WEBHOOKS}/:webhook/settings`, async ({ ctx, path }) => {
+    const hook = await ctx.services.webhooks.get(path.webhook!)
     return ctx.render(hook.name, 'webhooks', webhookView(envOf(ctx), hook, 'settings'))
   })
 
   // Endpoint, status and basic authentication. Events and the secret have their own forms.
-  router.post(`${WEBHOOKS}/:webhook/settings`, ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.get(path.webhook!)
+  router.post(`${WEBHOOKS}/:webhook/settings`, async ({ ctx, path }) => {
+    const hook = await ctx.services.webhooks.get(path.webhook!)
     const draft = draftOfForm(ctx.form, hook)
     try {
-      ctx.services.webhooks.update(hook.id, {
+      await ctx.services.webhooks.update(hook.id, {
         name: draft.name,
         url: draft.url,
         enabled: draft.enabled,
@@ -107,12 +107,12 @@ export function webhookPages(router: ConsoleRouter): void {
     }
   })
 
-  router.post(`${WEBHOOKS}/:webhook/events`, ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.get(path.webhook!)
+  router.post(`${WEBHOOKS}/:webhook/events`, async ({ ctx, path }) => {
+    const hook = await ctx.services.webhooks.get(path.webhook!)
     const events = eventsOf(ctx.form)
     try {
       if (!events.length) throw err('general_argument_invalid', 'Choose at least one event.')
-      ctx.services.webhooks.update(hook.id, { events })
+      await ctx.services.webhooks.update(hook.id, { events })
       return ctx.go(`${webhookUrl(hook.id)}/settings`, { tone: 'success', text: 'Events saved' })
     } catch (error) {
       if (!(error instanceof BunwriteError)) throw error
@@ -122,19 +122,19 @@ export function webhookPages(router: ConsoleRouter): void {
 
   // One delivery now, so the endpoint and its signature check can be tried by hand.
   router.post(`${WEBHOOKS}/:webhook/test`, async ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.get(path.webhook!)
+    const hook = await ctx.services.webhooks.get(path.webhook!)
     const result = await ctx.services.webhooks.sendTest(hook.id)
     return ctx.go(webhookUrl(hook.id), { tone: result.ok ? 'success' : 'critical', text: result.message })
   })
 
   // A new secret is shown once, in this response, like an API key; never in the URL.
-  router.post(`${WEBHOOKS}/:webhook/secret`, ({ ctx, path }) => {
-    const hook = ctx.services.webhooks.updateSecret(path.webhook!, undefined)
+  router.post(`${WEBHOOKS}/:webhook/secret`, async ({ ctx, path }) => {
+    const hook = await ctx.services.webhooks.updateSecret(path.webhook!, undefined)
     return ctx.render(hook.name, 'webhooks', webhookView(envOf(ctx), hook, 'settings', { secret: hook.secret }))
   })
 
-  router.post(`${WEBHOOKS}/:webhook/delete`, ({ ctx, path }) => {
-    ctx.services.webhooks.delete(path.webhook!)
+  router.post(`${WEBHOOKS}/:webhook/delete`, async ({ ctx, path }) => {
+    await ctx.services.webhooks.delete(path.webhook!)
     return ctx.go(WEBHOOKS, { tone: 'success', text: 'Webhook deleted' })
   })
 }

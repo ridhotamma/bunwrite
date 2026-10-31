@@ -13,7 +13,7 @@ import {
   type SqliteSynchronous,
 } from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
-import type { DriverCapabilities } from './driver'
+import type { DriverCapabilities, SqlDatabase } from './driver'
 import { withBusyRetry } from './errors'
 import { createSqliteDriver, type SqliteDriver } from './sqlite-driver'
 import * as schema from './system-schema'
@@ -29,7 +29,7 @@ export type Orm = BunSQLiteDatabase<typeof schema>
  * behind the async port). A migration to Postgres or MongoDB moves a service
  * from `sqlite` to `driver`; see docs/DATABASE.md.
  */
-export interface Db {
+export interface Db extends SqlDatabase {
   sqlite: Database
   orm: Orm
   driver: SqliteDriver

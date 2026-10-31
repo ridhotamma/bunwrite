@@ -18,12 +18,12 @@ const tone = (status: number) => (status >= 500 ? 'critical' : status >= 400 ? '
 const duration = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(1)} ms`)
 
 export function logPages(router: ConsoleRouter): void {
-  router.get(LOGS, ({ ctx, url }) => {
+  router.get(LOGS, async ({ ctx, url }) => {
     const search = url.searchParams.get('q') ?? ''
     const status = url.searchParams.get('status') ?? ''
     const { page, limit } = pageParams(url, LIMIT)
     const project = ctx.services.config.projectId
-    const { total, logs } = ctx.services.requestLogs.list({ page, limit, search, status, project })
+    const { total, logs } = await ctx.services.requestLogs.list({ page, limit, search, status, project })
     const pages = pageCount(total, limit)
     const statusSelect = html`<select name="status" aria-label="Filter by status">
       ${STATUS_FILTERS.map(([value, label]) => html`<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`)}
@@ -76,9 +76,9 @@ export function logPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${LOGS}/:seq`, ({ ctx, path }) => {
+  router.get(`${LOGS}/:seq`, async ({ ctx, path }) => {
     const seq = Number(path.seq)
-    const log = Number.isSafeInteger(seq) ? ctx.services.requestLogs.get(seq, ctx.services.config.projectId) : null
+    const log = Number.isSafeInteger(seq) ? await ctx.services.requestLogs.get(seq, ctx.services.config.projectId) : null
     if (!log) {
       return ctx.render(
         'Log entry not found',
@@ -115,8 +115,8 @@ export function logPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${LOGS}/delete`, ({ ctx }) => {
-    ctx.services.requestLogs.clear(ctx.services.config.projectId)
+  router.post(`${LOGS}/delete`, async ({ ctx }) => {
+    await ctx.services.requestLogs.clear(ctx.services.config.projectId)
     return ctx.go(LOGS, { tone: 'success', text: 'Request logs cleared' })
   })
 }

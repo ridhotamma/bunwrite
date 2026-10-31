@@ -1,4 +1,4 @@
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { err } from '~/lib/errors'
 import {
   normalizeAttribute,
@@ -25,16 +25,29 @@ export class Registry {
   databases = new Map<string, DatabaseInfo>()
   collections = new Map<string, Collection>()
 
-  constructor(private db: Db) {
-    this.reload()
+  constructor(private db: SqlDatabase) {
+    // SQLite loads synchronously, as before. A network backend waits for
+    // `load()` from the boot path (services.ready()).
+    if (db.dialect === 'sqlite') this.reload()
   }
 
+  /** Reload over the synchronous SQLite path; schema DDL is still SQLite-only. */
   reload(): void {
+    const dbs = this.db.sqlite!.query<any, []>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases').all()
+    const rows = this.db.sqlite!.query<any, []>('SELECT * FROM _collections').all()
+    this.apply(dbs, rows)
+  }
+
+  /** Reload through the driver port so it works on Postgres too. */
+  async load(): Promise<void> {
+    const dbs = await this.db.driver.all<any>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
+    const rows = await this.db.driver.all<any>('SELECT * FROM _collections')
+    this.apply(dbs, rows)
+  }
+
+  private apply(dbs: any[], rows: any[]): void {
     this.databases.clear()
     this.collections.clear()
-    const dbs = this.db.sqlite
-      .query<any, []>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
-      .all()
     for (const d of dbs) {
       this.databases.set(d.id, {
         seq: d.seq,
@@ -45,7 +58,6 @@ export class Registry {
         updatedAt: d.updated_at,
       })
     }
-    const rows = this.db.sqlite.query<any, []>('SELECT * FROM _collections').all()
     for (const r of rows) {
       const database = this.databases.get(r.database_id)
       if (!database) continue

@@ -4,7 +4,7 @@
  * seen counters with the database and reloads what changed. By default the
  * comparison happens on every request; `CACHE_CHECK_MS` can throttle it.
  */
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 
 export const VERSION_KEYS = ['schema', 'settings', 'catalog', 'projects', 'auth', 'keys'] as const
 export type VersionKey = (typeof VERSION_KEYS)[number]
@@ -28,16 +28,18 @@ export class VersionMonitor {
   private checkedAt = 0
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private intervalMs = 0,
   ) {
-    this.seen = this.read()
+    // SQLite loads synchronously, as before. A network backend starts at zero
+    // and `load()` (from services.ready()) establishes the baseline.
+    this.seen = this.db.dialect === 'sqlite' ? this.readSync() : emptyVersions()
   }
 
-  private read(): Record<VersionKey, number> {
-    const values: Record<VersionKey, number> = { schema: 0, settings: 0, catalog: 0, projects: 0, auth: 0, keys: 0 }
+  private readSync(): Record<VersionKey, number> {
+    const values = emptyVersions()
     try {
-      for (const row of this.db.sqlite.query<{ key: string; value: number }, []>('SELECT key, value FROM _meta').all()) {
+      for (const row of this.db.sqlite!.query<{ key: string; value: number }, []>('SELECT key, value FROM _meta').all()) {
         if ((VERSION_KEYS as readonly string[]).includes(row.key)) values[row.key as VersionKey] = Number(row.value) || 0
       }
     } catch {
@@ -46,12 +48,19 @@ export class VersionMonitor {
     return values
   }
 
-  /** Which caches another process changed since the last call. Throttled. */
-  poll(): VersionChanges {
-    const stamp = Date.now()
-    if (this.checkedAt && stamp - this.checkedAt < this.intervalMs) return NO_CHANGES
-    this.checkedAt = stamp
-    const next = this.read()
+  private async readAsync(): Promise<Record<VersionKey, number>> {
+    const values = emptyVersions()
+    try {
+      for (const row of await this.db.driver.all<{ key: string; value: number }>('SELECT key, value FROM _meta')) {
+        if ((VERSION_KEYS as readonly string[]).includes(row.key)) values[row.key as VersionKey] = Number(row.value) || 0
+      }
+    } catch {
+      // A database opened before `_meta` existed: treat everything as fresh.
+    }
+    return values
+  }
+
+  private diff(next: Record<VersionKey, number>): VersionChanges {
     const changes: VersionChanges = {
       schema: next.schema !== this.seen.schema,
       settings: next.settings !== this.seen.settings,
@@ -62,6 +71,32 @@ export class VersionMonitor {
     }
     this.seen = next
     return changes
+  }
+
+  private throttled(stamp: number): boolean {
+    if (this.checkedAt && stamp - this.checkedAt < this.intervalMs) return true
+    this.checkedAt = stamp
+    return false
+  }
+
+  /** Establish the baseline for a backend that did not load synchronously. */
+  async load(): Promise<void> {
+    this.seen = await this.readAsync()
+    this.checkedAt = Date.now()
+  }
+
+  /** Which caches another process changed since the last call. Throttled. */
+  poll(): VersionChanges {
+    const stamp = Date.now()
+    if (this.throttled(stamp)) return NO_CHANGES
+    return this.diff(this.readSync())
+  }
+
+  /** Like `poll`, but uses the driver port so it works on Postgres too. */
+  async pollAsync(): Promise<VersionChanges> {
+    const stamp = Date.now()
+    if (this.throttled(stamp)) return NO_CHANGES
+    return this.diff(await this.readAsync())
   }
 
   /**
@@ -83,7 +118,14 @@ export class VersionMonitor {
 
   /** Re-baseline after this process applied the change, or after a restore. */
   reset(): void {
-    this.seen = this.read()
+    this.seen = this.readSync()
+    this.checkedAt = Date.now()
+  }
+
+  async resetAsync(): Promise<void> {
+    this.seen = await this.readAsync()
     this.checkedAt = Date.now()
   }
 }
+
+const emptyVersions = (): Record<VersionKey, number> => ({ schema: 0, settings: 0, catalog: 0, projects: 0, auth: 0, keys: 0 })

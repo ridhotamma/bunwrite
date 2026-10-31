@@ -13,7 +13,7 @@
  * alert emails to apply them to.
  */
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import type { SettingsService } from './service'
@@ -119,17 +119,32 @@ export class AccessService {
   private cache: Stored | null = null
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private settings: () => SettingsService,
-  ) {}
+  ) {
+    if (db.dialect === 'sqlite') this.loadSync()
+  }
+
+  private merge(saved: Partial<Stored>): Stored {
+    return { ...structuredClone(DEFAULTS), ...saved, membershipPrivacy: { ...DEFAULTS.membershipPrivacy, ...saved.membershipPrivacy } }
+  }
+
+  private loadSync(): void {
+    const row = this.db.sqlite!.query<{ value: string }, [string]>('SELECT value FROM _settings WHERE key = ?').get('access')
+    this.cache = this.merge(row ? (JSON.parse(row.value) as Partial<Stored>) : {})
+  }
+
+  /** Load through the driver port (boot path on a network backend). */
+  async load(): Promise<void> {
+    const row = await this.db.driver.get<{ value: string }>('SELECT value FROM _settings WHERE key = ?', ['access'])
+    this.cache = this.merge(row ? (JSON.parse(row.value) as Partial<Stored>) : {})
+  }
 
   private read(): Stored {
-    if (this.cache) return this.cache
-    const row = this.db.sqlite.query<{ value: string }, [string]>('SELECT value FROM _settings WHERE key = ?').get('access')
-    const saved = row ? (JSON.parse(row.value) as Partial<Stored>) : {}
-    this.cache = { ...structuredClone(DEFAULTS), ...saved, membershipPrivacy: { ...DEFAULTS.membershipPrivacy, ...saved.membershipPrivacy } }
-    return this.cache
+    // Defaults before `load()` finishes keep requests safe; a network boot
+    // awaits services.ready(), so this only covers the empty database case.
+    return this.cache ?? structuredClone(DEFAULTS)
   }
 
   /** Drop the cached settings after the database was replaced. */
@@ -137,12 +152,13 @@ export class AccessService {
     this.cache = null
   }
 
-  private write(change: (s: Stored) => void): void {
+  private async write(change: (s: Stored) => void): Promise<void> {
     const next = structuredClone(this.read())
     change(next)
-    this.db.sqlite
-      .query("INSERT INTO _settings (key, value, updated_at) VALUES ('access', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
-      .run(JSON.stringify(next), now())
+    await this.db.driver.run(
+      "INSERT INTO _settings (key, value, updated_at) VALUES ('access', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      [JSON.stringify(next), now()],
+    )
     this.cache = next
   }
 
@@ -160,19 +176,19 @@ export class AccessService {
     return this.read().authMethods[id] ?? true
   }
 
-  setService(id: string, enabled: boolean): void {
+  async setService(id: string, enabled: boolean): Promise<void> {
     if (!(SERVICE_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`serviceId\` param: must be one of ${SERVICE_IDS.join(', ')}`)
-    this.write((s) => (s.services[id as ServiceId] = enabled))
+    await this.write((s) => (s.services[id as ServiceId] = enabled))
   }
 
-  setProtocol(id: string, enabled: boolean): void {
+  async setProtocol(id: string, enabled: boolean): Promise<void> {
     if (!(PROTOCOL_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`protocolId\` param: must be one of ${PROTOCOL_IDS.join(', ')}`)
-    this.write((s) => (s.protocols[id as ProtocolId] = enabled))
+    await this.write((s) => (s.protocols[id as ProtocolId] = enabled))
   }
 
-  setAuthMethod(id: string, enabled: boolean): void {
+  async setAuthMethod(id: string, enabled: boolean): Promise<void> {
     if (!(AUTH_METHOD_IDS as readonly string[]).includes(id)) throw err('general_argument_invalid', `Invalid \`methodId\` param: must be one of ${AUTH_METHOD_IDS.join(', ')}`)
-    this.write((s) => (s.authMethods[id as AuthMethodId] = enabled))
+    await this.write((s) => (s.authMethods[id as AuthMethodId] = enabled))
   }
 
   services() {
@@ -204,11 +220,11 @@ export class AccessService {
   }
 
   /** Sign-ups stop once the project has `user-limit` users (0 means no limit). */
-  assertUserLimit(): void {
+  async assertUserLimit(): Promise<void> {
     const limit = this.read().userLimit
     if (limit <= 0) return
-    const { n } = this.db.sqlite.query<{ n: number }, []>('SELECT count(*) AS n FROM _users').get()!
-    if (n >= limit) throw err('user_count_exceeded')
+    const row = await this.db.driver.get<{ n: number }>('SELECT count(*) AS n FROM _users')
+    if (Number(row?.n ?? 0) >= limit) throw err('user_count_exceeded')
   }
 
   /** With the personal-data policy on, a password may not contain the user's ID, name, email or phone. */
@@ -250,7 +266,7 @@ export class AccessService {
   }
 
   /** Apply one policy update; `params` is the request body. */
-  updatePolicy(id: string, params: Record<string, unknown>) {
+  async updatePolicy(id: string, params: Record<string, unknown>) {
     const flag = () => {
       if (typeof params.enabled !== 'boolean') throw err('general_argument_invalid', 'Invalid `enabled` param: Value must be a valid boolean')
       return params.enabled
@@ -263,47 +279,47 @@ export class AccessService {
     switch (id) {
       case 'password-dictionary': {
         const v = flag()
-        this.write((s) => (s.passwordDictionary = v))
+        await this.write((s) => (s.passwordDictionary = v))
         break
       }
       case 'password-history': {
         const v = count('total', 20)
-        this.write((s) => (s.passwordHistory = v))
+        await this.write((s) => (s.passwordHistory = v))
         break
       }
       case 'password-personal-data': {
         const v = flag()
-        this.write((s) => (s.passwordPersonalData = v))
+        await this.write((s) => (s.passwordPersonalData = v))
         break
       }
       case 'session-alert': {
         const v = flag()
-        this.write((s) => (s.sessionAlert = v))
+        await this.write((s) => (s.sessionAlert = v))
         break
       }
       case 'session-invalidation': {
         const v = flag()
-        this.write((s) => (s.sessionInvalidation = v))
+        await this.write((s) => (s.sessionInvalidation = v))
         break
       }
       case 'user-limit': {
         const v = count('total', 10_000)
-        this.write((s) => (s.userLimit = v))
+        await this.write((s) => (s.userLimit = v))
         break
       }
       case 'deny-aliased-email': {
         const v = flag()
-        this.write((s) => (s.denyAliasedEmail = v))
+        await this.write((s) => (s.denyAliasedEmail = v))
         break
       }
       case 'deny-disposable-email': {
         const v = flag()
-        this.write((s) => (s.denyDisposableEmail = v))
+        await this.write((s) => (s.denyDisposableEmail = v))
         break
       }
       case 'deny-free-email': {
         const v = flag()
-        this.write((s) => (s.denyFreeEmail = v))
+        await this.write((s) => (s.denyFreeEmail = v))
         break
       }
       case 'membership-privacy': {
@@ -311,14 +327,14 @@ export class AccessService {
         for (const key of Object.keys(DEFAULTS.membershipPrivacy) as (keyof MembershipPrivacy)[]) {
           if (params[key] !== undefined && params[key] !== null) next[key] = Boolean(params[key])
         }
-        this.write((s) => Object.assign(s.membershipPrivacy, next))
+        await this.write((s) => Object.assign(s.membershipPrivacy, next))
         break
       }
       case 'session-duration':
-        this.saveProject({ sessionDuration: count('duration', 31_536_000) })
+        await this.saveProject({ sessionDuration: count('duration', 31_536_000) })
         break
       case 'session-limit':
-        this.saveProject({ sessionsLimit: count('total', 100) })
+        await this.saveProject({ sessionsLimit: count('total', 100) })
         break
       default:
         throw err('general_argument_invalid', `Invalid \`policyId\` param: must be one of ${POLICY_IDS.join(', ')}`)
@@ -327,12 +343,12 @@ export class AccessService {
   }
 
   /** Session duration and limit share the console's `project` setting. */
-  private saveProject(change: { sessionDuration?: number; sessionsLimit?: number }): void {
+  private async saveProject(change: { sessionDuration?: number; sessionsLimit?: number }): Promise<void> {
     if (change.sessionDuration !== undefined && change.sessionDuration < 5) {
       throw err('general_argument_invalid', 'Invalid `duration` param: Value must be a valid range between 5 and 31,536,000')
     }
     const c = this.config
-    this.settings().set('project', {
+    await this.settings().set('project', {
       projectName: c.projectName,
       allowedOrigins: c.allowedOrigins,
       sessionDuration: change.sessionDuration ?? c.sessionDuration,
@@ -352,21 +368,21 @@ export class AccessService {
     return found
   }
 
-  createMockPhone(number: unknown, otp: unknown): MockPhone {
+  async createMockPhone(number: unknown, otp: unknown): Promise<MockPhone> {
     const phone = validPhoneNumber(number)
     const code = validOtp(otp)
     if (this.read().mockPhones.some((m) => m.number === phone)) throw err('mock_number_already_exists')
     if (this.read().mockPhones.length >= MAX_MOCK_PHONES) throw err('mock_number_limit_exceeded')
     const stamp = now()
     const created = { number: phone, otp: code, createdAt: stamp, updatedAt: stamp }
-    this.write((s) => s.mockPhones.push(created))
+    await this.write((s) => s.mockPhones.push(created))
     return created
   }
 
-  updateMockPhone(number: string, otp: unknown): MockPhone {
+  async updateMockPhone(number: string, otp: unknown): Promise<MockPhone> {
     this.mockPhone(number)
     const code = validOtp(otp)
-    this.write((s) => {
+    await this.write((s) => {
       const m = s.mockPhones.find((p) => p.number === number)!
       m.otp = code
       m.updatedAt = now()
@@ -374,9 +390,9 @@ export class AccessService {
     return this.mockPhone(number)
   }
 
-  deleteMockPhone(number: string): void {
+  async deleteMockPhone(number: string): Promise<void> {
     this.mockPhone(number)
-    this.write((s) => (s.mockPhones = s.mockPhones.filter((m) => m.number !== number)))
+    await this.write((s) => (s.mockPhones = s.mockPhones.filter((m) => m.number !== number)))
   }
 }
 

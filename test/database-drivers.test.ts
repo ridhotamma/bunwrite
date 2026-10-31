@@ -12,6 +12,16 @@ import {
 } from '~/db/postgres-schema'
 import type { MongoDriver } from '~/db/mongo-driver'
 import type { PostgresDriver } from '~/db/postgres-driver'
+import type { SqlDatabase } from '~/db/driver'
+import { keyCaller } from '~/auth/caller'
+import { RequestLogService } from '~/logs/service'
+import { VariablesService } from '~/variables/service'
+import { WebhookService } from '~/webhooks/service'
+import { SettingsService, resolveApiKey } from '~/settings/service'
+import { AccessService } from '~/settings/access'
+import { Registry } from '~/schema/registry'
+import { VersionMonitor } from '~/cluster/versions'
+import { testConfig } from './helpers'
 
 const sqlite = openDb(':memory:')
 afterAll(() => sqlite.sqlite.close())
@@ -213,6 +223,119 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     })
     expect(await driver.get(`SELECT id FROM _teams WHERE id = 't3'`)).not.toBeNull()
     expect(await driver.get(`SELECT id FROM _teams WHERE id = 't4'`)).toBeNull()
+  })
+
+  test('the ported services read and write Postgres', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const stamp = '2026-01-01T00:00:00.000+00:00'
+
+    const variables = new VariablesService(handle)
+    await variables.create('project', 'v1', 'API_URL', 'https://a.example', false)
+    expect(await variables.projectEnvironment('live')).toMatchObject({ API_URL: 'https://a.example' })
+    await variables.setVariable('project', 'API_URL', 'https://b.example', false)
+    expect((await variables.projectEnvironment()).API_URL).toBe('https://b.example')
+    expect(await variables.list('project')).toHaveLength(1)
+    // The legacy function-variable migration uses ON CONFLICT and a transaction.
+    await driver.run(
+      `INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES ('*', ?, ?, 0, '', ?, ?)`,
+      ['LEGACY', 'kept', stamp, stamp],
+    )
+    await variables.adoptFunctionGlobals()
+    expect((await variables.projectEnvironment()).LEGACY).toBe('kept')
+    expect(await driver.get(`SELECT 1 FROM _function_vars WHERE function_id = '*'`)).toBeNull()
+
+    const webhooks = new WebhookService(handle, () => 'test-project', () => 'bunwrite')
+    const hook = await webhooks.create('hook-1', {
+      name: 'Hook',
+      url: 'http://127.0.0.1:9/hook',
+      events: ['databases.*.collections.*.documents.*.create'],
+    })
+    expect(hook.enabled).toBe(1)
+    await webhooks.update('hook-1', { enabled: false })
+    // Disabled hooks are skipped before any network call.
+    await webhooks.dispatch(
+      [{ collection: { databaseId: 'main', id: 'products' }, action: 'create', document: { $id: 'x' } } as never],
+      keyCaller(),
+    )
+    await webhooks.delete('hook-1')
+
+    const logs = new RequestLogService(handle, testConfig())
+    logs.record({ id: 'r1', method: 'GET', path: '/x', status: 200, durationMs: 1, requestBytes: 10, responseBytes: 20 })
+    const listed = await logs.list({ page: 1, limit: 10 })
+    expect(listed.total).toBe(1)
+    expect(listed.logs[0]).toMatchObject({ path: '/x' })
+    const bands = await logs.bandwidthByHour('2000-01-01T00:00:00.000+00:00')
+    expect(bands[0]).toMatchObject({ inbound: 10, outbound: 20 })
+    const consumers = await logs.topConsumers('2000-01-01T00:00:00.000+00:00', 5)
+    expect(consumers[0]).toMatchObject({ path: '/x', bytes: 30 })
+    await logs.prune()
+    await logs.clear()
+    expect((await logs.list({ page: 1, limit: 10 })).total).toBe(0)
+  })
+
+  test('the cache services load and write through the port', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const stamp = '2026-01-01T00:00:00.000+00:00'
+
+    // Version counters.
+    const versions = new VersionMonitor(handle, 0)
+    await versions.load()
+    const before = versions.authVersion()
+    await driver.run(`UPDATE _meta SET value = value + 1 WHERE key = 'auth'`)
+    const changed = await versions.pollAsync()
+    expect(changed.auth).toBe(true)
+    expect(versions.authVersion()).toBe(before + 1)
+
+    // Settings overlay and API keys.
+    const config = testConfig()
+    const settings = new SettingsService(handle, config)
+    await settings.load()
+    expect(settings.overridden('project')).toBe(false)
+    await settings.set('project', { projectName: 'PG Project', allowedOrigins: ['https://pg.example'], sessionDuration: 3600, sessionsLimit: 5 })
+    expect(config.projectName).toBe('PG Project')
+    expect(settings.overridden('project')).toBe(true)
+    const { key, secret } = await settings.createKey('reader', null, ['documents.read'])
+    expect((await settings.listKeys()).map((row) => row.id)).toContain(key.id)
+    expect((await resolveApiKey(handle, config, secret))?.scopes).toEqual(['documents.read'])
+    await settings.deleteKey(key.id)
+    expect(await settings.listKeys()).toHaveLength(0)
+    await settings.reset('project')
+    expect(config.projectName).toBe(testConfig().projectName)
+
+    // Another process writes the row; `load()` is the refresh path.
+    await driver.run(`INSERT INTO _settings (key, value, updated_at) VALUES ('project', ?, ?)`, [
+      JSON.stringify({ projectName: 'External', allowedOrigins: [], sessionDuration: 60, sessionsLimit: 1 }),
+      stamp,
+    ])
+    await settings.load()
+    expect(config.projectName).toBe('External')
+    expect(settings.overridden('project')).toBe(true)
+    await settings.reset('project')
+
+    // Access switches share the `access` row.
+    const access = new AccessService(handle, config, () => settings)
+    await access.load()
+    expect(access.serviceEnabled('users')).toBe(true)
+    await access.setService('users', false)
+    expect(access.serviceEnabled('users')).toBe(false)
+    await access.updatePolicy('user-limit', { total: 2 })
+    expect(access.policy('user-limit').total).toBe(2)
+    await access.assertUserLimit()
+    expect(await access.createMockPhone('+15555550123', '123456')).toMatchObject({ number: '+15555550123', otp: '123456' })
+
+    // Registry rows.
+    await driver.run(
+      `INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT (id) DO NOTHING`,
+      ['main', 'Main', stamp, stamp],
+    )
+    await driver.run(
+      `INSERT INTO _collections (database_id, id, name, enabled, document_security, permissions, attributes, indexes, created_at, updated_at)
+       VALUES (?, ?, ?, 1, 1, '[]', ?, '[]', ?, ?) ON CONFLICT (database_id, id) DO NOTHING`,
+      ['main', 'products', 'Products', JSON.stringify([{ key: 'name', type: 'string', format: '', required: false, array: false, default: null }]), stamp, stamp],
+    )
+    const registry = new Registry(handle)
+    await registry.load()
+    expect(registry.collections.get('main/products')?.attributeMap.has('name')).toBe(true)
   })
 
   test('drops the scratch schema', async () => {

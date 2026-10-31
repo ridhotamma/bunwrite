@@ -135,8 +135,8 @@ function databaseCard(ctx: ConsoleContext): Html {
     </form>`)
 }
 
-function projectVariablesCard(ctx: ConsoleContext): Html {
-  const projectVars = ctx.services.variables.list(PROJECT_SCOPE)
+async function projectVariablesCard(ctx: ConsoleContext): Promise<Html> {
+  const projectVars = await ctx.services.variables.list(PROJECT_SCOPE)
   return card(ctx, 'project-vars', 'Global variables', null, 'Available to every site and function. A site or function variable with the same name wins.', variableList(projectVars, {
     id: 'project-vars',
     save: `${SETTINGS}/variables`,
@@ -283,7 +283,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       body = functionCards(ctx)
       break
     case 'variables':
-      body = projectVariablesCard(ctx)
+      body = await projectVariablesCard(ctx)
       break
     case 'logs':
       body = logsCard(ctx)

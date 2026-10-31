@@ -323,7 +323,7 @@ export class FunctionService {
       functionEnv?: Record<string, string>
       internalEndpoint?: string
       /** Project variables (`/project/variables`), shared by functions and sites. */
-      projectVariables?: (context: DeployContext) => Record<string, string>
+      projectVariables?: (context: DeployContext) => Record<string, string> | Promise<Record<string, string>>
     } = {},
   ) {}
 
@@ -768,14 +768,14 @@ export class FunctionService {
    * Environment for a run or a build: server env without secrets, function variables, and
    * BUNWRITE_FUNCTION_* values (plus APPWRITE_FUNCTION_* in Appwrite mode).
    */
-  env(f: FunctionRow, trigger: string, context: DeployContext = 'live'): Record<string, string> {
+  async env(f: FunctionRow, trigger: string, context: DeployContext = 'live'): Promise<Record<string, string>> {
     const base: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
     const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
     // The function's own values for this deploy context; they win over project variables.
     const vars = resolveContext(this.variables(f.id), context)
-    const projectVars = this.options.projectVariables?.(context) ?? {}
+    const projectVars = (await this.options.projectVariables?.(context)) ?? {}
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
     const own = { ...projectVars, ...this.options.functionEnv, ...vars }
     const fromVars = (name: string) => own[`BUNWRITE_${name}`] ?? own[`APPWRITE_${name}`]
@@ -882,7 +882,7 @@ export class FunctionService {
       const sandbox = this.config.functionsSandbox
       const runtime = runtimeId && !f.runtime.startsWith('python') ? await ensureRuntime(this.config, runtimeId) : null
       let command = this.command(f, dir, entrypoint, runtime)
-      const env = withRuntime(this.env(f, request.trigger), runtime)
+      const env = withRuntime(await this.env(f, request.trigger), runtime)
       if (sandbox) {
         const uid = sandbox.uidFor(this.config.projectId, f.id)
         const home = functionHome(this.config, f.id)

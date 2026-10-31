@@ -76,13 +76,13 @@ export function settingsPages(router: ConsoleRouter): void {
     return page(templatePreview(ctx.services.templates.preview(id, { ...fields, subject: fields.subject || defaults.subject, message: fields.message || defaults.message })))
   })
 
-  router.post(`${SETTINGS}/project`, ({ ctx }) => {
+  router.post(`${SETTINGS}/project`, async ({ ctx }) => {
     const f = ctx.form
     const days = Number(f.sessionDays)
     const limit = Number(f.sessionsLimit)
     if (!(days >= 1) || !(limit >= 1 && limit <= 100)) throw err('general_argument_invalid', 'Session length and sessions per user must be positive.')
     const projectName = value(f, 'projectName') || ctx.services.config.projectName
-    ctx.services.settings.set('project', {
+    await ctx.services.settings.set('project', {
       projectName,
       allowedOrigins: lines(f.allowedOrigins),
       sessionDuration: Math.round(days * 86400),
@@ -92,15 +92,15 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('general'), { tone: 'success', text: 'Project settings saved' })
   })
 
-  router.post(`${SETTINGS}/smtp`, ({ ctx }) => {
+  router.post(`${SETTINGS}/smtp`, async ({ ctx }) => {
     const f = ctx.form
     if (f.disable) {
-      ctx.services.settings.set('smtp', { disabled: true })
+      await ctx.services.settings.set('smtp', { disabled: true })
       return ctx.go(tabPath('email'), { tone: 'success', text: 'Email turned off' })
     }
     const host = value(f, 'host')
     if (!host) throw err('general_argument_invalid', 'Enter the SMTP host.')
-    ctx.services.settings.set('smtp', {
+    await ctx.services.settings.set('smtp', {
       host,
       port: Number(f.port || 587),
       user: value(f, 'user') || undefined,
@@ -130,10 +130,10 @@ export function settingsPages(router: ConsoleRouter): void {
   })
 
   for (const id of OAUTH_PROVIDER_IDS) {
-    router.post(`${SETTINGS}/${id}`, ({ ctx }) => {
+    router.post(`${SETTINGS}/${id}`, async ({ ctx }) => {
       const meta = OAUTH_PROVIDERS[id]
       if (ctx.form.disable) {
-        ctx.services.settings.set(id, { disabled: true })
+        await ctx.services.settings.set(id, { disabled: true })
         return ctx.go(tabPath('email'), { tone: 'success', text: `${meta.name} sign-in turned off` })
       }
       const f = ctx.form
@@ -145,20 +145,20 @@ export function settingsPages(router: ConsoleRouter): void {
         const keyId = value(f, 'keyId') || current?.keyId || ''
         const privateKey = String(f.privateKey ?? '').trim() || current?.privateKey || ''
         if (!teamId || !keyId || !privateKey) throw err('general_argument_invalid', 'Enter the Apple team ID, key ID and .p8 private key.')
-        ctx.services.settings.set(id, { clientId, clientSecret: '', teamId, keyId, privateKey })
+        await ctx.services.settings.set(id, { clientId, clientSecret: '', teamId, keyId, privateKey })
       } else {
         const clientSecret = String(f.clientSecret ?? '') || current?.clientSecret || ''
         if (!clientSecret) throw err('general_argument_invalid', 'Enter both the client ID and secret.')
-        ctx.services.settings.set(id, { clientId, clientSecret })
+        await ctx.services.settings.set(id, { clientId, clientSecret })
       }
       return ctx.go(tabPath('email'), { tone: 'success', text: `${meta.name} sign-in saved` })
     })
   }
 
-  router.post(`${SETTINGS}/functions`, ({ ctx }) => {
+  router.post(`${SETTINGS}/functions`, async ({ ctx }) => {
     const functionsDir = value(ctx.form, 'functionsDir')
     if (functionsDir && !existsSync(functionsDir)) throw err('general_argument_invalid', `No folder at ${functionsDir}.`)
-    ctx.services.settings.set('functions', { skipSchedules: arrayOf(ctx.form.paused), functionsDir: functionsDir || undefined })
+    await ctx.services.settings.set('functions', { skipSchedules: arrayOf(ctx.form.paused), functionsDir: functionsDir || undefined })
     return ctx.go(tabPath('functions'), { tone: 'success', text: 'Schedules saved' })
   })
 
@@ -172,16 +172,16 @@ export function settingsPages(router: ConsoleRouter): void {
     then: () => tabPath('variables'),
   })
 
-  router.post(`${SETTINGS}/logs`, ({ ctx }) => {
+  router.post(`${SETTINGS}/logs`, async ({ ctx }) => {
     const days = Number(ctx.form.retentionDays)
     if (!Number.isFinite(days) || days < 0) throw err('general_argument_invalid', 'Retention must be zero or more days.')
-    ctx.services.settings.set('logs', { retentionDays: Math.round(days), logIp: checked(ctx.form.logIp) })
-    ctx.services.requestLogs.prune()
+    await ctx.services.settings.set('logs', { retentionDays: Math.round(days), logIp: checked(ctx.form.logIp) })
+    await ctx.services.requestLogs.prune()
     return ctx.go(tabPath('logs'), { tone: 'success', text: 'Log settings saved' })
   })
 
-  router.post(`${SETTINGS}/render`, ({ ctx }) => {
-    ctx.services.settings.set('render', { enabled: checked(ctx.form.enabled), allowRemote: checked(ctx.form.allowRemote) })
+  router.post(`${SETTINGS}/render`, async ({ ctx }) => {
+    await ctx.services.settings.set('render', { enabled: checked(ctx.form.enabled), allowRemote: checked(ctx.form.allowRemote) })
     return ctx.go(tabPath('render'), { tone: 'success', text: 'Rendering settings saved' })
   })
 
@@ -194,12 +194,12 @@ export function settingsPages(router: ConsoleRouter): void {
     return new Response(bytes, { headers: { ...headers, 'content-type': mime } })
   })
 
-  router.post(`${SETTINGS}/storage`, ({ ctx }) => {
-    ctx.services.settings.set('s3', s3FromForm(ctx.form, 's3', ctx.services.config.s3))
+  router.post(`${SETTINGS}/storage`, async ({ ctx }) => {
+    await ctx.services.settings.set('s3', s3FromForm(ctx.form, 's3', ctx.services.config.s3))
     return ctx.go(tabPath('storage'), { tone: 'success', text: 'Storage settings saved' })
   })
 
-  router.post(`${SETTINGS}/cache`, ({ ctx }) => {
+  router.post(`${SETTINGS}/cache`, async ({ ctx }) => {
     const f = ctx.form
     const seconds = (name: string) => {
       const n = Number(f[name])
@@ -208,7 +208,7 @@ export function settingsPages(router: ConsoleRouter): void {
     }
     const days = Number(f.previewRetentionDays)
     if (!Number.isFinite(days) || days < 0 || days > 3650) throw err('general_argument_invalid', 'Keep previews between 0 and 3650 days.')
-    ctx.services.settings.set('cache', { fileMaxAge: seconds('fileMaxAge'), previewMaxAge: seconds('previewMaxAge'), previewRetentionDays: Math.round(days) })
+    await ctx.services.settings.set('cache', { fileMaxAge: seconds('fileMaxAge'), previewMaxAge: seconds('previewMaxAge'), previewRetentionDays: Math.round(days) })
     ctx.services.storage.prunePreviews(true)
     return ctx.go(tabPath('cache'), { tone: 'success', text: 'Cache settings saved' })
   })
@@ -218,20 +218,20 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('cache'), { tone: 'success', text: 'Preview cache cleared' })
   })
 
-  router.post(`${SETTINGS}/database`, ({ ctx }) => {
+  router.post(`${SETTINGS}/database`, async ({ ctx }) => {
     const mode = String(ctx.form.synchronous ?? '').trim().toUpperCase()
     if (mode !== 'NORMAL' && mode !== 'FULL') throw err('general_argument_invalid', 'Synchronous mode must be NORMAL or FULL.')
-    ctx.services.settings.set('database', { synchronous: mode })
+    await ctx.services.settings.set('database', { synchronous: mode })
     return ctx.go(tabPath('database'), { tone: 'success', text: `Database durability set to ${mode}` })
   })
 
-  router.post(`${SETTINGS}/:key/reset`, ({ ctx, path }) => {
+  router.post(`${SETTINGS}/:key/reset`, async ({ ctx, path }) => {
     const key = path.key as SettingKey
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
     if (key === 'backups') return ctx.go('/console/organization/backups')
-    ctx.services.settings.reset(key)
+    await ctx.services.settings.reset(key)
     if (key === 'project') ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
-    if (key === 'logs') ctx.services.requestLogs.prune()
+    if (key === 'logs') await ctx.services.requestLogs.prune()
     if (key === 'cache') ctx.services.storage.prunePreviews(true)
     return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Setting reset' })
   })

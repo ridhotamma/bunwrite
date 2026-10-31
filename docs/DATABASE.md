@@ -18,11 +18,13 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [CONFIGURATION.md](CONFIGURATION.md
 | Postgres | `Bun.SQL` (async pool) | Derived from the Drizzle schema + triggers + views | Not yet — see [Migration order](#migration-order) |
 | MongoDB | `mongodb` (async, optional) | Indexes + `_counters` | Not yet — see [Migration order](#migration-order) |
 
-The port, both network drivers, schema bootstrapping, dialect translation and
-the operational CLI are complete and tested against real Postgres and MongoDB.
-Moving the remaining services from the synchronous `db.sqlite` fast path to
-`db.driver` is the next, incremental step. Nothing in the existing SQLite path
-changed behaviour.
+The port, both network drivers, schema bootstrapping, dialect translation, the
+operational CLI and the cache/services layer (logs, variables, webhooks,
+settings, registry, versions, access) are complete and tested against real
+Postgres and MongoDB. The document, auth, teams, storage, functions and console
+layers still use the synchronous SQLite fast path; [Migration
+order](#migration-order) lists what is left. Nothing in the existing SQLite
+path changed behaviour.
 
 ## Configuration
 
@@ -129,6 +131,25 @@ db.capabilities                      // DriverCapabilities
 `db.driver` lets a service move to the port one module at a time. The intended
 order is listed in [Migration order](#migration-order).
 
+### Boot seam
+
+SQLite services that keep an in-memory cache (settings, the schema registry,
+the access switches, the version counters) load it synchronously in their
+constructor, exactly as before. A network backend starts empty and the boot
+path awaits `services.ready()`:
+
+```ts
+const services = createServices(config, db)
+await services.ready()   // no-op on SQLite; loads caches on Postgres/Mongo
+```
+
+`startServer` awaits `projects.ready()`, which does the same for the control
+project and every project runtime.
+
+Reads stay synchronous (`settings` mutates the config in place, `registry`
+exposes its maps), so the per-request paths did not change. Writes and reloads
+go through `db.driver` and are awaited.
+
 ## Postgres
 
 - The built-in tables are **derived from `src/db/system-schema.ts`** at runtime,
@@ -218,10 +239,18 @@ document's `_permissions` field, which is what the permission filter expects.
 Move services to `db.driver` from the outside in; each step must keep the
 SQLite test suite green:
 
-1. `logs/service.ts`, `variables/service.ts`, `webhooks/service.ts` — small,
-   few callers.
-2. `settings/service.ts`, `schema/registry.ts`, `cluster/versions.ts` — the
-   per-request cache counters.
+1. **Done.** `logs/service.ts`, `variables/service.ts`, `webhooks/service.ts`
+   use `db.driver` and `SqlDatabase`, so they accept either SQLite or Postgres.
+   `test/database-drivers.test.ts` exercises all three against a real Postgres
+   schema. The console handlers that call them are async; `record()` stays
+   synchronous because it only queues in memory.
+2. **Done.** `settings/service.ts`, `schema/registry.ts`, `cluster/versions.ts`
+   and `settings/access.ts` load their caches through `db.driver` and keep
+   synchronous in-memory reads (`settings` overlays the config, `registry`
+   exposes its maps, access switches are booleans). SQLite still loads in the
+   constructor; a network backend calls `services.ready()` before serving.
+   `test/database-drivers.test.ts` covers the overlay, API keys, access
+   switches, version counters and the registry against Postgres.
 3. `documents/store.ts` + `documents/batcher.ts` + `transactions/service.ts` —
    the data plane. This is the step that makes the document API portable, and
    the one that needs the Mongo repository.

@@ -61,33 +61,33 @@ describe('shared cache versions', () => {
     expect(monitor.version('auth')).toBe(monitor.authVersion())
   })
 
-  test('a DB-backed API key is cached and invalidated by the keys counter', () => {
+  test('a DB-backed API key is cached and invalidated by the keys counter', async () => {
     const db = memory()
     const config = testConfig({ apiKeys: [], internalKey: undefined })
     const versions = new VersionMonitor(db, 0)
     const secret = 'standard_cached_key'
 
     insertKey(db, secret)
-    expect(apiKeyValid(db, config, secret, versions)).toBe(true)
+    expect(await apiKeyValid(db, config, secret, versions)).toBe(true)
 
     // The in-memory result stays valid until the poll sees the trigger.
     db.sqlite.query('DELETE FROM _api_keys WHERE id = ?').run('key-1')
-    expect(apiKeyValid(db, config, secret, versions)).toBe(true)
+    expect(await apiKeyValid(db, config, secret, versions)).toBe(true)
 
     versions.poll()
-    expect(apiKeyValid(db, config, secret, versions)).toBe(false)
+    expect(await apiKeyValid(db, config, secret, versions)).toBe(false)
   })
 
-  test('expired and unknown keys are rejected', () => {
+  test('expired and unknown keys are rejected', async () => {
     const db = memory()
     const config = testConfig({ apiKeys: ['env-key'], internalKey: undefined })
     const versions = new VersionMonitor(db, 0)
 
     insertKey(db, 'standard_expired', '2000-01-01T00:00:00.000Z')
-    expect(apiKeyValid(db, config, 'standard_expired', versions)).toBe(false)
-    expect(apiKeyValid(db, config, 'standard_missing', versions)).toBe(false)
+    expect(await apiKeyValid(db, config, 'standard_expired', versions)).toBe(false)
+    expect(await apiKeyValid(db, config, 'standard_missing', versions)).toBe(false)
 
     // Environment keys bypass the table and the cache entirely.
-    expect(apiKeyValid(db, config, 'env-key', versions)).toBe(true)
+    expect(await apiKeyValid(db, config, 'env-key', versions)).toBe(true)
   })
 })

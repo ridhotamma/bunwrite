@@ -41,7 +41,7 @@ function backupsPage(ctx: ConsoleContext) {
 export function backupPages(router: ConsoleRouter): void {
   router.get(BACKUPS, ({ ctx }) => backupsPage(ctx))
 
-  router.post(BACKUPS, ({ ctx }) => {
+  router.post(BACKUPS, async ({ ctx }) => {
     requireOwner(ctx)
     const keep = Number(ctx.form.backupsKeep)
     if (!Number.isInteger(keep) || keep < 1 || keep > 100) {
@@ -51,13 +51,13 @@ export function backupPages(router: ConsoleRouter): void {
     const s3 = s3FromForm(ctx.form, 'backupS3', control.config.backups.s3)
     const prefix = value(ctx.form, 'backupPrefix').replace(/^\/+|\/+$/g, '')
     if (prefix.includes('..')) throw err('general_argument_invalid', 'The backup prefix cannot contain "..".')
-    control.settings.set('backups', { enabled: checked(ctx.form.backupsEnabled), keep, s3, prefix })
+    await control.settings.set('backups', { enabled: checked(ctx.form.backupsEnabled), keep, s3, prefix })
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings saved' })
   })
 
-  router.post(`${BACKUPS}/reset`, ({ ctx }) => {
+  router.post(`${BACKUPS}/reset`, async ({ ctx }) => {
     requireOwner(ctx)
-    ctx.projects.control.settings.reset('backups')
+    await ctx.projects.control.settings.reset('backups')
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings reset' })
   })
 

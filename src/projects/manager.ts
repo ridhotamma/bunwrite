@@ -175,6 +175,15 @@ export class ProjectManager implements ProjectResolver {
     return { info, services }
   }
 
+  /**
+   * Load the network-backend caches for the control project and every runtime.
+   * SQLite loads synchronously in the service constructors, so this is a no-op
+   * there; the boot path awaits it for Postgres/MongoDB.
+   */
+  async ready(): Promise<void> {
+    await Promise.all([...this.runtimes.values()].map((runtime) => runtime.services.ready()))
+  }
+
   defaultProject(): ProjectRuntime {
     return this.runtimes.get(this.config.projectId)!
   }
@@ -319,8 +328,8 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.render.stop()
       runtime.services.render.shutdown()
       runtime.services.realtime.stop()
-      runtime.services.requestLogs.flush()
-      runtime.services.db.sqlite.close()
+      // The runtime is going away; close the file once its buffered logs are safe.
+      void runtime.services.requestLogs.flush().finally(() => runtime.services.db.sqlite.close())
       this.runtimes.delete(id)
     }
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
@@ -350,7 +359,7 @@ export class ProjectManager implements ProjectResolver {
       }
     }
 
-    runtime.services.requestLogs.flush()
+    await runtime.services.requestLogs.flush()
     this.db.sqlite.query('DELETE FROM _projects WHERE id = ?').run(id)
     runtime.services.db.sqlite.close()
     this.control.versions.reset()
@@ -372,13 +381,13 @@ export class ProjectManager implements ProjectResolver {
    * Apply schema, settings and project-list changes made by another process.
    * Called at the start of a request; the version check is throttled.
    */
-  sync(): void {
+  async sync(): Promise<void> {
     // Single-process servers also use these counters for session/API-key caches.
-    const changed = this.control.versions.poll()
-    if (changed.schema) this.control.registry.reload()
+    const changed = await this.control.versions.pollAsync()
+    if (changed.schema) await this.control.registry.load()
     if (changed.settings) {
-      this.control.settings.refreshAll()
-      this.control.access.reload()
+      await this.control.settings.load()
+      await this.control.access.load()
     }
     if (changed.catalog) {
       this.control.proxy.reload()
@@ -396,15 +405,16 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.functions.pruneDeployments()
       runtime.services.sites.pruneDeployments()
       runtime.services.queue.prune()
-      runtime.services.requestLogs.prune()
+      void runtime.services.requestLogs.prune()
       runtime.services.storage.prunePreviews()
       runtime.services.realtime.pruneBus()
       pruneRateLimits(runtime.services.db)
     }
   }
 
-  close(): void {
-    for (const [id, runtime] of this.runtimes) {
+  async close(): Promise<void> {
+    const closing = [...this.runtimes]
+    for (const [, runtime] of closing) {
       // Schedulers would otherwise tick on into a closed database.
       runtime.services.functions.stop()
       runtime.services.sites.stop()
@@ -412,7 +422,9 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.queue.stop()
       runtime.services.render.stop()
       runtime.services.realtime.stop()
-      runtime.services.requestLogs.flush()
+    }
+    await Promise.all(closing.map(([, runtime]) => runtime.services.requestLogs.flush()))
+    for (const [id, runtime] of closing) {
       if (id !== this.config.projectId) runtime.services.db.sqlite.close()
     }
   }

@@ -27,9 +27,9 @@ describe('API key scopes', () => {
     stops.push(server.stop)
     const origin = server.endpoint.replace(/\/v1$/, '')
 
-    const readKey = server.services.settings.createKey('reader', null, ['documents.read']).secret
-    const writeKey = server.services.settings.createKey('writer', null, ['documents.write']).secret
-    const fullKey = server.services.settings.createKey('full', null).secret
+    const readKey = (await server.services.settings.createKey('reader', null, ['documents.read'])).secret
+    const writeKey = (await server.services.settings.createKey('writer', null, ['documents.write'])).secret
+    const fullKey = (await server.services.settings.createKey('full', null)).secret
     const headers = (key: string) => ({ 'x-appwrite-project': PROJECT, 'x-appwrite-key': key, 'content-type': 'application/json' })
 
     // A read-only key can list documents but not create them.
@@ -73,9 +73,9 @@ describe('API key scopes', () => {
     expect(envUsers.status).toBe(200)
 
     // The cached lookup keeps the scopes too.
-    const identity = resolveApiKey(server.db, server.config, readKey)
+    const identity = await resolveApiKey(server.db, server.config, readKey)
     expect(identity?.scopes).toEqual(['documents.read'])
-    expect(resolveApiKey(server.db, server.config, KEY)?.scopes).toBeNull()
+    expect((await resolveApiKey(server.db, server.config, KEY))?.scopes).toBeNull()
   })
 })
 

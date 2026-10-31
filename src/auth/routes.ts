@@ -124,7 +124,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     assertNoSession(ctx)
     method(ctx, 'email-password')
     limit(route, 'account-create', '')
-    ctx.access.assertUserLimit()
+    await ctx.access.assertUserLimit()
     ctx.access.assertPasswordPersonalData(params.password, { id: params.userId, name: params.name, email: params.email })
     const user = await ctx.auth.createUser({ id: params.userId, email: params.email, password: params.password ?? '', name: params.name })
     return json(accountModel(user), 201)

@@ -537,7 +537,7 @@ describe('push and pull webhooks', () => {
       webhooks: [{ $id: 'notes-hook', name: 'Notes', url, events: ['databases.main.collections.notes.documents.*.create'], enabled: true, tls: true }],
     }
     expect(await ws.ok('push', 'webhooks', '--all', '--force')).toContain('Successfully pushed 1 webhooks')
-    const hook = server.services.webhooks.get('notes-hook')
+    const hook = await server.services.webhooks.get('notes-hook')
     expect(hook).toMatchObject({ name: 'Notes', url, enabled: 1 })
 
     deliveries.length = 0

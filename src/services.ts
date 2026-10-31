@@ -63,6 +63,12 @@ export interface Services {
   render: RenderService
   /** Durable job queue for SDK workers (docs/QUEUE.md). */
   queue: QueueService
+  /**
+   * Load the database-backed caches. SQLite constructors load synchronously, so
+   * this is a no-op there; a network backend must await it before serving
+   * (`services.ready()` is the boot seam).
+   */
+  ready(): Promise<void>
 }
 
 export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
@@ -81,7 +87,11 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const teams = new TeamService(db, store, auth)
   const proxy = new ProxyService(db, config)
   const variables = new VariablesService(db)
-  variables.adoptFunctionGlobals()
+  // One-time legacy migration; it is idempotent and must not block the SQLite
+  // boot. A network backend awaits it in ready().
+  if (db.dialect === 'sqlite') {
+    void variables.adoptFunctionGlobals().catch((error) => console.error('[variables] could not adopt global function variables:', error))
+  }
   const sites = new SiteService(db, config, proxy, variables)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
@@ -121,5 +131,15 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
     settingsOptions,
   )
   if (!overrides.mailer) services.mailer = makeMailer()
+  services.ready = async () => {
+    if (db.dialect === 'sqlite') return
+    // Order matters: settings feed access, and both feed the config overlay
+    // that the other caches read.
+    await versions.load()
+    await services.settings.load()
+    await services.access.load()
+    await registry.load()
+    await variables.adoptFunctionGlobals()
+  }
   return Object.assign(services, overrides)
 }

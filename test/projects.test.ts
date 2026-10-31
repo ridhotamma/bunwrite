@@ -51,11 +51,11 @@ describe('multiple projects', () => {
     manager.start()
   })
 
-  afterAll(() => {
+  afterAll(async () => {
     server.stop(true)
-    manager.control.requestLogs.flush()
-    manager.get('project-b')?.services.requestLogs.flush()
-    manager.close()
+    await manager.control.requestLogs.flush()
+    await manager.get('project-b')?.services.requestLogs.flush()
+    await manager.close()
     db.sqlite.close()
     rmSync(dir, { recursive: true, force: true })
   })
@@ -125,8 +125,8 @@ describe('multiple projects', () => {
   })
 
   test('request logs are shared but filtered by project', async () => {
-    const aLogs = manager.defaultProject().services.requestLogs.list({ page: 1, limit: 50, project: PROJECT })
-    const bLogs = manager.get('project-b')!.services.requestLogs.list({ page: 1, limit: 50, project: 'project-b' })
+    const aLogs = await manager.defaultProject().services.requestLogs.list({ page: 1, limit: 50, project: PROJECT })
+    const bLogs = await manager.get('project-b')!.services.requestLogs.list({ page: 1, limit: 50, project: 'project-b' })
     expect(aLogs.total).toBeGreaterThan(0)
     expect(bLogs.total).toBeGreaterThan(0)
     expect(aLogs.logs.every((log) => log.project === PROJECT)).toBe(true)
@@ -216,7 +216,7 @@ describe('multiple projects', () => {
     await expect(manager.delete(PROJECT)).rejects.toThrow('default project')
   })
 
-  test('projects inherit the server SMTP live, and their own setting wins', () => {
+  test('projects inherit the server SMTP live, and their own setting wins', async () => {
     const server = manager.defaultProject().services
     const other = manager.get('project-b')!.services
     const smtp = (host: string) => ({
@@ -232,23 +232,23 @@ describe('multiple projects', () => {
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
 
-    server.settings.set('smtp', smtp('smtp.server.test'))
+    await server.settings.set('smtp', smtp('smtp.server.test'))
     expect(other.config.smtp).toMatchObject({ host: 'smtp.server.test' })
     expect(other.mailer.enabled).toBe(true)
 
-    other.settings.set('smtp', smtp('smtp.project.test'))
-    server.settings.set('smtp', smtp('smtp.server2.test'))
+    await other.settings.set('smtp', smtp('smtp.project.test'))
+    await server.settings.set('smtp', smtp('smtp.server2.test'))
     expect(other.config.smtp).toMatchObject({ host: 'smtp.project.test' })
 
-    other.settings.reset('smtp')
+    await other.settings.reset('smtp')
     expect(other.config.smtp).toMatchObject({ host: 'smtp.server2.test' })
 
-    server.settings.reset('smtp')
+    await server.settings.reset('smtp')
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
   })
 
-  test('each project keeps its own database durability setting', () => {
+  test('each project keeps its own database durability setting', async () => {
     const control = manager.defaultProject().services
     const other = manager.get('project-b')!.services
     const synchronous = (db: Db) => (db.sqlite.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous
@@ -256,7 +256,7 @@ describe('multiple projects', () => {
     expect(synchronous(control.db)).toBe(1)
     expect(synchronous(other.db)).toBe(1)
 
-    control.settings.set('database', { synchronous: 'FULL' })
+    await control.settings.set('database', { synchronous: 'FULL' })
     expect(control.config.sqliteSynchronous).toBe('FULL')
     expect(synchronous(control.db)).toBe(2)
     // The default project's setting must not leak into another project.
@@ -270,12 +270,12 @@ describe('multiple projects', () => {
     expect(synchronous(created.project.services.db)).toBe(1)
     manager.delete('project-sync')
 
-    other.settings.set('database', { synchronous: 'FULL' })
+    await other.settings.set('database', { synchronous: 'FULL' })
     expect(other.config.sqliteSynchronous).toBe('FULL')
     expect(synchronous(other.db)).toBe(2)
 
-    control.settings.reset('database')
-    other.settings.reset('database')
+    await control.settings.reset('database')
+    await other.settings.reset('database')
     expect(synchronous(control.db)).toBe(1)
     expect(synchronous(other.db)).toBe(1)
   })

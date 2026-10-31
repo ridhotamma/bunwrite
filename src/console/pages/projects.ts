@@ -7,7 +7,7 @@ import { projectEditView, projectsView, type CreatedProject } from '~/console/vi
 import { addSeconds } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 
-function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
+async function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
   const query = (url.searchParams.get('q') ?? '').trim()
   const view = url.searchParams.get('view') === 'list' ? 'list' : 'grid'
   const all = ctx.projects.list()
@@ -22,8 +22,8 @@ function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
   const stats = new Map<string, { requests: number; spark: number[] }>()
   for (const project of filtered) {
     const logs = project.services.requestLogs
-    const requests = logs.list({ page: 1, limit: 1, project: project.info.id }).total
-    const perHour = new Map(logs.requestsByHour(since, project.info.id).map((row) => [row.hour, row.count]))
+    const requests = (await logs.list({ page: 1, limit: 1, project: project.info.id })).total
+    const perHour = new Map((await logs.requestsByHour(since, project.info.id)).map((row) => [row.hour, row.count]))
     stats.set(project.info.id, { requests, spark: hours.map((hour) => perHour.get(hour) ?? 0) })
   }
 
@@ -86,12 +86,12 @@ export function projectPages(router: ConsoleRouter): void {
     return ctx.render(`Rename ${project.info.name}`, 'projects', projectEditView(project.info))
   })
 
-  router.post('/console/projects/:id/edit', ({ ctx, path }) => {
+  router.post('/console/projects/:id/edit', async ({ ctx, path }) => {
     const project = ctx.projects.get(path.id!)
     if (!project) throw err('general_argument_invalid', 'Unknown project.')
     const name = value(ctx.form, 'name')
     if (!name || name.length > 128) throw err('general_argument_invalid', 'A project needs a name of 128 characters or less.')
-    project.services.settings.set('project', {
+    await project.services.settings.set('project', {
       projectName: name,
       allowedOrigins: project.services.config.allowedOrigins,
       sessionDuration: project.services.config.sessionDuration,

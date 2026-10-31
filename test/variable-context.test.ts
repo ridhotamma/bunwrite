@@ -63,33 +63,33 @@ describe('project and site variables', () => {
     expect(listed.map((v: any) => [v.key, v.context]).sort()).toEqual([['MODE', ''], ['MODE', 'live'], ['MODE', 'preview']])
 
     const vars = server.services.variables
-    expect(vars.projectEnvironment('live').MODE).toBe('live')
-    expect(vars.projectEnvironment('preview').MODE).toBe('preview')
+    expect((await vars.projectEnvironment('live')).MODE).toBe('live')
+    expect((await vars.projectEnvironment('preview')).MODE).toBe('preview')
 
     // Moving a value to another context is an update; it cannot collide.
     expect((await api('PUT', `/project/variables/${preview.body.$id}`, { context: 'live' })).status).toBe(409)
     expect((await api('PUT', `/project/variables/${preview.body.$id}`, { value: 'preview 2' })).body.context).toBe('preview')
-    expect(vars.projectEnvironment('preview').MODE).toBe('preview 2')
+    expect((await vars.projectEnvironment('preview')).MODE).toBe('preview 2')
 
     await api('DELETE', `/project/variables/${preview.body.$id}`)
-    expect(vars.projectEnvironment('preview').MODE).toBe('all')
-    vars.clearVariables('project')
+    expect((await vars.projectEnvironment('preview')).MODE).toBe('all')
+    await vars.clearVariables('project')
   })
 
   test('a site sees project values, then its own, each for the context', async () => {
     const vars = server.services.variables
-    vars.setVariable('project', 'API', 'project-live', false, 'live')
-    vars.setVariable('project', 'API', 'project-preview', false, 'preview')
-    vars.setVariable('site:web', 'API', 'site-preview', false, 'preview')
-    vars.setVariable('site:web', 'ONLY_LIVE', 'yes', false, 'live')
+    await vars.setVariable('project', 'API', 'project-live', false, 'live')
+    await vars.setVariable('project', 'API', 'project-preview', false, 'preview')
+    await vars.setVariable('site:web', 'API', 'site-preview', false, 'preview')
+    await vars.setVariable('site:web', 'ONLY_LIVE', 'yes', false, 'live')
     try {
-      expect(vars.siteEnvironment('web', 'live')).toEqual({ API: 'project-live', ONLY_LIVE: 'yes' })
-      expect(vars.siteEnvironment('web', 'preview')).toEqual({ API: 'site-preview' })
+      expect(await vars.siteEnvironment('web', 'live')).toEqual({ API: 'project-live', ONLY_LIVE: 'yes' })
+      expect(await vars.siteEnvironment('web', 'preview')).toEqual({ API: 'site-preview' })
       // Older callers get live values.
-      expect(vars.siteEnvironment('web')).toEqual({ API: 'project-live', ONLY_LIVE: 'yes' })
+      expect(await vars.siteEnvironment('web')).toEqual({ API: 'project-live', ONLY_LIVE: 'yes' })
     } finally {
-      vars.clearVariables('project')
-      vars.clearVariables('site:web')
+      await vars.clearVariables('project')
+      await vars.clearVariables('site:web')
     }
   })
 })
@@ -109,41 +109,41 @@ describe('function variables', () => {
       expect((await api('GET', '/functions/ctx-fn/variables/STRIPE_KEY')).status).toBe(404)
       expect((await api('PUT', '/functions/ctx-fn/variables/STRIPE_KEY.preview', { value: 'sk_test_2' })).body.$id).toBe('STRIPE_KEY.preview')
 
-      server.services.variables.setVariable('project', 'GLOBAL', 'preview global', false, 'preview')
+      await server.services.variables.setVariable('project', 'GLOBAL', 'preview global', false, 'preview')
       const fn = server.services.functions.fn('ctx-fn')
-      const live = server.services.functions.env(fn, 'http')
-      const build = server.services.functions.env(fn, 'build', 'preview')
+      const live = await server.services.functions.env(fn, 'http')
+      const build = await server.services.functions.env(fn, 'build', 'preview')
       expect([live.STRIPE_KEY, live.SHARED, live.GLOBAL]).toEqual(['sk_live', 'everywhere', undefined])
       expect([build.STRIPE_KEY, build.SHARED, build.GLOBAL]).toEqual(['sk_test_2', 'everywhere', 'preview global'])
 
       expect((await api('DELETE', '/functions/ctx-fn/variables/STRIPE_KEY.preview')).status).toBe(204)
-      expect(server.services.functions.env(fn, 'build', 'preview').STRIPE_KEY).toBeUndefined()
-      expect(server.services.functions.env(fn, 'http').STRIPE_KEY).toBe('sk_live')
+      expect((await server.services.functions.env(fn, 'build', 'preview')).STRIPE_KEY).toBeUndefined()
+      expect((await server.services.functions.env(fn, 'http')).STRIPE_KEY).toBe('sk_live')
     } finally {
-      server.services.variables.clearVariables('project')
+      await server.services.variables.clearVariables('project')
       await api('DELETE', '/functions/ctx-fn')
     }
   })
 
-  test('global function variables from older versions become project variables', () => {
+  test('global function variables from older versions become project variables', async () => {
     const stamp = new Date().toISOString()
     const addGlobal = (key: string, value: string) =>
       server.db.sqlite
         .query("INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES ('*', ?, ?, 0, '', ?, ?)")
         .run(key, value, stamp, stamp)
 
-    server.services.variables.setVariable('project', 'SHARED', 'project value', false)
+    await server.services.variables.setVariable('project', 'SHARED', 'project value', false)
     addGlobal('LEGACY_GLOBAL', 'kept')
     addGlobal('SHARED', 'function value')
     try {
-      server.services.variables.adoptFunctionGlobals()
-      expect(server.services.variables.list('project')).toMatchObject([
+      await server.services.variables.adoptFunctionGlobals()
+      expect(await server.services.variables.list('project')).toMatchObject([
         { key: 'LEGACY_GLOBAL', value: 'kept' },
         { key: 'SHARED', value: 'project value' },
       ])
       expect(server.services.functions.variables('*')).toEqual([])
     } finally {
-      server.services.variables.clearVariables('project')
+      await server.services.variables.clearVariables('project')
     }
   })
 })
@@ -166,11 +166,11 @@ describe('console', () => {
     const page = await (await fetch(`${base}/console/settings/variables`, { headers: { cookie } })).text()
     expect(page).toContain('Previews only')
     expect(page).toContain('https://staging.example.com')
-    expect(server.services.variables.projectEnvironment('preview').API_URL).toBe('https://staging.example.com')
-    expect(server.services.variables.projectEnvironment('live').API_URL).toBe('https://api.example.com')
+    expect((await server.services.variables.projectEnvironment('preview')).API_URL).toBe('https://staging.example.com')
+    expect((await server.services.variables.projectEnvironment('live')).API_URL).toBe('https://api.example.com')
 
     await post('/console/settings/variables/delete', { key: 'API_URL', context: 'preview' })
-    expect(server.services.variables.list('project').map((v) => [v.key, v.context])).toEqual([['API_URL', '']])
-    server.services.variables.clearVariables('project')
+    expect((await server.services.variables.list('project')).map((v) => [v.key, v.context])).toEqual([['API_URL', '']])
+    await server.services.variables.clearVariables('project')
   })
 })

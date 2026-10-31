@@ -21,11 +21,11 @@ export function envBulkDialog(options: { id: string; title: string; action: stri
   })
 }
 
-export function importEnvVariables(
+export async function importEnvVariables(
   ctx: ConsoleContext,
-  save: (vars: EnvVariable[], secret: boolean) => void,
+  save: (vars: EnvVariable[], secret: boolean) => void | Promise<void>,
   redirect: string,
-): Response {
+): Promise<Response> {
   let vars: EnvVariable[]
   try {
     vars = parseEnvVariables(String(ctx.form.env ?? ''))
@@ -36,6 +36,6 @@ export function importEnvVariables(
     }
     return ctx.back({ tone: 'critical', text: issues.join(' ') })
   }
-  save(vars, checked(ctx.form.secret))
+  await save(vars, checked(ctx.form.secret))
   return ctx.go(redirect, { tone: 'success', text: `Imported ${vars.length} variable${vars.length === 1 ? '' : 's'}` })
 }

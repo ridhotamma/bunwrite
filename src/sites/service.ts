@@ -432,7 +432,8 @@ export class SiteService {
       this.sql.query('DELETE FROM _site_branches WHERE site_id = ?').run(id)
       this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
     }).immediate()
-    this.variables.removeSite(id)
+    // Best-effort cleanup: the site row is already gone and these rows are unreachable.
+    void this.variables.removeSite(id).catch((error) => console.error('[sites] could not remove variables:', error))
     this.changed()
     // A request could have started the old app between the first stop and here.
     this.ssr.forget(id)
@@ -847,7 +848,7 @@ export class SiteService {
     })
     logs.push(`Runtime: ${runtime.version ? `${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}` : `this server's Bun ${process.versions.bun}`}`)
     const env = withRuntime(
-      siteBaseEnv(this.config, site.id, this.variables.siteEnvironment(site.id, context)),
+      siteBaseEnv(this.config, site.id, await this.variables.siteEnvironment(site.id, context)),
       runtime,
     )
     for (const [label, command] of commands) {

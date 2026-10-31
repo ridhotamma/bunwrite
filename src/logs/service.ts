@@ -1,9 +1,13 @@
 /**
  * Request logs for the console. Writes are batched so the request path stays
  * cheap, and the table is pruned to LOG_RETENTION_DAYS.
+ *
+ * `record()` stays synchronous (it only queues in memory); everything that
+ * touches the database goes through the driver port so the service can run on
+ * SQLite or Postgres.
  */
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, now } from '~/lib/datetime'
 import type { RequestLog } from '~/lib/log'
 
@@ -69,9 +73,11 @@ const COLUMNS = 'seq, id, method, path, status, duration_ms, request_bytes, resp
 export class RequestLogService {
   private queue: PendingLog[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
+  /** Serialises flushes so two callers cannot write the same queue twice. */
+  private flushing: Promise<void> | null = null
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
   ) {}
 
@@ -79,56 +85,67 @@ export class RequestLogService {
     return this.config.logRetentionDays
   }
 
+  /** Queue one line. Synchronous: the write happens on the next flush. */
   record(entry: RequestLog): void {
     this.queue.push({ ...entry, createdAt: now() })
-    if (this.queue.length >= BATCH_SIZE) this.flush()
+    if (this.queue.length >= BATCH_SIZE) void this.flush()
     else if (!this.timer) {
-      this.timer = setTimeout(() => this.flush(), FLUSH_MS)
+      this.timer = setTimeout(() => void this.flush(), FLUSH_MS)
       this.timer.unref?.()
     }
   }
 
   /** Write queued lines now. Also called before reads so the page is up to date. */
-  flush(): void {
+  flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
     }
-    if (!this.queue.length) return
+    if (!this.queue.length) return Promise.resolve()
+    // A flush already in progress owns the queue; wait for it, then write what
+    // arrived meanwhile.
+    if (this.flushing) return this.flushing.then(() => this.flush())
     const rows = this.queue
     this.queue = []
+    this.flushing = this.write(rows).finally(() => {
+      this.flushing = null
+    })
+    return this.flushing
+  }
+
+  private async write(rows: PendingLog[]): Promise<void> {
     try {
-      const insert = this.db.sqlite.prepare(
-        `INSERT INTO _request_logs (id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      this.db.sqlite.transaction(() => {
+      await this.db.driver.transaction(async (tx) => {
         for (const row of rows) {
-          insert.run(
-            row.id,
-            row.method,
-            row.path,
-            row.status,
-            row.durationMs,
-            row.requestBytes ?? 0,
-            row.responseBytes ?? 0,
-            row.ip ?? '',
-            row.project ?? '',
-            row.auth ?? '',
-            row.referer ?? '',
-            row.userAgent ?? '',
-            row.error ?? '',
-            row.createdAt,
+          await tx.run(
+            `INSERT INTO _request_logs (id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              row.id,
+              row.method,
+              row.path,
+              row.status,
+              row.durationMs,
+              row.requestBytes ?? 0,
+              row.responseBytes ?? 0,
+              row.ip ?? '',
+              row.project ?? '',
+              row.auth ?? '',
+              row.referer ?? '',
+              row.userAgent ?? '',
+              row.error ?? '',
+              row.createdAt,
+            ],
           )
         }
-      }).immediate()
+      })
     } catch (error) {
       console.error('[logs] failed to store request logs:', error)
     }
   }
 
-  list(filter: RequestLogFilter): { total: number; logs: RequestLogRow[] } {
-    this.flush()
+  async list(filter: RequestLogFilter): Promise<{ total: number; logs: RequestLogRow[] }> {
+    await this.flush()
     const where: string[] = []
     const params: (string | number)[] = []
     const search = filter.search?.trim()
@@ -149,69 +166,69 @@ export class RequestLogService {
       params.push(filter.project)
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
-    const total = (this.db.sqlite.query(`SELECT count(*) AS n FROM _request_logs ${clause}`).get(...params) as { n: number }).n
-    const logs = this.db.sqlite
-      .query<RequestLogRow, any[]>(
-        `SELECT ${COLUMNS} FROM _request_logs ${clause} ORDER BY seq DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, filter.limit, (Math.max(1, filter.page) - 1) * filter.limit)
-    return { total, logs }
+    const total = await this.db.driver.get<{ n: number }>(`SELECT count(*) AS n FROM _request_logs ${clause}`, params)
+    const logs = await this.db.driver.all<RequestLogRow>(
+      `SELECT ${COLUMNS} FROM _request_logs ${clause} ORDER BY seq DESC LIMIT ? OFFSET ?`,
+      [...params, filter.limit, (Math.max(1, filter.page) - 1) * filter.limit],
+    )
+    return { total: Number(total?.n ?? 0), logs }
   }
 
-  get(seq: number, project?: string): RequestLogRow | null {
-    this.flush()
+  async get(seq: number, project?: string): Promise<RequestLogRow | null> {
+    await this.flush()
     const where = project ? 'WHERE seq = ? AND project = ?' : 'WHERE seq = ?'
     const params: (string | number)[] = project ? [seq, project] : [seq]
-    return this.db.sqlite.query<RequestLogRow, any[]>(`SELECT ${COLUMNS} FROM _request_logs ${where}`).get(...params) ?? null
+    return this.db.driver.get<RequestLogRow>(`SELECT ${COLUMNS} FROM _request_logs ${where}`, params)
   }
 
   /** Request and response bytes per hour since `since`, an ISO timestamp. */
-  bandwidthByHour(since: string): HourlyBandwidth[] {
-    this.flush()
-    return this.db.sqlite
-      .query<HourlyBandwidth, [string]>(
-        `SELECT substr(created_at, 1, 13) AS hour, coalesce(sum(request_bytes), 0) AS inbound, coalesce(sum(response_bytes), 0) AS outbound
-         FROM _request_logs WHERE created_at >= ? GROUP BY hour`,
-      )
-      .all(since)
+  async bandwidthByHour(since: string): Promise<HourlyBandwidth[]> {
+    await this.flush()
+    const rows = await this.db.driver.all<HourlyBandwidth>(
+      `SELECT substr(created_at, 1, 13) AS hour, coalesce(sum(request_bytes), 0) AS inbound, coalesce(sum(response_bytes), 0) AS outbound
+       FROM _request_logs WHERE created_at >= ? GROUP BY hour`,
+      [since],
+    )
+    return rows.map((row) => ({ hour: row.hour, inbound: Number(row.inbound), outbound: Number(row.outbound) }))
   }
 
   /** Request count per hour since `since`, optionally for one project. */
-  requestsByHour(since: string, project?: string): HourlyRequests[] {
-    this.flush()
+  async requestsByHour(since: string, project?: string): Promise<HourlyRequests[]> {
+    await this.flush()
     const where = project ? 'created_at >= ? AND project = ?' : 'created_at >= ?'
     const params: string[] = project ? [since, project] : [since]
-    return this.db.sqlite
-      .query<HourlyRequests, any[]>(
-        `SELECT substr(created_at, 1, 13) AS hour, count(*) AS count FROM _request_logs WHERE ${where} GROUP BY hour`,
-      )
-      .all(...params)
+    const rows = await this.db.driver.all<HourlyRequests>(
+      `SELECT substr(created_at, 1, 13) AS hour, count(*) AS count FROM _request_logs WHERE ${where} GROUP BY hour`,
+      params,
+    )
+    return rows.map((row) => ({ hour: row.hour, count: Number(row.count) }))
   }
 
   /** Paths with the most traffic since `since`, largest first. */
-  topConsumers(since: string, limit = 6): BandwidthConsumer[] {
-    this.flush()
-    return this.db.sqlite
-      .query<BandwidthConsumer, [string, number]>(
-        `SELECT path, coalesce(sum(request_bytes + response_bytes), 0) AS bytes
-         FROM _request_logs WHERE created_at >= ? GROUP BY path ORDER BY bytes DESC LIMIT ?`,
-      )
-      .all(since, limit)
+  async topConsumers(since: string, limit = 6): Promise<BandwidthConsumer[]> {
+    await this.flush()
+    const rows = await this.db.driver.all<BandwidthConsumer>(
+      `SELECT path, coalesce(sum(request_bytes + response_bytes), 0) AS bytes
+       FROM _request_logs WHERE created_at >= ? GROUP BY path ORDER BY bytes DESC LIMIT ?`,
+      [since, limit],
+    )
+    return rows.map((row) => ({ path: row.path, bytes: Number(row.bytes) }))
   }
 
-  clear(project?: string): void {
+  async clear(project?: string): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
     }
     this.queue = []
-    if (project) this.db.sqlite.query('DELETE FROM _request_logs WHERE project = ?').run(project)
-    else this.db.sqlite.query('DELETE FROM _request_logs').run()
+    if (this.flushing) await this.flushing
+    if (project) await this.db.driver.run('DELETE FROM _request_logs WHERE project = ?', [project])
+    else await this.db.driver.run('DELETE FROM _request_logs')
   }
 
-  prune(): void {
-    this.flush()
+  async prune(): Promise<void> {
+    await this.flush()
     if (this.retentionDays <= 0) return
-    this.db.sqlite.query('DELETE FROM _request_logs WHERE created_at < ?').run(addSeconds(-this.retentionDays * 86400))
+    await this.db.driver.run('DELETE FROM _request_logs WHERE created_at < ?', [addSeconds(-this.retentionDays * 86400)])
   }
 }

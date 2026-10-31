@@ -262,7 +262,7 @@ describe('webhooks through the console', () => {
     })
     expect(created.status).toBe(303)
     expect(created.headers.get('location')).toBe('/console/webhooks/order-events?ok=Webhook+created')
-    let hook = server.services.webhooks.get('order-events')
+    let hook = await server.services.webhooks.get('order-events')
     expect(JSON.parse(hook.events)).toEqual([
       'databases.main.collections.products.documents.*.create',
       'databases.main.collections.products.documents.*.update',
@@ -299,7 +299,7 @@ describe('webhooks through the console', () => {
       authUsername: 'alice',
       authPassword: '',
     })
-    hook = server.services.webhooks.get('order-events')
+    hook = await server.services.webhooks.get('order-events')
     expect([hook.name, hook.url, hook.enabled, hook.tls, hook.auth_username, hook.auth_password]).toEqual([
       'Order events v2',
       'https://example.com/hooks/v2',
@@ -315,7 +315,7 @@ describe('webhooks through the console', () => {
       customEvents: 'databases.main.collections.products.documents.n1.update',
     })
     expect(flash(events).get('ok')).toBe('Events saved')
-    expect(JSON.parse(server.services.webhooks.get('order-events').events)).toEqual([
+    expect(JSON.parse((await server.services.webhooks.get('order-events')).events)).toEqual([
       'databases.*.collections.*.documents.*',
       'databases.main.collections.products.documents.n1.update',
     ])
@@ -333,7 +333,7 @@ describe('webhooks through the console', () => {
     expect(rotated.status).toBe(200)
     const rotatedHtml = await rotated.text()
     expect(rotatedHtml).toContain('id="webhook-secret-dialog"')
-    hook = server.services.webhooks.get('order-events')
+    hook = await server.services.webhooks.get('order-events')
     expect(hook.secret).not.toBe('first-secret')
     expect(rotatedHtml).toContain(hook.secret)
 
@@ -354,7 +354,7 @@ describe('webhooks through the console', () => {
       tls: 'on',
       authUsername: 'alice',
     })
-    hook = server.services.webhooks.get('order-events')
+    hook = await server.services.webhooks.get('order-events')
     expect([hook.enabled, hook.attempts, hook.tls]).toEqual([1, 0, 1])
 
     // While enabled, recent failures show as failing; ten turn it off for good.
@@ -366,7 +366,7 @@ describe('webhooks through the console', () => {
     expect(await (await get('/console/webhooks/order-events')).text()).toContain('Deliveries stopped after 10 failures')
 
     await form('/console/webhooks/order-events/delete', {})
-    expect(() => server.services.webhooks.get('order-events')).toThrow()
+    await expect(server.services.webhooks.get('order-events')).rejects.toThrow()
     expect(await (await get('/console/webhooks')).text()).toContain('No webhooks yet')
   })
 
@@ -398,7 +398,7 @@ describe('webhooks through the console', () => {
       expect(flash(failed).get('err')).toContain('500')
       expect(hits).toHaveLength(2)
       // A test never adds to the failure count or turns the webhook off.
-      expect(server.services.webhooks.get('tester')).toMatchObject({ attempts: 0, enabled: 1 })
+      expect(await server.services.webhooks.get('tester')).toMatchObject({ attempts: 0, enabled: 1 })
     } finally {
       receiver.stop(true)
       await form('/console/webhooks/tester/delete', {})
@@ -474,7 +474,7 @@ describe('settings through the console', () => {
 
   test('global variables can be added, edited and removed', async () => {
     await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 'on' })
-    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
+    expect(await server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
     const page = await (await get('/console/settings/variables')).text()
     expect(page).toContain('BUNWRITE_GLOBAL_TEST')
     expect(page).toContain('Delete all')
@@ -483,23 +483,23 @@ describe('settings through the console', () => {
     expect(page).toContain('hx-post="/console/settings/variables/bulk"')
     // Editing keeps the stored value when the secret field is left blank.
     await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: '' })
-    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
+    expect(await server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'global-value', secret: 1 }])
     await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 'on' })
-    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 1 }])
+    expect(await server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'new-value', secret: 1 }])
     // Unhiding a secret clears the flag.
     await form('/console/settings/variables', { key: 'BUNWRITE_GLOBAL_TEST', value: 'shown' })
-    expect(server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'shown', secret: 0 }])
+    expect(await server.services.variables.list('project')).toMatchObject([{ key: 'BUNWRITE_GLOBAL_TEST', value: 'shown', secret: 0 }])
     await form('/console/settings/variables/delete', { key: 'BUNWRITE_GLOBAL_TEST' })
-    expect(server.services.variables.list('project')).toEqual([])
+    expect(await server.services.variables.list('project')).toEqual([])
   })
 
   test('global variables can all be deleted at once', async () => {
     await form('/console/settings/variables', { key: 'WIPE_A', value: 'one' })
     await form('/console/settings/variables', { key: 'WIPE_B', value: 'two' })
-    expect(server.services.variables.list('project')).toHaveLength(2)
+    expect(await server.services.variables.list('project')).toHaveLength(2)
     const cleared = await form('/console/settings/variables/clear', {})
     expect(flash(cleared).get('ok')).toBe('Removed 2 variables')
-    expect(server.services.variables.list('project')).toEqual([])
+    expect(await server.services.variables.list('project')).toEqual([])
     const empty = await form('/console/settings/variables/clear', {})
     expect(flash(empty).get('ok')).toBe('No variables to remove')
   })
@@ -644,7 +644,7 @@ describe('settings through the console', () => {
   test('global variables can be bulk imported, with validation errors in the dialog', async () => {
     const ok = await form('/console/settings/variables/bulk', { env: 'BULK_A=one\nBULK_B="two words"\n# comment', secret: 'on' })
     expect(flash(ok).get('ok')).toBe('Imported 2 variables')
-    expect(server.services.variables.list('project').map(({ key, value, secret }) => ({ key, value, secret }))).toEqual([
+    expect((await server.services.variables.list('project')).map(({ key, value, secret }) => ({ key, value, secret }))).toEqual([
       { key: 'BULK_A', value: 'one', secret: 1 },
       { key: 'BULK_B', value: 'two words', secret: 1 },
     ])
@@ -655,8 +655,8 @@ describe('settings through the console', () => {
     expect(inline.status).toBe(200)
     expect(await inline.text()).toContain('Line 1')
 
-    server.services.variables.deleteVariable('project', 'BULK_A')
-    server.services.variables.deleteVariable('project', 'BULK_B')
+    await server.services.variables.deleteVariable('project', 'BULK_A')
+    await server.services.variables.deleteVariable('project', 'BULK_B')
   })
 
   test('Google sign-in can be set up from the console', async () => {
@@ -705,7 +705,7 @@ describe('settings through the console', () => {
     const client = adminClient(server.endpoint)
     client.client.setKey(secret)
     expect((await client.databases.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.limit(1)] })).total).toBeGreaterThanOrEqual(0)
-    const id = server.services.settings.listKeys()[0]!.id
+    const id = (await server.services.settings.listKeys())[0]!.id
     await form(`/console/api/keys/${id}/delete`, {})
     expect(await client.databases.listDocuments({ databaseId: DB, collectionId: 'products' }).catch((e: any) => e.code)).toBe(401)
   })

@@ -222,14 +222,14 @@ function routes(): Router<ConsoleApiContext> {
     return json(modelOf(orgProject(ctx, path.projectId!)))
   })
 
-  router.patch('/organization/projects/:projectId', ({ ctx, path }) => {
+  router.patch('/organization/projects/:projectId', async ({ ctx, path }) => {
     signedIn(ctx)
     const target = orgProject(ctx, path.projectId!)
     const name = str(ctx.params.name)?.trim()
     if (!name || name.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
     // Same as renaming in the console: the project's own setting and the registry.
     const c = target.services.config
-    target.services.settings.set('project', { projectName: name, allowedOrigins: c.allowedOrigins, sessionDuration: c.sessionDuration, sessionsLimit: c.sessionsLimit })
+    await target.services.settings.set('project', { projectName: name, allowedOrigins: c.allowedOrigins, sessionDuration: c.sessionDuration, sessionsLimit: c.sessionsLimit })
     ctx.projects.update(target.info.id, { name })
     return json(modelOf(project(ctx, target.info.id)))
   })

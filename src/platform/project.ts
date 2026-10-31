@@ -91,20 +91,20 @@ export function projectRoutes(router: Router<AppContext>): void {
   })
 
   // Project variables: available to every site and function in this project.
-  router.get('/project/variables', ({ ctx, params }) => {
+  router.get('/project/variables', async ({ ctx, params }) => {
     requireKey(ctx, 'project.read')
     const { total, items } = page(
-      ctx.variables.list(PROJECT_SCOPE).map((v) => variableModel(v, 'project', '')),
+      (await ctx.variables.list(PROJECT_SCOPE)).map((v) => variableModel(v, 'project', '')),
       list(params.queries),
     )
     return json({ total, variables: items })
   })
 
-  router.post('/project/variables', ({ ctx, params }) => {
+  router.post('/project/variables', async ({ ctx, params }) => {
     requireKey(ctx, 'project.write')
     const key = str(params.key) ?? ''
     const id = resolveId(params.variableId ?? 'unique()', 'Variable ID')
-    const row = ctx.variables.create(
+    const row = await ctx.variables.create(
       PROJECT_SCOPE,
       id,
       key,
@@ -117,14 +117,14 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(variableModel(row, 'project', ''), 201)
   })
 
-  router.get('/project/variables/:variableId', ({ ctx, path }) => {
+  router.get('/project/variables/:variableId', async ({ ctx, path }) => {
     requireKey(ctx, 'project.read')
-    return json(variableModel(ctx.variables.get(PROJECT_SCOPE, path.variableId!), 'project', ''))
+    return json(variableModel(await ctx.variables.get(PROJECT_SCOPE, path.variableId!), 'project', ''))
   })
 
-  router.put('/project/variables/:variableId', ({ ctx, path, params }) => {
+  router.put('/project/variables/:variableId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'project.write')
-    const row = ctx.variables.update(PROJECT_SCOPE, path.variableId!, {
+    const row = await ctx.variables.update(PROJECT_SCOPE, path.variableId!, {
       key: str(params.key),
       value: str(params.value),
       secret: params.secret === undefined ? undefined : bool(params.secret, false),
@@ -134,28 +134,28 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(variableModel(row, 'project', ''))
   })
 
-  router.delete('/project/variables/:variableId', ({ ctx, path }) => {
+  router.delete('/project/variables/:variableId', async ({ ctx, path }) => {
     requireKey(ctx, 'project.write')
-    ctx.variables.deleteById(PROJECT_SCOPE, path.variableId!)
+    await ctx.variables.deleteById(PROJECT_SCOPE, path.variableId!)
     for (const site of ctx.sites.list()) ctx.sites.ssr.stopSite(site.id)
     return noContent()
   })
 
-  router.patch('/project/services/:serviceId', ({ ctx, path, params }) => {
+  router.patch('/project/services/:serviceId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'project.write')
-    ctx.access.setService(path.serviceId!, enabledParam(params))
+    await ctx.access.setService(path.serviceId!, enabledParam(params))
     return json(projectModel(infoOf(ctx), ctx))
   })
 
-  router.patch('/project/protocols/:protocolId', ({ ctx, path, params }) => {
+  router.patch('/project/protocols/:protocolId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'project.write')
-    ctx.access.setProtocol(path.protocolId!, enabledParam(params))
+    await ctx.access.setProtocol(path.protocolId!, enabledParam(params))
     return json(projectModel(infoOf(ctx), ctx))
   })
 
-  router.patch('/project/auth-methods/:methodId', ({ ctx, path, params }) => {
+  router.patch('/project/auth-methods/:methodId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'project.write')
-    ctx.access.setAuthMethod(path.methodId!, enabledParam(params))
+    await ctx.access.setAuthMethod(path.methodId!, enabledParam(params))
     return json(projectModel(infoOf(ctx), ctx))
   })
 
@@ -170,9 +170,9 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(ctx.access.policy(path.policyId!))
   })
 
-  router.patch('/project/policies/:policyId', ({ ctx, path, params }) => {
+  router.patch('/project/policies/:policyId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'policies.write')
-    return json(ctx.access.updatePolicy(path.policyId!, params))
+    return json(await ctx.access.updatePolicy(path.policyId!, params))
   })
 
   // Email templates. Only English is sent, so `locale` must be "en" (or left out).
@@ -204,9 +204,9 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json({ total, mockNumbers: items.map(({ $id: _, ...m }) => m) })
   })
 
-  router.post('/project/mock-phones', ({ ctx, params }) => {
+  router.post('/project/mock-phones', async ({ ctx, params }) => {
     requireKey(ctx, 'project.write')
-    const { $id: _, ...m } = mockModel(ctx.access.createMockPhone(params.number, params.otp))
+    const { $id: _, ...m } = mockModel(await ctx.access.createMockPhone(params.number, params.otp))
     return json(m, 201)
   })
 
@@ -216,15 +216,15 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(m)
   })
 
-  router.put('/project/mock-phones/:number', ({ ctx, path, params }) => {
+  router.put('/project/mock-phones/:number', async ({ ctx, path, params }) => {
     requireKey(ctx, 'project.write')
-    const { $id: _, ...m } = mockModel(ctx.access.updateMockPhone(path.number!, params.otp))
+    const { $id: _, ...m } = mockModel(await ctx.access.updateMockPhone(path.number!, params.otp))
     return json(m)
   })
 
-  router.delete('/project/mock-phones/:number', ({ ctx, path }) => {
+  router.delete('/project/mock-phones/:number', async ({ ctx, path }) => {
     requireKey(ctx, 'project.write')
-    ctx.access.deleteMockPhone(path.number!)
+    await ctx.access.deleteMockPhone(path.number!)
     return noContent()
   })
 }

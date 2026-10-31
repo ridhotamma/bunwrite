@@ -7,35 +7,35 @@ import { webhookModel } from './service'
 
 /** The Webhooks service (`appwrite pull/push webhooks`). API keys and console admins only. */
 export function webhookRoutes(router: Router<AppContext>): void {
-  router.get('/webhooks', ({ ctx, params }) => {
+  router.get('/webhooks', async ({ ctx, params }) => {
     requireKey(ctx, 'webhooks.read')
-    const { total, items } = page(ctx.webhooks.list().map(webhookModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'url'] })
+    const { total, items } = page((await ctx.webhooks.list()).map(webhookModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'url'] })
     return json({ total, webhooks: items })
   })
 
-  router.post('/webhooks', ({ ctx, params }) => {
+  router.post('/webhooks', async ({ ctx, params }) => {
     requireKey(ctx, 'webhooks.write')
-    return json(webhookModel(ctx.webhooks.create(params.webhookId, params)), 201)
+    return json(webhookModel(await ctx.webhooks.create(params.webhookId, params)), 201)
   })
 
-  router.get('/webhooks/:webhookId', ({ ctx, path }) => {
+  router.get('/webhooks/:webhookId', async ({ ctx, path }) => {
     requireKey(ctx, 'webhooks.read')
-    return json(webhookModel(ctx.webhooks.get(path.webhookId!)))
+    return json(webhookModel(await ctx.webhooks.get(path.webhookId!)))
   })
 
-  router.put('/webhooks/:webhookId', ({ ctx, path, params }) => {
+  router.put('/webhooks/:webhookId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'webhooks.write')
-    return json(webhookModel(ctx.webhooks.update(path.webhookId!, params)))
+    return json(webhookModel(await ctx.webhooks.update(path.webhookId!, params)))
   })
 
-  router.patch('/webhooks/:webhookId/secret', ({ ctx, path, params }) => {
+  router.patch('/webhooks/:webhookId/secret', async ({ ctx, path, params }) => {
     requireKey(ctx, 'webhooks.write')
-    return json(webhookModel(ctx.webhooks.updateSecret(path.webhookId!, params.secret)))
+    return json(webhookModel(await ctx.webhooks.updateSecret(path.webhookId!, params.secret)))
   })
 
-  router.delete('/webhooks/:webhookId', ({ ctx, path }) => {
+  router.delete('/webhooks/:webhookId', async ({ ctx, path }) => {
     requireKey(ctx, 'webhooks.write')
-    ctx.webhooks.delete(path.webhookId!)
+    await ctx.webhooks.delete(path.webhookId!)
     return noContent()
   })
 }

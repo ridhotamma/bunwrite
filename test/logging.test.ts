@@ -103,32 +103,32 @@ describe('request logs', () => {
     expect(page).toContain('/v1/health')
     expect(page).toContain('visible-1')
     expect(page).toContain('guest')
-    expect(server.services.requestLogs.list({ page: 1, limit: 100 }).logs.some((log) => log.path === '/console/logs')).toBe(false)
+    expect((await server.services.requestLogs.list({ page: 1, limit: 100 })).logs.some((log) => log.path === '/console/logs')).toBe(false)
 
     await fetch(`${server.endpoint}/nope`, { headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'missing-1' } })
     const filtered = await (await fetch(`${base}/console/logs?status=4xx`, { headers: { cookie } })).text()
     expect(filtered).toContain('missing-1')
     expect(filtered).not.toContain('visible-1')
 
-    const missing = server.services.requestLogs.list({ page: 1, limit: 10, search: 'missing-1' }).logs[0]!
+    const missing = (await server.services.requestLogs.list({ page: 1, limit: 10, search: 'missing-1' })).logs[0]!
     expect(missing.error).toContain('Route not found')
     const detail = await (await fetch(`${base}/console/logs/${missing.seq}`, { headers: { cookie } })).text()
     expect(detail).toContain('missing-1')
     expect(detail).toContain('Route not found')
     expect(detail).toContain('/v1/nope')
 
-    const visible = server.services.requestLogs.list({ page: 1, limit: 10, search: 'visible-1' }).logs[0]!
+    const visible = (await server.services.requestLogs.list({ page: 1, limit: 10, search: 'visible-1' })).logs[0]!
     expect([visible.auth, visible.referer, visible.user_agent]).toEqual(['guest', 'https://example.com/app', 'LogTest/1.0'])
   })
 
-  test('prunes rows older than the retention window', () => {
+  test('prunes rows older than the retention window', async () => {
     server.db.sqlite
       .query(
         `INSERT INTO _request_logs (id, method, path, status, duration_ms, ip, project, created_at)
          VALUES ('old-request', 'GET', '/old', 200, 1, '', '', '2000-01-01T00:00:00.000+00:00')`,
       )
       .run()
-    server.services.requestLogs.prune()
+    await server.services.requestLogs.prune()
     const row = server.db.sqlite.query("SELECT count(*) AS n FROM _request_logs WHERE id = 'old-request'").get() as { n: number }
     expect(row.n).toBe(0)
   })
