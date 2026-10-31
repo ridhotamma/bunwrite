@@ -520,6 +520,7 @@ backup-<timestamp>.archive.zst
 - create a manual archive;
 - download it;
 - delete old archives;
+- upload an archive to validate and stage it for the next restart;
 - turn on daily automatic backups at 02:00 UTC and choose how many to keep
   (1–100);
 - keep archives on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
@@ -552,22 +553,23 @@ bun run snapshot /var/backups/bunwrite
 
 ### Restoring
 
-Restore is offline, because it replaces the control database.
+You can restore from the console: open **Settings → Backups → Restore archive**
+and upload a `.archive.zst` or `.archive.zst.enc` file. The server validates the
+whole archive (checksums, SQLite integrity, every project ID) and stages it;
+**restart Bunwrite** to apply it. The swap is still offline under the hood,
+because the archive replaces the control database, so the next start applies it
+before opening SQLite. A staged restore can be cancelled from the same page.
 
-1. Stop Bunwrite.
-2. Run the archive through the CLI. It decrypts and decompresses it, checks
-   every database (`PRAGMA integrity_check`, Bunwrite tables, project ID) before
-   replacing anything, and keeps the previous files as
-   `*.before-restore-<timestamp>`:
+Or run the CLI with the server stopped. It validates the archive, replaces every
+database, and keeps the previous files as `*.before-restore-<timestamp>`:
 
-   ```bash
-   bun run restore backup-2026-10-31T02-00-00-000Z.archive.zst
-   ```
+```bash
+bun run restore backup-2026-10-31T02-00-00-000Z.archive.zst
+```
 
-   Use `bunwrite restore <file>` with the compiled binary. Add `--dry-run` to
-   check an archive without writing. Encrypted archives read
-   `BACKUP_ENCRYPTION_KEY` from the environment or `.env`, or `--key`.
-3. Start Bunwrite and check the console and API.
+Use `bunwrite restore <file>` with the compiled binary. Add `--dry-run` to check
+an archive without writing. Encrypted archives read `BACKUP_ENCRYPTION_KEY`
+from the environment or `.env`, or `--key`.
 
 A failure while swapping puts the previous files back. Uploaded files, function
 code and site builds are not in the archive; back up `STORAGE_PATH` or the

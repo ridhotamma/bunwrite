@@ -3,11 +3,12 @@
  * change through a console form and checks it through the Appwrite SDK.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Query } from 'node-appwrite'
 
+import { readPendingRestore } from '~/backups/pending'
 import { ConsoleAuth } from '~/console/auth'
 import { adminClient, DB, PROJECT, startServer, testConfig, type TestServer } from './helpers'
 
@@ -530,6 +531,10 @@ describe('settings through the console', () => {
   test('backups can be created, downloaded and deleted locally', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-backups-'))
     const fileServer = startServer(undefined, { backupsPath: join(dir, 'backups') }, undefined, {}, join(dir, 'bunwrite.sqlite'))
+    // The test helper skips bootstrap; a global archive needs the instance record.
+    fileServer.db.sqlite
+      .query("INSERT INTO _settings (key, value, updated_at) VALUES ('instance', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(JSON.stringify({ projectId: PROJECT }), new Date().toISOString())
     const fileBase = fileServer.endpoint.replace(/\/v1$/, '')
     const auth = new ConsoleAuth(fileServer.db)
     await auth.upsert('backup@example.com', 'console-password')
@@ -552,6 +557,28 @@ describe('settings through the console', () => {
       const download = await read(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/download`)
       expect(download.status).toBe(200)
       expect(download.headers.get('content-disposition')).toContain('.archive.zst')
+
+      // Upload the archive back through the console: it is validated and
+      // staged for the next start, no CLI needed.
+      const upload = new FormData()
+      upload.append('backup', new File([readFileSync(join(dir, 'backups', backups[0]!.name))], backups[0]!.name))
+      const staged = await fetch(`${fileBase}/console/settings/backups/restore`, {
+        method: 'POST',
+        body: upload,
+        headers: { cookie: fileCookie },
+        redirect: 'manual',
+      })
+      expect(staged.status).toBe(303)
+      expect(new URL(staged.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('validated and staged')
+      expect(readPendingRestore(fileServer.config.databasePath)?.name).toBe(backups[0]!.name)
+      const stagedPage = await (await read('/console/settings/backups')).text()
+      expect(stagedPage).toContain('Restore staged')
+      expect(stagedPage).toContain('Cancel staged restore')
+
+      const cancelled = await post('/console/settings/backups/restore/cancel', {})
+      expect(new URL(cancelled.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('cancelled')
+      expect(readPendingRestore(fileServer.config.databasePath)).toBeNull()
+
       await post(`/console/settings/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
       expect(await fileServer.services.backups.list()).toHaveLength(0)
     } finally {

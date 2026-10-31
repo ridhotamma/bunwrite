@@ -14,7 +14,7 @@
  * edited archive fails before anything is restored.
  */
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readSync, rmSync } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
@@ -211,13 +211,31 @@ class ByteReader {
   }
 }
 
+const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+const ENCRYPTED_MAGIC = Buffer.from('BWBK')
+
+/** The first bytes decide compression, not the file name (staged files have no suffix). */
+function headerOf(path: string): Buffer {
+  const handle = openSync(path, 'r')
+  try {
+    const header = Buffer.alloc(4)
+    readSync(handle, header, 0, header.length, 0)
+    return header
+  } finally {
+    closeSync(handle)
+  }
+}
+
 function archiveStream(options: ReadArchiveOptions): AsyncIterable<Uint8Array> {
+  const header = headerOf(options.input)
+  const encrypted = header.equals(ENCRYPTED_MAGIC)
+  const compressed = encrypted || header.equals(ZSTD_MAGIC)
   let source: AsyncIterable<Uint8Array> = createReadStream(options.input)
-  if (options.input.endsWith('.enc')) {
+  if (encrypted) {
     if (!options.secret) throw new Error('Set BACKUP_ENCRYPTION_KEY to open an encrypted backup.')
     source = decrypt(source, options.secret)
   }
-  if (options.input.endsWith('.zst') || options.input.endsWith('.enc')) {
+  if (compressed) {
     // `pipe` does not forward source errors, which would leave the reader
     // waiting forever on a wrong key or a truncated file.
     const out = new PassThrough()

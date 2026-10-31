@@ -1,6 +1,7 @@
 /** Settings tab markup. The page loads data and validates writes; this module renders it. */
 import { gitTabView } from '~/console/views/vcs'
 import type { BackupFile } from '~/backups/service'
+import { readPendingRestore } from '~/backups/pending'
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type OAuthProviderId, type S3Config } from '~/config'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
@@ -131,6 +132,7 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
   } catch (problem) {
     error = problem instanceof Error ? problem.message : String(problem)
   }
+  const pending = readPendingRestore(control.config.databasePath)
   const encryption = c.backupEncryptionKey
     ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one with <code>bunwrite restore &lt;file&gt;</code>.`)
     : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
@@ -161,15 +163,32 @@ async function backupsCards(ctx: ConsoleContext): Promise<Html> {
           : emptyState('No backups yet', 'Create one now, or wait for the daily automatic backup.')}`,
       { id: 'backups', flush: true },
     )}
-    ${settingsSection(
-      'Restoring',
-      'Restore replaces the control database and every project database, so it runs with the server stopped.',
-      html`<p>Stop Bunwrite, then run the downloaded archive through the CLI:</p>
-        <pre class="mono">bunwrite restore backup-2026-10-31T02-00-00-000Z.archive.zst</pre>
-        <p>Every database is checked before anything is replaced. The previous files stay next to the restored ones as <code>*.before-restore-&lt;timestamp&gt;</code>. Add <code>--dry-run</code> to check an archive without writing.</p>
-        <p>Uploaded files, function code and site builds are not in the archive. Back up <code>STORAGE_PATH</code> or the uploads bucket separately.</p>`,
-      { id: 'backup-restore' },
-    )}
+    ${pending
+      ? settingsSection(
+          'Restore staged',
+          'This archive was validated and is waiting for the next start.',
+          html`<div class="toolbar">
+              <div class="backup-meta"><span class="mono clip" title="${pending.name}">${pending.name}</span><span class="subdued cell-sub">Uploaded ${pending.uploadedAt ? when(pending.uploadedAt) : 'earlier'}</span></div>
+              <form method="post" action="${SETTINGS}/backups/restore/cancel" class="inline" style="margin-left:auto" data-confirm="Cancel the staged restore?" data-confirm-label="Cancel restore" data-confirm-tone="critical"><button class="critical small">Cancel staged restore</button></form>
+            </div>
+            <p>Restart Bunwrite to apply it. The control database and every project database are replaced; the previous files stay as <code>*.before-restore-&lt;timestamp&gt;</code>.</p>
+            <p>Uploaded files, function code and site builds are not in the archive.</p>`,
+          { id: 'backup-pending' },
+        )
+      : settingsSection(
+          'Restore archive',
+          'Upload a backup here. Bunwrite validates it now and applies it the next time it starts, so there is no CLI step.',
+          html`<form method="post" action="${SETTINGS}/backups/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
+              data-confirm="Stage this archive? The control database and every project database will be replaced when Bunwrite next starts." data-confirm-label="Stage restore" data-confirm-tone="critical">
+            <label>Backup archive<input type="file" name="backup" accept=".zst,.enc,application/x-bunwrite-archive" required>
+              <small>A <code>.archive.zst</code> or <code>.archive.zst.enc</code> file from this server.</small></label>
+            <label>Encryption key <span class="subdued">(only for encrypted archives)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
+              <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
+            <div class="foot"><button class="critical">Validate and stage</button></div>
+          </form>
+          <p class="subdued">After staging, restart Bunwrite from your host (<code>docker compose restart bunwrite</code> or <code>systemctl restart bunwrite</code>). The archive is applied before the database opens. You can still run <code>bunwrite restore &lt;file&gt;</code> manually with the server stopped.</p>`,
+          { id: 'backup-restore' },
+        )}
     ${settingsSection(
       'Backup options',
       'Whole-instance backups: enable the daily run, choose how many to keep, and where they are stored.',

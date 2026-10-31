@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { readArchive, writeArchive } from '~/backups/archive'
 import { decrypt, encrypt, packBackup, unpackBackup } from '~/backups/format'
 import { createInstanceBackup } from '~/backups/instance'
+import { applyPendingRestore, cancelPendingRestore, readPendingRestore, stagePendingRestore } from '~/backups/pending'
 import { inspectBackup, inspectDatabase, restoreInstance } from '~/backups/restore'
 import { BackupService } from '~/backups/service'
 import { openDb, type Db } from '~/db/connection'
@@ -130,9 +131,14 @@ describe('single-database backup files', () => {
 function makeInstance(root: string) {
   const controlPath = join(root, 'bunwrite.sqlite')
   const control = bootstrapDb(controlPath, PROJECT)
-  control.sqlite
-    .query('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-    .run('other', 'Other', 'org_test', now(), now())
+  for (const [id, name] of [
+    [PROJECT, 'Main'],
+    ['other', 'Other'],
+  ] as const) {
+    control.sqlite
+      .query('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+      .run(id, name, 'org_test', now(), now())
+  }
   const projectPath = join(root, 'projects', 'other', 'bunwrite.sqlite')
   mkdirSync(join(root, 'projects', 'other'), { recursive: true })
   const project = bootstrapDb(projectPath, 'other')
@@ -330,6 +336,38 @@ describe('restoring whole-instance archives', () => {
       expect(inspectDatabase(otherPath).projectId).toBe('another-project')
     } finally {
       other.sqlite.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('stages a console upload and applies it on the next start, or cancels it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-staged-'))
+    const { controlPath, control, projectPath, project } = makeInstance(root)
+    try {
+      const outputDir = join(root, 'backups')
+      await createInstanceBackup({ databasePath: controlPath, outputDir })
+      const first = join(outputDir, readdirSync(outputDir)[0]!)
+      const staged = stagePendingRestore({ databasePath: controlPath, archive: first, name: 'first.archive.zst' })
+      expect(existsSync(staged.archive)).toBe(true)
+      expect(readPendingRestore(controlPath)?.name).toBe('first.archive.zst')
+      expect(cancelPendingRestore(controlPath)).toBe(true)
+      expect(readPendingRestore(controlPath)).toBeNull()
+      expect(cancelPendingRestore(controlPath)).toBe(false)
+
+      // A fresh archive, then a change that the restore must undo.
+      await createInstanceBackup({ databasePath: controlPath, outputDir })
+      const second = join(outputDir, readdirSync(outputDir)[0]!)
+      marker(control, 'control-after')
+      marker(project, 'project-after')
+      control.sqlite.close()
+      project.sqlite.close()
+      stagePendingRestore({ databasePath: controlPath, archive: second, name: 'second.archive.zst' })
+
+      expect(await applyPendingRestore(testConfig({ databasePath: controlPath }))).toBe(true)
+      expect(readPendingRestore(controlPath)).toBeNull()
+      expect(readMarker(controlPath)).toBe('control-before')
+      expect(readMarker(projectPath)).toBe('project-before')
+    } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })

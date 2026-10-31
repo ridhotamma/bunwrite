@@ -342,11 +342,13 @@ created with, so the execution returned to the caller is the one that runs.
   be created, downloaded and deleted in **Settings → Backups** (organization
   owners only); automatic archives run daily at 02:00 UTC and keep the
   configured number. Stored in `BACKUPS_PATH` or a separate S3 bucket.
-- Restore is offline: `bunwrite restore <archive>` validates the manifest,
-  checksums, SQLite integrity and every project ID, then swaps the files and
-  keeps the previous ones as `*.before-restore-<timestamp>`. The control
-  database is part of the archive, so a running server cannot be updated in
-  place. Archives do not include uploaded files, function code or site builds.
+- Restore is offline. The console validates an uploaded archive and stages it in
+  `<data>/.restore-pending`; the next start applies it before opening SQLite.
+  `bunwrite restore <archive>` does the same with the server stopped. Both
+  validate the manifest, checksums, SQLite integrity and every project ID, then
+  swap the files and keep the previous ones as
+  `*.before-restore-<timestamp>`. Archives do not include uploaded files,
+  function code or site builds.
 
 ## Settings and schema: who wins
 

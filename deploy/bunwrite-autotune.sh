@@ -25,6 +25,10 @@ if [ -n "${LITESTREAM_REPLICA_URL:-}" ]; then
   export LITESTREAM_REPLICA_URL="${LITESTREAM_REPLICA_URL%/}"
   mkdir -p "$DATA_DIR/projects"
 
+  # A restore staged from the console replaces every database; apply it before
+  # Litestream opens anything.
+  /usr/local/bin/bunwrite restore --pending || exit 1
+
   /usr/local/bin/bunwrite failover
 
   exec "$litestream_bin" replicate \

@@ -49,8 +49,7 @@ if (args.includes('--pending')) {
   const key = flag('--key')
   if (key) config.backupEncryptionKey = key
   try {
-    const applied = await applyPendingRestore(config)
-    if (!applied) console.log('restore: no staged backup')
+    await applyPendingRestore(config)
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)

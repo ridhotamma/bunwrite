@@ -25,6 +25,10 @@ if [ "${1:-serve}" = "serve" ] && [ -n "${LITESTREAM_REPLICA_URL:-}" ]; then
   export LITESTREAM_REPLICA_URL="${LITESTREAM_REPLICA_URL%/}"
   mkdir -p "$data_dir/projects"
 
+  # A restore staged from the console replaces every database; apply it before
+  # Litestream opens anything.
+  /usr/local/bin/bunwrite restore --pending
+
   /usr/local/bin/bunwrite failover
 
   config="${LITESTREAM_CONFIG:-/app/litestream.yml}"

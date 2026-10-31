@@ -403,9 +403,11 @@ Upgrade with `git pull && docker compose up -d --build`.
 - Enable daily database backups and optional S3 backup storage in
   **Settings → Backups**. One archive contains the control database and every
   project database; it does not include uploaded files. `bunwrite snapshot` is
-  available for cron-driven archives. Restore with `bunwrite restore <archive>`
-  while the server is stopped; it validates every database first and keeps the
-  previous files as `*.before-restore-<timestamp>`.
+  available for cron-driven archives. Restore by uploading the archive in
+  **Settings → Backups** and restarting Bunwrite, or run
+  `bunwrite restore <archive>` with the server stopped; either way every
+  database is validated first and the previous files are kept as
+  `*.before-restore-<timestamp>`.
 - Request logs are stored per project and go to stdout and the console. Set
   `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
 

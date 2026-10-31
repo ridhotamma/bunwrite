@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS, type S3Config } from '~/config'

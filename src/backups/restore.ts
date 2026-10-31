@@ -152,7 +152,7 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
     if (!existsSync(controlSource)) throw new Error(`Backup archive is missing ${manifest.control}.`)
     const control = inspectDatabase(controlSource)
     const listed = [...manifest.projects].sort()
-    const stored = [...control.projects].sort()
+    const stored = [...control.projects].filter((id) => id !== control.projectId).sort()
     if (listed.length !== stored.length || listed.some((id, index) => id !== stored[index])) {
       throw new Error('Backup archive project list does not match its control database.')
     }

@@ -33,7 +33,23 @@ export interface InstanceBackup {
 function projectIds(databasePath: string): string[] {
   const db = new Database(databasePath)
   try {
-    return db.query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq').all().map((row) => row.id)
+    // The control project's database is the control database itself; it must
+    // not be archived a second time as `projects/<id>/bunwrite.sqlite`.
+    const row = db.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'instance'").get()
+    let controlId = ''
+    if (row) {
+      try {
+        const value = JSON.parse(row.value) as { projectId?: unknown }
+        controlId = typeof value.projectId === 'string' ? value.projectId : ''
+      } catch {
+        /* inspectDatabase reports a broken instance record later */
+      }
+    }
+    return db
+      .query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq')
+      .all()
+      .map((entry) => entry.id)
+      .filter((id) => id !== controlId)
   } finally {
     db.close()
   }
