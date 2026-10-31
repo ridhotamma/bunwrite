@@ -201,12 +201,15 @@ export interface Config {
    */
   instanceKey?: string
   /**
-   * Loopback port where worker 0 serves short database writes. The other
-   * workers forward mutating API requests and short console forms here so
-   * SQLite has one writer process. Uploads, executions, deployments, renders
-   * and VCS work stay local. 0 disables both the listener and the forwarding.
+   * Loopback port where the first of the writer processes serves short
+   * database writes. Each writer gets `writerPort + shard`, and public workers
+   * forward mutating API requests to the writer that owns the project. Uploads,
+   * executions, deployments, renders and VCS work stay local. 0 disables both
+   * the listeners and the forwarding.
    */
   writerPort: number
+  /** Writer processes, each owning a hash of project IDs (WRITER_SHARDS). */
+  writerShards: number
   /** Interface for the writer listener; loopback by default, workers share a namespace. */
   writerHost: string
   /** Group document writes arriving within this many ms into one transaction; 0 disables. */
@@ -448,6 +451,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     workerIndex: cluster.workerIndex,
     // Keep the writer off the public port range when workers bind PORT..PORT+N-1.
     writerPort: wholeNumber(env.WRITER_PORT, workerPorts ? port + 100 : port + 1),
+    writerShards: cluster.writerShards,
     writerHost: env.WRITER_HOST || '127.0.0.1',
     // A few milliseconds is invisible next to a network round trip but lets
     // the writer group every request that is already waiting on the lock.

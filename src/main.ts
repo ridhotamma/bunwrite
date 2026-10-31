@@ -16,6 +16,7 @@ Usage:
   bunwrite serve               Start the server
   bunwrite console:admin ...   Create, reset or remove a console admin
   bunwrite snapshot [dir]      Copy the database consistently
+  bunwrite failover            Restore databases from Litestream
   bunwrite backup:open <file>  Decrypt/decompress a backup into a .sqlite file
   bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
@@ -52,6 +53,10 @@ switch (command) {
   case 'snapshot':
     runCli(...args)
     await import('./cli/snapshot')
+    break
+  case 'failover':
+    runCli(...args)
+    await import('./cli/failover')
     break
   case 'backup:open':
     runCli(...args)

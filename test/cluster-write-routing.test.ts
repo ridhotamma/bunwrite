@@ -12,6 +12,8 @@ import {
   isWriterWorker,
   shouldForwardConsoleWrite,
   shouldForwardWrite,
+  writerPortFor,
+  writerShardFor,
 } from '~/cluster/writer'
 import { ConsoleAuth } from '~/console/auth'
 import { configFromEnv } from '~/config'
@@ -58,6 +60,33 @@ describe('writer role', () => {
     expect(isWriterWorker({ workers: 4, workerIndex: 0 })).toBe(true)
     expect(isWriterWorker({ workers: 4, workerIndex: 1 })).toBe(false)
     expect(isWriterWorker({ workers: 4, workerIndex: 3 })).toBe(false)
+  })
+
+  test('a writer pool owns the first process indices', () => {
+    expect(isWriterWorker({ workers: 6, workerIndex: 0, writerShards: 2 })).toBe(true)
+    expect(isWriterWorker({ workers: 6, workerIndex: 1, writerShards: 2 })).toBe(true)
+    expect(isWriterWorker({ workers: 6, workerIndex: 2, writerShards: 2 })).toBe(false)
+    expect(isWriterWorker({ workers: 6, workerIndex: 5, writerShards: 2 })).toBe(false)
+  })
+
+  test('projects map to a stable writer shard', () => {
+    expect(writerShardFor('anything', 1)).toBe(0)
+    const shards = 4
+    for (const id of ['pesanle', 'project-a', 'project-b', 'project-c']) {
+      expect(writerShardFor(id, shards)).toBe(writerShardFor(id, shards))
+      expect(writerShardFor(id, shards)).toBeGreaterThanOrEqual(0)
+      expect(writerShardFor(id, shards)).toBeLessThan(shards)
+    }
+    // The mapping spreads a handful of projects over the pool.
+    const seen = new Set(['project-1', 'project-2', 'project-3', 'project-4', 'project-5', 'project-6'].map((id) => writerShardFor(id, 3)))
+    expect(seen.size).toBeGreaterThan(1)
+  })
+
+  test('each shard listens on its own loopback port', () => {
+    const config = testConfig({ writerPort: 9100, writerShards: 3, projectId: 'project-a' })
+    const shard = writerShardFor('project-a', 3)
+    expect(writerPortFor(config)).toBe(9100 + shard)
+    expect(writerPortFor(config, 2)).toBe(9102)
   })
 
   test('document and transaction writes are database writes', () => {
@@ -128,6 +157,7 @@ describe('writer role', () => {
   test('configuration defaults keep the listener on loopback beside PORT', () => {
     const config = configFromEnv({ PORT: '9090' })
     expect(config.writerPort).toBe(9091)
+    expect(config.writerShards).toBe(1)
     expect(config.writerHost).toBe('127.0.0.1')
     expect(config.writeBatchMs).toBe(0) // one process: no write contention
     expect(config.publicWorkers).toBe(1)
@@ -161,6 +191,76 @@ describe('writer role', () => {
 })
 
 describe('write forwarding', () => {
+  test('a write is forwarded to the writer shard that owns the project', async () => {
+    const path = tempDatabase()
+    const writerDb = open(path)
+    pushConfig(writerDb, testSchema)
+    const writerServices = createServices(testConfig({ databasePath: path, workers: 3, workerIndex: 0 }), writerDb)
+    services.push(writerServices)
+    const writerApp = createApp(writerServices)
+    const hits = [0, 0]
+
+    // Two shards need consecutive loopback ports: WRITER_PORT and WRITER_PORT + 1.
+    let base = 0
+    let first: ReturnType<typeof Bun.serve> | null = null
+    let second: ReturnType<typeof Bun.serve> | null = null
+    for (let attempt = 0; attempt < 40 && !second; attempt++) {
+      const probe = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 204 }) })
+      base = probe.port!
+      await probe.stop(true)
+      try {
+        first = Bun.serve({
+          hostname: '127.0.0.1',
+          port: base,
+          fetch: (request) => {
+            hits[0]!++
+            return writerApp.fetch(request)
+          },
+          websocket: writerApp.websocket,
+        })
+      } catch {
+        first = null
+        continue
+      }
+      try {
+        second = Bun.serve({
+          hostname: '127.0.0.1',
+          port: base + 1,
+          fetch: (request) => {
+            hits[1]!++
+            return writerApp.fetch(request)
+          },
+          websocket: writerApp.websocket,
+        })
+      } catch {
+        first.stop(true)
+        first = null
+      }
+    }
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+    stops.push(() => first?.stop(true), () => second?.stop(true))
+
+    const readerServices = createServices(
+      testConfig({ databasePath: path, workers: 3, workerIndex: 2, writerPort: base, writerShards: 2 }),
+      open(path),
+    )
+    services.push(readerServices)
+    const readerApp = createApp(readerServices)
+    const readerServer = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: readerApp.fetch, websocket: readerApp.websocket })
+    stops.push(() => readerServer.stop(true))
+
+    const created = await fetch(`http://127.0.0.1:${readerServer.port}/v1/databases/main/collections/products/documents`, {
+      method: 'POST',
+      headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ documentId: 'routed', data: product('Routed') }),
+    })
+    expect(created.status).toBe(201)
+    const owner = writerShardFor(PROJECT, 2)
+    expect(hits[owner]).toBe(1)
+    expect(hits[owner === 0 ? 1 : 0]).toBe(0)
+  })
+
   test('a write sent to a reader lands on the writer process', async () => {
     const path = tempDatabase()
     const writerDb = open(path)

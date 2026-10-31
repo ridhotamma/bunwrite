@@ -85,6 +85,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     workerPorts: false,
     workerIndex: 0,
     writerPort: 0,
+    writerShards: 1,
     writerHost: '127.0.0.1',
     writeBatchMs: 0,
     maxInflight: 0,

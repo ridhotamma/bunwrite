@@ -573,6 +573,29 @@ Backups contain the database only. Uploaded files live under `STORAGE_PATH` or
 in your S3 bucket, so back those up separately. Test a restore before you need
 it.
 
+### Continuous replication and failover
+
+For PocketBase Cloud-style recovery, set `LITESTREAM_REPLICA_URL` to an
+S3-compatible bucket. The Docker entrypoint restores the control database and
+every project database on start, then streams WAL changes:
+
+```env
+LITESTREAM_REPLICA_URL=s3://my-bucket/bunwrite
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+```
+
+Restore manually on a replacement host:
+
+```bash
+bun run failover
+```
+
+That restores `<replica>/bunwrite.sqlite`, reads `_projects`, then restores
+`<replica>/projects/<id>/bunwrite.sqlite` for each project. Keep only one writer
+against a replica prefix at a time. See
+[Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
+
 ## HTML rendering for invoices
 
 Bunwrite includes a rendering service for invoices, receipts, reports and social
@@ -852,6 +875,9 @@ docker compose up -d --build
 
 Before going live, enable **Settings → Backups** and back up uploaded files
 (`STORAGE_PATH` or the S3 bucket) separately. See [Backups](#backups).
+For continuous SQLite replication and restore onto a replacement host, set
+`LITESTREAM_REPLICA_URL`; see
+[Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
 
 ## Architecture
 

@@ -4,7 +4,7 @@
  * exits is restarted with backoff; SIGINT/SIGTERM stops them all.
  */
 import { applyAutotune } from '~/system/autotune'
-import { clusterProcessCount, workerPortsEnabled, writerEnabled } from './config'
+import { clusterProcessCount, resolveWriterShards, workerPortsEnabled, writerEnabled } from './config'
 
 const MAX_BACKOFF_MS = 30_000
 const SHUTDOWN_GRACE_MS = 10_000
@@ -24,13 +24,14 @@ export async function runSupervisor(publicWorkers: number): Promise<void> {
   // before their Bun runtimes start.
   applyAutotune()
   const withWriter = writerEnabled()
-  const total = clusterProcessCount(publicWorkers, withWriter)
+  const writerShards = resolveWriterShards(process.env.WRITER_SHARDS, publicWorkers, withWriter)
+  const total = clusterProcessCount(publicWorkers, withWriter, writerShards)
   const ports = workerPortsEnabled()
   const port = process.env.PORT ?? '8080'
   const publicRange = ports ? ` on :${port}-${Number(port) + publicWorkers - 1}` : ` on :${port}`
   console.log(
     `[cluster] starting ${publicWorkers} HTTP worker${publicWorkers === 1 ? '' : 's'}${publicRange}` +
-      `${withWriter ? ' + 1 writer' : ''}`,
+      `${withWriter ? ` + ${writerShards} writer${writerShards === 1 ? '' : 's'}` : ''}`,
   )
 
   const children = new Map<number, ReturnType<typeof Bun.spawn>>()
@@ -41,7 +42,12 @@ export async function runSupervisor(publicWorkers: number): Promise<void> {
     const startedAt = Date.now()
     const child = Bun.spawn({
       cmd: workerCommand(),
-      env: { ...process.env, BUNWRITE_WORKER: String(index), BUNWRITE_CLUSTER_SIZE: String(total) },
+      env: {
+        ...process.env,
+        BUNWRITE_WORKER: String(index),
+        BUNWRITE_CLUSTER_SIZE: String(total),
+        BUNWRITE_WRITER_SHARDS: String(writerShards),
+      },
       stdin: 'inherit',
       stdout: 'inherit',
       stderr: 'inherit',

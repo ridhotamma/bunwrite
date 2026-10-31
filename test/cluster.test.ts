@@ -8,6 +8,7 @@ import {
   clusterConfig,
   clusterProcessCount,
   resolveWorkers,
+  resolveWriterShards,
   workerPort,
   workerPortsEnabled,
   writerEnabled,
@@ -74,33 +75,73 @@ describe('worker count', () => {
     expect(resolveWorkers('4', 'darwin')).toBe(1)
   })
 
-  test('a supervisor adds one writer process beside the public workers', () => {
+  test('a supervisor adds the writer pool beside the public workers', () => {
     expect(clusterConfig({ WORKERS: '3' }, 'linux')).toEqual({
       workers: 4,
       publicWorkers: 3,
+      writerShards: 1,
       workerIndex: 0,
       supervisor: true,
     })
     expect(clusterConfig({ BUNWRITE_WORKER: '2', BUNWRITE_CLUSTER_SIZE: '4', WORKERS: '3' }, 'linux')).toEqual({
       workers: 4,
       publicWorkers: 3,
+      writerShards: 1,
       workerIndex: 2,
+      supervisor: false,
+    })
+    // More public workers mean more writer shards, so projects do not share one writer.
+    expect(clusterConfig({ WORKERS: '8' }, 'linux')).toEqual({
+      workers: 12,
+      publicWorkers: 8,
+      writerShards: 4,
+      workerIndex: 0,
+      supervisor: true,
+    })
+    expect(
+      clusterConfig({ BUNWRITE_WORKER: '5', BUNWRITE_CLUSTER_SIZE: '12', BUNWRITE_WRITER_SHARDS: '4' }, 'linux'),
+    ).toEqual({
+      workers: 12,
+      publicWorkers: 8,
+      writerShards: 4,
+      workerIndex: 5,
       supervisor: false,
     })
     // WRITER_PORT=0 keeps local writes, so every process serves public traffic.
     expect(clusterConfig({ WORKERS: '3', WRITER_PORT: '0' }, 'linux')).toEqual({
       workers: 3,
       publicWorkers: 3,
+      writerShards: 1,
       workerIndex: 0,
       supervisor: true,
     })
-    expect(clusterConfig({}, 'linux')).toEqual({ workers: 1, publicWorkers: 1, workerIndex: 0, supervisor: false })
+    expect(clusterConfig({}, 'linux')).toEqual({
+      workers: 1,
+      publicWorkers: 1,
+      writerShards: 1,
+      workerIndex: 0,
+      supervisor: false,
+    })
+  })
+
+  test('the writer pool size follows WRITER_SHARDS', () => {
+    expect(resolveWriterShards(undefined, 4)).toBe(2)
+    expect(resolveWriterShards('auto', 7)).toBe(3)
+    expect(resolveWriterShards('auto', 16)).toBe(8)
+    expect(resolveWriterShards('1', 8)).toBe(1)
+    expect(resolveWriterShards('6', 4)).toBe(4)
+    expect(resolveWriterShards('99', 16)).toBe(8)
+    expect(resolveWriterShards('nonsense', 8)).toBe(1)
+    expect(resolveWriterShards('4', 1)).toBe(1)
+    expect(resolveWriterShards('4', 8, false)).toBe(1)
   })
 
   test('process and port helpers follow the writer layout', () => {
     expect(clusterProcessCount(1)).toBe(1)
     expect(clusterProcessCount(4)).toBe(5)
     expect(clusterProcessCount(4, false)).toBe(4)
+    expect(clusterProcessCount(8, true, 4)).toBe(12)
+    expect(clusterProcessCount(8, false, 4)).toBe(8)
     expect(writerEnabled({})).toBe(true)
     expect(writerEnabled({ WRITER_PORT: '0' })).toBe(false)
     expect(workerPortsEnabled({})).toBe(false)
@@ -113,6 +154,9 @@ describe('worker count', () => {
     // No dedicated writer: index 0 is the first public worker.
     expect(workerPort(8080, 0, true, 0)).toBe(8080)
     expect(workerPort(8080, 2, true, 0)).toBe(8082)
+    // Two writers occupy 0 and 1, so the first public worker starts at 2.
+    expect(workerPort(8080, 0, true, 2)).toBe(8080)
+    expect(workerPort(8080, 3, true, 2)).toBe(8081)
   })
 
   test('workers are spawned with the executable and the user arguments only', () => {

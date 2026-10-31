@@ -1,0 +1,39 @@
+# Litestream configuration for Bunwrite.
+#
+# The Docker entrypoint exports DATA_DIR, LITESTREAM_DATABASE_NAME and
+# LITESTREAM_SYNC_INTERVAL before starting this file. For a manual install,
+# set the same variables (and DATABASE_PATH/LITESTREAM_REPLICA_URL) yourself.
+#
+# Replica layout:
+#   <replica>/bunwrite.sqlite
+#   <replica>/projects/<project-id>/bunwrite.sqlite
+#
+# The control database is targeted by path; project databases use the
+# directory watcher, so projects created at runtime are picked up without a
+# restart. `bunwrite failover` restores both kinds from the same layout.
+dbs:
+  - path: ${DATABASE_PATH}
+    restore-if-db-not-exists: true
+    replica:
+      url: ${LITESTREAM_REPLICA_URL}/${LITESTREAM_DATABASE_NAME}
+      sync-interval: ${LITESTREAM_SYNC_INTERVAL}
+
+  - dir: ${DATA_DIR}/projects
+    pattern: "bunwrite.sqlite"
+    recursive: true
+    watch: true
+    replica:
+      url: ${LITESTREAM_REPLICA_URL}/projects
+      sync-interval: ${LITESTREAM_SYNC_INTERVAL}
+
+# Keep a week of point-in-time restore points. Increase retention if you need
+# older recovery points; storage grows with write volume.
+snapshot:
+  interval: 24h
+  retention: 168h
+l0-retention: 24h
+
+# Optional dead-man switch. Leave empty to disable; set a Healthchecks.io or
+# Better Stack ping URL to alert when replication falls behind.
+heartbeat-url: ${LITESTREAM_HEARTBEAT_URL}
+heartbeat-interval: 5m

@@ -22,17 +22,17 @@ Related documents:
 
 | Area | Current state | Risk |
 | --- | --- | --- |
-| High availability | One host, one SQLite writer, no replication | **High** |
+| High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
 | API key permissions | Project-wide keys without scopes | **High** |
-| Backups | Off by default, snapshots only, no PITR | **High** |
+| Backups | Off by default; snapshots plus optional Litestream PITR | **High/Medium** |
 | Function isolation | Shared CPU/memory/network, no quotas | **High** |
 | Console authentication | Password only, no MFA | **High** |
 | Appwrite compatibility | Partial; some settings are stored but not applied | **High/Medium** |
 | Deployments and migrations | Restart-based, startup migrations, live DDL | **Medium** |
-| Write throughput | One writer per database; no horizontal write scale | **Medium** |
+| Write throughput | One writer per database; the writer pool scales only across projects | **Medium** |
 | Observability | Request logs only; no metrics or tracing | **Medium** |
 | Realtime | Cross-process SQLite event bus and polling | **Medium** |
-| Multi-tenancy | Per-project databases, but one shared writer process | **Medium** |
+| Multi-tenancy | Per-project databases and a project-sharded writer pool; console writes and the control database still share one writer | **Low/Medium** |
 | Public HTTP caching | Opt-in; default off, with a multi-project caveat | **Low/Medium** |
 
 ## P0 — can cause a breach, outage or data loss
@@ -40,7 +40,10 @@ Related documents:
 ### 1. Single-node SQLite, no high availability
 
 There is one SQLite writer per database file and one host. There is no
-replication, no automatic failover, no read replica and no multi-writer mode.
+automatic multi-host failover, no read replica and no multi-writer mode.
+Litestream can continuously replicate the databases to S3-compatible storage
+and `bunwrite failover` restores them onto a replacement host, but the
+promotion is still manual and the old host must be stopped first.
 
 - If the host or disk fails, Bunwrite is down until the machine is rebuilt and
   a backup is restored.
@@ -52,9 +55,10 @@ replication, no automatic failover, no read replica and no multi-writer mode.
   [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md#later-more-than-one-machine), not an
   implemented feature.
 
-Mitigations: keep the database on local disk, monitor disk health, take
-off-host backups, and plan a Postgres or replicated-SQLite migration if the
-service must survive a host failure.
+Mitigations: keep the database on local disk, monitor disk health, use
+Litestream plus `bunwrite failover` for host-loss recovery, and plan a
+replicated-SQLite design (for example LiteFS) if automatic failover is
+required.
 
 ### 2. API keys are all-or-nothing
 
@@ -75,14 +79,17 @@ third-party integrations.
 ### 3. Backups are off by default and are not point-in-time recovery
 
 `backups.enabled` defaults to `false`. When enabled, Bunwrite takes periodic
-SQLite snapshots; it does not continuously archive WAL or support PITR.
+SQLite snapshots. The optional Litestream integration provides continuous WAL
+replication and point-in-time restore to object storage, but it is not enabled
+by default and covers databases only, not uploaded files.
 
-- Losing the host loses everything written since the last snapshot.
+- Without Litestream, losing the host loses everything written since the last snapshot.
 - Database backups do not include uploaded files; back up `STORAGE_PATH` or the
   S3 bucket separately.
 - Backup encryption is optional (`BACKUP_ENCRYPTION_KEY`). Without it, backups
   are plaintext; if the key is lost, encrypted backups cannot be opened.
-- Restore is a manual file replacement, not an online operation.
+- Restore is a manual file replacement or `bunwrite failover`, not an online
+  operation.
 - There is no built-in restore verification or scheduled restore drill.
 
 See [DEPLOY.md](DEPLOY.md) for the backup and restore procedure.
@@ -211,7 +218,7 @@ the application data in the same database file.
   batched SQLite writes.
 - Log retention adds pruning work and disk usage.
 - Login and token rate limits are database writes.
-- These writes compete with document writes on the same writer.
+- These writes compete with document writes on the same project's writer.
 
 For throughput-sensitive deployments, turn request logging off or sample it,
 and prune aggressively.
@@ -219,16 +226,27 @@ and prune aggressively.
 ### 11. Multi-tenancy is logical, not isolated at the infrastructure level
 
 Each additional project has its own SQLite file, storage folder and backups, but
-all projects share the same host, the same writer process and the same console.
+all projects share the same host and the same console.
 
-- A noisy project can affect the writer and therefore other projects' writes.
-- All project databases are opened by every process (the project registry).
-- The writer process routes all short writes, not one writer per project.
+- Every process opens the project registry, so a large number of projects costs
+  a connection and mmap per project in every process.
+- Write traffic is sharded by project ID: `WRITER_SHARDS` (default: one writer
+  per two public workers, capped at 8) starts a pool of writer processes, and a
+  public worker forwards a project's short writes to the writer that owns that
+  project. A loud project therefore contends with the projects on its own
+  shard, not with every project on the instance, and a stalled writer only
+  affects writes for its shard. A single hot project still has one writer.
+- Console forms follow the selected project to its shard. Project-list,
+  organization and other control-database pages use the writer that owns the
+  default project, because the console reads `_projects`, console sessions and
+  organization data there.
 - Console admins can access every project on the instance.
 - File permissions are enforced by the sandbox/user model, not by separate
   containers.
 
 For strong tenant isolation, run separate Bunwrite instances per trust boundary.
+The writer pool removes the shared write bottleneck; it does not turn one
+instance into a hard multi-tenant boundary.
 
 ### 12. Realtime is not a distributed message bus
 
@@ -247,14 +265,17 @@ deliver to their own WebSocket clients.
 ### 13. Performance has a hard write ceiling and unsafe defaults
 
 SQLite has one writer per file. `WRITE_BATCH_MS`, `BEGIN IMMEDIATE`, WAL and the
-dedicated writer reduce contention, but they do not create parallel writers.
+writer pool reduce contention, but they do not create parallel writers for the
+same database.
 
 - 10k cached read requests/s is a realistic target after tuning on a multi-core
   host; 10k writes/s on one project is not.
 - `bun:sqlite` is synchronous; a long query, checkpoint or busy wait blocks the
   worker's event loop.
-- All short writes go through one writer process over a loopback HTTP hop. If
-  that writer stalls, public workers retry and then fall back to local writes.
+- All short writes go through a writer process over a loopback HTTP hop. The
+  pool is selected by project ID (`WRITER_SHARDS`), so different projects write
+  on different writers; the same project always uses one writer. If that writer
+  stalls, public workers retry and then fall back to local writes.
 - `WORKERS=auto` on 4 vCPU starts 4 public workers plus 1 writer; Caddy may be a
   sixth process on the same cores.
 - Defaults that commonly need tuning: `LOG_REQUESTS=true`, `CACHE_CHECK_MS=0`,
@@ -328,10 +349,13 @@ Some limits are documented in their own guides rather than here:
 Reasonable today:
 
 - one team or a small number of trusted projects,
+- several projects whose combined write load is spread across the writer pool,
 - one VPS with local disk,
 - read-heavy or moderate-write traffic,
 - trusted function code,
-- backups, monitoring and an external proxy managed by the operator.
+- continuous backup or periodic backups, monitoring and an external proxy
+  managed by the operator,
+- accepting a manual restore (minutes of downtime) after a host failure.
 
 Not a safe drop-in for:
 
@@ -348,8 +372,10 @@ Not a safe drop-in for:
    recoverable before scaling traffic.
 3. **Function resource isolation.** Per-function CPU/memory/network limits, or
    an external runner.
-4. **HA and write scaling.** Postgres for one hot project, or a replicated
-   SQLite design for read scaling and failover.
+4. **HA and write scaling for one hot project.** A replicated-SQLite design
+   (for example LiteFS) for automatic failover, and Postgres or another engine
+   for several writers on one database. Multi-project write scaling already
+   ships as the project-sharded writer pool (`WRITER_SHARDS`).
 5. **Observability.** Metrics, readiness checks, disk/WAL/backup alerts.
 6. **Compatibility gaps.** Query operators, messaging, webhooks, GraphQL, and
    the stored-but-not-applied policies.

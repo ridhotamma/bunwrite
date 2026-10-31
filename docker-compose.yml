@@ -18,6 +18,7 @@ services:
         # Set to true for HTML to PDF and images (adds Chromium).
         # Then enable it in Console > Settings > HTML rendering.
         WITH_CHROMIUM: ${BUNWRITE_WITH_CHROMIUM:-false}
+        LITESTREAM_VERSION: ${LITESTREAM_VERSION:-0.5.17}
     image: bunwrite:latest
     restart: unless-stopped
     init: true
@@ -33,7 +34,7 @@ services:
       # The container always listens on 8080; change the published port below instead.
       HOST: 0.0.0.0
       PORT: 8080
-      # One public HTTP process per CPU, plus a dedicated SQLite writer that
+      # One public HTTP process per CPU, plus a project-sharded writer pool that
       # never accepts public traffic. Set WORKERS=1 for a single process.
       WORKERS: ${WORKERS:-auto}
       # One listener per public worker (PORT, PORT+1, ...) so Caddy can health
@@ -66,6 +67,19 @@ services:
       DOMAIN: ${DOMAIN:-}
       # Image previews, renders, SQLite cache, upload size, JSC heap and malloc
       # arenas are auto-tuned. Set any of them in .env to override autotune.
+      # Continuous SQLite replication; leave empty to run without Litestream.
+      LITESTREAM_REPLICA_URL: ${LITESTREAM_REPLICA_URL:-}
+      LITESTREAM_SYNC_INTERVAL: ${LITESTREAM_SYNC_INTERVAL:-1s}
+      LITESTREAM_CONFIG: ${LITESTREAM_CONFIG:-/app/litestream.yml}
+      LITESTREAM_ALLOW_EMPTY: ${LITESTREAM_ALLOW_EMPTY:-}
+      LITESTREAM_FORCE_RESTORE: ${LITESTREAM_FORCE_RESTORE:-}
+      LITESTREAM_HEARTBEAT_URL: ${LITESTREAM_HEARTBEAT_URL:-}
+      LITESTREAM_S3_ENDPOINT: ${LITESTREAM_S3_ENDPOINT:-}
+      LITESTREAM_S3_REGION: ${LITESTREAM_S3_REGION:-}
+      LITESTREAM_S3_FORCE_PATH_STYLE: ${LITESTREAM_S3_FORCE_PATH_STYLE:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
       # Chromium for HTML rendering (only present when built with WITH_CHROMIUM=true).
       CHROME_PATH: /usr/bin/chromium
       CHROME_NO_SANDBOX: "true"

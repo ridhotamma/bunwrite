@@ -1,25 +1,23 @@
 /**
- * One process writes to SQLite at a time. SQLite already serialises writers,
- * so the other workers do not gain anything by holding the lock themselves:
- * they would only queue on `busy_timeout` while the writer's connection is
- * already there. In a cluster, worker 0 publishes a loopback listener and the
- * other workers forward short database writes to it.
+ * Several writer processes may run, each owning a hash of project IDs. SQLite
+ * still has one writer per database file, but write traffic from different
+ * projects lands on different event loops instead of one shared writer.
+ * A process in the writer pool publishes a loopback listener and the public
+ * workers forward short database writes to the writer that owns the project.
  *
  * Almost every mutating API call and short console form is a short
- * transaction, so it belongs on the writer too. The exceptions are requests
+ * transaction, so it belongs on a writer too. The exceptions are requests
  * that spend their time outside the database: file uploads, function
  * executions and deployments, site deployments, backups, render jobs and
  * GitHub/VCS work. Those stay on the worker that accepted them.
  *
  * Everything stays inside the same container/network namespace, so this needs
- * no proxy or Caddy configuration: `WRITER_PORT` defaults to `PORT + 1` and
- * binds loopback. `WRITER_PORT=0` restores the old local-write behavior.
+ * no proxy or Caddy configuration: the first writer listens on `WRITER_PORT`
+ * (default `PORT + 1`) and shard `i` on `WRITER_PORT + i`, all on loopback.
+ * `WRITER_PORT=0` restores the old local-write behavior.
  */
 import type { Config } from '~/config'
 import { clientIpOf } from '~/lib/client-ip'
-
-/** The worker that owns the write connection; 0 unless a future mode says otherwise. */
-export const WRITER_WORKER = 0
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 /** Document and transaction writes always belong on the writer. */
@@ -86,16 +84,36 @@ const CIRCUIT_OPEN_MS = 30_000
  */
 const FORWARD_TIMEOUT_MS = 10_000
 
-let circuitOpenUntil = 0
+/** Shards whose listener failed recently; one bad writer does not open the others' circuits. */
+const circuitOpenUntil = new Map<number, number>()
 
 export interface ClusterRole {
   workers: number
   workerIndex: number
+  /** Writer processes in the pool; defaults to one. */
+  writerShards?: number
 }
 
-/** Single-process servers and worker 0 write locally. */
+/**
+ * Which writer owns a project. Stable across processes, so every worker picks
+ * the same writer for the same project. FNV-1a is enough here: project IDs are
+ * short, and the mapping only needs to spread them, not resist attacks.
+ */
+export function writerShardFor(projectId: string, writerShards: number): number {
+  const shards = Math.max(1, Math.floor(writerShards) || 1)
+  if (shards === 1) return 0
+  let hash = 0x811c9dc5
+  for (let index = 0; index < projectId.length; index++) {
+    hash ^= projectId.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0) % shards
+}
+
+/** Single-process servers and every process in the writer pool write locally. */
 export function isWriterWorker(role: ClusterRole): boolean {
-  return role.workers <= 1 || role.workerIndex === WRITER_WORKER
+  if (role.workers <= 1) return true
+  return role.workerIndex < Math.max(1, Math.floor(role.writerShards ?? 1))
 }
 
 /** Whether this path is a document or transaction write. */
@@ -126,34 +144,43 @@ export function isForwardedConsoleWrite(method: string, pathname: string): boole
   return !CONSOLE_LOCAL_WRITES.some((pattern) => pattern.test(pathname))
 }
 
-/** A cluster with a reachable writer and this process is not it. */
-function canForward(config: Config): boolean {
+/** The loopback port a writer shard listens on. */
+export function writerPortFor(config: Config, shard = writerShardFor(config.projectId, config.writerShards)): number {
+  return config.writerPort + shard
+}
+
+/** A cluster with a reachable writer for this project and this process is not it. */
+function canForward(config: Config, shard: number): boolean {
   if (config.workers <= 1 || config.writerPort <= 0) return false
   if (isWriterWorker(config)) return false
-  return Date.now() >= circuitOpenUntil
+  return Date.now() >= (circuitOpenUntil.get(shard) ?? 0)
 }
 
-/** Whether this request should be handed to the writer worker's listener. */
-export function shouldForwardWrite(config: Config, method: string, pathname: string): boolean {
-  return canForward(config) && isForwardedWrite(method, pathname)
+/** Whether this request should be handed to the writer that owns the project. */
+export function shouldForwardWrite(config: Config, method: string, pathname: string, projectId = config.projectId): boolean {
+  const shard = writerShardFor(projectId, config.writerShards)
+  return canForward(config, shard) && isForwardedWrite(method, pathname)
 }
 
-/** Whether this console form should be handed to the writer worker's listener. */
-export function shouldForwardConsoleWrite(config: Config, method: string, pathname: string): boolean {
-  return canForward(config) && isForwardedConsoleWrite(method, pathname)
+/** Whether this console form should be handed to the writer that owns its project. */
+export function shouldForwardConsoleWrite(config: Config, method: string, pathname: string, projectId = config.projectId): boolean {
+  const shard = writerShardFor(projectId, config.writerShards)
+  return canForward(config, shard) && isForwardedConsoleWrite(method, pathname)
 }
 
 const HOP_BY_HOP = ['host', 'content-length', 'connection', 'keep-alive', 'transfer-encoding', 'upgrade']
 
 /**
- * Send the request to worker 0, preserving its headers apart from the client
- * address (and the console's Origin, which must match the listener it reaches).
- * Returns null when the writer did not take it, so the caller can handle the
- * write locally instead of failing it.
+ * Send the request to the writer that owns its project, preserving its headers
+ * apart from the client address (and the console's Origin, which must match the
+ * listener it reaches). Returns null when that writer did not take it, so the
+ * caller can handle the write locally instead of failing it.
  */
-export async function forwardWrite(config: Config, request: Request): Promise<Response | null> {
+export async function forwardWrite(config: Config, request: Request, projectId = config.projectId): Promise<Response | null> {
+  const shard = writerShardFor(projectId, config.writerShards)
+  const port = writerPortFor(config, shard)
   const url = new URL(request.url)
-  const target = `http://${config.writerHost}:${config.writerPort}${url.pathname}${url.search}`
+  const target = `http://${config.writerHost}:${port}${url.pathname}${url.search}`
   // Tee the body: if forwarding fails, the caller still handles the request.
   const body = await request.clone().arrayBuffer()
   const headers = new Headers(request.headers)
@@ -165,7 +192,7 @@ export async function forwardWrite(config: Config, request: Request): Promise<Re
   // on. On the writer that host is the loopback listener, so present it as
   // the origin; the API itself uses the original Origin for CORS.
   if (url.pathname === '/console' || url.pathname.startsWith('/console/')) {
-    if (headers.has('origin')) headers.set('origin', `http://${config.writerHost}:${config.writerPort}`)
+    if (headers.has('origin')) headers.set('origin', `http://${config.writerHost}:${port}`)
   }
 
   let lastError: unknown
@@ -184,9 +211,9 @@ export async function forwardWrite(config: Config, request: Request): Promise<Re
     }
   }
 
-  circuitOpenUntil = Date.now() + CIRCUIT_OPEN_MS
+  circuitOpenUntil.set(shard, Date.now() + CIRCUIT_OPEN_MS)
   console.error(
-    `[cluster] write listener ${config.writerHost}:${config.writerPort} is unreachable; serving writes locally for ${CIRCUIT_OPEN_MS / 1000}s:`,
+    `[cluster] writer shard ${shard} (${config.writerHost}:${port}) is unreachable; serving writes for project ${projectId} locally for ${CIRCUIT_OPEN_MS / 1000}s:`,
     lastError instanceof Error ? lastError.message : lastError,
   )
   return null

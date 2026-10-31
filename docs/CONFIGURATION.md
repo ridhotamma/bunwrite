@@ -153,6 +153,33 @@ terminator per host.
 Additional projects live under `data/projects/<project-id>/`, each with its own
 database, storage, backups and functions folder.
 
+### Continuous replication and failover
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `LITESTREAM_REPLICA_URL` | unset | Base Litestream replica URL, for example `s3://bucket/bunwrite`. Setting it enables restore-on-start and continuous replication on Docker `serve`. |
+| `LITESTREAM_SYNC_INTERVAL` | `1s` | How often Litestream pushes WAL frames. Lower means less data at risk and more object-storage requests. |
+| `LITESTREAM_ALLOW_EMPTY` | unset | Allow startup when no restore point exists. Use only for the first deployment of a new instance; otherwise a missing backup fails closed. |
+| `LITESTREAM_FORCE_RESTORE` | unset | Replace existing local databases from the replica during startup. Dangerous; stop the old instance first. |
+| `LITESTREAM_HEARTBEAT_URL` | unset | Optional dead-man switch. Litestream pings it only while every database syncs successfully. |
+| `LITESTREAM_S3_ENDPOINT` | unset | S3-compatible endpoint for R2/MinIO. Omit for AWS S3. `bunwrite failover` uses it for restore too. |
+| `LITESTREAM_S3_REGION` | `auto` with an endpoint | Region for the S3-compatible endpoint. |
+| `LITESTREAM_S3_FORCE_PATH_STYLE` | unset | Use path-style addressing; most non-AWS providers need it. |
+| `LITESTREAM_CONFIG` | `/app/litestream.yml` | Litestream config file for replication tuning. Keep the same replica URL layout as `bunwrite failover`. |
+| `LITESTREAM_BIN` | `litestream` | Litestream executable used by `bunwrite failover` and the Docker entrypoint. |
+
+Litestream reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_DEFAULT_REGION` and `LITESTREAM_*` credentials from the environment. The
+included [`deploy/litestream.yml`](../deploy/litestream.yml) replicates the
+control database and discovers project databases under
+`data/projects/*/bunwrite.sqlite`. The Docker entrypoint restores missing
+databases with `bunwrite failover` before starting the app and Litestream.
+
+This is a single-writer disaster-recovery setup, not active/active HA. Run only
+one instance against a replica prefix at a time. Uploaded files are not part of
+Litestream; back up `STORAGE_PATH` or the uploads bucket separately. See
+[DEPLOY.md](DEPLOY.md#continuous-backup-and-failover).
+
 S3 for uploads and backups is configured in **Console → Settings → File storage**
 and **Settings → Backups**, not in `.env`. Backups contain the database only;
 back up `STORAGE_PATH` or the uploads bucket separately.
@@ -161,35 +188,38 @@ back up `STORAGE_PATH` or the uploads bucket separately.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A cluster also starts one dedicated writer process. |
+| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A cluster also starts a pool of writer processes. |
 | `WORKER_PORTS` | `false` | With `WORKERS` > 1, bind one port per public worker (`PORT`, `PORT+1`, ...) instead of sharing one port with `SO_REUSEPORT`. Set the proxy upstream to the same range so it can health-check and route around a stalled worker. |
 | `MAX_INFLIGHT` | `200` | Total in-flight requests allowed across the public workers before new ones get `503` with `Retry-After: 1`. Health checks are always allowed. `0` disables shedding. |
 | `HTTP_IDLE_TIMEOUT` | `30` | Seconds Bun keeps an idle HTTP connection open (maximum 255, `0` disables). Keep it above the proxy's upstream keepalive; the bundled Caddyfile uses 5s. |
 | `CACHE_CHECK_MS` | `0` | Check for settings, schema, session and API-key changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. 100–250 is a good production trade-off. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
-| `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | Loopback port where the dedicated writer accepts short database writes. Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` API requests there, including `/v1/databases`, auth, teams, storage metadata, schema, variables, proxy rules, queues and settings, plus short console forms, so one process owns SQLite's write connection. Uploads, function executions and deployments, function HTTP endpoints, site deployments, render jobs, VCS work, and console forms that upload, build, back up or call out stay on the accepting worker. `0` disables the listener and forwarding; each worker then writes locally. |
+| `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | First loopback port of the writer pool. Shard `i` listens on `WRITER_PORT + i`. Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` API requests to the writer that owns the request's project, including `/v1/databases`, auth, teams, storage metadata, schema, variables, proxy rules, queues and settings, so one process owns each project's write connection. Short console forms follow the selected project; project-list and organization pages go to the writer that owns the default project, because they read the control database. Uploads, function executions and deployments, function HTTP endpoints, site deployments, render jobs, VCS work, and console forms that upload, build, back up or call out stay on the accepting worker. `0` disables the listeners and forwarding; each worker then writes locally. |
+| `WRITER_SHARDS` | `auto` | Writer processes in the pool. `auto` uses one writer per two public workers, capped at `8`; a number pins it; the value never exceeds `WORKERS`. Shard `i` handles the projects whose ID hashes to `i`, so different projects write on different processes. A single hot project still uses one writer. The shards occupy loopback ports `WRITER_PORT` through `WRITER_PORT + WRITER_SHARDS - 1`. |
 | `WRITER_HOST` | `127.0.0.1` | Interface for the writer listener. The workers are processes in the same container/network namespace, so loopback is reachable and the port is never public. |
 | `WRITE_BATCH_MS` | `1` with `WORKERS` > 1, `0` otherwise | Group document writes that arrive within this window into one SQLite transaction. `0` writes each request immediately. Every write keeps its own savepoint, permissions and events; one failure never rolls back the others. |
 
 With `WORKERS` above 1, the supervisor starts `WORKERS` public processes plus
-one dedicated writer. The public processes either share one port with
-`SO_REUSEPORT`, or bind `PORT` through `PORT + WORKERS - 1` when `WORKER_PORTS`
-is on. The writer only listens on the loopback writer port, so a synchronous
-WAL checkpoint or lock wait cannot stall client connections. A proxy can use
-the per-worker ports to health-check each process and route around a stalled
-one. Work that must not run once per worker uses a database lease: cron
-schedules, automatic backups, the queue reaper, the render queue and pruning
-run only in the elected leader. If the leader stops, another worker takes over
-within ten seconds.
+a writer pool of `WRITER_SHARDS` processes. The public processes either share
+one port with `SO_REUSEPORT`, or bind `PORT` through `PORT + WORKERS - 1` when
+`WORKER_PORTS` is on. A writer only listens on its loopback writer port, so a
+synchronous WAL checkpoint or lock wait cannot stall client connections. A
+proxy can use the per-worker ports to health-check each process and route
+around a stalled one. Work that must not run once per worker uses a database
+lease: cron schedules, automatic backups, the queue reaper, the render queue
+and pruning run only in the elected leader. If the leader stops, another worker
+takes over within ten seconds.
 
-Database writes are forwarded to the writer through its loopback listener, so
-the public processes never queue on SQLite's write lock for document writes;
-they forward the request and return the writer's response unchanged. If the
-writer is restarting, the readers retry for a moment and then serve the write
-locally rather than failing it. Writes that arrive together are committed in
-one transaction up to `WRITE_BATCH_MS`, which removes one commit per request
-under load. Storage uploads, auth, sites and functions are not forwarded: they
-keep running on the worker that accepted them.
+Database writes are forwarded to the writer selected by the request's project
+ID, so the public processes never queue on SQLite's write lock for document
+writes; they forward the request and return the writer's response unchanged.
+Different projects write on different writers; the same project always uses the
+same one. If a writer is restarting, the readers retry for a moment and then
+serve the write locally rather than failing it. Writes that arrive together are
+committed in one transaction up to `WRITE_BATCH_MS`, which removes one commit
+per request under load. Storage uploads, function and site deployments,
+function runs and renders are not forwarded: they keep running on the worker
+that accepted them.
 
 Reads run in parallel, so expect roughly 3–3.5× read throughput on four cores.
 `FUNCTIONS_CONCURRENCY` applies per process, and request-log batches are per

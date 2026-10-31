@@ -12,6 +12,32 @@ RUN bun install --frozen-lockfile --production
 COPY . .
 RUN bun run build && ./dist/bunwrite --help >/dev/null
 
+# ---- Litestream ----
+# Keep the database on local disk and stream WAL frames to S3-compatible
+# storage. The binary is copied into the runtime image; the Docker entrypoint
+# wraps `serve` when LITESTREAM_REPLICA_URL is set.
+FROM debian:trixie-slim AS litestream
+ARG LITESTREAM_VERSION=0.5.17
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+      x86_64) asset=x86_64 ;; \
+      aarch64|arm64) asset=arm64 ;; \
+      *) echo "Unsupported architecture for Litestream: $arch" >&2; exit 1 ;; \
+    esac; \
+    asset_name="litestream-${LITESTREAM_VERSION}-linux-${asset}.tar.gz"; \
+    curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/checksums.txt" \
+      -o /tmp/litestream-checksums.txt; \
+    curl -fsSL "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/${asset_name}" \
+      -o /tmp/${asset_name}; \
+    (cd /tmp && grep " ${asset_name}$" litestream-checksums.txt | sha256sum -c -); \
+    tar -xzf /tmp/${asset_name} -C /usr/local/bin litestream; \
+    chmod +x /usr/local/bin/litestream; \
+    rm -f /tmp/${asset_name} /tmp/litestream-checksums.txt; \
+    rm -rf /var/lib/apt/lists/*
+
 # ---- Runtime ----
 # Same Debian release as the build stage.
 FROM debian:trixie-slim
@@ -38,6 +64,8 @@ RUN apt-get update \
  && chown -R bunwrite:bunwrite /app
 
 COPY --from=build /src/dist/bunwrite /usr/local/bin/bunwrite
+COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
+COPY deploy/litestream.yml /app/litestream.yml
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 

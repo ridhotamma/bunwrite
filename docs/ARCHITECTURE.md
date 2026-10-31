@@ -3,7 +3,7 @@
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
 admin console (`/console`); on Linux, `WORKERS=auto` starts one such process per
-CPU behind a shared port, plus a dedicated writer (see
+CPU behind a shared port, plus a pool of writer processes (see
 [Multiple processes](#multiple-processes)). The
 default project uses the main SQLite file; additional projects each use their
 own database under `data/projects/<id>/`, plus their own storage, backups and
@@ -33,12 +33,14 @@ function folder.
 ## Multiple processes
 
 On Linux, `WORKERS=auto` (the Docker image default) starts one public HTTP
-process per CPU plus one dedicated writer. The public processes bind the same
-port with `SO_REUSEPORT`, or one port each when `WORKER_PORTS` is on, and all
-processes open the same SQLite file in WAL mode: reads run in parallel and
-SQLite serializes writes. Every connection maps up to `SQLITE_MMAP_MB` of the
-file (default 256 MB; `0` disables mmap), so reads come from shared mapped
-pages. The processes coordinate through the database (`src/cluster`):
+process per CPU plus a pool of writer processes. The pool size follows
+`WRITER_SHARDS` (default: one writer per two public workers, capped at 8). The
+public processes bind the same port with `SO_REUSEPORT`, or one port each when
+`WORKER_PORTS` is on, and all processes open the same SQLite file in WAL mode:
+reads run in parallel and SQLite serializes writes. Every connection maps up to
+`SQLITE_MMAP_MB` of the file (default 256 MB; `0` disables mmap), so reads come
+from shared mapped pages. The processes coordinate through the database
+(`src/cluster`):
 
 - **Leader lease** — `_cluster_leases` names the process that runs cron
   schedules, automatic backups, the queue reaper, the render queue and pruning.
@@ -56,30 +58,42 @@ pages. The processes coordinate through the database (`src/cluster`):
   process. The same counters carry project additions and removals, and the
   session/key caches reuse the request's single read instead of querying
   `_meta` again.
-- **Dedicated writer** — process 0 opens only a loopback listener on
-  `127.0.0.1:${WRITER_PORT}` and never accepts public traffic, so a synchronous
-  WAL checkpoint or lock wait cannot stall client connections. Public workers
-  forward every short `POST`/`PUT`/`PATCH`/`DELETE` API request there, not only
-  document writes: auth, teams, storage metadata, schema, variables, proxy
-  rules, queues and settings all share the writer's connection. Short console
-  forms take the same hop; their uploads, builds, backups and outbound tests
-  stay local. Requests that spend their time outside SQLite stay on the worker
-  that accepted them — storage uploads, function executions and deployments,
-  function HTTP endpoints, site deployments, render jobs and VCS work.
-  `WRITE_BATCH_MS`
-  groups writes that arrive together into one transaction (each with its own
-  savepoint), which removes a commit per request at peak. Write transactions
-  retry a busy lock a few times with jittered backoff before failing; a retry
-  only happens before the transaction callback starts, so events and generated
-  IDs are never duplicated. If the writer is restarting, a reader retries
-  briefly and then serves the write locally; `WRITER_PORT=0` disables the
-  split entirely. Public workers also answer `503` with `Retry-After` when
-  `MAX_INFLIGHT` is reached, instead of queueing without bound.
+- **Project-sharded writers** — the first process indices open a loopback
+  listener on `127.0.0.1:${WRITER_PORT}` (shard `i` uses `WRITER_PORT + i`)
+  instead of a public one, so a synchronous WAL checkpoint or lock wait cannot
+  stall client connections. Public workers forward every short
+  `POST`/`PUT`/`PATCH`/`DELETE` API request to the writer that owns the
+  request's project (`writerShardFor`: FNV-1a of the project ID modulo the pool
+  size), not only document writes: auth, teams, storage metadata, schema,
+  variables, proxy rules, queues and settings all share that project's writer.
+  Console forms follow the selected project; project-list, organization and
+  other control-database pages use the writer that owns the default project.
+  Short console forms take the same hop; their uploads, builds,
+  backups and outbound tests stay local. Requests that spend their time outside
+  SQLite stay on the worker that accepted them — storage uploads, function
+  executions and deployments, function HTTP endpoints, site deployments, render
+  jobs and VCS work.
+  `WRITE_BATCH_MS` groups writes that arrive together into one transaction
+  (each with its own savepoint), which removes a commit per request at peak.
+  Write transactions retry a busy lock a few times with jittered backoff before
+  failing; a retry only happens before the transaction callback starts, so
+  events and generated IDs are never duplicated. If a writer is restarting, a
+  reader retries briefly and then serves the write locally; the circuit is per
+  shard, so one stalled writer does not stop forwarding for the others.
+  `WRITER_PORT=0` disables the split entirely. Public workers also answer `503`
+  with `Retry-After` when `MAX_INFLIGHT` is reached, instead of queueing without
+  bound.
 - **Shared rate limits and sessions** — `_rate_limits` holds login and token
   windows that every worker increments. A worker caches a session and its roles
   for 30 seconds; `_meta.auth` triggers on sessions, users, memberships and
   teams clear it, so a logout, block or role change is visible on the next
   request in every worker.
+- **Continuous replication** — optional Litestream keeps SQLite on local disk
+  and streams WAL frames to S3-compatible storage. The control database is
+  watched by path; `data/projects/*/bunwrite.sqlite` is watched as a directory,
+  so new projects are replicated without a restart. `bunwrite failover`
+  restores the control database, reads `_projects`, and restores every project
+  database. This is single-writer disaster recovery, not active/active HA.
 
 Migrations run under a file lock, and first-run bootstrap runs in an immediate
 write transaction, so workers starting together cannot create two instances or

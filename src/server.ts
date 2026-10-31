@@ -19,10 +19,14 @@ export async function startServer(): Promise<void> {
   if (tuning) console.log(`[autotune] ${tuning.summary}`)
 
   const config = configFromEnv()
-  // In a cluster, index 0 is a writer that never accepts public traffic. That
-  // keeps a synchronous SQLite checkpoint or lock wait out of the request path.
+  // In a cluster, the first process indices are writers that never accept
+  // public traffic. Each owns a hash of project IDs, so one project's write
+  // load cannot stall the others' writes. A blocking checkpoint still only
+  // affects the writer shard that owns that project.
   const dedicatedWriter = config.workers > 1 && config.writerPort > 0
   const writer = dedicatedWriter && isWriterWorker(config)
+  const writerShard = writer ? config.workerIndex : 0
+  const writerPort = config.writerPort + writerShard
   const databasePath = config.databasePath
   const busyTimeoutMs = dedicatedWriter && !writer ? config.readerBusyTimeoutMs : config.busyTimeoutMs
 
@@ -88,11 +92,11 @@ export async function startServer(): Promise<void> {
   // one process owns SQLite's write connection. It does not accept public
   // traffic, so a blocking checkpoint cannot stall client connections.
   let writes: ReturnType<typeof Bun.serve> | null = null
-  if (dedicatedWriter && writer && config.writerPort > 0) {
+  if (dedicatedWriter && writer && writerPort > 0) {
     try {
       writes = Bun.serve({
         hostname: config.writerHost,
-        port: config.writerPort,
+        port: writerPort,
         fetch: withInflightLimit(app.fetch, config.maxInflight),
         websocket: app.websocket,
         maxRequestBodySize: tuning?.maxRequestBodyBytes ?? bodyLimitBytes(),
@@ -100,7 +104,7 @@ export async function startServer(): Promise<void> {
       })
     } catch (error) {
       console.error(
-        `[cluster] write listener ${config.writerHost}:${config.writerPort} failed to start; workers will write locally:`,
+        `[cluster] write listener ${config.writerHost}:${writerPort} failed to start; workers will write locally:`,
         error instanceof Error ? error.message : error,
       )
     }
@@ -113,7 +117,7 @@ export async function startServer(): Promise<void> {
   const server = servesPublic
     ? Bun.serve({
         hostname: config.hostname,
-        port: workerPort(config.port, config.workerIndex, config.workerPorts, dedicatedWriter ? 1 : 0),
+        port: workerPort(config.port, config.workerIndex, config.workerPorts, dedicatedWriter ? config.writerShards : 0),
         // Several processes bind this port; the kernel spreads connections.
         // With WORKER_PORTS each process has its own port for the proxy instead.
         reusePort: config.workers > 1 && !config.workerPorts,
@@ -124,7 +128,11 @@ export async function startServer(): Promise<void> {
       })
     : null
 
-  const label = config.workers > 1 ? `[${writer ? 'writer' : `worker ${config.workerIndex}/${config.publicWorkers}`}] ` : ''
+  const publicIndex = Math.max(1, config.workerIndex - (dedicatedWriter ? config.writerShards : 0) + 1)
+  const label =
+    config.workers > 1
+      ? `[${writer ? `writer ${writerShard + 1}/${config.writerShards}` : `worker ${publicIndex}/${config.publicWorkers}`}] `
+      : ''
   if (server) {
     console.log(
       `${label}bunwrite listening on :${server.port} (${services.registry.collections.size} collections)${config.consoleEnabled ? ', console at /console' : ''}`,

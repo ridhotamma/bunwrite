@@ -5,7 +5,6 @@
  * folder, so the existing single-project services stay unchanged.
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
 
 import { restoreDatabase } from '~/backups/restore'
 import type { Config, SmtpConfig } from '~/config'
@@ -14,12 +13,13 @@ import { bootstrapInstance, clearInstanceApiKey } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { functionHost, siteHost } from '~/lib/hosts'
-import { isValidId, randomSecret, resolveId, sha256 } from '~/lib/ids'
+import { randomSecret, resolveId } from '~/lib/ids'
 import { removeTree } from '~/functions/sandbox'
 import type { FunctionRow } from '~/functions/service'
 import { pruneRateLimits } from '~/lib/limits'
 import { createServices, type Services } from '~/services'
 import type { SiteRow } from '~/sites/service'
+import { dataDirOf, projectPaths, type ProjectPaths } from './paths'
 import type { ProjectCreateInput, ProjectInfo, ProjectResolver, ProjectRuntime } from './types'
 
 interface ProjectRow {
@@ -30,14 +30,6 @@ interface ProjectRow {
   updated_at: string
 }
 
-interface ProjectPaths {
-  dir: string
-  database: string
-  storage: string
-  backups: string
-  functions: string
-}
-
 export interface ProjectManagerOptions {
   config: Config
   db: Db
@@ -45,11 +37,6 @@ export interface ProjectManagerOptions {
   /** Root for `projects/<id>/...`; defaults to the control database's folder. */
   dataDir?: string
 }
-
-const dataDirOf = (config: Config): string =>
-  config.databasePath === ':memory:' || config.databasePath.startsWith('file::memory:')
-    ? resolve('data')
-    : dirname(resolve(config.databasePath))
 
 const infoOf = (row: ProjectRow): ProjectInfo => ({
   id: row.id,
@@ -73,7 +60,7 @@ export class ProjectManager implements ProjectResolver {
     this.control = options.services
     this.config = options.config
     this.db = options.db
-    this.dataDir = options.dataDir ?? dataDirOf(options.config)
+    this.dataDir = options.dataDir ?? dataDirOf(options.config.databasePath)
     this.ensureDefault()
     this.load()
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
@@ -117,15 +104,7 @@ export class ProjectManager implements ProjectResolver {
   }
 
   private paths(id: string): ProjectPaths {
-    const folder = isValidId(id) ? id : `p_${sha256(id).slice(0, 16)}`
-    const dir = join(this.dataDir, 'projects', folder)
-    return {
-      dir,
-      database: join(dir, 'bunwrite.sqlite'),
-      storage: join(dir, 'storage'),
-      backups: join(dir, 'backups'),
-      functions: join(dir, 'functions'),
-    }
+    return projectPaths(this.dataDir, id)
   }
 
   private configFor(info: ProjectInfo, paths: ProjectPaths, instance: ReturnType<typeof bootstrapInstance>): Config {

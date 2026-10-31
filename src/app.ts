@@ -1,6 +1,6 @@
 import type { Server } from 'bun'
 
-import { keyCaller, resolveCaller, type Caller } from './auth/caller'
+import { keyCaller, parseCookies, resolveCaller, type Caller } from './auth/caller'
 import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
 import { forwardWrite, shouldForwardConsoleWrite, shouldForwardWrite } from './cluster/writer'
@@ -186,6 +186,20 @@ export function createApp(source: Services | ProjectResolver) {
 
   const projectOf = (request: Request, url: URL) => apiHeader(request, 'project') ?? url.searchParams.get('project')
 
+  /**
+   * Which project a console form writes to. Project-wide pages (projects,
+   * organization, the index) use the control database and go to the control
+   * writer; the rest follow the selected-project cookie.
+   */
+  function consoleWriteProject(request: Request, url: URL): string {
+    const pathname = url.pathname.replace(/\/$/, '') || '/'
+    if (pathname === '/console' || pathname.startsWith('/console/projects') || pathname.startsWith('/console/organization')) {
+      return control.config.projectId
+    }
+    const cookie = parseCookies(request.headers.get('cookie') ?? '')['console_project']
+    return cookie && projects.get(cookie) ? cookie : control.config.projectId
+  }
+
   /** Which project's services handle this request. */
   function runtimeFor(request: Request, url: URL): ProjectRuntime {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
@@ -263,8 +277,8 @@ export function createApp(source: Services | ProjectResolver) {
     // mutations there. Uploads, function runs and deployments stay local.
     // If the writer is unreachable, `forwardWrite` returns null and this
     // worker handles the request itself so writes never fail open.
-    if (match && shouldForwardWrite(services.config, request.method, pathname)) {
-      const forwarded = await forwardWrite(services.config, request)
+    if (match && shouldForwardWrite(services.config, request.method, pathname, runtime.info.id)) {
+      const forwarded = await forwardWrite(services.config, request, runtime.info.id)
       if (forwarded) {
         meta.forwarded = true
         return forwarded
@@ -342,9 +356,11 @@ export function createApp(source: Services | ProjectResolver) {
       return new Response(file, { headers: { 'content-type': brand.type, 'content-length': String(file.size), 'cache-control': 'public, max-age=604800' } })
     }
     // Console forms are short database writes too. Uploads, builds, backups
-    // and outbound tests stay on this worker; the writer handles the rest.
-    if (shouldForwardConsoleWrite(control.config, request.method, url.pathname)) {
-      const forwarded = await forwardWrite(control.config, request)
+    // and outbound tests stay on this worker; the writer that owns the selected
+    // project handles the rest.
+    const consoleProjectId = consoleWriteProject(request, url)
+    if (shouldForwardConsoleWrite(control.config, request.method, url.pathname, consoleProjectId)) {
+      const forwarded = await forwardWrite(control.config, request, consoleProjectId)
       if (forwarded) {
         meta.forwarded = true
         return forwarded

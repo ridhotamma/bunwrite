@@ -195,8 +195,8 @@ MAX_INFLIGHT=200
 
 Each public worker binds its own port, so Caddy's `health_uri /v1/health`
 probes them separately and `unhealthy_latency` / `fail_duration` remove a
-stalled process. The writer listens on a loopback port outside that range and
-never receives public traffic. Without `WORKER_PORTS`, the workers share one
+stalled process. The writer pool listens on loopback ports outside that range
+and never receives public traffic. Without `WORKER_PORTS`, the workers share one
 port with `SO_REUSEPORT`; that is slightly faster but the proxy cannot see an
 individual stalled worker.
 
@@ -406,6 +406,90 @@ Upgrade with `git pull && docker compose up -d --build`.
   copies of the default project.
 - Request logs are stored per project and go to stdout and the console. Set
   `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
+
+### Continuous backup and failover
+
+This is the PocketBase Cloud model: one SQLite instance on local disk,
+continuous WAL replication to object storage, and restore onto a replacement
+instance when the host is lost. It is **not** active/active HA and does not
+make SQLite multi-writer.
+
+The Docker image includes Litestream. Enable it in `.env`:
+
+```env
+LITESTREAM_REPLICA_URL=s3://my-bucket/bunwrite
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_DEFAULT_REGION=us-east-1
+LITESTREAM_SYNC_INTERVAL=1s
+```
+
+Use a bucket/prefix dedicated to this instance. Enable bucket versioning and
+encryption, and give the key access only to that prefix. Do not point
+`DATABASE_PATH` at S3 or a network filesystem.
+
+On `docker compose up`, the entrypoint:
+
+1. restores the control database and any missing project databases from the
+   replica;
+2. starts `bunwrite` under Litestream;
+3. replicates the control database and every
+   `data/projects/*/bunwrite.sqlite` it discovers.
+
+A restore point for an existing database is required. For a brand-new instance
+with no backup yet, set `LITESTREAM_ALLOW_EMPTY=true` once, then remove it.
+Without that flag the container refuses to start rather than silently creating
+an empty database over an unavailable backup.
+
+Manual restore after a host loss:
+
+```bash
+# Stop the old instance first. Never run two writers against one replica.
+docker compose down
+
+# On the replacement host, with the same .env and an empty data volume:
+docker compose up -d
+```
+
+Or run the restore directly before starting:
+
+```bash
+bunwrite failover
+bunwrite failover --dry-run       # show what would be restored
+bunwrite failover --force         # replace existing local databases
+```
+
+`failover` restores `<replica>/bunwrite.sqlite` first, reads `_projects`, then
+restores `<replica>/projects/<id>/bunwrite.sqlite` for each project. It keeps
+the previous file as `*.before-restore` when `--force` replaces one.
+
+Manual installs: install the `litestream` binary from
+[litestream.io/install](https://litestream.io/install/) (the Docker image already
+includes it), keep [`deploy/litestream.yml`](../deploy/litestream.yml) in the
+checkout and set the same environment. The bundled `deploy/bunwrite-autotune.sh` detects
+`LITESTREAM_REPLICA_URL`, runs `bunwrite failover`, then starts:
+
+```bash
+litestream replicate \
+  -config /opt/bunwrite/deploy/litestream.yml \
+  -exec "/usr/local/bin/bunwrite serve"
+```
+
+The normal systemd unit already uses that wrapper, so `systemctl restart
+bunwrite` performs the restore. For a manual restore, stop the unit first and
+run `bunwrite failover` as the `bunwrite` user.
+
+Restore points follow writes; an idle database has no newer point. Litestream
+data must be in a bucket outside the server, or a lost host takes the backup
+with it. Uploaded files are not in Litestream; back up `STORAGE_PATH` or the
+uploads bucket separately.
+
+For S3-compatible storage (R2, MinIO), copy the config and add `endpoint`,
+`region` and `force-path-style` under both replicas, then set
+`LITESTREAM_CONFIG` to that file. Also set `LITESTREAM_S3_ENDPOINT`,
+`LITESTREAM_S3_REGION` and, when needed, `LITESTREAM_S3_FORCE_PATH_STYLE` so
+`bunwrite failover` can build a matching one-off restore config. Keep the
+replica URL layout unchanged so failover can find the databases.
 
 ## Upgrades
 

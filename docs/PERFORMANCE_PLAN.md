@@ -84,8 +84,9 @@ keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
 - [x] **Caddy keepalive below Bun's idle timeout.** Caddy's 2m default outlives
   Bun's 10s; the bundled Caddyfiles now use `keepalive 5s`,
   `response_header_timeout 15s`, active health checks and `least_conn`.
-- [x] **Dedicated writer process.** A cluster starts `WORKERS` public processes
-  plus one writer that never accepts public traffic (`clusterProcessCount`).
+- [x] **Dedicated writer processes.** A cluster starts `WORKERS` public
+  processes plus a project-sharded writer pool (`clusterProcessCount`,
+  `WRITER_SHARDS`).
 - [x] **Per-worker ports.** `WORKER_PORTS=true` binds `PORT..PORT+N-1` so the
   proxy can health-check each process and route around a stalled one.
 - [x] **Load shedding.** `MAX_INFLIGHT` (default 200, total across public
@@ -171,33 +172,36 @@ request.
   default 1 ms in a cluster), each in its own savepoint so one failure does not
   roll back the others. The transaction API and the bulk document endpoints
   already batched; this covers the ordinary one-document-per-request path.
-- [x] **Send short database writes to a dedicated writer process.** A cluster
-  starts `WORKERS` public processes plus one writer that only opens a loopback
-  listener (`WRITER_PORT`, default `PORT + 1`, or `PORT + 100` with
-  `WORKER_PORTS`). Public workers forward every short `POST`/`PUT`/`PATCH`/
-  `DELETE` API request, not only `/v1/databases`, and short console forms, then
-  return the response. This is done in-process rather than in Caddy, so it
-  works with any proxy and in direct installs; `WRITER_PORT=0` reverts it. If
-  the writer is restarting, readers retry and then serve the write locally.
-  Uploads, function executions and deployments, function HTTP endpoints, site
-  deployments, render jobs, VCS work, and console forms that upload, build,
-  back up or call out stay on the accepting worker, so the split does not
-  serialise uploads or function CPU work.
+- [x] **Send short database writes to a pool of writer processes.** A cluster
+  starts `WORKERS` public processes plus a writer pool that only opens loopback
+  listeners (`WRITER_PORT`, default `PORT + 1`, or `PORT + 100` with
+  `WORKER_PORTS`; `WRITER_SHARDS`, default one writer per two public workers).
+  Public workers forward every short `POST`/`PUT`/`PATCH`/`DELETE` API request
+  to the writer that owns the request's project, not only `/v1/databases`, and
+  short console forms to the selected project's writer, then return the
+  response. This is
+  done in-process rather than in Caddy, so it works with any proxy and in
+  direct installs; `WRITER_PORT=0` reverts it. If a writer is restarting,
+  readers retry and then serve the write locally. Uploads, function executions
+  and deployments, function HTTP endpoints, site deployments, render jobs, VCS
+  work, and console forms that upload, build, back up or call out stay on the
+  accepting worker, so the split does not serialise uploads or function CPU
+  work.
 - [x] **Retry a busy write lock.** Write transactions retry `SQLITE_BUSY` /
   `SQLITE_LOCKED` up to five times with jittered exponential backoff. Retries
   only happen before the transaction callback runs, so events or generated IDs
   cannot be duplicated; `busy_timeout` still handles ordinary contention first.
 
-### 5b. Write scaling beyond one writer (not done)
+### 5b. Write scaling beyond the writer pool (not done)
 
 This is an architecture change, not a tuning flag. A single SQLite file still
 has one writer, so these are the only ways past it:
 
-- [ ] **Per-project writer pool.** Multiple writer processes, each responsible
+- [x] **Per-project writer pool.** Multiple writer processes, each responsible
   for a hash of project IDs; the public workers choose the writer from the
-  project they resolved. This helps only when writes are spread over several
-  project databases. It does not help a single hot project, which is the usual
-  case.
+  project they resolved (`WRITER_SHARDS`). This helps only when writes are
+  spread over several project databases. It does not help a single hot project,
+  which is the usual case.
 - [ ] **Postgres for the document path.** The largest change: raw SQL, Drizzle
   dialect, SQLite triggers, FTS, `RETURNING` behavior, transaction staging and
   migration tooling all need porting. This is the only option here that gives

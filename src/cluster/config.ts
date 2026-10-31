@@ -6,13 +6,17 @@ import { detectResources } from '~/system/autotune'
 
 /** Beyond this, SQLite write contention and memory per process outweigh the gain. */
 const MAX_WORKERS = 16
+/** More write processes than this stop paying for their memory and connections. */
+export const MAX_WRITER_SHARDS = 8
 
 export interface ClusterConfig {
-  /** Total processes, including the dedicated writer when there is one. */
+  /** Total processes, including the dedicated writers when there are any. */
   workers: number
   /** Processes that accept public HTTP traffic. */
   publicWorkers: number
-  /** This process's position, 0-based. Index 0 is the writer in a cluster. */
+  /** Writer processes, each owning a hash of project IDs. */
+  writerShards: number
+  /** This process's position, 0-based. Indices `0..writerShards-1` are writers. */
   workerIndex: number
   /** This process starts the workers and does not serve HTTP itself. */
   supervisor: boolean
@@ -50,13 +54,35 @@ export function workerPortsEnabled(env: Record<string, string | undefined> = pro
 }
 
 /**
- * Public workers plus the dedicated writer. A single process keeps the old
- * layout (one process that serves HTTP and writes); a cluster needs one extra
- * process so the writer never has to share an event loop with request handling.
+ * Writer processes to start. `auto` (the default in a cluster) uses one writer
+ * per two public workers, capped, so write traffic from different projects
+ * lands on different event loops without doubling the process count. A number
+ * pins the pool size; the effective value never exceeds the public workers.
  */
-export function clusterProcessCount(publicWorkers: number, withWriter = true): number {
+export function resolveWriterShards(
+  value: string | undefined,
+  publicWorkers: number,
+  enabled = true,
+): number {
+  if (!enabled || publicWorkers <= 1) return 1
+  const setting = (value ?? '').trim().toLowerCase()
+  if (!setting || setting === 'auto') {
+    return Math.min(MAX_WRITER_SHARDS, Math.max(1, Math.floor(publicWorkers / 2)))
+  }
+  const count = Number(setting)
+  if (!Number.isInteger(count) || count < 1) return 1
+  return Math.min(MAX_WRITER_SHARDS, publicWorkers, count)
+}
+
+/**
+ * Public workers plus the writer pool. A single process keeps the old layout
+ * (one process that serves HTTP and writes); a cluster needs extra processes so
+ * the writers never share an event loop with request handling.
+ */
+export function clusterProcessCount(publicWorkers: number, withWriter = true, writerShards = 1): number {
   const publicCount = Math.max(1, Math.round(publicWorkers))
-  return withWriter && publicCount > 1 ? publicCount + 1 : publicCount
+  if (!withWriter || publicCount <= 1) return publicCount
+  return publicCount + Math.max(1, Math.round(writerShards))
 }
 
 /**
@@ -64,8 +90,9 @@ export function clusterProcessCount(publicWorkers: number, withWriter = true): n
  * listener so the proxy can health-check and route around it; otherwise every
  * public worker shares one port with SO_REUSEPORT.
  *
- * `publicOffset` is 1 when index 0 is the dedicated writer (public indices are
- * 1..N) and 0 when every process serves public traffic (`WRITER_PORT=0`).
+ * `publicOffset` is the number of dedicated writer processes (public indices
+ * are `publicOffset..N`) and 0 when every process serves public traffic
+ * (`WRITER_PORT=0`).
  */
 export function workerPort(
   basePort: number,
@@ -86,10 +113,22 @@ export function clusterConfig(
   if (env.BUNWRITE_WORKER !== undefined && env.BUNWRITE_WORKER !== '') {
     const index = Math.max(0, Math.floor(Number(env.BUNWRITE_WORKER) || 0))
     const total = Math.max(1, Math.floor(Number(env.BUNWRITE_CLUSTER_SIZE) || 1))
-    const publicWorkers = writerEnabled(env) && total > 1 ? total - 1 : total
-    return { workers: total, publicWorkers, workerIndex: index, supervisor: false }
+    const enabled = writerEnabled(env)
+    const writerShards = enabled
+      ? Math.min(total, Math.max(1, Math.floor(Number(env.BUNWRITE_WRITER_SHARDS) || 1)))
+      : 1
+    const publicWorkers = enabled && total > 1 ? Math.max(1, total - writerShards) : total
+    return { workers: total, publicWorkers, writerShards, workerIndex: index, supervisor: false }
   }
   const publicWorkers = resolveWorkers(env.WORKERS, platform)
-  const total = clusterProcessCount(publicWorkers, writerEnabled(env))
-  return { workers: total, publicWorkers, workerIndex: 0, supervisor: total > 1 && publicWorkers > 1 }
+  const enabled = writerEnabled(env)
+  const writerShards = resolveWriterShards(env.WRITER_SHARDS, publicWorkers, enabled)
+  const total = clusterProcessCount(publicWorkers, enabled, writerShards)
+  return {
+    workers: total,
+    publicWorkers,
+    writerShards,
+    workerIndex: 0,
+    supervisor: total > 1 && publicWorkers > 1,
+  }
 }
