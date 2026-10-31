@@ -392,8 +392,8 @@ function setupOptions(): {
   reset: boolean
 } {
   const base = normalizeBase(required(flag('base') ?? env('STRESS_BASE'), '--base (or STRESS_BASE)'))
-  const project = required(flag('project') ?? env('STRESS_PROJECT'), '--project (or STRESS_PROJECT)')
-  const key = required(flag('key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
+  const project = required(flag('project') ?? flag('project-id') ?? env('STRESS_PROJECT'), '--project (or STRESS_PROJECT)')
+  const key = required(flag('key') ?? flag('api-key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
   const database = flag('database') ?? DEFAULT_DATABASE
   const prefix = assertId(flag('prefix') ?? DEFAULT_PREFIX, '--prefix')
   assertId(database, '--database')
@@ -512,8 +512,8 @@ function runOptions(manifestOverride?: Manifest): RunOptions {
   const manifestPath = flag('manifest') ?? env('STRESS_MANIFEST')
   const manifest = manifestOverride ?? (manifestPath ? readManifest(manifestPath) : loadImplicitManifest())
   const base = normalizeBase(flag('base') ?? env('STRESS_BASE') ?? manifest.base)
-  const project = flag('project') ?? env('STRESS_PROJECT') ?? manifest.project
-  const key = required(flag('key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
+  const project = flag('project') ?? flag('project-id') ?? env('STRESS_PROJECT') ?? manifest.project
+  const key = required(flag('key') ?? flag('api-key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
   const tool = (flag('tool') ?? env('STRESS_TOOL') ?? 'auto') as RunOptions['tool']
   if (!['auto', 'oha', 'builtin'].includes(tool)) throw new Error('--tool must be auto, oha or builtin')
   return {
@@ -1025,7 +1025,7 @@ async function runSession(): Promise<void> {
   const manifestPath = flag('manifest') ?? env('STRESS_MANIFEST')
   const manifest = manifestPath ? readManifest(manifestPath) : loadImplicitManifest()
   const base = normalizeBase(flag('base') ?? env('STRESS_BASE') ?? manifest.base)
-  const project = flag('project') ?? env('STRESS_PROJECT') ?? manifest.project
+  const project = flag('project') ?? flag('project-id') ?? env('STRESS_PROJECT') ?? manifest.project
   const timeout = integerFlag('timeout', DEFAULT_TIMEOUT)
   const email = flag('session-email') ?? manifest.stressEmail ?? SESSION_EMAIL
   const tool = (flag('tool') ?? env('STRESS_TOOL') ?? 'auto') as RunOptions['tool']
@@ -1075,8 +1075,8 @@ async function runSession(): Promise<void> {
 
 async function cleanup(): Promise<void> {
   const base = normalizeBase(required(flag('base') ?? env('STRESS_BASE'), '--base (or STRESS_BASE)'))
-  const project = required(flag('project') ?? env('STRESS_PROJECT'), '--project (or STRESS_PROJECT)')
-  const key = required(flag('key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
+  const project = required(flag('project') ?? flag('project-id') ?? env('STRESS_PROJECT'), '--project (or STRESS_PROJECT)')
+  const key = required(flag('key') ?? flag('api-key') ?? env('STRESS_API_KEY'), '--key (or STRESS_API_KEY)')
   const database = flag('database') ?? DEFAULT_DATABASE
   assertId(database, '--database')
   if (!/stress/i.test(database) && !boolFlag('yes')) {
@@ -1104,8 +1104,8 @@ Usage:
 
 Common:
   --base <url>            API root, e.g. https://bunwrite.example.com/v1
-  --project <id>          X-Appwrite-Project
-  --key <key>             API key (or STRESS_API_KEY)
+  --project <id>          X-Appwrite-Project (--project-id also works)
+  --key <key>             API key (or STRESS_API_KEY; --api-key also works)
   --database <id>         Default: ${DEFAULT_DATABASE}
   --prefix <text>         Document prefix (letters, digits, . _ -)
   --manifest <path>       Manifest written by setup
