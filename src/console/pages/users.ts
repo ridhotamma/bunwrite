@@ -82,7 +82,7 @@ export function userPages(router: ConsoleRouter): void {
   router.get(`${USERS}/:id`, ({ ctx, path }) => {
     const u = ctx.services.auth.user(path.id!)
     const sessions = ctx.services.auth.sessions(u.id)
-    const model = userModel(u) as Record<string, any>
+    const model = userModel(u) as Record<string, unknown>
     const base = userUrl(u.id)
     return ctx.render(
       u.name || u.email || u.id,
@@ -93,7 +93,7 @@ export function userPages(router: ConsoleRouter): void {
         'The name and contact details shown across the console and in your apps.',
         html`<form method="post" action="${base}">
           <div class="fields"><label>Name<input name="name" value="${u.name}"></label><label>Email<input name="email" type="email" value="${u.email ?? ''}"></label></div>
-          <div class="fields"><label>Phone<input name="phone" value="${u.phone ?? ''}"></label><label>Labels<input name="labels" value="${model.labels.join(', ')}"><small>Comma-separated. Grant <code>label:…</code> roles.</small></label></div>
+          <div class="fields"><label>Phone<input name="phone" value="${u.phone ?? ''}"></label><label>Labels<input name="labels" value="${Array.isArray(model.labels) ? model.labels.join(', ') : ''}"><small>Comma-separated. Grant <code>label:…</code> roles.</small></label></div>
           <div class="fields"><label class="check"><input type="checkbox" name="emailVerification" ${u.email_verification ? 'checked' : ''}>Email verified</label>
             <label class="check"><input type="checkbox" name="phoneVerification" ${u.phone_verification ? 'checked' : ''}>Phone verified</label></div>
           <div class="foot"><button class="primary">Save</button></div>

@@ -163,7 +163,7 @@ function cachedSession(db: Db, secret: string, authVersion?: number): CachedSess
   if (hit && hit.expire > now() && Date.now() - hit.at < SESSION_TTL_MS) return hit
 
   const row = db.sqlite
-    .query<any, [string, string]>(
+    .query<UserRow & { session_id: string; session_expire: string }, [string, string]>(
       `SELECT s.id AS session_id, s.expire AS session_expire, u.* FROM _sessions s JOIN _users u ON u.id = s.user_id
        WHERE s.secret_hash = ? AND s.expire > ?`,
     )
@@ -174,10 +174,10 @@ function cachedSession(db: Db, secret: string, authVersion?: number): CachedSess
   }
   const { session_id, session_expire, ...user } = row
   const entry: CachedSession = {
-    user: user as UserRow,
-    sessionId: session_id,
-    expire: session_expire,
-    roles: [...rolesForUser(db, user as UserRow)],
+    user,
+    sessionId: row.session_id,
+    expire: row.session_expire,
+    roles: [...rolesForUser(db, user)],
     at: Date.now(),
   }
   if (cache.entries.size >= SESSION_CACHE_MAX) cache.entries.clear()
@@ -193,7 +193,7 @@ export function sessionCaller(db: Db, secret: string, authVersion?: number): Cal
 }
 
 function findUser(db: Db, id: string): UserRow | null {
-  return db.sqlite.query<any, [string]>('SELECT * FROM _users WHERE id = ?').get(id) ?? null
+  return db.sqlite.query<UserRow, [string]>('SELECT * FROM _users WHERE id = ?').get(id) ?? null
 }
 
 /** A user from a JWT; its session (when it names one) must still be live. */
@@ -202,7 +202,7 @@ export async function jwtCaller(db: Db, config: Config, jwt: string): Promise<Ca
   if (!claims) return null
   if (claims.sessionId) {
     const session = db.sqlite
-      .query<any, [string, string, string]>('SELECT id FROM _sessions WHERE id = ? AND user_id = ? AND expire > ?')
+      .query<{ id: string }, [string, string, string]>('SELECT id FROM _sessions WHERE id = ? AND user_id = ? AND expire > ?')
       .get(claims.sessionId, claims.userId, now())
     if (!session) return null
   }

@@ -46,6 +46,7 @@ switch (command) {
     } catch {
       process.exit(1)
     }
+    break
   }
   case 'console:admin':
     runCli(...args)

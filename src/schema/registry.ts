@@ -17,6 +17,29 @@ export interface DatabaseInfo {
   updatedAt: string
 }
 
+interface DatabaseRow {
+  seq: number
+  id: string
+  name: string
+  enabled: number
+  created_at: string
+  updated_at: string
+}
+
+interface CollectionRow {
+  seq: number
+  database_id: string
+  id: string
+  name: string
+  enabled: number
+  document_security: number
+  permissions: string
+  attributes: string
+  indexes: string
+  created_at: string
+  updated_at: string
+}
+
 /**
  * In-memory view of databases and collections, read from `_databases` and
  * `_collections`. Call `reload()` after a schema change.
@@ -33,19 +56,21 @@ export class Registry {
 
   /** Reload over the synchronous SQLite path; schema DDL is still SQLite-only. */
   reload(): void {
-    const dbs = this.db.sqlite!.query<any, []>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases').all()
-    const rows = this.db.sqlite!.query<any, []>('SELECT * FROM _collections').all()
+    const dbs = this.db.sqlite!
+      .query<DatabaseRow, []>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
+      .all()
+    const rows = this.db.sqlite!.query<CollectionRow, []>('SELECT * FROM _collections').all()
     this.apply(dbs, rows)
   }
 
   /** Reload through the driver port so it works on Postgres too. */
   async load(): Promise<void> {
-    const dbs = await this.db.driver.all<any>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
-    const rows = await this.db.driver.all<any>('SELECT * FROM _collections')
+    const dbs = await this.db.driver.all<DatabaseRow>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
+    const rows = await this.db.driver.all<CollectionRow>('SELECT * FROM _collections')
     this.apply(dbs, rows)
   }
 
-  private apply(dbs: any[], rows: any[]): void {
+  private apply(dbs: DatabaseRow[], rows: CollectionRow[]): void {
     this.databases.clear()
     this.collections.clear()
     for (const d of dbs) {

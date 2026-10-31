@@ -871,7 +871,7 @@ export class FunctionService {
     let headers: Record<string, string> = {}
     let body = ''
     let logs = ''
-    let errors = ''
+    let errors: string
     /** Set once the function starts a streamed response. */
     let head: { statusCode: number; headers: Record<string, string>; ended: boolean } | null = null
     try {

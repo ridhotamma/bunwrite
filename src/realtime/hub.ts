@@ -140,7 +140,7 @@ export class RealtimeHub {
   }
 
   message(ws: Socket, raw: string | Buffer): void {
-    let message: { type?: string; data?: any }
+    let message: { type?: string; data?: unknown }
     try {
       message = JSON.parse(String(raw))
     } catch {
@@ -152,7 +152,8 @@ export class RealtimeHub {
         send(ws, 'pong', null)
         return
       case 'authentication': {
-        const secret = message.data?.session
+        const data = message.data && typeof message.data === 'object' ? (message.data as Record<string, unknown>) : {}
+        const secret = data.session
         const caller = typeof secret === 'string' ? sessionCaller(this.db, secret) : null
         if (!caller) {
           send(ws, 'error', { code: 1003, message: 'Session is not valid.' })

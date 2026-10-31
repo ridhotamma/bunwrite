@@ -27,7 +27,7 @@ export function appwriteHashOptions(): Record<string, unknown> {
 const equal = (a: Buffer, b: Buffer) => a.length === b.length && timingSafeEqual(a, b)
 
 /** Check a password against a stored hash in any format Appwrite exports. */
-export async function verifyPassword(password: string, hash: string | null, algorithm: string, options: Record<string, any> = {}): Promise<boolean> {
+export async function verifyPassword(password: string, hash: string | null, algorithm: string, options: Record<string, unknown> = {}): Promise<boolean> {
   if (!hash) return false
   try {
     switch (algorithm) {

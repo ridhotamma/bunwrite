@@ -7,6 +7,7 @@
 import { resolve } from 'node:path'
 
 import { collectionVersionKey } from '~/cluster/versions'
+import type { BucketConfig, FunctionConfig, ProjectConfig } from './config'
 import { q, type Db } from '~/db/connection'
 import { collectionVersionTriggers } from '~/db/cluster-schema'
 import { now } from '~/lib/datetime'
@@ -19,6 +20,15 @@ import {
   type Attribute,
   type Index,
 } from './types'
+
+interface ExistingCollection {
+  name: string
+  enabled: number
+  document_security: number
+  permissions: string
+  attributes: string
+  indexes: string
+}
 
 export interface PushOptions {
   prune?: boolean
@@ -59,35 +69,46 @@ export function sqlType(attribute: Attribute): string {
 }
 
 /** Read the collections out of a config file, in either the Tables or Collections shape. */
-export function readConfig(config: any): { databases: { id: string; name: string; enabled: boolean }[]; collections: ConfigCollection[] } {
-  const databases = (config.tablesDB ?? config.databases ?? []).map((d: any) => ({
-    id: d.$id,
-    name: d.name ?? d.$id,
-    enabled: d.enabled ?? true,
-  }))
-  const raw = config.tables ?? config.collections ?? []
-  const collections = raw.map((c: any) => ({
-    databaseId: c.databaseId,
-    id: c.$id,
-    name: c.name ?? c.$id,
-    enabled: c.enabled ?? true,
-    documentSecurity: c.rowSecurity ?? c.documentSecurity ?? false,
-    permissions: c.$permissions ?? [],
-    attributes: (c.columns ?? c.attributes ?? []).map(normalizeAttribute),
-    indexes: (c.indexes ?? []).map(normalizeIndex),
-  }))
+export function readConfig(config: unknown): { databases: { id: string; name: string; enabled: boolean }[]; collections: ConfigCollection[] } {
+  const root = config && typeof config === 'object' ? (config as Record<string, unknown>) : {}
+  const databaseList = Array.isArray(root.tablesDB) ? root.tablesDB : Array.isArray(root.databases) ? root.databases : []
+  const databases = databaseList.map((raw) => {
+    const d = raw as Record<string, unknown>
+    const id = typeof d.$id === 'string' ? d.$id : ''
+    return {
+      id,
+      name: typeof d.name === 'string' ? d.name : id,
+      enabled: d.enabled === undefined || d.enabled === null ? true : Boolean(d.enabled),
+    }
+  })
+  const collectionList = Array.isArray(root.tables) ? root.tables : Array.isArray(root.collections) ? root.collections : []
+  const collections = collectionList.map((raw): ConfigCollection => {
+    const c = raw as Record<string, unknown>
+    const id = typeof c.$id === 'string' ? c.$id : ''
+    return {
+      databaseId: typeof c.databaseId === 'string' ? c.databaseId : '',
+      id,
+      name: typeof c.name === 'string' ? c.name : id,
+      enabled: c.enabled === undefined || c.enabled === null ? true : Boolean(c.enabled),
+      documentSecurity: Boolean(c.rowSecurity ?? c.documentSecurity),
+      permissions: Array.isArray(c.$permissions) ? c.$permissions.map(String) : [],
+      attributes: (Array.isArray(c.columns) ? c.columns : Array.isArray(c.attributes) ? c.attributes : []).map(normalizeAttribute),
+      indexes: (Array.isArray(c.indexes) ? c.indexes : []).map(normalizeIndex),
+    }
+  })
   return { databases, collections }
 }
 
-export function pushConfig(db: Db, config: any, options: PushOptions = {}): void {
+export function pushConfig(db: Db, config: unknown, options: PushOptions = {}): void {
   const log = options.log ?? (() => {})
+  const project = config && typeof config === 'object' ? (config as ProjectConfig) : {}
   const { databases, collections } = readConfig(config)
   const sqlite = db.sqlite
 
   sqlite.transaction(() => {
     const stamp = now()
     for (const d of databases) {
-      const existing = sqlite.query<any, [string]>('SELECT seq FROM _databases WHERE id = ?').get(d.id)
+      const existing = sqlite.query<{ seq: number }, [string]>('SELECT seq FROM _databases WHERE id = ?').get(d.id)
       if (existing) {
         sqlite.run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [d.name, d.enabled, stamp, d.id])
       } else {
@@ -108,11 +129,11 @@ export function pushConfig(db: Db, config: any, options: PushOptions = {}): void
       pushCollection(db, c, stamp, log)
     }
 
-    pushBuckets(db, config.buckets ?? [], stamp, log)
-    pushFunctions(db, config.functions ?? [], stamp, log, options.baseDir)
+    pushBuckets(db, project.buckets ?? [], stamp, log)
+    pushFunctions(db, project.functions ?? [], stamp, log, options.baseDir)
 
     if (options.prune) {
-      const all = sqlite.query<any, []>('SELECT c.database_id, c.id, d.seq AS dseq FROM _collections c JOIN _databases d ON d.id = c.database_id').all()
+      const all = sqlite.query<{ database_id: string; id: string; dseq: number }, []>('SELECT c.database_id, c.id, d.seq AS dseq FROM _collections c JOIN _databases d ON d.id = c.database_id').all()
       for (const c of all) {
         if (wanted.has(`${c.database_id}/${c.id}`)) continue
         dropCollectionTables(db, tableName(c.dseq, c.id))
@@ -126,11 +147,11 @@ export function pushConfig(db: Db, config: any, options: PushOptions = {}): void
 
 export function pushCollection(db: Db, c: ConfigCollection, stamp: string, log: (line: string) => void): void {
   const sqlite = db.sqlite
-  const dseq = sqlite.query<any, [string]>('SELECT seq FROM _databases WHERE id = ?').get(c.databaseId)?.seq
+  const dseq = sqlite.query<{ seq: number }, [string]>('SELECT seq FROM _databases WHERE id = ?').get(c.databaseId)?.seq
   if (!dseq) throw new Error(`Collection ${c.id} points at unknown database ${c.databaseId}`)
   const table = tableName(dseq, c.id)
   const existing = sqlite
-    .query<any, [string, string]>('SELECT name, enabled, document_security, permissions, attributes, indexes FROM _collections WHERE database_id = ? AND id = ?')
+    .query<ExistingCollection, [string, string]>('SELECT name, enabled, document_security, permissions, attributes, indexes FROM _collections WHERE database_id = ? AND id = ?')
     .get(c.databaseId, c.id)
 
   if (!existing) {
@@ -216,7 +237,7 @@ function createCollectionTables(db: Db, table: string, attributes: Attribute[]):
 
 export function dropCollectionTables(db: Db, table: string): void {
   const fts = db.sqlite
-    .query<any, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ESCAPE '\\'")
+    .query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ? ESCAPE '\\'")
     .all(`${table.replace(/_/g, '\\_')}\\_\\_fts\\_%`)
   for (const t of fts) db.sqlite.run(`DROP TABLE IF EXISTS ${q(t.name)}`)
   db.sqlite.run(`DROP TABLE IF EXISTS ${q(table)}`)
@@ -303,7 +324,7 @@ function createFulltext(db: Db, table: string, index: Index): void {
   db.sqlite.run(`INSERT INTO ${q(fts)} (${q(fts)}) VALUES ('rebuild')`)
 }
 
-function pushBuckets(db: Db, buckets: any[], stamp: string, log: (line: string) => void): void {
+function pushBuckets(db: Db, buckets: BucketConfig[], stamp: string, log: (line: string) => void): void {
   for (const b of buckets) {
     const values = [
       b.name ?? b.$id,
@@ -340,7 +361,7 @@ function pushBuckets(db: Db, buckets: any[], stamp: string, log: (line: string) 
  * and as written otherwise (an uploaded file); relative paths resolve against the functions
  * code folder at run time.
  */
-function pushFunctions(db: Db, functions: any[], stamp: string, log: (line: string) => void, baseDir: string | undefined): void {
+function pushFunctions(db: Db, functions: FunctionConfig[], stamp: string, log: (line: string) => void, baseDir: string | undefined): void {
   for (const f of functions) {
     const values = [
       f.name ?? f.$id,

@@ -18,7 +18,7 @@ import type { Config } from '~/config'
 import { isLeader } from '~/cluster/role'
 import { err } from '~/lib/errors'
 import { s3Call, s3Client } from '~/storage/s3'
-import { ARCHIVE_COMPRESSED_EXT, ARCHIVE_ENCRYPTED_EXT, contentType, MIN_KEY_LENGTH } from './format'
+import { contentType, MIN_KEY_LENGTH } from './format'
 import { createInstanceBackup } from './instance'
 
 export interface BackupFile {

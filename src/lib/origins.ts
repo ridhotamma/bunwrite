@@ -63,6 +63,8 @@ export function requestEndpoint(request: Request, fallback: string): string {
   // Same host as PUBLIC_ENDPOINT: keep its exact form (path, scheme).
   try {
     if (new URL(configured).host.toLowerCase() === host.toLowerCase()) return configured
-  } catch {}
+  } catch {
+    // A malformed PUBLIC_ENDPOINT falls back to the request host below.
+  }
   return `${proto}://${host}/v1`
 }

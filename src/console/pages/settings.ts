@@ -35,7 +35,7 @@ export function settingsPages(router: ConsoleRouter): void {
     if (!id || !isTemplateId(id)) throw err('general_argument_invalid', 'Unknown email template.')
     return id
   }
-  const templateForm = (form: Record<string, any>): TemplateFields => ({
+  const templateForm = (form: Record<string, unknown>): TemplateFields => ({
     subject: String(form.subject ?? ''),
     message: String(form.message ?? ''),
     senderName: value(form, 'senderName'),

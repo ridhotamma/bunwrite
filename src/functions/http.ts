@@ -31,7 +31,9 @@ export async function functionHttpResponse(services: Services, f: FunctionRow, c
   const quietly = (call: () => void) => {
     try {
       call()
-    } catch {}
+    } catch {
+      // The client already cancelled; there is nobody to report to.
+    }
   }
   const stream: ExecutionStream = {
     signal: abort.signal,

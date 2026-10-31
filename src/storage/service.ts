@@ -20,7 +20,7 @@ import { isValidId, resolveId } from '~/lib/ids'
 import { listSeqs } from '~/system/list'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { s3Call, s3Client, s3Key } from './s3'
-import { loadSharp } from './sharp'
+import { loadSharp, type SharpModule } from './sharp'
 import { previewKey, previewOptions, renderPreview } from './transform'
 
 /** Cache headers for a file or preview: `private` so only the visitor's browser keeps it, never a shared proxy. */
@@ -240,13 +240,13 @@ export class StorageService {
         .query(
           'INSERT INTO _buckets (name, enabled, file_security, permissions, maximum_file_size, allowed_file_extensions, transformations, compression, encryption, antivirus, created_at, updated_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         )
-        .run(...(values as any[]), stamp, stamp, input.id)
+        .run(...values, stamp, stamp, input.id)
     } else {
       this.sql
         .query(
           'UPDATE _buckets SET name = ?, enabled = ?, file_security = ?, permissions = ?, maximum_file_size = ?, allowed_file_extensions = ?, transformations = ?, compression = ?, encryption = ?, antivirus = ?, updated_at = ? WHERE id = ?',
         )
-        .run(...(values as any[]), stamp, input.id)
+        .run(...values, stamp, input.id)
     }
     return this.bucket(input.id, true)
   }
@@ -558,7 +558,7 @@ export class StorageService {
     const unchanged = notModified(request, caching)
     if (unchanged) return unchanged
     if (!existsSync(cached)) {
-      let sharp: any
+      let sharp: SharpModule
       try {
         sharp = await loadSharp(this.config)
       } catch {
@@ -633,7 +633,9 @@ export class StorageService {
       try {
         bytes += statSync(path).size
         files++
-      } catch {}
+      } catch {
+        // A preview removed between listing and stat is simply not counted.
+      }
     }
     return { files, bytes }
   }

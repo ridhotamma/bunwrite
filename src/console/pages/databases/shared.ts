@@ -1,7 +1,7 @@
 import { keyCaller } from '~/auth/caller'
 import type { Collection } from '~/schema/types'
 import type { ConsoleContext } from '~/console/context'
-import { html, type Html } from '~/console/html'
+import type { Html } from '~/console/html'
 import { header, tabs as tabList } from '~/console/ui'
 
 export const DB = '/console/databases'

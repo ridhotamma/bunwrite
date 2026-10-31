@@ -5,6 +5,8 @@
  * crop → opacity → background → border → border radius → rotation.
  */
 import { err } from '~/lib/errors'
+import type { Channels } from 'sharp'
+import type { SharpInstance, SharpModule } from './sharp'
 
 export const OUTPUTS = ['jpg', 'png', 'webp', 'avif', 'gif'] as const
 export type OutputFormat = (typeof OUTPUTS)[number]
@@ -26,7 +28,7 @@ export const avifTooLarge = () =>
   err('general_argument_invalid', `AVIF output is limited to ${maxAvifPixels() / 1_000_000} megapixels on this server. Use a smaller size, or webp.`)
 
 /** The size renderPreview will produce, worked out from the source header without decoding it. */
-export async function previewSize(sharp: any, source: string | Uint8Array, o: PreviewOptions): Promise<{ width: number; height: number }> {
+export async function previewSize(sharp: SharpModule, source: string | Uint8Array, o: PreviewOptions): Promise<{ width: number; height: number }> {
   const meta = await sharp(source, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
   const turned = (meta.orientation ?? 1) >= 5
   let w: number = turned ? meta.height : meta.width
@@ -181,7 +183,7 @@ async function headOf(source: string | Uint8Array): Promise<Uint8Array> {
 }
 
 /** Run the transformations with sharp and return the encoded image. */
-export async function renderPreview(sharp: any, source: string | Uint8Array, o: PreviewOptions): Promise<Buffer> {
+export async function renderPreview(sharp: SharpModule, source: string | Uint8Array, o: PreviewOptions): Promise<Buffer> {
   if (!sniffImage(await headOf(source))) throw err('storage_file_type_unsupported', 'Previews support JPEG, PNG, GIF, WebP, AVIF and HEIC images.')
   if (o.format === 'avif') {
     const size = await previewSize(sharp, source, o)
@@ -203,9 +205,9 @@ export async function renderPreview(sharp: any, source: string | Uint8Array, o: 
   if (effects) {
     // Each step works on raw pixels so it sees the size the previous step produced.
     let cur: Raw = await pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-    const step = async (fn: (img: any, w: number, h: number) => any) => {
+    const step = async (fn: (img: SharpInstance, w: number, h: number) => SharpInstance) => {
       const { width, height, channels } = cur.info
-      cur = await fn(sharp(cur.data, { raw: { width, height, channels } }), width, height).raw().toBuffer({ resolveWithObject: true })
+      cur = await fn(sharp(cur.data, { raw: { width, height, channels: channels as Channels } }), width, height).raw().toBuffer({ resolveWithObject: true })
     }
     if (o.opacity < 1) {
       const alpha = Buffer.from([255, 255, 255, Math.round(o.opacity * 255)])
@@ -228,7 +230,7 @@ export async function renderPreview(sharp: any, source: string | Uint8Array, o: 
       await step((img) => img.rotate(o.rotation, { background }))
     }
     const { width, height, channels } = cur.info
-    pipeline = sharp(cur.data, { raw: { width, height, channels } })
+    pipeline = sharp(cur.data, { raw: { width, height, channels: channels as Channels } })
   }
 
   const quality = o.quality >= 0 ? { quality: Math.max(1, o.quality) } : {}

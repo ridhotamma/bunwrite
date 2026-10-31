@@ -311,7 +311,7 @@ export class SsrRuntime {
       runtime = await ensureRuntime(this.config, target.runtime, (line) => this.log(app, `[runtime] ${line}`))
     } catch (error) {
       this.recordFailure(target.siteId)
-      throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     // Take the port only after the runtime is ready: the shorter the gap before
     // the app binds it, the smaller the chance anything else takes it.
@@ -333,7 +333,7 @@ export class SsrRuntime {
     } catch (error) {
       reservedPorts.delete(port)
       this.recordFailure(target.siteId)
-      throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`)
+      throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     app.proc = proc
     app.live = { proc, sandbox: sandboxed ? this.sandbox : null }

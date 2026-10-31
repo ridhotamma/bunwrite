@@ -162,7 +162,7 @@ export function detectResources(env: Env = process.env, options: DetectOptions =
     if (Number.isFinite(quota) && quota > 0 && Number.isFinite(period) && period > 0) cgroupCpus = quota / period
   }
 
-  let cgroupMemory: number | null = null
+  let cgroupMemory: number | null
   const memoryMax = readFirst(cgroupCandidates('memory.max', null, read), read)
   if (memoryMax !== null) {
     cgroupMemory = parseMemoryLimit(memoryMax)

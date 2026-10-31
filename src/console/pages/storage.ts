@@ -82,7 +82,7 @@ function settingsForm(ctx: ConsoleContext, b: BucketRow, section: Section): Html
 }
 
 /** Every field, for the create page. */
-const bucketInput = (form: Record<string, any>, id: string): BucketInput => ({
+const bucketInput = (form: Record<string, unknown>, id: string): BucketInput => ({
   id,
   name: value(form, 'name'),
   enabled: checked(form.enabled),
@@ -94,7 +94,7 @@ const bucketInput = (form: Record<string, any>, id: string): BucketInput => ({
 })
 
 /** One section's fields over the bucket's current values, so saving one card leaves the others alone. */
-function sectionInput(form: Record<string, any>, b: BucketRow): BucketInput {
+function sectionInput(form: Record<string, unknown>, b: BucketRow): BucketInput {
   const all = bucketInput(form, b.id)
   const current: BucketInput = {
     id: b.id,

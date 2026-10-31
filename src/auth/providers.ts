@@ -33,7 +33,7 @@ export interface OAuthProvider {
 
 const verified = (value: unknown) => value === true || value === 'true'
 
-async function requestJson<T = Record<string, any>>(url: string | URL, init: RequestInit = {}): Promise<T> {
+async function requestJson<T = Record<string, unknown>>(url: string | URL, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
     response = await fetch(url, init)
@@ -41,7 +41,7 @@ async function requestJson<T = Record<string, any>>(url: string | URL, init: Req
     throw err('user_oauth2_provider_error', 'Could not reach the OAuth2 provider.')
   }
   const text = await response.text()
-  let body: any = null
+  let body: unknown
   try {
     body = text ? JSON.parse(text) : {}
   } catch {
@@ -52,7 +52,7 @@ async function requestJson<T = Record<string, any>>(url: string | URL, init: Req
   return body as T
 }
 
-async function postForm(url: string, body: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, any>> {
+async function postForm(url: string, body: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
   return requestJson(url, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers },
@@ -60,7 +60,7 @@ async function postForm(url: string, body: Record<string, string>, headers: Reco
   })
 }
 
-function tokenError(body: Record<string, any>): never {
+function tokenError(body: Record<string, unknown>): never {
   const detail = typeof body.error_description === 'string' ? body.error_description : typeof body.error === 'string' ? body.error : ''
   throw err('user_oauth2_provider_error', detail || 'Failed to obtain access token.')
 }
@@ -70,11 +70,11 @@ const text = (value: unknown) => (typeof value === 'string' ? value : '')
 
 const b64url = (value: string | Uint8Array) => Buffer.from(value).toString('base64url')
 
-function jwtClaims(token: string | undefined): Record<string, any> {
+function jwtClaims(token: string | undefined): Record<string, unknown> {
   const payload = token?.split('.')[1]
   if (!payload) return {}
   try {
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, any>
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Record<string, unknown>
   } catch {
     return {}
   }
@@ -131,7 +131,7 @@ const providers: Record<OAuthProviderId, OAuthProvider> = {
         grant_type: 'authorization_code',
       })
       if (!body.access_token) tokenError(body)
-      return body as OAuthTokens
+      return body as unknown as OAuthTokens
     },
     async identity(config, tokens) {
       const info = await requestJson(`${config.userinfoUrl}?access_token=${encodeURIComponent(tokens.access_token)}`)
@@ -153,7 +153,7 @@ const providers: Record<OAuthProviderId, OAuthProvider> = {
       url.searchParams.set('code', code)
       const body = await requestJson(url)
       if (!body.access_token) tokenError(body)
-      return body as OAuthTokens
+      return body as unknown as OAuthTokens
     },
     async identity(config, tokens) {
       const url = new URL(config.userinfoUrl!)
@@ -177,14 +177,14 @@ const providers: Record<OAuthProviderId, OAuthProvider> = {
         { accept: 'application/json' },
       )
       if (!body.access_token) tokenError(body)
-      return body as OAuthTokens
+      return body as unknown as OAuthTokens
     },
     async identity(config, tokens) {
       const headers = { authorization: `token ${tokens.access_token}`, accept: 'application/vnd.github+json', 'user-agent': 'Bunwrite' }
-      const user = await requestJson<Record<string, any>>(config.userinfoUrl!, { headers })
-      let emails: Array<Record<string, any>> = []
+      const user = await requestJson<Record<string, unknown>>(config.userinfoUrl!, { headers })
+      let emails: Array<Record<string, unknown>> = []
       try {
-        emails = await requestJson<Array<Record<string, any>>>(`${config.userinfoUrl}/emails`, { headers })
+        emails = await requestJson<Array<Record<string, unknown>>>(`${config.userinfoUrl}/emails`, { headers })
       } catch {
         // Without user:email the profile email is all GitHub gives us; it stays unverified.
       }
@@ -213,7 +213,7 @@ const providers: Record<OAuthProviderId, OAuthProvider> = {
         redirect_uri: callback,
       })
       if (!body.access_token) tokenError(body)
-      return body as OAuthTokens
+      return body as unknown as OAuthTokens
     },
     async identity(_config, tokens, user) {
       // Apple returns no userinfo endpoint: the ID token carries the account.

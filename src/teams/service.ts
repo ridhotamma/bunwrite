@@ -1,7 +1,7 @@
 import type { AuthService } from '~/auth/service'
 import { validEmail } from '~/auth/service'
 import type { Caller } from '~/auth/caller'
-import type { MembershipRowFull, TeamRow } from '~/auth/models'
+import type { MembershipRowFull, TeamRow, UserRowFull } from '~/auth/models'
 import type { Db } from '~/db/connection'
 import type { DocumentStore } from '~/documents/store'
 import { now } from '~/lib/datetime'
@@ -181,13 +181,13 @@ export class TeamService {
       const email = validEmail(input.email)
       user = this.auth.userByEmail(email) ?? (await this.auth.createUser({ email, name: input.name ?? '' }))
     } else if (input.phone) {
-      user = this.sql.query<any, [string]>('SELECT * FROM _users WHERE phone = ?').get(String(input.phone))
+      user = this.sql.query<UserRowFull, [string]>('SELECT * FROM _users WHERE phone = ?').get(String(input.phone))
       user ??= await this.auth.createUser({ phone: input.phone, name: input.name ?? '' })
     } else {
       throw err('general_argument_invalid', 'At least one of userId, email, or phone is required')
     }
 
-    const existing = this.sql.query<any, [string, string]>('SELECT id FROM _memberships WHERE team_id = ? AND user_id = ?').get(teamId, user.id)
+    const existing = this.sql.query<{ id: string }, [string, string]>('SELECT id FROM _memberships WHERE team_id = ? AND user_id = ?').get(teamId, user.id)
     if (existing) throw err('membership_already_exists')
 
     const stamp = now()

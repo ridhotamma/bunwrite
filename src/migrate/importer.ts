@@ -23,6 +23,136 @@ import { pushConfig } from '~/schema/push'
 import { Registry } from '~/schema/registry'
 import type { Attribute, Collection } from '~/schema/types'
 
+export interface LiveAttribute {
+  key?: string
+  type?: string
+  format?: string
+  required?: boolean
+  array?: boolean
+  size?: number
+  min?: number
+  max?: number
+  default?: unknown
+  elements?: string[]
+  status?: string
+}
+
+interface LiveIndex {
+  key?: string
+  type?: string
+  attributes?: string[]
+  columns?: string[]
+  orders?: (string | null)[]
+  status?: string
+}
+
+export interface LiveDatabase {
+  $id: string
+  name?: string
+  enabled?: boolean
+}
+
+export interface LiveCollection {
+  $id: string
+  databaseId?: string
+  name?: string
+  enabled?: boolean
+  documentSecurity?: boolean
+  rowSecurity?: boolean
+  $permissions?: string[]
+  attributes?: LiveAttribute[]
+  columns?: LiveAttribute[]
+  indexes?: LiveIndex[]
+}
+
+export interface LiveUser {
+  $id: string
+  name?: string
+  email?: string
+  phone?: string
+  password?: string
+  hash?: string
+  hashOptions?: Record<string, unknown>
+  registration?: string
+  status?: boolean
+  labels?: string[]
+  passwordUpdate?: string
+  emailVerification?: boolean
+  phoneVerification?: boolean
+  mfa?: boolean
+  prefs?: Record<string, unknown>
+  accessedAt?: string
+  $createdAt: string
+  $updatedAt: string
+}
+
+interface LiveIdentity {
+  $id: string
+  userId: string
+  provider: string
+  providerUid?: string
+  providerEmail?: string
+  providerAccessToken?: string
+  providerAccessTokenExpiry?: string
+  providerRefreshToken?: string
+  $createdAt: string
+  $updatedAt: string
+}
+
+interface LiveTeam {
+  $id: string
+  name?: string
+  prefs?: Record<string, unknown>
+  $createdAt: string
+  $updatedAt: string
+}
+
+interface LiveMembership {
+  $id: string
+  userId: string
+  roles?: string[]
+  invited?: string
+  joined?: string
+  confirm?: boolean
+  $createdAt: string
+  $updatedAt: string
+}
+
+interface LiveVariable {
+  $id: string
+  key: string
+  value?: string
+  secret?: boolean
+  $createdAt: string
+  $updatedAt: string
+}
+
+interface LiveBucket {
+  $id: string
+}
+
+interface LiveFile {
+  $id: string
+  name?: string
+  $permissions?: string[]
+  signature?: string
+  mimeType?: string
+  chunksTotal?: number
+  chunksUploaded?: number
+  $createdAt: string
+  $updatedAt: string
+}
+
+export interface LiveDocument {
+  $id: string
+  $sequence?: string
+  $createdAt?: string
+  $updatedAt?: string
+  $permissions?: string[]
+  $revision?: number
+  [key: string]: unknown
+}
+
 export interface ImportOptions {
   endpoint: string
   projectId: string
@@ -54,7 +184,7 @@ export interface ImportReport {
 class Source {
   constructor(private opts: ImportOptions) {}
 
-  async get<T = any>(path: string, queries: string[] = []): Promise<T> {
+  async get<T = unknown>(path: string, queries: string[] = []): Promise<T> {
     const url = new URL(this.opts.endpoint.replace(/\/$/, '') + path)
     queries.forEach((qq, i) => url.searchParams.append(`queries[${i}]`, qq))
     for (let attempt = 0; ; attempt++) {
@@ -105,7 +235,7 @@ function encodeLenient(a: Attribute, value: unknown): string | number | null {
 }
 
 /** Turn Appwrite's collection list into the appwrite.config.json shape pushConfig reads. */
-export function configFromLive(databases: any[], collections: any[], buckets: any[]) {
+export function configFromLive(databases: LiveDatabase[], collections: LiveCollection[], buckets: LiveBucket[]) {
   return {
     tablesDB: databases.map((d) => ({ $id: d.$id, name: d.name, enabled: d.enabled })),
     tables: collections.map((c) => ({
@@ -116,8 +246,8 @@ export function configFromLive(databases: any[], collections: any[], buckets: an
       rowSecurity: c.documentSecurity ?? c.rowSecurity,
       $permissions: c.$permissions ?? [],
       columns: (c.attributes ?? c.columns ?? [])
-        .filter((a: any) => !a.status || a.status === 'available')
-        .map((a: any) => ({
+        .filter((a: LiveAttribute) => !a.status || a.status === 'available')
+        .map((a: LiveAttribute) => ({
           key: a.key,
           type: a.type,
           format: a.format ?? '',
@@ -130,8 +260,8 @@ export function configFromLive(databases: any[], collections: any[], buckets: an
           elements: a.elements,
         })),
       indexes: (c.indexes ?? [])
-        .filter((i: any) => !i.status || i.status === 'available')
-        .map((i: any) => ({ key: i.key, type: i.type, columns: i.attributes ?? i.columns ?? [], orders: (i.orders ?? []).map((o: string | null) => o ?? 'ASC') })),
+        .filter((i: LiveIndex) => !i.status || i.status === 'available')
+        .map((i: LiveIndex) => ({ key: i.key, type: i.type, columns: i.attributes ?? i.columns ?? [], orders: (i.orders ?? []).map((o: string | null) => o ?? 'ASC') })),
     })),
     buckets,
   }
@@ -146,19 +276,23 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
   const report: ImportReport = { collections: [], users: 0, identities: 0, teams: 0, memberships: 0, variables: 0, files: 0, fileBytes: 0, skipped: [], hashFormats: {} }
 
   // ---------------------------------------------------------- schema
-  const databases = (await source.get<{ databases: any[] }>('/databases')).databases
-  const collections: any[] = []
-  for (const d of databases) collections.push(...(await source.all(`/databases/${d.$id}/collections`, 'collections')))
-  const buckets = want('files') || want('schema') ? (await source.get<{ buckets: any[] }>('/storage/buckets')).buckets : []
+  const databases = (await source.get<{ databases: LiveDatabase[] }>('/databases')).databases
+  const collections: LiveCollection[] = []
+  for (const d of databases) collections.push(...(await source.all<LiveCollection>(`/databases/${d.$id}/collections`, 'collections')))
+  const buckets: LiveBucket[] = want('files') || want('schema') ? (await source.get<{ buckets: LiveBucket[] }>('/storage/buckets')).buckets : []
   if (want('schema')) {
     pushConfig(db, configFromLive(databases, collections, buckets), { log: (l) => log(`[schema] ${l}`) })
-    if (opts.functions) pushConfig(db, { functions: (opts.functions.config as any).functions ?? [] }, { baseDir: opts.functions.baseDir, log: (l) => log(`[schema] ${l}`) })
+    if (opts.functions) {
+      const config = opts.functions.config && typeof opts.functions.config === 'object' ? (opts.functions.config as Record<string, unknown>) : {}
+      const functions = Array.isArray(config.functions) ? config.functions : []
+      pushConfig(db, { functions }, { baseDir: opts.functions.baseDir, log: (l) => log(`[schema] ${l}`) })
+    }
   }
   const registry = new Registry(db)
 
   // ---------------------------------------------------------- users
   if (want('users')) {
-    const users = await source.all<any>('/users', 'users', [], pageSize)
+    const users = await source.all<LiveUser>('/users', 'users', [], pageSize)
     const insert = sql.query(
       `INSERT OR REPLACE INTO _users (id, name, email, phone, password, hash, hash_options, registration, status, labels, password_update,
         email_verification, phone_verification, mfa, prefs, accessed_at, created_at, updated_at)
@@ -179,7 +313,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     report.users = users.length
     log(`users: ${users.length}`)
 
-    const identities = await source.all<any>('/users/identities', 'identities', [], pageSize)
+    const identities = await source.all<LiveIdentity>('/users/identities', 'identities', [], pageSize)
     const insertIdentity = sql.query(
       `INSERT OR REPLACE INTO _identities (id, user_id, provider, provider_uid, provider_email, provider_access_token, provider_access_token_expiry, provider_refresh_token, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -187,7 +321,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     sql.transaction(() => {
       for (const i of identities) {
         if (!sql.query('SELECT 1 FROM _users WHERE id = ?').get(i.userId)) continue
-        insertIdentity.run(i.$id, i.userId, i.provider, i.providerUid, i.providerEmail ?? '', i.providerAccessToken ?? '', i.providerAccessTokenExpiry ?? '', i.providerRefreshToken ?? '', i.$createdAt, i.$updatedAt)
+        insertIdentity.run(i.$id, i.userId, i.provider, i.providerUid ?? '', i.providerEmail ?? '', i.providerAccessToken ?? '', i.providerAccessTokenExpiry ?? '', i.providerRefreshToken ?? '', i.$createdAt, i.$updatedAt)
         report.identities++
       }
     }).immediate()
@@ -196,11 +330,11 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
 
   // ---------------------------------------------------------- teams
   if (want('teams')) {
-    const teams = await source.all<any>('/teams', 'teams', [], pageSize)
+    const teams = await source.all<LiveTeam>('/teams', 'teams', [], pageSize)
     for (const t of teams) {
-      const prefs = await source.get(`/teams/${t.$id}/prefs`).catch(() => t.prefs ?? {})
-      sql.query('INSERT OR REPLACE INTO _teams (id, name, prefs, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(t.$id, t.name, JSON.stringify(prefs ?? {}), t.$createdAt, t.$updatedAt)
-      const memberships = await source.all<any>(`/teams/${t.$id}/memberships`, 'memberships', [], pageSize)
+      const prefs = await source.get<Record<string, unknown>>(`/teams/${t.$id}/prefs`).catch(() => t.prefs ?? {})
+      sql.query('INSERT OR REPLACE INTO _teams (id, name, prefs, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(t.$id, t.name ?? t.$id, JSON.stringify(prefs ?? {}), t.$createdAt, t.$updatedAt)
+      const memberships = await source.all<LiveMembership>(`/teams/${t.$id}/memberships`, 'memberships', [], pageSize)
       for (const m of memberships) {
         if (!sql.query('SELECT 1 FROM _users WHERE id = ?').get(m.userId)) {
           report.skipped.push(`membership ${m.$id}: user ${m.userId} missing`)
@@ -224,7 +358,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     // Project variables apply to every function and site. Site variables are
     // set with the sites themselves (the importer does not create sites).
     const vars = await source
-      .all<any>('/project/variables', 'variables', [], pageSize)
+      .all<LiveVariable>('/project/variables', 'variables', [], pageSize)
       .catch((error) => {
         report.skipped.push(`project variables: ${(error as Error).message}`)
         return []
@@ -259,9 +393,9 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
   // ---------------------------------------------------------- files
   if (want('files')) {
     for (const b of buckets) {
-      const files = await source.all<any>(`/storage/buckets/${b.$id}/files`, 'files', [], 100)
+      const files = await source.all<LiveFile>(`/storage/buckets/${b.$id}/files`, 'files', [], 100)
       for (const f of files) {
-        if (f.chunksUploaded < f.chunksTotal) {
+        if ((f.chunksUploaded ?? 1) < (f.chunksTotal ?? 1)) {
           report.skipped.push(`file ${b.$id}/${f.$id}: upload never finished`)
           continue
         }
@@ -274,7 +408,7 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
             `INSERT OR REPLACE INTO _files (id, bucket_id, name, permissions, signature, mime_type, size_original, chunks_total, chunks_uploaded, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(f.$id, b.$id, f.name, JSON.stringify(f.$permissions ?? []), f.signature ?? '', f.mimeType ?? 'application/octet-stream', bytes.length, f.chunksTotal ?? 1, f.chunksUploaded ?? 1, f.$createdAt, f.$updatedAt)
+          .run(f.$id, b.$id, f.name ?? f.$id, JSON.stringify(f.$permissions ?? []), f.signature ?? '', f.mimeType ?? 'application/octet-stream', bytes.length, f.chunksTotal ?? 1, f.chunksUploaded ?? 1, f.$createdAt, f.$updatedAt)
         report.files++
         report.fileBytes += bytes.length
       }
@@ -299,7 +433,7 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
   for (;;) {
     const queries = [JSON.stringify({ method: 'orderAsc', attribute: '$sequence' }), JSON.stringify({ method: 'limit', values: [pageSize] })]
     if (cursor) queries.push(JSON.stringify({ method: 'cursorAfter', values: [cursor] }))
-    const page = await source.get<{ total: number; documents: any[] }>(path, queries)
+    const page = await source.get<{ total: number; documents: LiveDocument[] }>(path, queries)
     if (!cursor) total = page.total
     sql.transaction(() => {
       for (const d of page.documents) {
@@ -326,7 +460,7 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
       }
     }).immediate()
     if (page.documents.length < pageSize) break
-    cursor = page.documents[page.documents.length - 1].$id
+    cursor = page.documents[page.documents.length - 1]!.$id
   }
   // Appwrite caps `total` at 5000; report what was actually copied when it is larger.
   return { source: Math.max(total, imported), imported }

@@ -164,7 +164,7 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
       try {
         inspectBackup(source, id)
       } catch (error) {
-        throw new Error(`Backup for project "${id}" is invalid: ${error instanceof Error ? error.message : String(error)}`)
+        throw new Error(`Backup for project "${id}" is invalid: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
       }
       return { id, source, target: projectPaths(dataDir, id).database }
     })

@@ -56,7 +56,9 @@ export function nodeRunner(config: Config): string {
   let current: Buffer | null = null
   try {
     current = readFileSync(path)
-  } catch {}
+  } catch {
+    // Missing is fine: it is written below.
+  }
   if (!current || !current.equals(text)) writeFileSync(path, text)
   shareWithFunctions(config, dir, [[path, 0o644]])
   return path
@@ -132,7 +134,9 @@ export function writeShims(config: Config, dir: string, scripts: Record<string, 
     let current = ''
     try {
       current = readFileSync(path, 'utf8')
-    } catch {}
+    } catch {
+      // Missing is fine: it is written below.
+    }
     if (current !== text) writeFileSync(path, text, { mode: 0o755 })
   }
   shareWithFunctions(config, dir, Object.keys(scripts).map((name) => [join(dir, name), 0o755]))

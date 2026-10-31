@@ -53,9 +53,14 @@ export const permsTableName = (table: string) => `${table}__perms`
 export const ftsTableName = (table: string, indexKey: string) => `${table}__fts_${indexKey}`
 
 /** Normalise an attribute definition from a project config file or the API. */
-export function normalizeAttribute(raw: any): Attribute {
+export function normalizeAttribute(raw: unknown): Attribute {
+  if (!raw || typeof raw !== 'object') throw new Error('Attribute definitions must be objects.')
+  const value = raw as Record<string, unknown>
+  const rawType = typeof value.type === 'string' ? value.type : ''
+  const key = typeof value.key === 'string' ? value.key : ''
+  if (!key) throw new Error('Attribute definitions need a key.')
   let type: AttributeType
-  switch (raw.type) {
+  switch (rawType) {
     case 'string':
     case 'varchar':
     case 'text':
@@ -82,23 +87,23 @@ export function normalizeAttribute(raw: any): Attribute {
       type = 'datetime'
       break
     default:
-      throw new Error(`Unsupported attribute type "${raw.type}" on "${raw.key}"`)
+      throw new Error(`Unsupported attribute type "${rawType}" on "${key}"`)
   }
-  const format = raw.format || (['email', 'url', 'ip', 'enum'].includes(raw.type) ? raw.type : '')
-  const declaredType = raw.declaredType ?? (DECLARED_TYPES.includes(raw.type) ? raw.type : undefined)
+  const format = typeof value.format === 'string' && value.format ? value.format : ['email', 'url', 'ip', 'enum'].includes(rawType) ? rawType : ''
+  const declaredType = typeof value.declaredType === 'string' ? value.declaredType : DECLARED_TYPES.includes(rawType) ? rawType : undefined
   return {
-    key: raw.key,
+    key,
     type,
     format,
-    required: Boolean(raw.required),
-    array: Boolean(raw.array),
-    size: raw.size ?? (type === 'string' ? DEFAULT_STRING_SIZE : undefined),
-    min: raw.min ?? undefined,
-    max: raw.max ?? undefined,
-    default: raw.default ?? null,
-    elements: raw.elements ?? undefined,
+    required: Boolean(value.required),
+    array: Boolean(value.array),
+    size: typeof value.size === 'number' ? value.size : type === 'string' ? DEFAULT_STRING_SIZE : undefined,
+    min: typeof value.min === 'number' ? value.min : undefined,
+    max: typeof value.max === 'number' ? value.max : undefined,
+    default: value.default ?? null,
+    elements: Array.isArray(value.elements) ? (value.elements as string[]) : undefined,
     // Stored only when set, so definitions saved before this field compare equal.
-    ...(raw.encrypt === true ? { encrypt: true } : {}),
+    ...(value.encrypt === true ? { encrypt: true } : {}),
     ...(declaredType ? { declaredType } : {}),
   }
 }
@@ -140,11 +145,14 @@ export const FORMATTED_STRINGS = ['email', 'url', 'ip', 'enum']
 export const DEFAULT_STRING_SIZE = 16384
 const DECLARED_TYPES = ['varchar', 'text', 'mediumtext', 'longtext', 'bigint']
 
-export function normalizeIndex(raw: any): Index {
+export function normalizeIndex(raw: unknown): Index {
+  const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const type = value.type === 'unique' || value.type === 'fulltext' ? value.type : 'key'
+  const attributes = Array.isArray(value.columns) ? value.columns : Array.isArray(value.attributes) ? value.attributes : []
   return {
-    key: raw.key,
-    type: raw.type,
-    attributes: raw.columns ?? raw.attributes ?? [],
-    orders: raw.orders ?? [],
+    key: typeof value.key === 'string' ? value.key : '',
+    type,
+    attributes: attributes.map(String),
+    orders: Array.isArray(value.orders) ? value.orders.map(String) : [],
   }
 }

@@ -1,7 +1,7 @@
 import type { AppContext } from '~/app'
 import { requireKey, requireScope } from '~/auth/routes'
 import { apiHeader } from '~/lib/compat'
-import { normalizeDate, now } from '~/lib/datetime'
+import { normalizeDate } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'

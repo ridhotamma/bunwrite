@@ -53,6 +53,7 @@ export async function s3Call<T>(config: S3Config, run: () => Promise<T>): Promis
     const message = error instanceof Error ? error.message : String(error)
     throw new Error(
       `S3 request to ${endpoint} failed (${code}: ${message}). Check the endpoint, bucket and region. If this is an S3-compatible service or an AWS bucket name with dots, turn on Force path-style addressing in Settings → File storage.`,
+      { cause: error },
     )
   }
 }

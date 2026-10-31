@@ -31,7 +31,7 @@ interface MethodIndex<C> {
 }
 
 /** Shared empty list; a lookup miss must not allocate on the request path. */
-const NO_ROUTES: Route<any>[] = []
+const NO_ROUTES: Route<never>[] = []
 
 /** First path segment when it is static (`/databases/...` → `databases`), else null. */
 function staticSegment(path: string): string | null {

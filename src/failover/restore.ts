@@ -177,6 +177,7 @@ function restoreOne(
     }
     throw new Error(
       `failover: could not restore ${target}${id ? ` ${id}` : ''} from ${remote}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
     )
   }
 }

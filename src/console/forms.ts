@@ -2,7 +2,7 @@
 import type { S3Config } from '~/config'
 import { err } from '~/lib/errors'
 
-export type Form = Record<string, any>
+export type Form = Record<string, unknown>
 
 /** Read a form body; repeated fields become arrays. GET and non-form bodies yield {}. */
 export async function readForm(request: Request): Promise<Form> {
@@ -61,7 +61,7 @@ export function parseJsonObject(raw: unknown, message: string): Record<string, u
 }
 
 /** Read S3 fields from a settings form, keeping the stored secret when the field is blank. */
-export function s3FromForm(form: Record<string, any>, prefix: string, existing: S3Config): S3Config {
+export function s3FromForm(form: Record<string, unknown>, prefix: string, existing: S3Config): S3Config {
   const read = (suffix: string) => value(form, `${prefix}${suffix}`)
   const enabled = checked(form[`${prefix}Enabled`])
   const secret = String(form[`${prefix}Secret`] ?? '') || existing.secret

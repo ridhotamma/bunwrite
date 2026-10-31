@@ -58,6 +58,25 @@ interface PullRef {
   fork: boolean
 }
 
+/** The parts of a GitHub webhook this hub reads. */
+interface GithubWebhookPayload {
+  ref?: string
+  ref_type?: string
+  action?: string
+  deleted?: unknown
+  after?: string
+  head_commit?: {
+    message?: unknown
+    url?: unknown
+    author?: { username?: unknown; name?: unknown }
+  }
+  repository?: { id?: number | string; full_name?: string }
+  installation?: { id?: number | string }
+  repositories_removed?: Array<{ id?: number | string }>
+  pull_request?: GithubPull
+  [key: string]: unknown
+}
+
 /** What the console's deploy page offers for a connected resource. */
 export interface DeployOptions {
   /** Branches of the repository, production branch first. */
@@ -567,9 +586,9 @@ export class VcsHub {
     if (!verifyWebhookSignature(app.webhookSecret, body, request.headers.get('x-hub-signature-256'))) {
       return Response.json({ message: 'The webhook signature does not match.', code: 401 }, { status: 401 })
     }
-    let payload: any
+    let payload: GithubWebhookPayload
     try {
-      payload = JSON.parse(new TextDecoder().decode(body))
+      payload = JSON.parse(new TextDecoder().decode(body)) as GithubWebhookPayload
     } catch {
       return Response.json({ message: 'The webhook body is not JSON.', code: 400 }, { status: 400 })
     }
@@ -578,7 +597,7 @@ export class VcsHub {
     return Response.json({ received: event }, { status: 202 })
   }
 
-  private async onEvent(event: string, payload: any): Promise<void> {
+  private async onEvent(event: string, payload: GithubWebhookPayload): Promise<void> {
     if (event === 'push') return this.onPush(payload)
     if (event === 'pull_request') return this.onPullRequest(payload)
     if (event === 'delete' && payload.ref_type === 'branch') return this.onBranchDeleted(String(payload.repository?.id ?? ''), String(payload.ref ?? ''))
@@ -593,7 +612,7 @@ export class VcsHub {
     }
   }
 
-  private async onPush(payload: any): Promise<void> {
+  private async onPush(payload: GithubWebhookPayload): Promise<void> {
     const ref = String(payload.ref ?? '')
     if (!ref.startsWith('refs/heads/')) return
     const branch = ref.slice('refs/heads/'.length)
@@ -634,7 +653,7 @@ export class VcsHub {
     }
   }
 
-  private async onPullRequest(payload: any): Promise<void> {
+  private async onPullRequest(payload: GithubWebhookPayload): Promise<void> {
     const pr = payload.pull_request as GithubPull | undefined
     if (!pr) return
     const repositoryId = String(payload.repository?.id ?? pr.base.repo.id)
@@ -645,7 +664,7 @@ export class VcsHub {
       if (fork) for (const t of targets) if (t.type === 'site') t.project.services.sites.removeBranch(t.id, `pr-${pr.number}`)
       return
     }
-    if (!['opened', 'reopened', 'synchronize'].includes(payload.action)) return
+    if (!payload.action || !['opened', 'reopened', 'synchronize'].includes(payload.action)) return
     const pull: PullRef = { number: pr.number, branch: pr.head.ref, fork }
     // Branches of the repository itself build on push; the comment just needs to exist.
     if (!fork) {

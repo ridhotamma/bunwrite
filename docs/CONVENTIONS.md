@@ -22,16 +22,17 @@ bun run format        # write, for the modules that have been migrated
 bun run format:check  # CI
 ```
 
-The scripts currently cover the data layer (`src/db`, `src/documents`,
-`src/transactions`, `src/settings`, `src/logs`, `src/variables`,
-`src/webhooks`, `src/cluster`, `src/schema/push-postgres.ts`). As a module is
-refactored it is added to the globs in `package.json`. Do not reformat a module
-you are not otherwise touching: it hides the real diff.
+`format`/`format:check` currently cover the data layer (`src/db`,
+`src/documents`, `src/transactions`, `src/settings`, `src/logs`,
+`src/variables`, `src/webhooks`, `src/cluster`, `src/schema/push-postgres.ts`).
+As a module is refactored it is added to the globs in `package.json`. Do not
+reformat a module you are not otherwise touching: it hides the real diff.
+`lint` covers all of `src`; keep it at zero errors.
 
 ## Linting
 
 ```bash
-bun run lint
+bun run lint        # all of src
 ```
 
 The ESLint flat config enables `typescript-eslint` recommended rules plus:

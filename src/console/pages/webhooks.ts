@@ -17,7 +17,7 @@ import { BunwriteError, err } from '~/lib/errors'
 import type { WebhookRow } from '~/webhooks/service'
 
 /** Checked presets and hand-typed patterns, without duplicates. */
-const eventsOf = (form: Record<string, any>): string[] => [...new Set([...arrayOf(form.events), ...lines(form.customEvents)])]
+const eventsOf = (form: Record<string, unknown>): string[] => [...new Set([...arrayOf(form.events), ...lines(form.customEvents)])]
 
 /** The schema's databases and collections, as the event picker lists them. */
 function databasesOf(ctx: ConsoleContext): DatabaseChoice[] {
@@ -25,7 +25,7 @@ function databasesOf(ctx: ConsoleContext): DatabaseChoice[] {
   return [...ctx.services.registry.databases.values()].map((database) => ({
     id: database.id,
     name: database.name,
-    collections: collections.filter((c) => c.databaseId === database.id).map((c) => ({ id: c.$id, name: c.name })),
+    collections: collections.filter((c) => c.databaseId === database.id).map((c) => ({ id: String(c.$id ?? ''), name: String(c.name ?? '') })),
   }))
 }
 
@@ -37,7 +37,7 @@ function envOf(ctx: ConsoleContext): WebhookEnv {
   }
 }
 
-function draftOfForm(form: Record<string, any>, existing?: WebhookRow): WebhookDraft {
+function draftOfForm(form: Record<string, unknown>, existing?: WebhookRow): WebhookDraft {
   return {
     id: existing?.id ?? value(form, 'id'),
     name: value(form, 'name') || existing?.name || '',

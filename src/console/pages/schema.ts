@@ -47,7 +47,7 @@ function selectedCollections(ctx: ConsoleContext, url: URL) {
   return { all, explicit, selected: explicit ? all.filter((c) => ids.has(`${c.databaseId}/${c.$id}`)) : all }
 }
 
-function collectionsUrl(selected: Record<string, any>[], explicit: boolean): string {
+function collectionsUrl(selected: Record<string, unknown>[], explicit: boolean): string {
   if (!explicit) return `${SCHEMA}/collections.json`
   const params = new URLSearchParams({ selected: '1' })
   for (const collection of selected) params.append('ids', `${collection.databaseId}/${collection.$id}`)
@@ -67,14 +67,10 @@ function parseCollections(raw: string): unknown[] {
   } catch {
     throw err('general_argument_invalid', 'That is not valid JSON.')
   }
-  const collections =
-    Array.isArray(parsed)
-      ? parsed
-      : parsed && typeof parsed === 'object' && Array.isArray((parsed as any).tables)
-        ? (parsed as any).tables
-        : parsed && typeof parsed === 'object' && Array.isArray((parsed as any).collections)
-          ? (parsed as any).collections
-          : null
+  const record = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null
+  const tables = record && Array.isArray(record.tables) ? record.tables : null
+  const legacy = record && Array.isArray(record.collections) ? record.collections : null
+  const collections = Array.isArray(parsed) ? parsed : (tables ?? legacy)
   if (!collections) throw err('general_argument_invalid', 'The import must be a JSON array of collections.')
   return collections
 }
@@ -110,7 +106,10 @@ export function schemaPages(router: ConsoleRouter): void {
       const collections = parseCollections(raw)
       const changes = ctx.schema.importCollections(collections, { prune, dryRun: true })
       const names = collections
-        .map((collection: any) => `${collection.name ?? collection.$id ?? collection.id} (${collection.databaseId}/${collection.$id ?? collection.id})`)
+        .map((collection) => {
+          const c = collection as Record<string, unknown>
+          return `${c.name ?? c.$id ?? c.id} (${c.databaseId}/${c.$id ?? c.id})`
+        })
         .join(' · ')
       return ctx.render(
         'Schema',

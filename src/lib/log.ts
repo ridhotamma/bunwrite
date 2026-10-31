@@ -18,6 +18,8 @@ export interface RequestLog {
   error?: string
 }
 
+// Control characters would corrupt a log line; stripping them is the point.
+// eslint-disable-next-line no-control-regex
 const clean = (value: string) => value.replace(/[\s\u0000-\u001f]+/g, '_')
 
 export const truncate = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max)}…` : value)

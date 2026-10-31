@@ -21,6 +21,20 @@ const parse = <T>(value: unknown, fallback: T): T => {
   }
 }
 
+export interface IdentityRow {
+  seq: number
+  id: string
+  user_id: string
+  provider: string
+  provider_uid: string | null
+  provider_email: string | null
+  provider_access_token: string
+  provider_access_token_expiry: string
+  provider_refresh_token: string
+  created_at: string
+  updated_at: string
+}
+
 export interface UserRowFull {
   seq: number
   id: string

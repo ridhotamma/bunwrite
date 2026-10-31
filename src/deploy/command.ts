@@ -8,8 +8,6 @@
  * command (npm, make and whatever they started) with it instead of only its
  * `sh`, which would leave workers running as the function's user for good.
  */
-import type { FunctionSandbox } from '~/functions/sandbox'
-
 /** Appwrite builds have 15 minutes; a build that takes longer is killed. */
 export const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 

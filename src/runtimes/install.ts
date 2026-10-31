@@ -76,7 +76,7 @@ export function installedRuntime(config: Config, id: string): ResolvedRuntime | 
   if (parsed.kind === 'bun' && parsed.line === SERVER_BUN_LINE) return serverBun(config, id)
   if (!config.runtimes.download) return serverBun(config, id)
   const dir = join(runtimesRoot(config), id)
-  let version = ''
+  let version: string
   try {
     version = readFileSync(join(dir, 'current'), 'utf8').trim()
   } catch {
@@ -207,7 +207,7 @@ async function request(url: string): Promise<Response> {
   try {
     res = await fetch(url, { headers: { 'user-agent': 'bunwrite', accept: '*/*' } })
   } catch (error) {
-    throw new Error(`Could not reach ${new URL(url).host} to download a runtime (${error instanceof Error ? error.message : String(error)}). Set RUNTIMES_DOWNLOAD=false to use this server's Bun instead.`)
+    throw new Error(`Could not reach ${new URL(url).host} to download a runtime (${error instanceof Error ? error.message : String(error)}). Set RUNTIMES_DOWNLOAD=false to use this server's Bun instead.`, { cause: error })
   }
   if (!res.ok) throw new Error(`${url} answered ${res.status}.`)
   return res

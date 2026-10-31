@@ -56,7 +56,7 @@ function attributeForm(c: Collection, a: Collection['attributes'][number] | null
   </form>`
 }
 
-function attributeFromForm(form: Record<string, any>) {
+function attributeFromForm(form: Record<string, unknown>) {
   const type = value(form, 'type') || 'string'
   const base = ['email', 'url', 'enum'].includes(type) ? 'string' : type
   return {

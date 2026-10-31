@@ -5,6 +5,7 @@
  * project config shape the project keeps in its repo.
  */
 import type { Db } from '~/db/connection'
+import type { BucketRow } from '~/storage/service'
 import { collectionVersionKey } from '~/cluster/versions'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -145,7 +146,7 @@ export class SchemaAdmin {
   }
 
   /** All collections as project config table entries. */
-  collectionDefinitions(): Record<string, any>[] {
+  collectionDefinitions(): Record<string, unknown>[] {
     return [...this.registry.collections.values()]
       .sort((a, b) => a.seq - b.seq)
       .map((c) => ({
@@ -161,7 +162,7 @@ export class SchemaAdmin {
   }
 
   /** Selected collections as project config table entries. */
-  exportCollections(ids?: Iterable<string>): Record<string, any>[] {
+  exportCollections(ids?: Iterable<string>): Record<string, unknown>[] {
     const definitions = this.collectionDefinitions()
     if (!ids) return definitions
     const wanted = new Set(ids)
@@ -178,7 +179,7 @@ export class SchemaAdmin {
     }
     const list = collections.map((raw) => {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw err('general_argument_invalid', 'Each collection must be a JSON object.')
-      const entry = { ...(raw as Record<string, any>) }
+      const entry = { ...(raw as Record<string, unknown>) }
       const databaseId = String(entry.databaseId ?? '')
       const id = String(entry.$id ?? entry.id ?? '')
       if (!databaseId || !id) throw err('general_argument_invalid', 'Each collection needs a databaseId and $id.')
@@ -204,7 +205,7 @@ export class SchemaAdmin {
         entry.rowSecurity ??= existing.documentSecurity
         entry.$permissions ??= existing.permissions
         entry.indexes ??= existing.indexes.map((index) => ({ key: index.key, type: index.type, status: 'available', columns: index.attributes, orders: index.orders }))
-        const columns = (entry.columns ?? entry.attributes ?? []) as Record<string, any>[]
+        const columns = (entry.columns ?? entry.attributes ?? []) as Record<string, unknown>[]
         const keys = new Set(columns.map((column) => column.key))
         for (const attribute of existing.attributes) {
           if (!keys.has(attribute.key)) columns.push(this.attributeConfig(attribute))
@@ -219,7 +220,7 @@ export class SchemaAdmin {
   /** Current schema in project config shape (tablesDB/tables/buckets). */
   export(): Record<string, unknown> {
     const sql = this.db.sqlite
-    const buckets = sql.query<any, []>('SELECT * FROM _buckets ORDER BY seq').all()
+    const buckets = sql.query<BucketRow, []>('SELECT * FROM _buckets ORDER BY seq').all()
     return {
       tablesDB: [...this.registry.databases.values()].map((d) => ({ $id: d.id, name: d.name, enabled: d.enabled })),
       tables: this.collectionDefinitions(),

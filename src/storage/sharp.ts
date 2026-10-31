@@ -10,9 +10,17 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type sharpFactory from 'sharp'
+import type { Sharp } from 'sharp'
+
 import type { Config } from '~/config'
 
 type EmbeddedFile = Blob & { name: string }
+
+/** The sharp module (a callable factory plus its global helpers). */
+export type SharpModule = typeof sharpFactory
+/** One sharp image pipeline. */
+export type SharpInstance = Sharp
 
 const PREFIXES = [
   'sharp/',
@@ -33,7 +41,7 @@ const ENTRY = ['sharp', 'dist', 'index.cjs']
 /** Bump when the extraction or patching changes, so a cached folder is rebuilt. */
 const EXTRACT_VERSION = 2
 
-let loaded: Promise<any> | null = null
+let loaded: Promise<SharpModule> | null = null
 
 function cacheDir(config: Config): string {
   const base = config.databasePath === ':memory:' ? join(tmpdir(), 'bunwrite') : dirname(resolve(config.databasePath))
@@ -154,7 +162,7 @@ async function extractSharp(config: Config): Promise<string> {
  * Optional limits for small hosts. libvips sizes its thread pool from the host's
  * CPU count, which ignores container CPU limits.
  */
-function tune(sharp: any): any {
+function tune(sharp: SharpModule): SharpModule {
   const threads = Number(process.env.SHARP_CONCURRENCY)
   if (Number.isInteger(threads) && threads > 0) sharp.concurrency(threads)
   const cacheMb = process.env.SHARP_CACHE_MB
@@ -164,7 +172,7 @@ function tune(sharp: any): any {
   return sharp
 }
 
-export function loadSharp(config: Config): Promise<any> {
+export function loadSharp(config: Config): Promise<SharpModule> {
   if (!loaded) {
     loaded = (async () => {
       if (!Bun.isStandaloneExecutable) {

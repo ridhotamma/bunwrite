@@ -28,7 +28,7 @@ import { signInPage } from './pages/sign-in'
 import { alert, emptyState, header } from './ui'
 import { inviteAcceptContent, inviteUnavailableContent } from './views/organization'
 
-function loopback(request: Request, server?: Server<any>): boolean {
+function loopback(request: Request, server?: Server<unknown>): boolean {
   const ip = server?.requestIP(request)?.address ?? ''
   const forwarded = request.headers.get('x-forwarded-for') || request.headers.get('cf-connecting-ip')
   return !forwarded && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')
@@ -57,7 +57,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
     control.mailer.send(control.templates.render('mfaChallenge', email, { user: email, otp: code }))
 
   return {
-    async handle(request: Request, server?: Server<any>): Promise<Response | null> {
+    async handle(request: Request, server?: Server<unknown>): Promise<Response | null> {
       const url = new URL(request.url)
       if (url.pathname !== '/console' && !url.pathname.startsWith('/console/')) return null
       if (!control.config.consoleEnabled) return new Response('Not found', { status: 404 })

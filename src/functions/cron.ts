@@ -14,7 +14,8 @@ function field(spec: string, [min, max]: readonly [number, number]): Set<number>
   for (const part of spec.split(',')) {
     const [range, stepText] = part.split('/') as [string, string?]
     const step = stepText ? Number(stepText) : 1
-    let [from, to] = range === '*' ? [min, max] : (range.split('-').map(Number) as [number, number?]) as [number, number]
+    const [from, toValue] = range === '*' ? [min, max] : ((range.split('-').map(Number) as [number, number?]) as [number, number])
+    let to = toValue
     if (to === undefined || Number.isNaN(to)) to = stepText ? max : from
     if ([from, to, step].some((n) => !Number.isInteger(n)) || step < 1 || from < min || to > max || from > to) {
       throw new Error(`Invalid cron field "${spec}"`)

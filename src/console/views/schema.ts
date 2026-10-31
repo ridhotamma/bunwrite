@@ -18,10 +18,10 @@ function changeList(changes: string[]): Html {
   return html`<ul class="list">${changes.map((c) => html`<li><span class="mono">${c}</span>${c.startsWith('+') ? badge('Add', 'success') : c.startsWith('-') ? badge('Remove', 'critical') : badge('Change', 'attention')}</li>`)}</ul>`
 }
 
-function exportPanel(selected: Record<string, any>[], download: string): Html {
+function exportPanel(selected: Record<string, unknown>[], download: string): Html {
   const json = JSON.stringify(selected, null, 2)
-  const columns = selected.reduce((sum, collection) => sum + (collection.columns?.length ?? 0), 0)
-  const indexes = selected.reduce((sum, collection) => sum + (collection.indexes?.length ?? 0), 0)
+  const columns = selected.reduce((sum, collection) => sum + (Array.isArray(collection.columns) ? collection.columns.length : 0), 0)
+  const indexes = selected.reduce((sum, collection) => sum + (Array.isArray(collection.indexes) ? collection.indexes.length : 0), 0)
   const bytes = new TextEncoder().encode(json).length
   const size = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`
   return html`<div id="export-panel">
@@ -127,12 +127,13 @@ const EXPORT_SCRIPT = `
 window.__bunwriteExportSync(document.getElementById("export-form"))
 `
 
-function exportGroups(all: Record<string, any>[], databases: Map<string, string>) {
-  const groups = new Map<string, Record<string, any>[]>()
+function exportGroups(all: Record<string, unknown>[], databases: Map<string, string>) {
+  const groups = new Map<string, Record<string, unknown>[]>()
   for (const collection of all) {
-    const list = groups.get(collection.databaseId) ?? []
+    const id = typeof collection.databaseId === 'string' ? collection.databaseId : ''
+    const list = groups.get(id) ?? []
     list.push(collection)
-    groups.set(collection.databaseId, list)
+    groups.set(id, list)
   }
   return [...groups].map(([id, collections]) => ({ id, name: databases.get(id) ?? id, collections }))
 }
@@ -162,8 +163,8 @@ export function configurationView(options: { schemaPath?: string; fileName: stri
 }
 
 export interface ExportView {
-  all: Record<string, any>[]
-  selected: Record<string, any>[]
+  all: Record<string, unknown>[]
+  selected: Record<string, unknown>[]
   download: string
   /** Database id to display name, for the group headers. */
   databases: Map<string, string>
@@ -171,7 +172,7 @@ export interface ExportView {
 
 export function exportView(options: ExportView): Html {
   const { all, selected, download, databases } = options
-  const key = (collection: Record<string, any>) => `${collection.databaseId}/${collection.$id}`
+  const key = (collection: Record<string, unknown>) => `${collection.databaseId}/${collection.$id}`
   const selectedKeys = new Set(selected.map(key))
   const list = all.length
     ? html`<div class="export-list">
@@ -186,7 +187,7 @@ export function exportView(options: ExportView): Html {
               <span class="export-count subdued" data-export-count>${on}/${group.collections.length}</span>
             </label>
             ${group.collections.map((collection) => {
-              const columns = collection.columns?.length ?? 0
+              const columns = Array.isArray(collection.columns) ? collection.columns.length : 0
               return html`<label class="export-row" data-export-row="${`${collection.name} ${collection.$id}`.toLowerCase()}">
                 <input type="checkbox" name="ids" value="${key(collection)}" ${selectedKeys.has(key(collection)) ? 'checked' : ''}>
                 <span class="export-row-text">

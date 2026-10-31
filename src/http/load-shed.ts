@@ -7,9 +7,13 @@
  * proxy and the client can retry or shed load. Health checks always pass so a
  * busy worker is not mistaken for a dead one.
  */
-// `any` keeps this boundary compatible with Bun's handler types and the app's
-// `Response | undefined` return without casts at every call site.
-export type FetchHandler = (request: Request, server?: any) => any
+import type { Server } from 'bun'
+
+/** The shape Bun.serve and the app share; `undefined` is a WebSocket upgrade. */
+export type FetchHandler = (
+  request: Request,
+  server?: Server<unknown>,
+) => Response | undefined | Promise<Response | undefined>
 
 export function isHealthPath(pathname: string): boolean {
   return pathname === '/health' || pathname === '/v1/health' || pathname.startsWith('/v1/health/')
@@ -46,7 +50,7 @@ export function withInflightLimit(handler: FetchHandler, limit: number): FetchHa
     if (isHealthPath(pathname) || isRealtimePath(pathname)) return handler(request, server)
     if (inflight >= limit) return busyResponse()
     inflight++
-    let result: Response | Promise<Response>
+    let result: Response | undefined | Promise<Response | undefined>
     try {
       result = handler(request, server)
     } catch (error) {

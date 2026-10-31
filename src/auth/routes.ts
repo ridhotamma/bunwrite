@@ -7,7 +7,7 @@ import { assertRedirect, withQuery } from '~/lib/origins'
 import type { RouteContext, Router } from '~/lib/router'
 import { signJwt } from './jwt'
 import { callerHasScope } from './caller'
-import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type SessionRow, type UserRowFull } from './models'
+import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type IdentityRow, type SessionRow, type UserRowFull } from './models'
 import { verifyPassword } from './passwords'
 import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from './service'
 import { FailedAttempts, RateLimiter } from '~/lib/limits'
@@ -92,10 +92,10 @@ function sessionFromToken(route: RouteContext<AppContext>, user: UserRowFull, to
     provider,
     factors,
     info,
-    providerUid: identity?.provider_uid,
-    providerAccessToken: identity?.provider_access_token,
-    providerRefreshToken: identity?.provider_refresh_token,
-    providerAccessTokenExpiry: identity?.provider_access_token_expiry,
+    providerUid: identity?.provider_uid ?? undefined,
+    providerAccessToken: identity?.provider_access_token ?? undefined,
+    providerRefreshToken: identity?.provider_refresh_token ?? undefined,
+    providerAccessTokenExpiry: identity?.provider_access_token_expiry ?? undefined,
   })
   return sessionResponse(route, session, secret)
 }
@@ -350,14 +350,15 @@ export function userRoutes(router: Router<AppContext>): void {
     let offset = 0
     let after = 0
     for (const raw of list(params.queries)) {
-      const query = typeof raw === 'string' ? JSON.parse(raw) : (raw as any)
+      const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const query = parsed && typeof parsed === 'object' ? (parsed as { method?: unknown; values?: unknown[] }) : null
       if (query?.method === 'limit') limit = Number(query.values?.[0] ?? 25)
       if (query?.method === 'offset') offset = Number(query.values?.[0] ?? 0)
       if (query?.method === 'cursorAfter') {
         after = ctx.db.sqlite.query<{ seq: number }, [string]>('SELECT seq FROM _identities WHERE id = ?').get(String(query.values?.[0]))?.seq ?? 0
       }
     }
-    const rows = ctx.db.sqlite.query<any, [number, number, number]>('SELECT * FROM _identities WHERE seq > ? ORDER BY seq LIMIT ? OFFSET ?').all(after, limit, offset)
+    const rows = ctx.db.sqlite.query<IdentityRow, [number, number, number]>('SELECT * FROM _identities WHERE seq > ? ORDER BY seq LIMIT ? OFFSET ?').all(after, limit, offset)
     const total = (ctx.db.sqlite.query('SELECT count(*) AS n FROM _identities').get() as { n: number }).n
     return json({
       total,

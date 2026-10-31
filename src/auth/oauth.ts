@@ -22,6 +22,7 @@ import { uniqueId } from '~/lib/ids'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import { OAUTH_PROVIDERS_BY_ID, type OAuthIdentity, type OAuthProvider, type OAuthTokens } from './providers'
 import type { AuthService } from './service'
+import type { IdentityRow } from './models'
 
 const OAUTH2_TOKEN_TTL = 15 * 60
 const STATE_TTL = 15 * 60
@@ -186,7 +187,7 @@ export class OAuthService {
   /** Provider details a session created from an oauth2 token carries. */
   identity(userId: string, provider: string) {
     return this.db.sqlite
-      .query<any, [string, string]>('SELECT * FROM _identities WHERE user_id = ? AND provider = ? ORDER BY seq DESC LIMIT 1')
+      .query<IdentityRow, [string, string]>('SELECT * FROM _identities WHERE user_id = ? AND provider = ? ORDER BY seq DESC LIMIT 1')
       .get(userId, provider)
   }
 }

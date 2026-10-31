@@ -73,9 +73,10 @@ function page<T extends Record<string, unknown>>(items: T[], rawQueries: unknown
   let limit = 25
   let offset = 0
   for (const raw of rawQueries) {
-    let query: any
+    let query: { method?: unknown; attribute?: unknown; values?: unknown[] } | null
     try {
-      query = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
+      query = parsed && typeof parsed === 'object' ? (parsed as { method?: unknown; attribute?: unknown; values?: unknown[] }) : null
     } catch {
       throw err('general_argument_invalid', 'Invalid `queries` param: Invalid query: Syntax error')
     }
@@ -85,8 +86,9 @@ function page<T extends Record<string, unknown>>(items: T[], rawQueries: unknown
     else if (query?.method === 'cursorAfter') {
       const i = out.findIndex((x) => x[idField] === v[0])
       out = i >= 0 ? out.slice(i + 1) : out
-    } else if (query?.method === 'equal' && ['$id', 'key', 'name', 'type'].includes(query.attribute)) {
-      out = out.filter((x) => v.includes(x[query.attribute]))
+    } else if (query?.method === 'equal') {
+      const attribute = typeof query.attribute === 'string' ? query.attribute : ''
+      if (['$id', 'key', 'name', 'type'].includes(attribute)) out = out.filter((x) => v.includes(x[attribute]))
     }
   }
   return out.slice(offset, offset + limit)
@@ -142,8 +144,11 @@ function definitionFor(type: string, p: Params): Record<string, unknown> {
 }
 
 /** The create-path type for an inline definition: `{ type: 'string', format: 'email' }` is created as `email`. */
-const pathTypeOf = (raw: Record<string, any>): string =>
-  FORMATTED.includes(raw.format) ? raw.format : raw.type === 'double' ? 'float' : String(raw.type)
+const pathTypeOf = (raw: Record<string, unknown>): string => {
+  const format = typeof raw.format === 'string' ? raw.format : ''
+  const type = typeof raw.type === 'string' ? raw.type : ''
+  return FORMATTED.includes(format) ? format : type === 'double' ? 'float' : type
+}
 
 /** Kind of value a path type stores, to reject e.g. PATCH /integer/<a string key>. */
 function kindOf(type: string): string {
@@ -241,8 +246,8 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     if (ctx.registry.collections.has(`${databaseId}/${id}`)) throw err(tables ? 'table_already_exists' : 'collection_already_exists', undefined, [id])
     const security = bool(tables ? (params.rowSecurity ?? params.documentSecurity) : (params.documentSecurity ?? params.rowSecurity), false)
     // Appwrite 1.8 can create the attributes and indexes in the same call.
-    const attributes = list(params.attributes ?? params.columns) as Record<string, any>[]
-    const indexes = list(params.indexes) as Record<string, any>[]
+    const attributes = list(params.attributes ?? params.columns) as Record<string, unknown>[]
+    const indexes = list(params.indexes) as Record<string, unknown>[]
     atomically(ctx, () => {
       const a = admin(ctx)
       a.createCollection(databaseId, id, str(params.name) ?? id, security, permissionsOf(params.permissions) ?? [])

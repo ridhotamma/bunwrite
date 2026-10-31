@@ -45,7 +45,7 @@
     "cli:build": "cd packages/cli && bun run build",
     "format": "prettier --write \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
     "format:check": "prettier --check \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
-    "lint": "eslint \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",

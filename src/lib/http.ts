@@ -12,15 +12,22 @@ export function parseSearchParams(search: URLSearchParams): Params {
   for (const [rawKey, value] of search) {
     const isPush = rawKey.endsWith('[]')
     const parts = (isPush ? rawKey.slice(0, -2) : rawKey).split(/\]?\[/).map((p) => p.replace(/\]$/, ''))
-    let target: any = out
+    let target: Record<string, unknown> = out
     parts.forEach((key, i) => {
       if (i === parts.length - 1) {
-        if (isPush) (target[key] ??= []).push(value)
-        else target[key] = value
+        if (isPush) {
+          const list = target[key]
+          if (Array.isArray(list)) list.push(value)
+          else target[key] = [value]
+        } else target[key] = value
         return
       }
-      target[key] ??= /^\d+$/.test(parts[i + 1]!) ? [] : {}
-      target = target[key]
+      const next = target[key]
+      if (next && typeof next === 'object') target = next as Record<string, unknown>
+      else {
+        target[key] = /^\d+$/.test(parts[i + 1]!) ? [] : {}
+        target = target[key] as Record<string, unknown>
+      }
     })
   }
   return compactArrays(out) as Params
@@ -29,7 +36,7 @@ export function parseSearchParams(search: URLSearchParams): Params {
 function compactArrays(value: unknown): unknown {
   if (Array.isArray(value)) return value.filter((v) => v !== undefined).map(compactArrays)
   if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) (value as any)[k] = compactArrays(v)
+    for (const [k, v] of Object.entries(value)) (value as Record<string, unknown>)[k] = compactArrays(v)
   }
   return value
 }

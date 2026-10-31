@@ -23,51 +23,12 @@ import {
 } from '~/db/postgres-schema'
 import { now } from '~/lib/datetime'
 import { readConfig, type ConfigCollection, type PushOptions } from './push'
+import type { BucketConfig, FunctionConfig, ProjectConfig } from './config'
 import { ftsTableName, permsTableName, tableName, type Attribute, type Index } from './types'
 
 const q = (name: string) => `"${name.replace(/"/g, '""')}"`
 
 const flag = (value: boolean | number) => (value ? 1 : 0)
-
-/** The subset of a project config this push reads for buckets and functions. */
-interface BucketConfig {
-  $id: string
-  name?: string
-  enabled?: boolean
-  fileSecurity?: boolean
-  $permissions?: string[]
-  maximumFileSize?: number
-  allowedFileExtensions?: string[]
-  compression?: string
-  encryption?: boolean
-  antivirus?: boolean
-  transformations?: boolean
-}
-
-interface FunctionConfig {
-  $id: string
-  name?: string
-  runtime?: string
-  entrypoint?: string
-  path?: string
-  execute?: string[]
-  events?: string[]
-  schedule?: string
-  timeout?: number
-  enabled?: boolean
-  scopes?: string[]
-  commands?: string
-  logging?: boolean
-  buildSpecification?: string
-  runtimeSpecification?: string
-  deploymentRetention?: number
-}
-
-interface ProjectConfig {
-  buckets?: BucketConfig[]
-  functions?: FunctionConfig[]
-  [key: string]: unknown
-}
 
 interface ExistingCollection {
   name: string
