@@ -200,10 +200,11 @@ and never receives public traffic. Without `WORKER_PORTS`, the workers share one
 port with `SO_REUSEPORT`; that is slightly faster but the proxy cannot see an
 individual stalled worker.
 
-`MAX_INFLIGHT` is a total across the public workers. Above it, Bunwrite answers
-`503` with `Retry-After: 1` immediately instead of holding the request. Keep it
-near the measured safe concurrency (about 200 for the write-heavy booking mix)
-and leave headroom for spikes.
+`MAX_INFLIGHT` is per public worker. Above it, Bunwrite answers `503` with
+`Retry-After: 1` immediately instead of holding the request. Keep it near the
+measured safe concurrency per worker (about 200 for the write-heavy booking
+mix) and leave headroom for spikes. The total the cluster will admit is the
+value times the number of public workers.
 
 **Postgres.** With `DB_DRIVER=postgres`, set `WORKERS` for the public HTTP
 processes only. The supervisor does not start writer shards or loopback writer

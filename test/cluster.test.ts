@@ -66,8 +66,10 @@ describe('worker count', () => {
     expect(resolveWorkers('64', 'linux')).toBe(16)
   })
 
-  test('auto follows the CPUs the container may use', () => {
-    expect(resolveWorkers('auto', 'linux', () => 3.5)).toBe(4)
+  test('auto leaves one CPU for the proxy and supervisor', () => {
+    expect(resolveWorkers('auto', 'linux', () => 3.5)).toBe(3)
+    expect(resolveWorkers('auto', 'linux', () => 4)).toBe(3)
+    expect(resolveWorkers('auto', 'linux', () => 2)).toBe(1)
     expect(resolveWorkers('auto', 'linux', () => 0.5)).toBe(1)
     expect(resolveWorkers('auto', 'linux', () => 64)).toBe(16)
     // SO_REUSEPORT is only used on Linux.

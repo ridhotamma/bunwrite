@@ -200,9 +200,9 @@ replica.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A SQLite cluster also starts a pool of writer processes; Postgres does not. |
+| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use, less one for the proxy and supervisor (Linux only); a number pins the count; `1` keeps one process. A SQLite cluster also starts a pool of writer processes; Postgres does not. |
 | `WORKER_PORTS` | `false` | With `WORKERS` > 1, bind one port per public worker (`PORT`, `PORT+1`, ...) instead of sharing one port with `SO_REUSEPORT`. Set the proxy upstream to the same range so it can health-check and route around a stalled worker. |
-| `MAX_INFLIGHT` | `200` | Total in-flight requests allowed across the public workers before new ones get `503` with `Retry-After: 1`. Health checks are always allowed. `0` disables shedding. |
+| `MAX_INFLIGHT` | `200` | In-flight requests allowed per public worker before that worker returns `503` with `Retry-After: 1`. It is per process, not a cluster total, so adding workers adds headroom instead of dividing it. Health checks are always allowed. `0` disables shedding. |
 | `HTTP_IDLE_TIMEOUT` | `30` | Seconds Bun keeps an idle HTTP connection open (maximum 255, `0` disables). Keep it above the proxy's upstream keepalive; the bundled Caddyfile uses 5s. |
 | `CACHE_CHECK_MS` | `0` | Check for settings, schema, session and API-key changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. 100–250 is a good production trade-off. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |

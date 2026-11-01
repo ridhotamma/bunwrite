@@ -23,8 +23,9 @@ Docker networking or the network.
 
 ## Done
 
-- [x] **One HTTP worker per CPU** (`WORKERS=auto`, Linux), with a leader for
-  background work, cross-process cache reloads and a realtime event bus.
+- [x] **One HTTP worker per CPU, less one for the proxy** (`WORKERS=auto`,
+  Linux), with a leader for background work, cross-process cache reloads and a
+  realtime event bus.
   Design: [ARCHITECTURE.md](ARCHITECTURE.md). Commit `0f2b650`.
 - [x] **Request log sampling** (`LOG_SAMPLE_RATE`); errors are always logged.
 - [x] **Immediate write transactions.** Every write transaction now starts with
@@ -89,9 +90,9 @@ keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
   `WRITER_SHARDS`).
 - [x] **Per-worker ports.** `WORKER_PORTS=true` binds `PORT..PORT+N-1` so the
   proxy can health-check each process and route around a stalled one.
-- [x] **Load shedding.** `MAX_INFLIGHT` (default 200, total across public
-  workers) returns `503` + `Retry-After` instead of holding a black-holed
-  request; health checks are exempt.
+- [x] **Load shedding.** `MAX_INFLIGHT` (default 200 per public worker)
+  returns `503` + `Retry-After` instead of holding a black-holed request; health
+  checks are exempt.
 - [x] **Fast reader lock waits.** `SQLITE_READER_BUSY_TIMEOUT_MS` (default
   500 ms) replaces the 5 s wait on public workers; the writer keeps 5 s.
 - [ ] Re-run the booking matrix at 200/300/400 clients with `WORKER_PORTS=true`

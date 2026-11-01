@@ -137,7 +137,10 @@ export async function startServer(): Promise<void> {
 
   // The writer in a cluster only serves the loopback write listener.
   const servesPublic = !dedicatedWriter || !writer
-  const publicLimit = config.maxInflight > 0 ? Math.max(1, Math.ceil(config.maxInflight / Math.max(1, config.publicWorkers))) : 0
+  // MAX_INFLIGHT is per process: a worker does not know how busy its siblings
+  // are, and dividing a cluster-wide budget made adding CPUs shrink each
+  // worker's headroom (200 / 4 workers = 50).
+  const publicLimit = config.maxInflight > 0 ? config.maxInflight : 0
   const server = servesPublic
     ? Bun.serve({
         hostname: config.hostname,

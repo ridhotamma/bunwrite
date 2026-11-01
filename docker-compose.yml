@@ -40,8 +40,8 @@ services:
       # One listener per public worker (PORT, PORT+1, ...) so Caddy can health
       # check each one. Set UPSTREAM to the same range (see the caddy service).
       WORKER_PORTS: ${WORKER_PORTS:-false}
-      # Total in-flight requests across the public workers before returning 503
-      # with Retry-After. 0 disables shedding.
+      # In-flight requests allowed per public worker before that worker returns
+      # 503 with Retry-After. It is not divided across the pool.
       MAX_INFLIGHT: ${MAX_INFLIGHT:-200}
       # Bun closes idle HTTP connections after this many seconds. Keep it above
       # Caddy's 5s upstream keepalive (see Caddyfile).

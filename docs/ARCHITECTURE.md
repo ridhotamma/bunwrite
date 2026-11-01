@@ -3,7 +3,8 @@
 One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 (`/v1/realtime`), function HTTP endpoints (`/v1/functions/<id>/http`) and the
 admin console (`/console`); on Linux, `WORKERS=auto` starts one such process per
-CPU behind a shared port, plus a pool of writer processes (see
+CPU less one for the proxy, behind a shared port, plus a pool of writer
+processes (see
 [Multiple processes](#multiple-processes)). The
 default project uses the main SQLite file; additional projects each use their
 own database under `data/projects/<id>/`, plus their own storage, backups and
@@ -33,7 +34,8 @@ function folder.
 ## Multiple processes
 
 On Linux, `WORKERS=auto` (the Docker image default) starts one public HTTP
-process per CPU plus, for SQLite, a pool of writer processes. The pool size
+process per CPU less one left for the proxy and supervisor, plus, for SQLite, a
+pool of writer processes. The pool size
 follows `WRITER_SHARDS` (default: one writer per two public workers, capped at
 8). The public processes bind the same port with `SO_REUSEPORT`, or one port
 each when `WORKER_PORTS` is on, and all processes open the same SQLite file in

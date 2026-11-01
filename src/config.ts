@@ -222,8 +222,10 @@ export interface Config {
   /** Group document writes arriving within this many ms into one transaction; 0 disables. */
   writeBatchMs: number
   /**
-   * Total in-flight HTTP requests allowed across the public workers before new
-   * ones get a 503. 0 disables shedding. Health checks are always allowed.
+   * In-flight HTTP requests allowed in this process before new ones get a 503.
+   * Per worker, not a cluster total: a process cannot see its siblings' queues,
+   * and a shared budget made more workers mean less headroom each. 0 disables
+   * shedding. Health checks are always allowed.
    */
   maxInflight: number
   /** Bun's HTTP idle timeout in seconds (0 disables, maximum 255). */

@@ -23,8 +23,9 @@ export interface ClusterConfig {
 }
 
 /**
- * `WORKERS=auto` sizes to the CPUs the container may use; a number pins the
- * public HTTP count; unset, `1`, `off` and `false` keep one process.
+ * `WORKERS=auto` sizes to the CPUs the container may use, less one for the
+ * proxy (and the supervisor that spawns the workers); a number pins the public
+ * HTTP count; unset, `1`, `off` and `false` keep one process.
  */
 export function resolveWorkers(value: string | undefined, platform = process.platform, cpus?: () => number): number {
   if (platform !== 'linux') return 1
@@ -32,7 +33,9 @@ export function resolveWorkers(value: string | undefined, platform = process.pla
   if (!setting || setting === '1' || setting === 'off' || setting === 'false') return 1
   if (setting === 'auto') {
     const count = cpus ? cpus() : detectResources().cpus
-    return Math.max(1, Math.min(MAX_WORKERS, Math.round(count)))
+    // HTTP workers are not the only processes on the box. Leave one CPU for the
+    // proxy and the supervisor so a 4 vCPU host runs three workers, not four.
+    return Math.max(1, Math.min(MAX_WORKERS, Math.round(count) - 1))
   }
   const count = Number(setting)
   if (!Number.isInteger(count) || count <= 1) return 1

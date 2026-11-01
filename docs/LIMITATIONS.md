@@ -306,8 +306,8 @@ same database.
   pool is selected by project ID (`WRITER_SHARDS`), so different projects write
   on different writers; the same project always uses one writer. If that writer
   stalls, public workers retry and then fall back to local writes.
-- `WORKERS=auto` on 4 vCPU starts 4 public workers plus 1 writer; Caddy may be a
-  sixth process on the same cores.
+- `WORKERS=auto` on 4 vCPU starts 3 public workers plus 1 writer; the
+  supervisor and Caddy add two more processes on the same cores.
 - Defaults that commonly need tuning: `LOG_REQUESTS=true`, `CACHE_CHECK_MS=0`,
   `MAX_INFLIGHT=200`, `COMPRESSION` depending on the proxy.
 
