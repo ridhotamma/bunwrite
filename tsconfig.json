@@ -5,7 +5,8 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "~/*": ["./src/*"]
+      "~/*": ["./src/*"],
+      "@bunwrite/sdk": ["./packages/sdk/src/index.ts"]
     },
     "lib": ["ES2023"],
     "types": ["bun"],

@@ -368,10 +368,11 @@ headers, sessions, cookies and error shapes follow Appwrite. See
 [Bunwrite or Appwrite naming](#bunwrite-or-appwrite-naming) for the webhook
 headers and function variables.
 
-## Bunwrite SDK and CLI
+## Bunwrite SDK, CLI and MCP
 
-Bunwrite also has its own SDK and CLI in `packages/`, each a separate package
-with no dependencies and no code shared with the server:
+Bunwrite also has its own SDK, CLI and MCP server in `packages/`, each a
+separate package with no runtime dependencies and no code shared with the
+server:
 
 - [`@bunwrite/sdk`](packages/sdk/README.md): one SDK for browsers, Bun,
   Node.js and edge runtimes. Its services and methods are copied from
@@ -383,6 +384,10 @@ with no dependencies and no code shared with the server:
   `bunwrite.config.json` (or `bunwrite.json`; Appwrite's
   `appwrite.config.json` works too, same format), function deploys, and one
   command per SDK method.
+- [`@bunwrite/mcp`](packages/mcp/README.md): a Model Context Protocol server
+  for Claude Code, Cursor, Codex, OpenCode and other agents. It exposes a
+  compact operator surface over the full Bunwrite API, over stdio or a
+  stateless HTTP endpoint, with a read-only mode.
 
 Both use Bunwrite's names (`X-Bunwrite-*` headers, `bw_session_*` cookies), so
 they need a server from this version on.
@@ -408,13 +413,20 @@ Cursor, Codex, OpenCode, GitHub Copilot and other compatible tools how to use
 Bunwrite correctly:
 
 - `bunwrite` — endpoint and SDK setup, account sessions, databases and
-  documents, permissions, storage, realtime, functions and sites.
+  documents, permissions, storage, realtime, functions, sites, SQLite/Postgres
+  and multi-worker deployments.
 - `bunwrite-cli` — `bunwrite init project`, `pull`/`push`, config files,
   function and site deploys, and service commands.
 - `bunwrite-functions` — `context.req`/`res`, builds, environment variables,
   executions, cron and debugging.
 - `bunwrite-sites` — static deploys, output folders, fallbacks, custom domains
   and `/api/*` functions.
+- `bunwrite-observability` — request logs, traces, metrics, product analytics,
+  feature flags and the server/frontend split.
+- `bunwrite-mcp` — connect an AI agent to a project through the MCP server.
+
+For live project access, [`@bunwrite/mcp`](packages/mcp/README.md) exposes the
+API as MCP tools; see [docs/MCP.md](docs/MCP.md) for client configuration.
 
 Install them from the project folder with the
 [Skills CLI](https://github.com/vercel-labs/skills):
@@ -441,6 +453,40 @@ bunwrite skills --skill bunwrite --agent cursor
 live in [`skills/`](skills/README.md) as plain Markdown and do not execute code.
 Update them with `npx skills update`. If `bunwrite` on your machine is the
 standalone server binary, use `npx @bunwrite/cli@latest skills` instead.
+
+## MCP server
+
+[`@bunwrite/mcp`](packages/mcp/README.md) connects Claude Code, Cursor, Codex,
+OpenCode, VS Code, Zed and other MCP clients to a project. It follows the same
+small-operator-surface design as Appwrite's MCP server: the model sees
+`bunwrite_get_context`, `bunwrite_search_tools`, `bunwrite_call_tool`,
+`bunwrite_call_write_tool` and `bunwrite_search_docs`, while the full catalog is
+searched at runtime.
+
+```json
+{
+  "mcpServers": {
+    "bunwrite": {
+      "command": "node",
+      "args": ["/absolute/path/to/packages/mcp/dist/mcp.js"],
+      "env": {
+        "BUNWRITE_ENDPOINT": "https://api.example.com/v1",
+        "BUNWRITE_PROJECT_ID": "booking-app",
+        "BUNWRITE_API_KEY": "standard_..."
+      }
+    }
+  }
+}
+```
+
+```bash
+bun run mcp:build
+node packages/mcp/dist/mcp.js --help
+```
+
+Writes require `confirm_write: true`; `--read-only` hides them entirely. See
+[docs/MCP.md](docs/MCP.md) for stdio and HTTP setup, the tool catalog, security
+and limits.
 
 ## Bunwrite or Appwrite naming
 

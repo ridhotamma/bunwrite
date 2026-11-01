@@ -41,5 +41,8 @@ jobs:
       # The SDK and CLI packages.
       - run: bunx tsc --noEmit -p packages/sdk
       - run: bunx tsc --noEmit -p packages/cli
+      - run: bunx tsc --noEmit -p packages/mcp
       - run: bun run sdk:build && bun run cli:build
+      - run: bun run mcp:build
       - run: node packages/cli/dist/cli.js --version
+      - run: node packages/mcp/dist/mcp.js --version

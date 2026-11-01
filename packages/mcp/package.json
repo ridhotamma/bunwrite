@@ -1,0 +1,46 @@
+{
+  "name": "@bunwrite/mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for Bunwrite: let AI agents inspect and operate a Bunwrite project through a compact, searchable tool catalog.",
+  "license": "MIT AND BSD-3-Clause",
+  "keywords": [
+    "bunwrite",
+    "appwrite",
+    "mcp",
+    "model-context-protocol",
+    "ai"
+  ],
+  "homepage": "https://github.com/ridhotamma/bunwrite/tree/main/packages/mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ridhotamma/bunwrite.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/ridhotamma/bunwrite/issues"
+  },
+  "type": "module",
+  "bin": {
+    "bunwrite-mcp": "dist/mcp.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "prepublishOnly": "bun run typecheck && (cd ../.. && bun test test/mcp.test.ts) && bun run build"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

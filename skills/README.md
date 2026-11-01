@@ -42,6 +42,7 @@ make them available in every project. Update them with `npx skills update`.
 | --- | --- |
 | [`bunwrite`](bunwrite/SKILL.md) | Core: endpoint setup, SDK, account sessions, databases/documents, queries, permissions, storage, realtime, webhooks, SQLite/Postgres, multi-worker deployments and Appwrite compatibility |
 | [`bunwrite-observability`](bunwrite-observability/SKILL.md) | Request logs, traces, metrics, product analytics, feature flags, OTLP/Datadog/PostHog, the console Observability pages, and what the frontend must send itself |
+| [`bunwrite-mcp`](bunwrite-mcp/SKILL.md) | Connect Claude Code, Cursor, Codex, OpenCode and other MCP clients to a project; operator tools, writes, read-only mode and HTTP transport |
 | [`bunwrite-cli`](bunwrite-cli/SKILL.md) | `@bunwrite/cli`: project linking, `pull`/`push`, config files, function and site deploys, service commands |
 | [`bunwrite-functions`](bunwrite-functions/SKILL.md) | Function handlers, `context.req`/`res`, builds, environment variables, executions, cron and debugging |
 | [`bunwrite-sites`](bunwrite-sites/SKILL.md) | Static sites, output folders, fallbacks, custom domains and `/api/*` functions |
@@ -68,6 +69,12 @@ Use the bunwrite-sites skill. Deploy the Vite dist folder as a site and route
 Use the bunwrite-observability skill. Send request traces and metrics to
 Datadog, document events to PostHog, and read feature flags from GET /v1/flags.
 Tell me which product events the frontend still has to send itself.
+```
+
+```text
+Use the bunwrite-mcp skill. Connect Claude Code to my Bunwrite project, list the
+bookings collection, and show me the five most recent documents. Ask before any
+write.
 ```
 
 ## Adding a skill

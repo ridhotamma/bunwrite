@@ -375,6 +375,9 @@ bunwrite push functions --function-id send-invoice
 The project config is `bunwrite.config.json` or `bunwrite.json`; an existing
 `appwrite.config.json` works too. See the `bunwrite-cli` skill.
 
+For live project access from an AI agent, the `bunwrite-mcp` skill covers the
+MCP server: a compact operator surface over the same API, over stdio or HTTP.
+
 ## Troubleshooting
 
 | Symptom | Check |
