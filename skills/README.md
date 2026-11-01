@@ -40,7 +40,7 @@ make them available in every project. Update them with `npx skills update`.
 
 | Skill | Use it for |
 | --- | --- |
-| [`bunwrite`](bunwrite/SKILL.md) | Core: endpoint setup, SDK, account sessions, databases/documents, queries, permissions, storage, realtime, webhooks and Appwrite compatibility |
+| [`bunwrite`](bunwrite/SKILL.md) | Core: endpoint setup, SDK, account sessions, databases/documents, queries, permissions, storage, realtime, webhooks, SQLite/Postgres, multi-worker deployments and Appwrite compatibility |
 | [`bunwrite-observability`](bunwrite-observability/SKILL.md) | Request logs, traces, metrics, product analytics, feature flags, OTLP/Datadog/PostHog, the console Observability pages, and what the frontend must send itself |
 | [`bunwrite-cli`](bunwrite-cli/SKILL.md) | `@bunwrite/cli`: project linking, `pull`/`push`, config files, function and site deploys, service commands |
 | [`bunwrite-functions`](bunwrite-functions/SKILL.md) | Function handlers, `context.req`/`res`, builds, environment variables, executions, cron and debugging |

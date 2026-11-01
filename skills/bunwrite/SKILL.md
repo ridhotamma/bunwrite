@@ -1,6 +1,6 @@
 ---
 name: bunwrite
-description: "Use when building, changing, or debugging an app on Bunwrite, the lightweight self-hosted Appwrite-compatible BaaS on Bun and SQLite. Covers setup, @bunwrite/sdk, appwrite and node-appwrite compatibility, account sessions, databases and documents, queries, permissions, storage, realtime, functions, sites, webhooks, and the Bunwrite CLI. Triggers: Bunwrite, BUNWRITE_*, bunwrite.config.json, self-hosted Appwrite, Appwrite-compatible backend."
+description: "Use when building, changing, or debugging an app on Bunwrite, the lightweight self-hosted Appwrite-compatible BaaS on Bun with SQLite or Postgres. Covers setup, @bunwrite/sdk, appwrite and node-appwrite compatibility, account sessions, databases and documents, queries, permissions, storage, realtime, functions, sites, webhooks, observability, multi-worker deployments and the Bunwrite CLI. Triggers: Bunwrite, BUNWRITE_*, bunwrite.config.json, self-hosted Appwrite, Appwrite-compatible backend, SQLite, Postgres."
 metadata:
   author: bunwrite
   version: "0.1.0"
@@ -8,10 +8,11 @@ metadata:
 
 # Bunwrite
 
-Bunwrite is a single-process, self-hosted backend that implements the part of the
-Appwrite API most apps use: account sessions, databases and documents, storage,
-teams, functions, static sites, realtime, webhooks and messaging topics. It runs
-on Bun with SQLite and ships an admin console.
+Bunwrite is a self-hosted backend that implements the part of the Appwrite API
+most apps use: account sessions, databases and documents, storage, teams,
+functions, static sites, realtime, webhooks and messaging topics. It runs on Bun,
+defaults to SQLite, also runs on Postgres, supports several HTTP workers on
+Linux, and ships an admin console and observability pages.
 
 Existing apps can keep using `appwrite` or `node-appwrite`. They only need the
 endpoint pointed at Bunwrite. `@bunwrite/sdk` is the same API with Bunwrite's
@@ -83,6 +84,54 @@ BUNWRITE_API_KEY=standard_...   # server only
 A project and its first API key are shown on the console's first-run setup page
 or under **Console → Settings → API keys**. Local development defaults to
 `http://localhost:8080/v1`.
+
+## Database backend
+
+SQLite is the default and needs no configuration. Postgres is opt-in and runs the
+same API, console and worker path:
+
+```dotenv
+DB_DRIVER=postgres            # sqlite | postgres; this is the switch
+DATABASE_URL=postgres://user:password@db:5432/bunwrite
+DATABASE_POOL_MAX=10
+```
+
+- A `DATABASE_URL` alone does **not** move the server off SQLite; set
+  `DB_DRIVER=postgres`.
+- Each project gets its own Postgres schema, created on boot. The role needs
+  permission to create schemas in the database.
+- `bun run db:check --driver postgres --url ...` verifies connectivity and the
+  schema.
+- Writer sharding (`WRITER_PORT`, `WRITER_SHARDS`, loopback write forwarding) is
+  SQLite-only. On Postgres every worker uses the connection pool.
+- Local whole-instance backup archives, `snapshot`/`restore` and Litestream are
+  SQLite-only. On Postgres use WAL-G or your managed PITR; the console hides the
+  local archive buttons.
+- Schema changes are applied on boot; there is no SQL console for app data.
+
+See [DATABASE.md](https://github.com/ridhotamma/bunwrite/blob/main/docs/DATABASE.md).
+
+## Processes and scaling
+
+- `WORKERS=auto` (Docker default, Linux) starts one public HTTP worker per CPU
+  **less one** for the proxy and supervisor. `WORKERS=1` keeps one process.
+- `MAX_INFLIGHT` is **per worker** (default 200), not a cluster total. Above it a
+  worker answers `503` with `Retry-After` instead of queueing.
+- With `WORKER_PORTS=true`, workers bind `PORT`, `PORT+1`, ...; point the proxy at
+  the same range (for example `UPSTREAM=bunwrite:8080-8082`). Without it they
+  share one port with `SO_REUSEPORT`.
+- SQLite starts a project-sharded writer pool. A single hot project still uses
+  one writer; `WRITER_PORT=0` disables forwarding and lets each worker write
+  locally.
+- `WRITE_BATCH_MS` groups concurrent document writes into one transaction.
+- `bunwrite autotune` prints the per-process limits; autotune splits the host's
+  memory and CPUs across workers. `bunwrite autotune --shell` prints the two
+  startup-only variables for a bare-metal service.
+- Postgres starts no writer shards; tune `DATABASE_POOL_MAX` instead.
+
+See [DEPLOY.md](https://github.com/ridhotamma/bunwrite/blob/main/docs/DEPLOY.md)
+and
+[PERFORMANCE_PLAN.md](https://github.com/ridhotamma/bunwrite/blob/main/docs/PERFORMANCE_PLAN.md).
 
 ## Account and sessions
 
@@ -339,6 +388,12 @@ The project config is `bunwrite.config.json` or `bunwrite.json`; an existing
 | Function returns 500 | Read the execution logs in the console; the stack is in `errors`. |
 | Webhook signature fails | Verify the raw request body, not parsed JSON, and the matching webhook secret. |
 | Changes disappear on restart | The database is the source of truth; export schema changes to `bunwrite.config.json`. |
+| `503 Server is busy` | A worker hit `MAX_INFLIGHT`; raise it, reduce concurrency, or add workers. It is per worker, not a cluster total. |
+| `database is locked` / `SQLITE_BUSY` | SQLite. Keep transactions short, raise `SQLITE_BUSY_TIMEOUT_MS`, or use fewer workers. A single hot project still has one writer. |
+| `too many connections` | Lower `DATABASE_POOL_MAX`, or lower `WORKERS` on Postgres. |
+| `permission denied for schema` | The Postgres role needs `CREATE` on the database (for per-project schemas) and rights on the schema. |
+| Data missing after `DB_DRIVER=postgres` | SQLite and Postgres are separate stores. `DB_DRIVER` switches the server; it does not copy existing data. |
+| Observability pages are empty | Check `CONSOLE_ENABLED` and `OBSERVABILITY_CONSOLE`; metrics count every request, but detailed traces are sampled. |
 
 ## Security checklist
 
@@ -352,7 +407,8 @@ The project config is `bunwrite.config.json` or `bunwrite.json`; an existing
 - Put the console behind access control or set `CONSOLE_ENABLED=false` on a
   public API host, and use HTTPS.
 - Treat uploaded files as untrusted; limit extensions and size per bucket.
-- Back up the SQLite database and uploaded files separately.
+- Back up SQLite databases and uploaded files separately. On Postgres use
+  WAL-G or managed PITR, and back up the object store separately.
 
 ## Moving from Appwrite
 
@@ -373,5 +429,9 @@ The project config is `bunwrite.config.json` or `bunwrite.json`; an existing
 - [`@bunwrite/cli`](https://github.com/ridhotamma/bunwrite/blob/main/packages/cli/README.md)
 - [Sites](https://github.com/ridhotamma/bunwrite/blob/main/docs/SITES.md) and
   [HTML rendering](https://github.com/ridhotamma/bunwrite/blob/main/docs/RENDER.md)
+- [Database backends](https://github.com/ridhotamma/bunwrite/blob/main/docs/DATABASE.md),
+  [deployment](https://github.com/ridhotamma/bunwrite/blob/main/docs/DEPLOY.md)
+  and
+  [observability](https://github.com/ridhotamma/bunwrite/blob/main/docs/OBSERVABILITY.md)
 - [Appwrite API reference](https://appwrite.io/docs/references) for the shared
   resource and permission model
