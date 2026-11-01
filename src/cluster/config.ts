@@ -39,9 +39,16 @@ export function resolveWorkers(value: string | undefined, platform = process.pla
   return Math.min(MAX_WORKERS, count)
 }
 
-/** Whether a cluster runs a writer process that does not accept public traffic. */
-export function writerEnabled(env: Record<string, string | undefined> = process.env): boolean {
+/** Writer shards serialize SQLite's single-writer file; Postgres does not use them. */
+export function writerShardingEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const driver = (env.DB_DRIVER || env.DATABASE_DRIVER || '').trim().toLowerCase()
+  if (driver === 'postgres' || driver === 'postgresql' || driver === 'pg') return false
   return (env.WRITER_PORT ?? '').trim() !== '0'
+}
+
+/** @deprecated Use `writerShardingEnabled`; kept for callers that only need the port switch. */
+export function writerEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return writerShardingEnabled(env)
 }
 
 /** `WORKER_PORTS` binds one port per public worker instead of using SO_REUSEPORT. */
@@ -97,13 +104,13 @@ export function clusterConfig(env: Record<string, string | undefined> = process.
   if (env.BUNWRITE_WORKER !== undefined && env.BUNWRITE_WORKER !== '') {
     const index = Math.max(0, Math.floor(Number(env.BUNWRITE_WORKER) || 0))
     const total = Math.max(1, Math.floor(Number(env.BUNWRITE_CLUSTER_SIZE) || 1))
-    const enabled = writerEnabled(env)
+    const enabled = writerShardingEnabled(env)
     const writerShards = enabled ? Math.min(total, Math.max(1, Math.floor(Number(env.BUNWRITE_WRITER_SHARDS) || 1))) : 1
     const publicWorkers = enabled && total > 1 ? Math.max(1, total - writerShards) : total
     return { workers: total, publicWorkers, writerShards, workerIndex: index, supervisor: false }
   }
   const publicWorkers = resolveWorkers(env.WORKERS, platform)
-  const enabled = writerEnabled(env)
+  const enabled = writerShardingEnabled(env)
   const writerShards = resolveWriterShards(env.WRITER_SHARDS, publicWorkers, enabled)
   const total = clusterProcessCount(publicWorkers, enabled, writerShards)
   return {

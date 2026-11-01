@@ -15,6 +15,7 @@ import { resolve } from 'node:path'
 import { applyPendingRestore } from '~/backups/pending'
 import { restoreInstance } from '~/backups/restore'
 import { configFromEnv } from '~/config'
+import { requireSqliteCommand } from './sqlite-only'
 
 const USAGE = `Usage: bunwrite restore <archive> [options]
 
@@ -36,6 +37,7 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(USAGE)
   process.exit(0)
 }
+requireSqliteCommand('restore')
 
 function flag(name: string): string | undefined {
   const index = args.indexOf(name)

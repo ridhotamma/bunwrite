@@ -1,19 +1,25 @@
 /**
- * Cross-process realtime fan-out. A document write in one worker is appended
- * to `_realtime_events`; every other worker that has WebSocket clients polls
- * the table and delivers the event to its own sockets.
+ * Cross-process realtime fan-out.
  *
- * The writer delivers to its own sockets directly, and pollers skip their own
- * rows, so an event is sent once per socket. Writes are only appended when
- * some process has a socket: the presence table makes the common case (no
- * realtime clients) cost one indexed SELECT instead of an INSERT.
+ * SQLite has no server-side notification channel, so a document write is
+ * appended to `_realtime_events`; every other worker with WebSocket clients
+ * polls the table. Postgres uses `LISTEN`/`NOTIFY` instead: a write publishes
+ * one payload per batch and the database delivers it to every listening
+ * process.
+ *
+ * The writer delivers to its own sockets directly, and the bus skips its own
+ * origin, so an event is sent once per socket. SQLite still records presence
+ * so the common case (no realtime clients anywhere) costs one indexed SELECT
+ * instead of an INSERT. Postgres publishes unconditionally: NOTIFY is cheap
+ * and only listening processes receive it.
  */
 import type { Database } from 'bun:sqlite'
 
-import type { SqlDatabase } from '~/db/driver'
 import type { Doc } from '~/documents/codec'
 import type { DocEvent } from '~/documents/store'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
+import { sha256 } from '~/lib/ids'
 
 export interface BusEvent {
   databaseId: string
@@ -28,36 +34,53 @@ const EVENT_RETENTION_MS = 5 * 60_000
 const PRUNE_INTERVAL_MS = 60_000
 const POLL_BATCH = 200
 
+const isBusEvent = (event: unknown): event is BusEvent =>
+  Boolean(event) &&
+  typeof event === 'object' &&
+  typeof (event as BusEvent).databaseId === 'string' &&
+  typeof (event as BusEvent).collectionId === 'string'
+
 export class RealtimeBus {
   private readonly id = crypto.randomUUID()
   private readonly startedAt = now()
+  private readonly postgres: boolean
+  private readonly channel: string
   private lastSeq = 0
   private sockets = 0
   private stopped = false
   private timer: ReturnType<typeof setInterval> | null = null
   private lastHeartbeat = 0
   private lastPrune = 0
+  private listening: Promise<void> | null = null
+  private unsubscribe: (() => Promise<void>) | null = null
+  private polling = false
 
   constructor(
     private db: SqlDatabase,
-    private projectId: string,
+    private readonly projectId: string,
     private pollMs: number,
     private onEvents: (events: BusEvent[]) => void,
   ) {
     this.pollMs = Math.max(10, pollMs)
+    this.postgres = db.dialect === 'postgres'
+    this.channel = `bunwrite_rt_${sha256(projectId).slice(0, 16)}`
   }
 
-  /** The bus is the SQLite event table; a network backend does not construct it. */
+  /** The SQLite event table. */
   private get sqlite(): Database {
-    if (!this.db.sqlite) throw new Error('The realtime event bus is only available on SQLite.')
+    if (!this.db.sqlite) throw new Error('The SQLite realtime event bus is only available on SQLite.')
     return this.db.sqlite
   }
 
-  /** Add or remove this process's sockets; starts and stops polling. */
+  /** Add or remove this process's sockets; starts and stops the listener. */
   setSockets(count: number): void {
     const before = this.sockets
     this.sockets = Math.max(0, count)
     if (this.sockets > 0) {
+      if (this.postgres) {
+        void this.startPostgres()
+        return
+      }
       this.presence()
       if (!this.timer) {
         // Only events published from now on matter to a new socket.
@@ -68,6 +91,10 @@ export class RealtimeBus {
       return
     }
     if (before > 0) {
+      if (this.postgres) {
+        void this.stopPostgres()
+        return
+      }
       this.removePresence()
       this.stopPolling()
       this.prune()
@@ -77,19 +104,21 @@ export class RealtimeBus {
   /** Append our events for the other processes, if any of them can use them. */
   send(events: DocEvent[]): void {
     if (events.length === 0 || this.stopped) return
+    const wire = events.map((event) => ({
+      databaseId: event.collection.databaseId,
+      collectionId: event.collection.id,
+      action: event.action,
+      document: event.document,
+    }))
+    if (this.postgres) {
+      void this.publishPostgres(wire)
+      return
+    }
     try {
       if (!this.wanted()) return
-      const payload = JSON.stringify(
-        events.map((event) => ({
-          databaseId: event.collection.databaseId,
-          collectionId: event.collection.id,
-          action: event.action,
-          document: event.document,
-        })),
-      )
       this.sqlite
         .query('INSERT INTO _realtime_events (origin, project_id, payload, created_at) VALUES (?, ?, ?, ?)')
-        .run(this.id, this.projectId, payload, now())
+        .run(this.id, this.projectId, JSON.stringify(wire), now())
     } catch (error) {
       console.error('[realtime] could not publish to the other processes:', error)
     }
@@ -97,6 +126,10 @@ export class RealtimeBus {
 
   /** Delete expired events and presence rows left by dead processes. */
   prune(): void {
+    if (this.postgres) {
+      void this.prunePostgres()
+      return
+    }
     const stamp = Date.now()
     this.lastPrune = stamp
     try {
@@ -113,14 +146,111 @@ export class RealtimeBus {
 
   stop(): void {
     this.stopped = true
+    if (this.postgres) {
+      void this.stopPostgres()
+      return
+    }
     this.removePresence()
     this.stopPolling()
   }
 
   /** Skip events from before a database restore, whose sequence numbers started over. */
   reset(): void {
+    if (this.postgres) return
     this.lastSeq = this.maxSeq()
   }
+
+  // ------------------------------------------------------------ Postgres
+
+  private async startPostgres(): Promise<void> {
+    if (this.listening || this.stopped || !this.db.driver.listen) return
+    this.listening = (async () => {
+      try {
+        // Skip rows written before this listener existed.
+        this.lastSeq = await this.maxSeqPostgres()
+        const unsubscribe = await this.db.driver.listen!(this.channel, () => void this.pollPostgres())
+        if (this.stopped || this.sockets === 0) {
+          await unsubscribe().catch(() => {})
+          return
+        }
+        this.unsubscribe = unsubscribe
+        // Catch rows published between the max(seq) read and LISTEN.
+        await this.pollPostgres()
+      } catch (error) {
+        console.error('[realtime] could not listen on Postgres:', error)
+      } finally {
+        this.listening = null
+      }
+    })()
+    await this.listening
+  }
+
+  private async stopPostgres(): Promise<void> {
+    const unsubscribe = this.unsubscribe
+    this.unsubscribe = null
+    if (unsubscribe) await unsubscribe().catch(() => {})
+  }
+
+  /**
+   * NOTIFY payloads are limited to 8 kB, so the event body stays in
+   * `_realtime_events` and the notification only says "new rows". That keeps
+   * large documents intact and reuses the SQLite table layout.
+   */
+  private async publishPostgres(events: BusEvent[]): Promise<void> {
+    try {
+      const row = await this.db.driver.get<{ seq: number }>(
+        'INSERT INTO _realtime_events (origin, project_id, payload, created_at) VALUES (?, ?, ?, ?) RETURNING seq',
+        [this.id, this.projectId, JSON.stringify(events), now()],
+      )
+      if (row?.seq !== undefined) await this.db.driver.run('SELECT pg_notify(?, ?)', [this.channel, String(row.seq)])
+    } catch (error) {
+      console.error('[realtime] could not publish the Postgres notification:', error)
+    }
+  }
+
+  private async maxSeqPostgres(): Promise<number> {
+    const row = await this.db.driver.get<{ seq: number | null }>('SELECT max(seq) AS seq FROM _realtime_events')
+    return Number(row?.seq ?? 0)
+  }
+
+  private async pollPostgres(): Promise<void> {
+    if (this.polling || this.stopped) return
+    this.polling = true
+    try {
+      const rows = await this.db.driver.all<{ seq: number; payload: string }>(
+        'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
+        [this.lastSeq, this.id, POLL_BATCH],
+      )
+      if (rows.length === 0) return
+      this.lastSeq = rows[rows.length - 1]!.seq
+      const events = rows.flatMap((row) => {
+        try {
+          const parsed = JSON.parse(row.payload) as unknown
+          return Array.isArray(parsed) ? parsed.filter(isBusEvent) : []
+        } catch {
+          return []
+        }
+      })
+      if (events.length) this.onEvents(events)
+    } catch (error) {
+      console.error('[realtime] could not read the Postgres notification:', error)
+    } finally {
+      this.polling = false
+    }
+  }
+
+  private async prunePostgres(): Promise<void> {
+    const stamp = Date.now()
+    if (stamp - this.lastPrune < PRUNE_INTERVAL_MS) return
+    this.lastPrune = stamp
+    try {
+      await this.db.driver.run('DELETE FROM _realtime_events WHERE created_at < ?', [new Date(stamp - EVENT_RETENTION_MS).toISOString()])
+    } catch {
+      /* the database may be closing */
+    }
+  }
+
+  // ------------------------------------------------------------ SQLite
 
   private wanted(): boolean {
     // With a local socket, the bus is also how other processes reach it.
@@ -138,6 +268,7 @@ export class RealtimeBus {
   }
 
   private poll(): void {
+    if (this.postgres) return
     const stamp = Date.now()
     if (stamp - this.lastHeartbeat >= PRESENCE_HEARTBEAT_MS) this.presence()
     if (stamp - this.lastPrune >= PRUNE_INTERVAL_MS) this.prune()
@@ -180,6 +311,7 @@ export class RealtimeBus {
   }
 
   private presence(): void {
+    if (this.postgres) return
     this.lastHeartbeat = Date.now()
     try {
       this.sqlite
@@ -194,6 +326,7 @@ export class RealtimeBus {
   }
 
   private removePresence(): void {
+    if (this.postgres) return
     try {
       this.sqlite.query('DELETE FROM _cluster_processes WHERE id = ?').run(this.id)
     } catch {

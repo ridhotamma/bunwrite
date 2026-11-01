@@ -115,6 +115,14 @@ describe('worker count', () => {
       workerIndex: 0,
       supervisor: true,
     })
+    // Postgres has a pool, so it never spawns writer shards or loopback writers.
+    expect(clusterConfig({ WORKERS: '3', DB_DRIVER: 'postgres' }, 'linux')).toEqual({
+      workers: 3,
+      publicWorkers: 3,
+      writerShards: 1,
+      workerIndex: 0,
+      supervisor: true,
+    })
     expect(clusterConfig({}, 'linux')).toEqual({
       workers: 1,
       publicWorkers: 1,
@@ -224,27 +232,27 @@ describe('cache versions', () => {
 })
 
 describe('leader lease', () => {
-  test('one holder at a time, and an expired lease is taken over', () => {
+  test('one holder at a time, and an expired lease is taken over', async () => {
     const path = tempDatabase()
     const one = open(path)
     const two = open(path)
     const first = new LeaderLease(one, { owner: 'one', ttlMs: 60_000, onChange: () => {} })
     const second = new LeaderLease(two, { owner: 'two', ttlMs: 60_000, onChange: () => {} })
 
-    expect(first.acquire()).toBe(true)
+    expect(await first.acquire()).toBe(true)
     expect(first.isLeader).toBe(true)
-    expect(second.acquire()).toBe(false)
+    expect(await second.acquire()).toBe(false)
     expect(second.isLeader).toBe(false)
 
     // Simulate the first worker dying without releasing the lease.
     one.sqlite.query("UPDATE _cluster_leases SET expires_at = 0 WHERE name = 'scheduler'").run()
-    expect(second.acquire()).toBe(true)
+    expect(await second.acquire()).toBe(true)
     expect(second.isLeader).toBe(true)
-    expect(first.acquire()).toBe(false)
+    expect(await first.acquire()).toBe(false)
 
     // A clean stop hands the lease over immediately.
-    second.stop()
-    expect(first.acquire()).toBe(true)
+    await second.stop()
+    expect(await first.acquire()).toBe(true)
   })
 })
 

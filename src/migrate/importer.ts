@@ -16,10 +16,13 @@ import { dirname, join } from 'node:path'
 import { keyCaller } from '~/auth/caller'
 import { parsePermission } from '~/auth/permissions'
 import { q, type Db } from '~/db/connection'
+import type { BindValue, SqlDatabase, SqlExecutor } from '~/db/driver'
+import type { PostgresDriver } from '~/db/postgres-driver'
 import { decodeRow, type Doc } from '~/documents/codec'
 import { DocumentStore } from '~/documents/store'
 import { normalizeDate, now } from '~/lib/datetime'
 import { pushConfig } from '~/schema/push'
+import { pushConfigPostgres } from '~/schema/push-postgres'
 import { Registry } from '~/schema/registry'
 import type { Attribute, Collection } from '~/schema/types'
 
@@ -267,12 +270,23 @@ export function configFromLive(databases: LiveDatabase[], collections: LiveColle
   }
 }
 
-export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<ImportReport> {
+/** Import replaces rows by their stable IDs, so a re-run is idempotent. */
+async function replaceRow(
+  tx: SqlExecutor,
+  table: string,
+  where: { column: string; value: string | number }[],
+  columns: string[],
+  values: BindValue[],
+): Promise<void> {
+  await tx.run(`DELETE FROM ${q(table)} WHERE ${where.map((entry) => `${q(entry.column)} = ?`).join(' AND ')}`, where.map((entry) => entry.value))
+  await tx.run(`INSERT INTO ${q(table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`, values)
+}
+
+export async function importFromAppwrite(db: SqlDatabase, opts: ImportOptions): Promise<ImportReport> {
   const log = opts.log ?? (() => {})
   const want = (area: string) => !opts.only || opts.only.has(area)
   const source = new Source(opts)
   const pageSize = opts.pageSize ?? 500
-  const sql = db.sqlite
   const report: ImportReport = { collections: [], users: 0, identities: 0, teams: 0, memberships: 0, variables: 0, files: 0, fileBytes: 0, skipped: [], hashFormats: {} }
 
   // ---------------------------------------------------------- schema
@@ -281,11 +295,19 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
   for (const d of databases) collections.push(...(await source.all<LiveCollection>(`/databases/${d.$id}/collections`, 'collections')))
   const buckets: LiveBucket[] = want('files') || want('schema') ? (await source.get<{ buckets: LiveBucket[] }>('/storage/buckets')).buckets : []
   if (want('schema')) {
-    pushConfig(db, configFromLive(databases, collections, buckets), { log: (l) => log(`[schema] ${l}`) })
+    const push = async (config: unknown) => {
+      if (db.dialect === 'postgres') await pushConfigPostgres(db.driver as PostgresDriver, config, { log: (l) => log(`[schema] ${l}`) })
+      else pushConfig(db as Db, config, { log: (l) => log(`[schema] ${l}`) })
+    }
+    await push(configFromLive(databases, collections, buckets))
     if (opts.functions) {
       const config = opts.functions.config && typeof opts.functions.config === 'object' ? (opts.functions.config as Record<string, unknown>) : {}
       const functions = Array.isArray(config.functions) ? config.functions : []
-      pushConfig(db, { functions }, { baseDir: opts.functions.baseDir, log: (l) => log(`[schema] ${l}`) })
+      if (db.dialect === 'postgres') {
+        await pushConfigPostgres(db.driver as PostgresDriver, { functions }, { baseDir: opts.functions.baseDir, log: (l) => log(`[schema] ${l}`) })
+      } else {
+        pushConfig(db as Db, { functions }, { baseDir: opts.functions.baseDir, log: (l) => log(`[schema] ${l}`) })
+      }
     }
   }
   const registry = new Registry(db)
@@ -293,38 +315,40 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
   // ---------------------------------------------------------- users
   if (want('users')) {
     const users = await source.all<LiveUser>('/users', 'users', [], pageSize)
-    const insert = sql.query(
-      `INSERT OR REPLACE INTO _users (id, name, email, phone, password, hash, hash_options, registration, status, labels, password_update,
-        email_verification, phone_verification, mfa, prefs, accessed_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    sql.transaction(() => {
+    const columns = [
+      'id', 'name', 'email', 'phone', 'password', 'hash', 'hash_options', 'registration', 'status', 'labels', 'password_update',
+      'email_verification', 'phone_verification', 'mfa', 'prefs', 'accessed_at', 'created_at', 'updated_at',
+    ]
+    await db.driver.transaction(async (tx) => {
       for (const u of users) {
         const format = !u.password ? 'none' : /^\$argon2id\$/.test(u.password) ? 'argon2id-phc' : /^\$2[aby]\$/.test(u.password) ? 'bcrypt' : String(u.hash ?? 'unknown')
         report.hashFormats[format] = (report.hashFormats[format] ?? 0) + 1
-        insert.run(
+        await replaceRow(tx, '_users', [{ column: 'id', value: u.$id }], columns, [
           u.$id, u.name ?? '', empty(u.email) ? String(u.email).toLowerCase() : null, empty(u.phone) as string | null, empty(u.password) as string | null,
           u.hash || 'argon2', JSON.stringify(u.hashOptions ?? {}), u.registration ?? u.$createdAt, u.status === false ? 0 : 1,
           JSON.stringify(u.labels ?? []), empty(u.passwordUpdate) as string | null, u.emailVerification ? 1 : 0, u.phoneVerification ? 1 : 0,
           u.mfa ? 1 : 0, JSON.stringify(u.prefs ?? {}), empty(u.accessedAt) as string | null, u.$createdAt, u.$updatedAt,
-        )
+        ])
       }
-    }).immediate()
+    })
     report.users = users.length
     log(`users: ${users.length}`)
 
     const identities = await source.all<LiveIdentity>('/users/identities', 'identities', [], pageSize)
-    const insertIdentity = sql.query(
-      `INSERT OR REPLACE INTO _identities (id, user_id, provider, provider_uid, provider_email, provider_access_token, provider_access_token_expiry, provider_refresh_token, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    sql.transaction(() => {
+    const identityColumns = [
+      'id', 'user_id', 'provider', 'provider_uid', 'provider_email', 'provider_access_token', 'provider_access_token_expiry',
+      'provider_refresh_token', 'created_at', 'updated_at',
+    ]
+    await db.driver.transaction(async (tx) => {
       for (const i of identities) {
-        if (!sql.query('SELECT 1 FROM _users WHERE id = ?').get(i.userId)) continue
-        insertIdentity.run(i.$id, i.userId, i.provider, i.providerUid ?? '', i.providerEmail ?? '', i.providerAccessToken ?? '', i.providerAccessTokenExpiry ?? '', i.providerRefreshToken ?? '', i.$createdAt, i.$updatedAt)
+        if (!(await tx.get('SELECT 1 AS one FROM _users WHERE id = ?', [i.userId]))) continue
+        await replaceRow(tx, '_identities', [{ column: 'id', value: i.$id }], identityColumns, [
+          i.$id, i.userId, i.provider, i.providerUid ?? '', i.providerEmail ?? '', i.providerAccessToken ?? '', i.providerAccessTokenExpiry ?? '',
+          i.providerRefreshToken ?? '', i.$createdAt, i.$updatedAt,
+        ])
         report.identities++
       }
-    }).immediate()
+    })
     log(`identities: ${report.identities}`)
   }
 
@@ -333,19 +357,27 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     const teams = await source.all<LiveTeam>('/teams', 'teams', [], pageSize)
     for (const t of teams) {
       const prefs = await source.get<Record<string, unknown>>(`/teams/${t.$id}/prefs`).catch(() => t.prefs ?? {})
-      sql.query('INSERT OR REPLACE INTO _teams (id, name, prefs, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(t.$id, t.name ?? t.$id, JSON.stringify(prefs ?? {}), t.$createdAt, t.$updatedAt)
+      await db.driver.run('DELETE FROM _teams WHERE id = ?', [t.$id])
+      await db.driver.run('INSERT INTO _teams (id, name, prefs, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
+        t.$id,
+        t.name ?? t.$id,
+        JSON.stringify(prefs ?? {}),
+        t.$createdAt,
+        t.$updatedAt,
+      ])
       const memberships = await source.all<LiveMembership>(`/teams/${t.$id}/memberships`, 'memberships', [], pageSize)
       for (const m of memberships) {
-        if (!sql.query('SELECT 1 FROM _users WHERE id = ?').get(m.userId)) {
+        if (!(await db.driver.get('SELECT 1 AS one FROM _users WHERE id = ?', [m.userId]))) {
           report.skipped.push(`membership ${m.$id}: user ${m.userId} missing`)
           continue
         }
-        sql
-          .query(
-            `INSERT OR REPLACE INTO _memberships (id, team_id, user_id, roles, invited, joined, confirm, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(m.$id, t.$id, m.userId, JSON.stringify(m.roles ?? []), m.invited || m.$createdAt, empty(m.joined) as string | null, m.confirm ? 1 : 0, m.$createdAt, m.$updatedAt)
+        await replaceRow(
+          db.driver,
+          '_memberships',
+          [{ column: 'id', value: m.$id }],
+          ['id', 'team_id', 'user_id', 'roles', 'invited', 'joined', 'confirm', 'created_at', 'updated_at'],
+          [m.$id, t.$id, m.userId, JSON.stringify(m.roles ?? []), m.invited || m.$createdAt, empty(m.joined) as string | null, m.confirm ? 1 : 0, m.$createdAt, m.$updatedAt],
+        )
         report.memberships++
       }
     }
@@ -363,16 +395,20 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
         report.skipped.push(`project variables: ${(error as Error).message}`)
         return []
       })
-    const insert = sql.query(
-      `INSERT OR REPLACE INTO _variables (id, scope, key, value, secret, created_at, updated_at)
-       VALUES (?, 'project', ?, ?, ?, ?, ?)`,
-    )
-    sql.transaction(() => {
+    await db.driver.transaction(async (tx) => {
       for (const v of vars) {
-        insert.run(v.$id, v.key, v.value ?? '', v.secret ? 1 : 0, v.$createdAt, v.$updatedAt)
+        await tx.run("DELETE FROM _variables WHERE id = ? OR (scope = 'project' AND key = ? AND context = '')", [v.$id, v.key])
+        await tx.run("INSERT INTO _variables (id, scope, key, value, secret, context, created_at, updated_at) VALUES (?, 'project', ?, ?, ?, '', ?, ?)", [
+          v.$id,
+          v.key,
+          v.value ?? '',
+          v.secret ? 1 : 0,
+          v.$createdAt,
+          v.$updatedAt,
+        ])
         report.variables++
       }
-    }).immediate()
+    })
     log(`project variables: ${report.variables}`)
   }
 
@@ -403,12 +439,24 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
         const target = join(opts.storagePath, b.$id, f.$id)
         mkdirSync(dirname(target), { recursive: true })
         writeFileSync(target, bytes)
-        sql
-          .query(
-            `INSERT OR REPLACE INTO _files (id, bucket_id, name, permissions, signature, mime_type, size_original, chunks_total, chunks_uploaded, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(f.$id, b.$id, f.name ?? f.$id, JSON.stringify(f.$permissions ?? []), f.signature ?? '', f.mimeType ?? 'application/octet-stream', bytes.length, f.chunksTotal ?? 1, f.chunksUploaded ?? 1, f.$createdAt, f.$updatedAt)
+        await db.driver.run('DELETE FROM _files WHERE bucket_id = ? AND id = ?', [b.$id, f.$id])
+        await db.driver.run(
+          `INSERT INTO _files (id, bucket_id, name, permissions, signature, mime_type, size_original, chunks_total, chunks_uploaded, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            f.$id,
+            b.$id,
+            f.name ?? f.$id,
+            JSON.stringify(f.$permissions ?? []),
+            f.signature ?? '',
+            f.mimeType ?? 'application/octet-stream',
+            bytes.length,
+            f.chunksTotal ?? 1,
+            f.chunksUploaded ?? 1,
+            f.$createdAt,
+            f.$updatedAt,
+          ],
+        )
         report.files++
         report.fileBytes += bytes.length
       }
@@ -416,17 +464,14 @@ export async function importFromAppwrite(db: Db, opts: ImportOptions): Promise<I
     }
   }
 
-  sql.run('PRAGMA optimize')
+  if (db.dialect === 'sqlite') await db.driver.exec('PRAGMA optimize')
   return report
 }
 
-async function importCollection(db: Db, source: Source, collection: Collection, pageSize: number): Promise<{ source: number; imported: number }> {
-  const sql = db.sqlite
+async function importCollection(db: SqlDatabase, source: Source, collection: Collection, pageSize: number): Promise<{ source: number; imported: number }> {
   const columns = ['_seq', '_id', '_createdAt', '_updatedAt', '_permissions', '_rev', ...collection.attributes.map((a) => a.key)]
-  const insert = sql.query(`INSERT OR REPLACE INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
-  const clearPerms = sql.query(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`)
-  const addPerm = sql.query(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`)
   const path = `/databases/${collection.databaseId}/collections/${collection.id}/documents`
+  const insert = `INSERT INTO ${q(collection.table)} (${columns.map(q).join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`
   let imported = 0
   let total = 0
   let cursor: string | null = null
@@ -435,10 +480,13 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
     if (cursor) queries.push(JSON.stringify({ method: 'cursorAfter', values: [cursor] }))
     const page = await source.get<{ total: number; documents: LiveDocument[] }>(path, queries)
     if (!cursor) total = page.total
-    sql.transaction(() => {
+    await db.driver.transaction(async (tx) => {
       for (const d of page.documents) {
         const seq = Number(d.$sequence)
-        insert.run(
+        // Replace by both keys so a re-run that kept the ID but changed the
+        // sequence does not collide with the identity/unique index.
+        await tx.run(`DELETE FROM ${q(collection.table)} WHERE ${q('_seq')} = ? OR ${q('_id')} = ?`, [seq, d.$id])
+        await tx.run(insert, [
           seq,
           d.$id,
           normalizeDate(d.$createdAt) ?? now(),
@@ -447,20 +495,26 @@ async function importCollection(db: Db, source: Source, collection: Collection, 
           // Appwrite has no revision; keep the source's if it is a Bunwrite one.
           Number(d.$revision) || 1,
           ...collection.attributes.map((a) => encodeLenient(a, d[a.key])),
-        )
-        clearPerms.run(seq)
+        ])
+        await tx.run(`DELETE FROM ${q(collection.permsTable)} WHERE doc = ?`, [seq])
         for (const p of d.$permissions ?? []) {
           const { type, role } = parsePermission(p)
           if (type === 'write') {
-            addPerm.run(seq, 'update', role)
-            addPerm.run(seq, 'delete', role)
-          } else addPerm.run(seq, type, role)
+            await tx.run(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`, [seq, 'update', role])
+            await tx.run(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`, [seq, 'delete', role])
+          } else await tx.run(`INSERT OR IGNORE INTO ${q(collection.permsTable)} (doc, type, role) VALUES (?, ?, ?)`, [seq, type, role])
         }
         imported++
       }
-    }).immediate()
+    })
     if (page.documents.length < pageSize) break
     cursor = page.documents[page.documents.length - 1]!.$id
+  }
+  // Explicit `_seq` values do not advance a Postgres identity sequence.
+  if (db.dialect === 'postgres') {
+    await db.driver.exec(
+      `SELECT setval(pg_get_serial_sequence('${q(collection.table).replace(/'/g, "''")}', '_seq'), COALESCE(MAX("_seq"), 1), MAX("_seq") IS NOT NULL) FROM ${q(collection.table)}`,
+    )
   }
   // Appwrite caps `total` at 5000; report what was actually copied when it is larger.
   return { source: Math.max(total, imported), imported }
@@ -474,7 +528,7 @@ const canonical = (value: unknown): string =>
   JSON.stringify(value, (_k, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v))
 
 export async function verifyAgainstAppwrite(
-  db: Db,
+  db: SqlDatabase,
   opts: ImportOptions,
   sample = 100,
 ): Promise<{ checked: number; mismatches: string[]; orderOnly: number }> {

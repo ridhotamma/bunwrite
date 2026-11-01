@@ -200,14 +200,14 @@ replica.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A cluster also starts a pool of writer processes. |
+| `WORKERS` | `1` (`auto` in the Docker image) | Public HTTP processes. `auto` uses the CPUs the container may use (Linux only); a number pins the count; `1` keeps one process. A SQLite cluster also starts a pool of writer processes; Postgres does not. |
 | `WORKER_PORTS` | `false` | With `WORKERS` > 1, bind one port per public worker (`PORT`, `PORT+1`, ...) instead of sharing one port with `SO_REUSEPORT`. Set the proxy upstream to the same range so it can health-check and route around a stalled worker. |
 | `MAX_INFLIGHT` | `200` | Total in-flight requests allowed across the public workers before new ones get `503` with `Retry-After: 1`. Health checks are always allowed. `0` disables shedding. |
 | `HTTP_IDLE_TIMEOUT` | `30` | Seconds Bun keeps an idle HTTP connection open (maximum 255, `0` disables). Keep it above the proxy's upstream keepalive; the bundled Caddyfile uses 5s. |
 | `CACHE_CHECK_MS` | `0` | Check for settings, schema, session and API-key changes made by another worker on every request. Set a positive interval to throttle the check; a change can then take that long to be noticed. 100–250 is a good production trade-off. |
 | `REALTIME_BUS_POLL_MS` | `100` | How often a worker with WebSocket clients reads events published by the other workers. |
-| `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | First loopback port of the writer pool. Shard `i` listens on `WRITER_PORT + i`. Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` API requests to the writer that owns the request's project, including `/v1/databases`, auth, teams, storage metadata, schema, variables, proxy rules, queues and settings, so one process owns each project's write connection. Short console forms follow the selected project; project-list and organization pages go to the writer that owns the default project, because they read the control database. Uploads, function executions and deployments, function HTTP endpoints, site deployments, render jobs, VCS work, and console forms that upload, build, back up or call out stay on the accepting worker. `0` disables the listeners and forwarding; each worker then writes locally. |
-| `WRITER_SHARDS` | `auto` | Writer processes in the pool. `auto` uses one writer per two public workers, capped at `8`; a number pins it; the value never exceeds `WORKERS`. Shard `i` handles the projects whose ID hashes to `i`, so different projects write on different processes. A single hot project still uses one writer. The shards occupy loopback ports `WRITER_PORT` through `WRITER_PORT + WRITER_SHARDS - 1`. |
+| `WRITER_PORT` | `PORT + 1` (`PORT + 100` with `WORKER_PORTS`) | First loopback port of the SQLite writer pool; ignored with `DB_DRIVER=postgres`. Shard `i` listens on `WRITER_PORT + i`. Public workers forward `POST`/`PUT`/`PATCH`/`DELETE` API requests to the writer that owns the request's project, including `/v1/databases`, auth, teams, storage metadata, schema, variables, proxy rules, queues and settings, so one process owns each project's write connection. Short console forms follow the selected project; project-list and organization pages go to the writer that owns the default project, because they read the control database. Uploads, function executions and deployments, function HTTP endpoints, site deployments, render jobs, VCS work, and console forms that upload, build, back up or call out stay on the accepting worker. `0` disables the listeners and forwarding; each worker then writes locally. |
+| `WRITER_SHARDS` | `auto` | SQLite writer processes in the pool. `auto` uses one writer per two public workers, capped at `8`; a number pins it; the value never exceeds `WORKERS`. Not used on Postgres. Shard `i` handles the projects whose ID hashes to `i`, so different projects write on different processes. A single hot project still uses one writer. The shards occupy loopback ports `WRITER_PORT` through `WRITER_PORT + WRITER_SHARDS - 1`. |
 | `WRITER_HOST` | `127.0.0.1` | Interface for the writer listener. The workers are processes in the same container/network namespace, so loopback is reachable and the port is never public. |
 | `WRITE_BATCH_MS` | `1` with `WORKERS` > 1, `0` otherwise | Group document writes that arrive within this window into one SQLite transaction. `0` writes each request immediately. Every write keeps its own savepoint, permissions and events; one failure never rolls back the others. |
 
@@ -221,6 +221,12 @@ around a stalled one. Work that must not run once per worker uses a database
 lease: cron schedules, automatic backups, the queue reaper, the render queue
 and pruning run only in the elected leader. If the leader stops, another worker
 takes over within ten seconds.
+
+With `DB_DRIVER=postgres`, the supervisor starts only the public workers. There
+is no writer pool or loopback writer listener and no request forwarding: the
+connection pool serializes work on the server, and every worker writes
+independently. The leader lease still elects one scheduler, and realtime fans
+out through `LISTEN`/`NOTIFY`.
 
 Database writes are forwarded to the writer selected by the request's project
 ID, so the public processes never queue on SQLite's write lock for document

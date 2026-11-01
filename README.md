@@ -540,6 +540,12 @@ Each database is copied with SQLite's `VACUUM INTO`, so the archive is
 consistent even while requests are being handled. One archive covers the whole
 instance; there is no per-project backup.
 
+With `DB_DRIVER=postgres`, the archive buttons are hidden: the databases are
+not local files. Use WAL-G on the Postgres host or a managed PITR service; see
+[Postgres continuous backup (WAL-G)](docs/DEPLOY.md#postgres-continuous-backup-wal-g).
+The console page reports the WAL-G environment and the `archive_command` /
+`restore_command` to configure.
+
 Archives are compressed with zstd (`.archive.zst`). They include every project's
 stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
 (`.archive.zst.enc`):

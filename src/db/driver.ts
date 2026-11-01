@@ -128,6 +128,8 @@ export interface SqlDriver extends SqlExecutor {
   transaction<T>(fn: (tx: SqlTransaction) => Promise<T>): Promise<T>
   /** Round-trip a trivial query. Throws when the backend is unreachable. */
   ping(): Promise<void>
+  /** Subscribe to a Postgres NOTIFY channel; SQLite does not implement this. */
+  listen?(channel: string, onNotify: (payload: string) => void): Promise<() => Promise<void>>
   close(): Promise<void>
 }
 

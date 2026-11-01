@@ -37,6 +37,9 @@ import { SchemaAdmin } from '~/schema/admin'
 import { GithubAppStore } from '~/vcs/credentials'
 import { VcsInstallations } from '~/vcs/installations'
 import { approvedPulls, RepositoryLinks } from '~/vcs/repositories'
+import { RealtimeBus } from '~/realtime/bus'
+import { LeaderLease } from '~/cluster/leader'
+import { RateLimiter } from '~/lib/limits'
 import type { Caller } from '~/auth/caller'
 import { testConfig } from './helpers'
 
@@ -687,6 +690,65 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     expect(apps.stored()).toBe(true)
     expect(await apps.remove()).toBe(true)
     expect(apps.get()).toBeNull()
+  })
+
+  test('realtime events fan out through Postgres LISTEN/NOTIFY', async () => {
+    const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const peer: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
+    const received: unknown[] = []
+    const sender = new RealtimeBus(handle, 'pg-realtime', 20, () => {})
+    const listener = new RealtimeBus(peer, 'pg-realtime', 20, (events) => received.push(...events))
+    try {
+      listener.setSockets(1)
+      // LISTEN is established asynchronously; publish after it is ready.
+      await Bun.sleep(250)
+      sender.send([
+        {
+          collection: { databaseId: 'main', id: 'items' } as never,
+          action: 'create',
+          document: { $id: 'rt-1', $permissions: [] } as never,
+        },
+      ])
+      await Bun.sleep(250)
+      expect(received).toHaveLength(1)
+      expect((received[0] as { document: { $id: string } }).document.$id).toBe('rt-1')
+    } finally {
+      listener.stop()
+      sender.stop()
+      await other.close()
+    }
+  })
+
+  test('the scheduler lease works across Postgres processes', async () => {
+    const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
+    const one: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const two: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
+    const first = new LeaderLease(one, { owner: 'lease-one', ttlMs: 60_000, onChange: () => {} })
+    const second = new LeaderLease(two, { owner: 'lease-two', ttlMs: 60_000, onChange: () => {} })
+    try {
+      expect(await first.acquire()).toBe(true)
+      expect(await second.acquire()).toBe(false)
+      await driver.run("UPDATE _cluster_leases SET expires_at = 0 WHERE name = 'scheduler'")
+      expect(await second.acquire()).toBe(true)
+      expect(await first.acquire()).toBe(false)
+      await second.stop()
+      expect(await first.acquire()).toBe(true)
+    } finally {
+      await second.stop().catch(() => {})
+      await other.close()
+    }
+  })
+
+  test('shared rate limits store millisecond windows in Postgres bigint columns', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const limiter = new RateLimiter(handle)
+    const key = `pg-limit-${suffix}`
+    await limiter.hit(key, 2, 60)
+    await limiter.hit(key, 2, 60)
+    await expect(limiter.hit(key, 2, 60)).rejects.toBeDefined()
+    const row = await driver.get<{ reset_at: string | number }>('SELECT reset_at FROM _rate_limits WHERE key = ?', [`rate:${key}`])
+    expect(Number(row?.reset_at)).toBeGreaterThan(Date.now())
   })
 
   test('drops the scratch schema', async () => {

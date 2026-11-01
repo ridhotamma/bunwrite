@@ -205,9 +205,16 @@ individual stalled worker.
 near the measured safe concurrency (about 200 for the write-heavy booking mix)
 and leave headroom for spikes.
 
-**Scaling beyond one host.** Bunwrite uses SQLite. Do not point two containers
-or two machines at the same database file over a network filesystem: SQLite's
-locking assumes one host. For more capacity, either:
+**Postgres.** With `DB_DRIVER=postgres`, set `WORKERS` for the public HTTP
+processes only. The supervisor does not start writer shards or loopback writer
+ports, and requests are not forwarded: every worker uses the Postgres pool.
+The scheduler lease and realtime fan-out still work across workers
+(`_cluster_leases` and `LISTEN`/`NOTIFY`). Keep `WRITER_PORT` unset or `0` for
+clarity; it is ignored on Postgres.
+
+**Scaling beyond one host (SQLite).** Bunwrite uses SQLite. Do not point two
+containers or two machines at the same database file over a network
+filesystem: SQLite's locking assumes one host. For more capacity, either:
 
 - run one instance per project (the console already keeps each project in its
   own database), or
@@ -400,7 +407,7 @@ Upgrade with `git pull && docker compose up -d --build`.
   [RENDER.md](RENDER.md).
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
-- Enable daily database backups and optional S3 backup storage in
+- With SQLite, enable daily database backups and optional S3 backup storage in
   **Organization → Backups**. One archive contains the control database and every
   project database; it does not include uploaded files. `bunwrite snapshot` is
   available for cron-driven archives. Restore by uploading the archive in
@@ -408,6 +415,9 @@ Upgrade with `git pull && docker compose up -d --build`.
   `bunwrite restore <archive>` with the server stopped; either way every
   database is validated first and the previous files are kept as
   `*.before-restore-<timestamp>`.
+- With Postgres, the file-archive buttons are hidden. Configure WAL-G on the
+  database host (see [Postgres continuous backup](#postgres-continuous-backup-wal-g))
+  or use your provider's managed PITR.
 - Request logs are stored per project and go to stdout and the console. Set
   `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
 
@@ -500,6 +510,64 @@ For S3-compatible storage (R2, MinIO), copy the config and add `endpoint`,
 `LITESTREAM_S3_REGION` and, when needed, `LITESTREAM_S3_FORCE_PATH_STYLE` so
 `bunwrite failover` can build a matching one-off restore config. Keep the
 replica URL layout unchanged so failover can find the databases.
+
+### Postgres continuous backup (WAL-G)
+
+Bunwrite does not own the Postgres data directory, so it cannot copy `PGDATA`.
+Use [WAL-G](https://github.com/wal-g/wal-g) on the database host for WAL
+archiving and base backups, or use the managed provider's PITR. The console's
+**Organization → Backups** page reports the WAL-G environment it inherited and
+the exact commands to install.
+
+Put these in the Postgres environment (the same environment `wal-g` runs in):
+
+```env
+WALG_S3_PREFIX=s3://my-bucket/bunwrite/postgres
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_DEFAULT_REGION=us-east-1
+# Optional: WALG_COMPRESSION_METHOD=zstd
+# For WAL-G encryption, set one of WALG_LIBSODIUM_KEY,
+# WALG_LIBSODIUM_KEY_PATH, WALG_PGP_KEY or WALG_PGP_KEY_PATH.
+```
+
+Configure `postgresql.conf`:
+
+```conf
+wal_level = replica
+archive_mode = on
+archive_command = 'wal-g wal-push %p'
+restore_command = 'wal-g wal-fetch %f %p'
+```
+
+Then take a base backup after the first start and on a schedule (cron or a
+systemd timer):
+
+```bash
+wal-g backup-push "$PGDATA"
+wal-g backup-list
+wal-g delete retain FULL 7 --confirm
+```
+
+A base backup plus the archived WAL is continuous recovery: the latest WAL
+segment is the recovery point, and `recovery_target_time` gives point-in-time
+recovery. To restore onto a fresh Postgres data directory:
+
+```bash
+wal-g backup-fetch "$PGDATA" LATEST
+touch "$PGDATA/recovery.signal"
+# Set recovery_target_time in postgresql.conf when you need a point in time.
+# Set restore_command as above, then start Postgres.
+```
+
+WAL-G covers databases only. Uploaded files, function code and site builds are
+not included; back up the storage bucket separately. Keep WAL-G credentials out
+of the Bunwrite process unless the console needs to display them, and use a
+bucket lifecycle/retention policy that does not delete the base backup while its
+WAL is still needed.
+
+SQLite commands (`bunwrite snapshot`, `bunwrite restore`, `bunwrite failover`)
+refuse to run with `DB_DRIVER=postgres`; use WAL-G or the provider's PITR there.
 
 ## Upgrades
 

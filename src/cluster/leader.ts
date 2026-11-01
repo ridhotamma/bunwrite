@@ -2,8 +2,11 @@
  * A database lease that names one process as the leader. Workers renew it on a
  * timer; when the leader stops (or crashes and its lease runs out), another
  * worker takes over.
+ *
+ * The lease lives in `_cluster_leases` on both SQLite and Postgres. A single
+ * conditional upsert decides the winner, so no extra advisory lock is needed.
  */
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { setLeader } from './role'
 
 export interface LeaderLeaseOptions {
@@ -17,6 +20,10 @@ export interface LeaderLeaseOptions {
   onChange?: (leader: boolean) => void
 }
 
+const UPSERT_LEASE = `INSERT INTO _cluster_leases (name, owner, expires_at) VALUES (?, ?, ?)
+  ON CONFLICT(name) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
+  WHERE _cluster_leases.expires_at < ? OR _cluster_leases.owner = excluded.owner`
+
 export class LeaderLease {
   readonly owner: string
   private readonly name: string
@@ -27,7 +34,7 @@ export class LeaderLease {
   private leading = false
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     options: LeaderLeaseOptions = {},
   ) {
     this.name = options.name ?? 'scheduler'
@@ -42,18 +49,18 @@ export class LeaderLease {
   }
 
   start(): void {
-    this.acquire()
+    void this.acquire()
     if (this.timer) return
-    this.timer = setInterval(() => this.acquire(), this.heartbeatMs)
+    this.timer = setInterval(() => void this.acquire(), this.heartbeatMs)
     this.timer.unref?.()
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     // Hand over at once instead of making the next worker wait for the TTL.
     try {
-      this.db.sqlite.query('DELETE FROM _cluster_leases WHERE name = ? AND owner = ?').run(this.name, this.owner)
+      await this.db.driver.run('DELETE FROM _cluster_leases WHERE name = ? AND owner = ?', [this.name, this.owner])
     } catch {
       /* the database may already be closed */
     }
@@ -61,43 +68,15 @@ export class LeaderLease {
   }
 
   /** Take or renew the lease; public so tests can drive it without timers. */
-  acquire(): boolean {
+  async acquire(): Promise<boolean> {
     const stamp = Date.now()
-    try {
-      // Only the leader writes on a heartbeat. A live lease held by someone
-      // else is a cheap read, so followers do not contend for the write lock.
-      const current = this.db.sqlite
-        .query<{ owner: string; expires_at: number }, [string]>('SELECT owner, expires_at FROM _cluster_leases WHERE name = ?')
-        .get(this.name)
-      if (current && current.owner !== this.owner && current.expires_at >= stamp) {
-        this.setLeading(false)
-        return false
-      }
-    } catch {
-      // Fall through; the transaction below reports the real error.
-    }
-
     let won = false
     try {
-      this.db.sqlite
-        .transaction(() => {
-          // Only take an expired lease or one this process already holds. The
-          // first statement is a write, so it takes SQLite's write lock and the
-          // read below sees a settled row.
-          this.db.sqlite
-            .query(
-              `INSERT INTO _cluster_leases (name, owner, expires_at) VALUES (?, ?, ?)
-             ON CONFLICT(name) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at
-             WHERE _cluster_leases.expires_at < ? OR _cluster_leases.owner = excluded.owner`,
-            )
-            .run(this.name, this.owner, stamp + this.ttlMs, stamp)
-          const row = this.db.sqlite.query<{ owner: string }, [string]>('SELECT owner FROM _cluster_leases WHERE name = ?').get(this.name)
-          won = row?.owner === this.owner
-        })
-        .immediate()
+      await this.db.driver.run(UPSERT_LEASE, [this.name, this.owner, stamp + this.ttlMs, stamp])
+      const row = await this.db.driver.get<{ owner: string }>('SELECT owner FROM _cluster_leases WHERE name = ?', [this.name])
+      won = row?.owner === this.owner
     } catch (error) {
       console.error('[cluster] leader lease failed:', error)
-      won = false
     }
     this.setLeading(won)
     return won

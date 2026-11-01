@@ -25,10 +25,10 @@ limits, storage (buckets, files, uploads, previews), functions (definitions,
 deployments, executions), sites, messaging topics, the proxy/domain rules and
 the queue run on either backend. The project manager opens one Postgres schema
 per project, and `startServer` opens the configured backend. The console schema
-admin, settings, logs and the VCS stores also run through the driver port; only
-the cluster/backup features remain SQLite-only; [Migration
-order](#migration-order) lists them. Nothing in the existing SQLite path changed
-behaviour.
+admin, settings, logs, VCS stores, scheduler lease and cross-worker realtime
+fan-out also run on Postgres. Writer sharding and the local archive/Litestream
+snapshot flow are SQLite-only by design; [Migration order](#migration-order)
+lists them. Nothing in the existing SQLite path changed behaviour.
 
 ## Configuration
 
@@ -72,7 +72,13 @@ bun run db:migrate --schema appwrite.config.json --prune
 ```
 
 The CLI reads the same environment variables as the server. `--no-bootstrap`
-opens a read-only replica without touching the schema.
+opens a read-only replica without touching the schema. `bun run schema:push`,
+`bun run migrate` and `bun run db:migrate --schema` all target the configured
+backend, including Postgres.
+
+The legacy SQLite file commands (`bunwrite backup:open`, `snapshot`, `restore`
+and `failover`) only work with local SQLite databases. On Postgres they either
+have no meaning (`backup:open`) or stop with a WAL-G/PITR message.
 
 `DB_DRIVER=postgres` boots the server and serves API traffic. The boot path
 opens the control schema, runs the instance bootstrap through the driver, loads
@@ -220,17 +226,21 @@ with the backend's own mechanism before sending them.
 
 ### Not available on Postgres yet
 
-- Backups and snapshots (`VACUUM INTO`, Litestream, `_realtime_events` file
-  locks) are SQLite-only. Use `pg_dump`/managed PITR and Postgres `LISTEN`/
-  `NOTIFY` (the driver exposes `listen()`) instead.
-- The writer-shard cluster (`WRITER_SHARDS`, `WRITER_PORT`) is a SQLite
-  file-lock design. On Postgres, scale with more processes and the pool; the
+- Whole-instance archives (`VACUUM INTO`), Litestream and the
+  `_realtime_events` file locks are SQLite-only. For Postgres, configure WAL-G
+  or use your provider's managed PITR; the console's **Organization → Backups**
+  page reports the WAL-G environment and the required `archive_command` /
+  `restore_command`. See [DEPLOY.md](DEPLOY.md#postgres-continuous-backup-wal-g).
+- The scheduler lease works on both backends: `_cluster_leases` is decided by a
+  conditional upsert. Cross-process realtime fan-out uses `_realtime_events`
+  polling on SQLite and `LISTEN`/`NOTIFY` on Postgres.
+- The writer-shard cluster (`WRITER_SHARDS`, `WRITER_PORT`) is only for SQLite's
+  single-writer file. With `DB_DRIVER=postgres` no writer processes or loopback
+  listeners are started and every worker writes through the pool; the
   cache-version triggers already work across hosts.
 - `db.sqlite` remains SQLite-only. Services must be on `db.driver` before they
-  can run on Postgres.
-- The cluster lease and Litestream/whole-instance archives are SQLite-only by
-  design. Everything else, including schema DDL, the console schema admin and
-  the VCS stores, runs on Postgres.
+  can run on Postgres. Everything else, including schema DDL, the console schema
+  admin and the VCS stores, runs on Postgres.
 
 ## Migration order
 
@@ -270,8 +280,10 @@ SQLite test suite green:
    project manager opens each project as a Postgres schema and loads its caches
    before serving it. Schema import keeps the console's dry-run preview by
    running the Postgres apply inside a transaction and rolling it back.
-5. The cluster lease and backup/snapshot features can stay SQLite-only behind
-   `db.capabilities`.
+5. **Done.** The scheduler lease and cross-process realtime bus run on both
+   backends. Writer sharding and local archive/Litestream snapshots stay
+   SQLite-only: Postgres scales with workers + the pool and uses WAL-G or
+   managed PITR for backup.
 
 A converted method looks like this:
 

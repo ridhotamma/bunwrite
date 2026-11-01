@@ -2,6 +2,7 @@
 import { readPendingRestore } from '~/backups/pending'
 import type { BackupFile } from '~/backups/service'
 import { litestreamStatus } from '~/backups/litestream'
+import { walgStatus } from '~/backups/walg'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { alert, badge, destroy, emptyState, formatBytes, settingsSection, when } from '~/console/ui'
@@ -12,6 +13,9 @@ export const BACKUPS = '/console/organization/backups'
 export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   const control = ctx.projects.control
   const c = control.config
+  // Whole-instance archives use VACUUM INTO on local SQLite files. Postgres
+  // deployments use WAL-G or the provider's managed PITR instead.
+  if (!control.db.capabilities.localFile) return postgresBackupsView()
   let backups: BackupFile[] = []
   let error = ''
   try {
@@ -109,5 +113,48 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
           ? html`${badge('Custom', 'info')} ${destroy(`${BACKUPS}/reset`, 'Reset', 'Reset backup settings to the defaults?')}`
           : badge('Default'),
       },
+    )}`
+}
+
+/**
+ * Postgres backups run outside the app: WAL-G archives WAL and base backups on
+ * the database host, or a managed provider exposes its own PITR. The console
+ * reports the environment and the exact Postgres settings; it never starts a
+ * backup-push against a data directory it does not own.
+ */
+function postgresBackupsView(): Html {
+  const walg = walgStatus()
+  return html`
+    ${settingsSection(
+      'Postgres continuous backup (WAL-G)',
+      'Postgres uses WAL archiving and base backups on the database host instead of the SQLite archive files.',
+      html`${walg.configured
+        ? alert('success', html`WAL-G storage is configured for <code class="mono">${walg.storage}</code>${walg.compression ? html` · compression <code>${walg.compression}</code>` : ''}${walg.encrypted ? ' · encrypted' : ''}.`)
+        : alert('warning', html`WAL-G is not configured in this process. Set <code>WALG_S3_PREFIX</code> (or another <code>WALG_*_PREFIX</code>) and the storage credentials where the Postgres server and <code>wal-g</code> run, then restart Postgres so it inherits them.`)}
+      <p>WAL-G does not run inside Bunwrite: the Postgres server calls it through <code>archive_command</code> and operators take base backups with <code>wal-g backup-push</code>. Bunwrite cannot copy a remote <code>PGDATA</code>, so these settings belong on the database host.</p>
+      <ul class="list">
+        <li><span class="subdued">postgresql.conf</span><code>wal_level = replica</code> and <code>archive_mode = on</code></li>
+        <li><span class="subdued">archive_command</span><code>${walg.archiveCommand}</code></li>
+        <li><span class="subdued">restore_command</span><code>${walg.restoreCommand}</code></li>
+        <li><span class="subdued">Base backup</span><code>wal-g backup-push $PGDATA</code> (cron or a systemd timer)</li>
+        <li><span class="subdued">Point-in-time restore</span>restore the base backup with <code>wal-g backup-fetch $PGDATA LATEST</code>, create <code>recovery.signal</code>, and set <code>recovery_target_time</code> before starting Postgres.</li>
+        <li><span class="subdued">Retention</span><code>wal-g delete retain FULL 7 --confirm</code></li>
+      </ul>
+      <p class="subdued">Uploaded files, function code and site builds are not in WAL-G; back up your storage bucket separately. If the provider offers managed PITR, use that instead of running WAL-G yourself.</p>`,
+      { id: 'postgres-backup' },
+    )}
+    ${settingsSection(
+      'Logical backups',
+      'For a portable copy of one database, use pg_dump. It is slower to restore than WAL-G but easy to inspect.',
+      html`<pre>pg_dump --format=custom --file=bunwrite.dump "$DATABASE_URL"
+pg_restore --clean --if-exists --dbname="$DATABASE_URL" bunwrite.dump</pre>
+        <p class="subdued">A logical dump restores one point in time; it does not replace continuous WAL archiving.</p>`,
+      { id: 'postgres-logical' },
+    )}
+    ${settingsSection(
+      'SQLite archives',
+      'The whole-instance archive, restore upload and Litestream controls are only available when DB_DRIVER=sqlite.',
+      html`<p class="subdued">This instance uses Postgres, so those buttons are hidden instead of writing an archive to a local SQLite path that does not exist.</p>`,
+      { id: 'sqlite-backup-disabled' },
     )}`
 }

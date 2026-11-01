@@ -11,7 +11,9 @@ import { mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import { createInstanceBackup } from '~/backups/instance'
+import { requireSqliteCommand } from './sqlite-only'
 
+requireSqliteCommand('snapshot')
 const databasePath = resolve(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
 const dir = resolve(process.argv[2] ?? process.env.SNAPSHOT_DIR ?? process.env.BACKUPS_PATH ?? './data/backups')
 const keep = Math.max(1, Number(process.env.KEEP ?? 7) || 7)

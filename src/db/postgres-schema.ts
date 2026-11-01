@@ -172,12 +172,12 @@ export const POSTGRES_CLUSTER_STATEMENTS: string[] = [
   `CREATE TABLE IF NOT EXISTS "_rate_limits" (
     "key" text PRIMARY KEY NOT NULL,
     "count" integer NOT NULL,
-    "reset_at" integer NOT NULL
+    "reset_at" bigint NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS "_cluster_leases" (
     "name" text PRIMARY KEY NOT NULL,
     "owner" text NOT NULL,
-    "expires_at" integer NOT NULL
+    "expires_at" bigint NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS "_cluster_processes" (
     "id" text PRIMARY KEY NOT NULL,
@@ -345,6 +345,10 @@ export async function ensurePostgresSchema(driver: PostgresDriver, options: Post
     for (const statement of postgresSystemStatements()) await tx.exec(statement)
     for (const statement of postgresSystemIndexStatements()) await tx.exec(statement)
     for (const statement of POSTGRES_CLUSTER_STATEMENTS) await tx.exec(statement)
+    // Millisecond timestamps do not fit in int4. These ALTERs are idempotent
+    // and also upgrade databases created before the columns became bigint.
+    await tx.exec(`ALTER TABLE "_rate_limits" ALTER COLUMN "reset_at" TYPE bigint`)
+    await tx.exec(`ALTER TABLE "_cluster_leases" ALTER COLUMN "expires_at" TYPE bigint`)
     for (const statement of POSTGRES_VIEW_STATEMENTS) await tx.exec(statement)
     await tx.exec(POSTGRES_VERSION_FUNCTION)
     for (const statement of postgresVersionTriggerStatements()) await tx.exec(statement)

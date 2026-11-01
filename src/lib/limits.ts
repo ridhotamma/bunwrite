@@ -21,8 +21,8 @@ async function count(db: SqlDatabase, key: string, resetAt: number): Promise<num
   const row = await db.driver.get<CountRow>(
     `INSERT INTO _rate_limits (key, count, reset_at) VALUES (?, 1, ?)
      ON CONFLICT(key) DO UPDATE SET
-       count = CASE WHEN reset_at <= ? THEN 1 ELSE count + 1 END,
-       reset_at = CASE WHEN reset_at <= ? THEN excluded.reset_at ELSE reset_at END
+       count = CASE WHEN _rate_limits.reset_at <= ? THEN 1 ELSE _rate_limits.count + 1 END,
+       reset_at = CASE WHEN _rate_limits.reset_at <= ? THEN excluded.reset_at ELSE _rate_limits.reset_at END
      RETURNING count`,
     [key, resetAt, stamp, stamp],
   )

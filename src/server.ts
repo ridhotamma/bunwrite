@@ -25,14 +25,6 @@ export async function startServer(): Promise<void> {
   // `createServices` applies the default project's stored settings over
   // `config`; keep the environment value as the default for other projects.
   const sqliteSynchronous = config.sqliteSynchronous
-  // In a cluster, the first process indices are writers that never accept
-  // public traffic. Each owns a hash of project IDs, so one project's write
-  // load cannot stall the others' writes. A blocking checkpoint still only
-  // affects the writer shard that owns that project.
-  const dedicatedWriter = config.workers > 1 && config.writerPort > 0
-  const writer = dedicatedWriter && isWriterWorker(config)
-  const writerShard = writer ? config.workerIndex : 0
-  const writerPort = config.writerPort + writerShard
   const databasePath = config.databasePath
 
   // Before the database opens: with function isolation on, files are created private to the server.
@@ -47,6 +39,14 @@ export async function startServer(): Promise<void> {
     log: (line) => console.log(`[database] ${line}`),
   })
   const db = sqlDatabaseOf(database)
+  // Writer sharding exists to serialize SQLite's single-writer file. Postgres
+  // has a connection pool, so every process writes directly and no loopback
+  // writer listener or request forwarding is started.
+  if (!database.sqlite) config.writerPort = 0
+  const dedicatedWriter = Boolean(database.sqlite) && config.workers > 1 && config.writerPort > 0
+  const writer = dedicatedWriter && isWriterWorker(config)
+  const writerShard = writer ? config.workerIndex : 0
+  const writerPort = config.writerPort + writerShard
   const instance = db.dialect === 'sqlite' ? bootstrapInstance(db) : await bootstrapInstanceAsync(db)
   config.orgId = instance.orgId
   config.projectId = instance.projectId
@@ -79,9 +79,9 @@ export async function startServer(): Promise<void> {
   // Loads the control caches and every project runtime before serving.
   await projects.ready()
 
-  // The SQLite writer lease is a file-lock design; a Postgres deployment scales
-  // with the pool instead (docs/DATABASE.md).
-  const lease = config.workers > 1 && database.sqlite ? new LeaderLease(database.sqlite) : null
+  // Elect one scheduler per cluster on either backend. The lease is a row in
+  // `_cluster_leases`; SQLite and Postgres both decide it with one upsert.
+  const lease = config.workers > 1 ? new LeaderLease(db) : null
   lease?.start()
 
   // First console admin from env, if given and not there yet.
@@ -161,7 +161,7 @@ export async function startServer(): Promise<void> {
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
       void (async () => {
-        lease?.stop()
+        await lease?.stop()
         server?.stop()
         writes?.stop()
         await services.writes.drain()

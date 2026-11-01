@@ -30,10 +30,10 @@ Related documents:
 | Console authentication | Password plus optional email MFA; no hardware keys or admin audit trail | **Medium** |
 | Appwrite compatibility | Partial; some settings are stored but not applied | **High/Medium** |
 | Deployments and migrations | Restart-based, startup migrations, live DDL | **Medium** |
-| Write throughput | One writer per database; the writer pool scales only across projects | **Medium** |
+| Write throughput | SQLite: one writer per database and a project-sharded writer pool; Postgres uses the connection pool | **Medium** |
 | Observability | Request logs only; no metrics or tracing | **Medium** |
-| Realtime | Cross-process SQLite event bus and polling | **Medium** |
-| Multi-tenancy | Per-project databases and a project-sharded writer pool; console writes and the control database still share one writer | **Low/Medium** |
+| Realtime | SQLite: cross-process event table + polling; Postgres: `LISTEN`/`NOTIFY` | **Medium** |
+| Multi-tenancy | Per-project databases/schemas; SQLite control writes share one writer | **Low/Medium** |
 | Public HTTP caching | Opt-in; default off, with a multi-project caveat | **Low/Medium** |
 
 ## P0 — can cause a breach, outage or data loss
@@ -64,9 +64,11 @@ required.
 A database port now exists under the data layer (`src/db/driver.ts`) with a
 working Postgres driver, runtime schema bootstrap and integration tests against
 a real server. Postgres serves the API request path and the console, including
-one schema per project and Postgres schema DDL. The cluster lease and
-backup/snapshot features stay SQLite-only by design. See
-[DATABASE.md](DATABASE.md) for the current state and the migration order.
+one schema per project and Postgres schema DDL. The scheduler lease and
+cross-worker realtime fan-out also work there. Writer sharding and the local
+archive/Litestream snapshot flow stay SQLite-only by design; Postgres uses
+WAL-G or managed PITR. See [DATABASE.md](DATABASE.md) for the current state and
+the migration order.
 
 ### 2. API key scopes are available, but environment keys bypass them
 
@@ -257,12 +259,13 @@ all projects share the same host and the same console.
 
 - Every process opens the project registry, so a large number of projects costs
   a connection and mmap per project in every process.
-- Write traffic is sharded by project ID: `WRITER_SHARDS` (default: one writer
-  per two public workers, capped at 8) starts a pool of writer processes, and a
-  public worker forwards a project's short writes to the writer that owns that
-  project. A loud project therefore contends with the projects on its own
-  shard, not with every project on the instance, and a stalled writer only
-  affects writes for its shard. A single hot project still has one writer.
+- On SQLite, write traffic is sharded by project ID: `WRITER_SHARDS` (default:
+  one writer per two public workers, capped at 8) starts a pool of writer
+  processes, and a public worker forwards a project's short writes to the
+  writer that owns that project. A loud project therefore contends with the
+  projects on its own shard, not with every project on the instance, and a
+  stalled writer only affects writes for its shard. A single hot project still
+  has one writer. Postgres does not use writer shards or forwarding.
 - Console forms follow the selected project to its shard. Project-list,
   organization and other control-database pages use the writer that owns the
   default project, because the console reads `_projects`, console sessions and

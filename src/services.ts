@@ -94,8 +94,8 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db, {
-    // The cross-process bus is the SQLite event table (docs/DATABASE.md).
-    bus: config.workers > 1 && db.dialect === 'sqlite' ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
+    // SQLite uses `_realtime_events`; Postgres uses LISTEN/NOTIFY.
+    bus: config.workers > 1 && db.capabilities.eventBus ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
     collectionOf: (databaseId, collectionId) => registry.collections.get(`${databaseId}/${collectionId}`) ?? null,
   })
   const storage = new StorageService(db, config, store)
@@ -104,7 +104,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     projectVariables: (context) => variables.projectEnvironment(context),
   })
   const requestLogs = new RequestLogService(db, config)
-  const backups = new BackupService(config)
+  const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })

@@ -22,6 +22,13 @@ async function requireOwner(ctx: ConsoleContext): Promise<void> {
   if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can manage backups.')
 }
 
+/** The archive and Litestream flows only operate on local SQLite files. */
+function requireLocalBackups(ctx: ConsoleContext): void {
+  if (!ctx.projects.control.db.capabilities.localFile) {
+    throw err('general_argument_invalid', 'Whole-instance archives are only available with DB_DRIVER=sqlite. Use WAL-G or managed PITR for Postgres.')
+  }
+}
+
 async function backupsPage(ctx: ConsoleContext) {
   if (!(await canManage(ctx))) return ctx.go('/console')
   const control = ctx.projects.control
@@ -43,6 +50,7 @@ export function backupPages(router: ConsoleRouter): void {
 
   router.post(BACKUPS, async ({ ctx }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     const keep = Number(ctx.form.backupsKeep)
     if (!Number.isInteger(keep) || keep < 1 || keep > 100) {
       throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
@@ -57,23 +65,27 @@ export function backupPages(router: ConsoleRouter): void {
 
   router.post(`${BACKUPS}/reset`, async ({ ctx }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     await ctx.projects.control.settings.reset('backups')
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings reset' })
   })
 
   router.post(`${BACKUPS}/create`, async ({ ctx }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     const backup = await ctx.projects.control.backups.create('manual')
     return ctx.go(BACKUPS, { tone: 'success', text: `Created ${backup.name}` })
   })
 
   router.get(`${BACKUPS}/:name/download`, async ({ ctx, path }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     return ctx.projects.control.backups.serve(path.name!)
   })
 
   router.post(`${BACKUPS}/restore`, async ({ ctx }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     const file = ctx.form.backup
     if (!(file instanceof Blob) || file.size === 0) throw err('general_argument_invalid', 'Choose a backup archive to restore.')
     const config = ctx.projects.control.config
@@ -116,6 +128,7 @@ export function backupPages(router: ConsoleRouter): void {
 
   router.post(`${BACKUPS}/:name/delete`, async ({ ctx, path }) => {
     await requireOwner(ctx)
+    requireLocalBackups(ctx)
     await ctx.projects.control.backups.delete(path.name!)
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup deleted' })
   })

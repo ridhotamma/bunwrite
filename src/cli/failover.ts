@@ -10,6 +10,7 @@
 import { resolve } from 'node:path'
 
 import { runFailover } from '~/failover/restore'
+import { requireSqliteCommand } from './sqlite-only'
 
 const USAGE = `Usage: bunwrite failover [options]
 
@@ -33,6 +34,7 @@ if (args.includes('--help') || args.includes('-h')) {
   console.log(USAGE)
   process.exit(0)
 }
+requireSqliteCommand('failover')
 
 function flag(name: string): string | undefined {
   const index = args.indexOf(name)

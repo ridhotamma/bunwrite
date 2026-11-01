@@ -4,12 +4,14 @@
  *   bun run migrate --endpoint https://appwrite.example.com/v1 --project <id> --key <api key> \
  *     [--functions ./appwrite.config.json] [--only schema,users,teams,variables,documents,files] [--verify]
  *
- * Writes to DATABASE_PATH and STORAGE_PATH (same env as the server). Safe to run
- * again: rows are replaced by ID, so a final run at cutover picks up changes.
+ * Writes to the configured SQLite or Postgres database and STORAGE_PATH (same
+ * env as the server). Safe to run again: rows are replaced by ID, so a final run
+ * at cutover picks up changes.
  */
 import { dirname, resolve } from 'node:path'
 
-import { openDb } from '~/db/connection'
+import { configFromEnv } from '~/config'
+import { databaseOptionsOf, openDatabase, sqlDatabaseOf } from '~/db'
 import { importFromAppwrite, verifyAgainstAppwrite, type ImportOptions } from '~/migrate/importer'
 
 const args = process.argv.slice(2)
@@ -37,7 +39,8 @@ const options: ImportOptions = {
   functions: functionsPath ? { config: await Bun.file(functionsPath).json(), baseDir: dirname(resolve(functionsPath)) } : undefined,
 }
 
-const db = openDb(process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+const database = await openDatabase(databaseOptionsOf(configFromEnv()))
+const db = sqlDatabaseOf(database)
 const started = performance.now()
 const report = await importFromAppwrite(db, options)
 const docs = report.collections.reduce((n, c) => n + c.imported, 0)
@@ -59,4 +62,4 @@ if (args.includes('--verify')) {
   for (const m of mismatches.slice(0, 50)) console.log('  ', m)
   if (mismatches.length) process.exitCode = 2
 }
-db.sqlite.close()
+await database.close()

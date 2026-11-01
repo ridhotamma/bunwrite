@@ -35,11 +35,15 @@ export class BackupService {
   private timer: ReturnType<typeof setInterval> | null = null
   private lastAutoDay = ''
 
-  constructor(private config: Config) {}
+  constructor(
+    private config: Config,
+    /** File archives only make sense when the database is a local SQLite file. */
+    private readonly localFile = true,
+  ) {}
 
   /** Only the control instance owns whole-instance backups. */
   private get enabled(): boolean {
-    return this.config.instanceBackups !== false
+    return this.config.instanceBackups !== false && this.localFile
   }
 
   private get s3() {

@@ -33,23 +33,27 @@ function folder.
 ## Multiple processes
 
 On Linux, `WORKERS=auto` (the Docker image default) starts one public HTTP
-process per CPU plus a pool of writer processes. The pool size follows
-`WRITER_SHARDS` (default: one writer per two public workers, capped at 8). The
-public processes bind the same port with `SO_REUSEPORT`, or one port each when
-`WORKER_PORTS` is on, and all processes open the same SQLite file in WAL mode:
-reads run in parallel and SQLite serializes writes. Every connection maps up to
-`SQLITE_MMAP_MB` of the file (default 256 MB; `0` disables mmap), so reads come
-from shared mapped pages. The processes coordinate through the database
+process per CPU plus, for SQLite, a pool of writer processes. The pool size
+follows `WRITER_SHARDS` (default: one writer per two public workers, capped at
+8). The public processes bind the same port with `SO_REUSEPORT`, or one port
+each when `WORKER_PORTS` is on, and all processes open the same SQLite file in
+WAL mode: reads run in parallel and SQLite serializes writes. Every connection
+maps up to `SQLITE_MMAP_MB` of the file (default 256 MB; `0` disables mmap), so
+reads come from shared mapped pages. With `DB_DRIVER=postgres`, the writer pool
+and loopback listeners are not started: every worker uses the connection pool
+and writes independently. The processes coordinate through the database
 (`src/cluster`):
 
 - **Leader lease** — `_cluster_leases` names the process that runs cron
   schedules, automatic backups, the queue reaper, the render queue and pruning.
   Workers renew it every two seconds; when the leader stops, another worker
   takes over within ten seconds.
-- **Realtime bus** — a write in one worker appends the event to
-  `_realtime_events`; the other workers with WebSocket clients poll it and
-  deliver to their own sockets. `_cluster_processes` records which workers have
-  clients, so nothing is appended while realtime is unused.
+- **Realtime bus** — on SQLite, a write appends the event to
+  `_realtime_events`; workers with WebSocket clients poll it and deliver to
+  their own sockets. `_cluster_processes` records which workers have clients, so
+  nothing is appended while realtime is unused. On Postgres, the same hub uses
+  `LISTEN`/`NOTIFY` on a per-project channel; large batches are split to fit the
+  8 kB payload limit.
 - **Cache versions** — triggers on `_settings`, `_databases`, `_collections`,
   `_sites`, `_proxy_rules`, `_projects`, `_sessions`/`_users`/`_memberships`/
   `_teams` and `_api_keys` bump counters in `_meta`. Each worker compares them
@@ -58,8 +62,8 @@ from shared mapped pages. The processes coordinate through the database
   process. The same counters carry project additions and removals, and the
   session/key caches reuse the request's single read instead of querying
   `_meta` again.
-- **Project-sharded writers** — the first process indices open a loopback
-  listener on `127.0.0.1:${WRITER_PORT}` (shard `i` uses `WRITER_PORT + i`)
+- **Project-sharded writers (SQLite only)** — the first process indices open a
+  loopback listener on `127.0.0.1:${WRITER_PORT}` (shard `i` uses `WRITER_PORT + i`)
   instead of a public one, so a synchronous WAL checkpoint or lock wait cannot
   stall client connections. Public workers forward every short
   `POST`/`PUT`/`PATCH`/`DELETE` API request to the writer that owns the
