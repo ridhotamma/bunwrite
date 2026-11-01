@@ -35,11 +35,13 @@ interface Directory {
 }
 
 /** Users, teams, labels and team roles to suggest, newest first, capped so the page stays small. */
-function directory(ctx: ConsoleContext): Directory {
-  const users = ctx.services.auth.userDirectory()
-  const teams = ctx.services.teams.directory()
-  const labels = ctx.services.auth.userLabels()
-  const roles = ctx.services.teams.memberRoles()
+async function directory(ctx: ConsoleContext): Promise<Directory> {
+  const [users, teams, labels, roles] = await Promise.all([
+    ctx.services.auth.userDirectory(),
+    ctx.services.teams.directory(),
+    ctx.services.auth.userLabels(),
+    ctx.services.teams.memberRoles(),
+  ])
   return {
     users: users.map((u) => ({ id: u.id, name: u.name, email: u.email ?? '' })),
     teams,
@@ -49,7 +51,7 @@ function directory(ctx: ConsoleContext): Directory {
 }
 
 /** Names for user:/team: roles already in the list, even when they are not among the suggestions. */
-function knownNames(ctx: ConsoleContext, value: string[], dir: Directory): Record<string, string> {
+async function knownNames(ctx: ConsoleContext, value: string[], dir: Directory): Promise<Record<string, string>> {
   const names: Record<string, string> = {}
   for (const u of dir.users) names[`user:${u.id}`] = u.name || u.email || u.id
   for (const t of dir.teams) names[`team:${t.id}`] = t.name
@@ -57,10 +59,10 @@ function knownNames(ctx: ConsoleContext, value: string[], dir: Directory): Recor
     const m = /"(user|team):([^"/]+)/.exec(p)
     if (!m || names[`${m[1]}:${m[2]}`]) continue
     if (m[1] === 'user') {
-      const user = ctx.services.auth.findUser(m[2]!)
+      const user = await ctx.services.auth.findUser(m[2]!)
       if (user) names[`user:${m[2]}`] = user.name || user.email || user.id
     } else {
-      const team = ctx.services.teams.findTeam(m[2]!)
+      const team = await ctx.services.teams.findTeam(m[2]!)
       if (team) names[`team:${m[2]}`] = team.name
     }
   }
@@ -69,11 +71,11 @@ function knownNames(ctx: ConsoleContext, value: string[], dir: Directory): Recor
 
 let fieldCount = 0
 
-export function permissionsField(ctx: ConsoleContext, options: PermissionsFieldOptions): Html {
+export async function permissionsField(ctx: ConsoleContext, options: PermissionsFieldOptions): Promise<Html> {
   const { name = 'permissions', value, actions, note, empty = 'No roles yet, so only API keys and server functions have access.' } = options
-  const dir = directory(ctx)
+  const dir = await directory(ctx)
   const id = `perm-${++fieldCount}`
-  const config = { actions, names: knownNames(ctx, value, dir), users: dir.users, teams: dir.teams }
+  const config = { actions, names: await knownNames(ctx, value, dir), users: dir.users, teams: dir.teams }
   const canCreate = actions.includes('create')
   return html`<div class="perm" data-perm="${JSON.stringify(config)}">
     <div class="perm-presets">
@@ -82,10 +84,18 @@ export function permissionsField(ctx: ConsoleContext, options: PermissionsFieldO
       <button type="button" class="small" data-perm-preset="users:read">Signed-in users can read</button>
       ${canCreate ? html`<button type="button" class="small" data-perm-preset="users:create">Signed-in users can create</button>` : ''}
     </div>
-    <div class="scroll"><table class="perm-table">
-      <thead><tr><th>Role</th>${actions.map((a) => html`<th class="perm-col">${a[0]!.toUpperCase() + a.slice(1)}</th>`)}<th></th></tr></thead>
-      <tbody></tbody>
-    </table></div>
+    <div class="scroll">
+      <table class="perm-table">
+        <thead>
+          <tr>
+            <th>Role</th>
+            ${actions.map((a) => html`<th class="perm-col">${a[0]!.toUpperCase() + a.slice(1)}</th>`)}
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
     <p class="perm-empty subdued">${empty}</p>
     <div class="perm-add">
       <select data-perm-kind aria-label="Role type">
@@ -103,20 +113,23 @@ export function permissionsField(ctx: ConsoleContext, options: PermissionsFieldO
           <option value="label">Users with a label</option>
         </optgroup>
       </select>
-      <input data-perm-user list="${id}-users" placeholder="Name, email or user ID" hidden aria-label="User">
-      <input data-perm-team list="${id}-teams" placeholder="Team name or ID" hidden aria-label="Team">
-      <input data-perm-role list="${id}-roles" placeholder="Role, e.g. owner" hidden aria-label="Team role">
-      <input data-perm-label list="${id}-labels" placeholder="Label, e.g. admin" hidden aria-label="Label">
+      <input data-perm-user list="${id}-users" placeholder="Name, email or user ID" hidden aria-label="User" />
+      <input data-perm-team list="${id}-teams" placeholder="Team name or ID" hidden aria-label="Team" />
+      <input data-perm-role list="${id}-roles" placeholder="Role, e.g. owner" hidden aria-label="Team role" />
+      <input data-perm-label list="${id}-labels" placeholder="Label, e.g. admin" hidden aria-label="Label" />
       <button type="button" data-perm-add>Add role</button>
     </div>
     <p class="perm-error" hidden></p>
     <div class="perm-summary"></div>
     ${note ? html`<p class="help">${note}</p>` : ''}
-    <details class="perm-text"><summary>Edit as text</summary>
+    <details class="perm-text">
+      <summary>Edit as text</summary>
       <textarea name="${name}" class="mono" spellcheck="false" placeholder='read("any")'>${value.join('\n')}</textarea>
       <small class="help">One per line, e.g. <code>read("any")</code>, <code>update("team:ID/owner")</code>. The table updates as you type.</small>
     </details>
-    <datalist id="${id}-users">${dir.users.map((u) => html`<option value="${u.id}" label="${[u.name, u.email].filter(Boolean).join(' · ') || u.id}"></option>`)}</datalist>
+    <datalist id="${id}-users">
+      ${dir.users.map((u) => html`<option value="${u.id}" label="${[u.name, u.email].filter(Boolean).join(' · ') || u.id}"></option>`)}
+    </datalist>
     <datalist id="${id}-teams">${dir.teams.map((t) => html`<option value="${t.id}" label="${t.name}"></option>`)}</datalist>
     <datalist id="${id}-roles">${dir.teamRoles.map((r) => html`<option value="${r}"></option>`)}</datalist>
     <datalist id="${id}-labels">${dir.labels.map((l) => html`<option value="${l}"></option>`)}</datalist>
@@ -304,7 +317,16 @@ export const PERMISSIONS_SCRIPT = `
 export function securityChoice(name: string, on: boolean, kind: 'document' | 'file'): Html {
   const parent = kind === 'document' ? 'collection' : 'bucket'
   return html`<div class="choice" role="radiogroup" aria-label="${kind === 'document' ? 'Row security' : 'File security'}">
-    <label><input type="radio" name="${name}" value="" ${on ? '' : 'checked'}><span><b>${parent[0]!.toUpperCase() + parent.slice(1)} permissions only</b><span>Everyone allowed below gets the same access to every ${kind}.</span></span></label>
-    <label><input type="radio" name="${name}" value="on" ${on ? 'checked' : ''}><span><b>${kind === 'document' ? 'Row' : 'File'} security</b><span>Each ${kind} can also grant access to specific users or teams, for example "only the owner can read it".</span></span></label>
+    <label
+      ><input type="radio" name="${name}" value="" ${on ? '' : 'checked'} /><span
+        ><b>${parent[0]!.toUpperCase() + parent.slice(1)} permissions only</b><span>Everyone allowed below gets the same access to every ${kind}.</span></span
+      ></label
+    >
+    <label
+      ><input type="radio" name="${name}" value="on" ${on ? 'checked' : ''} /><span
+        ><b>${kind === 'document' ? 'Row' : 'File'} security</b
+        ><span>Each ${kind} can also grant access to specific users or teams, for example "only the owner can read it".</span></span
+      ></label
+    >
   </div>`
 }

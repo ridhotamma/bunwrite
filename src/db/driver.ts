@@ -226,7 +226,9 @@ export function uniqueViolation(error: unknown): UniqueViolation | null {
     if (!/UNIQUE constraint failed|duplicate key value violates unique constraint|E11000 duplicate key/i.test(message)) return null
   }
   const message = error instanceof Error ? error.message : String(error)
-  const constraint = /constraint "([^"]+)"/.exec(message)?.[1] ?? /index: (\S+)/.exec(message)?.[1] ?? /UNIQUE constraint failed: ([^.\s]+)/.exec(message)?.[1]
+  // SQLite names the column (`_users.email`), Postgres the index (`_users_email_key`)
+  // and MongoDB the index too. Keep the first column when SQLite lists several.
+  const constraint = /constraint "([^"]+)"/.exec(message)?.[1] ?? /index: (\S+)/.exec(message)?.[1] ?? /UNIQUE constraint failed: ([^\s,]+)/.exec(message)?.[1]
   return { constraint }
 }
 

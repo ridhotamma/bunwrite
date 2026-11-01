@@ -15,16 +15,22 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [CONFIGURATION.md](CONFIGURATION.md
 | Backend | Driver | Schema bootstrap | Used by the request path |
 | --- | --- | --- | --- |
 | SQLite | `bun:sqlite` (synchronous) | Drizzle migrations + cluster schema | **Yes**, the default |
-| Postgres | `Bun.SQL` (async pool) | Derived from the Drizzle schema + triggers + views | Not yet — see [Migration order](#migration-order) |
-| MongoDB | `mongodb` (async, optional) | Indexes + `_counters` | Not yet — see [Migration order](#migration-order) |
+| Postgres | `Bun.SQL` (async pool) | Derived from the Drizzle schema + triggers + views, once per project schema | **Yes** — the server boots on it, see [Boot path](#boot-path) |
+| MongoDB | `mongodb` (async, optional) | Indexes + `_counters` | Not yet — repositories are still missing |
 
 The port, both network drivers, schema bootstrapping, dialect translation, the
 operational CLI and the cache/services layer (logs, variables, webhooks,
-settings, registry, versions, access) are complete and tested against real
-Postgres and MongoDB. The document, auth, teams, storage, functions and console
-layers still use the synchronous SQLite fast path; [Migration
-order](#migration-order) lists what is left. Nothing in the existing SQLite
-path changed behaviour.
+settings, registry, versions, access, email templates) are complete and tested
+against real Postgres and MongoDB. The document layer, auth (users, sessions,
+tokens and OAuth identities), teams, console admins/sessions, organizations, the
+rate/abuse limits, storage (buckets, files, uploads, previews), functions
+(definitions, deployments, executions), sites, messaging topics, the
+proxy/domain rules and the queue now run on either backend as well. The project
+manager opens one Postgres schema per project, and `startServer` opens the
+configured backend. The remaining console screens (settings, schema admin, logs,
+queue views), the VCS console and the cluster/backup features still use
+synchronous SQLite paths; [Migration order](#migration-order) lists them.
+Nothing in the existing SQLite path changed behaviour.
 
 ## Configuration
 
@@ -50,10 +56,14 @@ environment by another tool does not move Bunwrite off SQLite. An unknown value
 fails at startup instead of silently falling back. The `db:*` CLI can also infer
 the backend from `--url` when `--driver` is omitted.
 
-For Postgres, `DATABASE_SCHEMA` creates and uses a schema
+For Postgres, `DATABASE_SCHEMA` creates and uses the control schema
 (`CREATE SCHEMA IF NOT EXISTS`); every pooled connection is opened with
-`search_path=<schema>, public`, not with a one-off `SET`. For MongoDB,
-`MONGO_DATABASE` selects the database; each Bunwrite project can use its own.
+`search_path=<schema>, public`, not with a one-off `SET`. Each additional
+Bunwrite project gets a sibling schema named `<DATABASE_SCHEMA>_<project-id>`
+(sanitized to 63 bytes and hashed when the ID is long). For MongoDB,
+`MONGO_DATABASE` selects the control database; the same namespace helper derives
+`<MONGO_DATABASE>_<project-id>` for when the repository layer can open a
+project there.
 
 ## Operations CLI
 
@@ -72,11 +82,12 @@ bun run db:migrate --schema appwrite.config.json --prune
 The CLI reads the same environment variables as the server. `--no-bootstrap`
 opens a read-only replica without touching the schema.
 
-While the request path is still SQLite, setting `DB_DRIVER` to `postgres` or
-`mongodb` makes the server stop with an explicit message instead of silently
-writing to the local file. Remove `DB_DRIVER` (or set it to `sqlite`) to start
-normally; use the CLI to prepare and verify the network backend in the
-meantime.
+`DB_DRIVER=postgres` now boots the server and serves API traffic. The boot path
+opens the control schema, runs the instance bootstrap through the driver,
+loads every service cache with `services.ready()`, and opens each project in its
+own schema. MongoDB still stops with an explicit message until the remaining
+SQL-shaped services have repositories; use the CLI to prepare and verify a
+MongoDB database in the meantime.
 
 ## The port
 
@@ -149,6 +160,31 @@ await services.ready()   // no-op on SQLite; loads caches on Postgres/Mongo
 `startServer` awaits `projects.ready()`, which does the same for the control
 project and every project runtime.
 
+### Boot path
+
+`startServer` no longer constructs a SQLite handle directly. It calls
+
+```ts
+const database = await openDatabase(databaseOptionsOf(config))
+const db = sqlDatabaseOf(database)       // driver + dialect + capabilities (+ sqlite)
+if (db.dialect === 'sqlite') bootstrapInstance(db)
+else await bootstrapInstanceAsync(db)
+```
+
+`bootstrapInstance` keeps the synchronous SQLite transaction the tests and local
+path have always used. `bootstrapInstanceAsync` computes the same plan from one
+snapshot and applies it in one driver transaction; on Postgres it takes an
+advisory lock first, so two workers booting together cannot store different
+instance secrets. `clearInstanceApiKeyAsync` is the matching async version used
+after the first console admin is created.
+
+`ProjectManager` now opens projects through `openDatabase` too. The default
+project reuses the control handle; every other project gets a derived namespace
+and its own pool. A project's services are not returned until `services.ready()`
+has loaded its caches, so the first request cannot observe an empty registry or
+settings map. Deleting a project drops its Postgres schema or MongoDB database
+after closing the pool. SQLite still removes the project folder.
+
 Reads stay synchronous (`settings` mutates the config in place, `registry`
 exposes its maps), so the per-request paths did not change. Writes and reloads
 go through `db.driver` and are awaited.
@@ -205,6 +241,10 @@ with the backend's own mechanism before sending them.
   cache-version triggers already work across hosts.
 - `db.sqlite` remains SQLite-only. Services must be on `db.driver` before they
   can run on Postgres.
+- Schema DDL and the schema admin console still build SQLite tables. Apply a
+  project with `bun run db:migrate --schema …` on Postgres. The VCS console
+  stores, the remaining settings/logs/queue screens and the cluster lease are
+  also still on the synchronous path.
 
 ## MongoDB
 
@@ -284,9 +324,23 @@ SQLite test suite green:
    permissions, revisions and `runBatch`; staged transaction reads, random
    order and multi-document transactions need a replica set/session support and
    are rejected explicitly rather than silently emulated.
-4. `auth/*`, `teams/*`, `storage/*`, `functions/*`.
+4. **Done for the boot path.** `auth/*`, `teams/*`, `console/auth.ts`,
+   `organizations/service.ts`, `lib/limits.ts`, `storage/service.ts`,
+   `functions/service.ts`, `functions/deployments.ts`, `sites/service.ts`,
+   `proxy/service.ts`, `queue/service.ts`, `messaging/topics.ts` and
+   `mail/templates.ts` use `db.driver`; their routes, console pages, caches and
+   tests are async. Auth, teams, storage and the proxy/site/queue layers have
+   been exercised against real Postgres; functions are covered by the SQLite
+   suite and use the proxy cache for custom-domain rules. Sites and proxy keep
+   synchronous reads over a cache filled by `ready()`, with async writes and
+   reloads. The project manager now opens each project as a Postgres schema or
+   MongoDB database and loads its caches before serving it.
+   The remaining synchronous screens are the console settings/schema admin and
+   the logs/queue views, plus the VCS console stores.
 5. Console pages and the cluster/backup features, which can stay SQLite-only
-   behind `db.capabilities`.
+   behind `db.capabilities`. Schema DDL (`schema/admin.ts`, `schema/push.ts`) is
+   still SQLite-only; on Postgres apply a project with
+   `bun run db:migrate --schema …`.
 
 A converted method looks like this:
 
@@ -323,7 +377,9 @@ bun test test/database-drivers.test.ts
 ```
 
 The Postgres test creates a random schema, bootstraps the full schema, runs
-CRUD, a rolled-back transaction, a savepoint and the cache triggers, then drops
-the schema. The Mongo test creates a random database, bootstraps indexes, runs
+CRUD, a rolled-back transaction, a savepoint and the cache triggers, then boots
+`createServices` + `ProjectManager` on the same connection, creates a second
+project in its own schema, writes a document there, deletes the project and
+drops both schemas. The Mongo test creates a random database, bootstraps indexes, runs
 CRUD/upsert, allocates `_seq` values, checks the unique index and drops the
 database. Without the environment variables both are skipped.

@@ -3,7 +3,7 @@
  * `installations`). They live in the control database, so installing an
  * account once makes its repositories available to every project.
  */
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
@@ -31,9 +31,11 @@ export function installationModel(row: InstallationRow) {
 }
 
 export class VcsInstallations {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: SqlDatabase) {}
 
+  /** The VCS console has not moved to the driver port yet; it is SQLite-only. */
   private get sql() {
+    if (!this.db.sqlite) throw new Error('GitHub installations are not available on this database backend yet.')
     return this.db.sqlite
   }
 

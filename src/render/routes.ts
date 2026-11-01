@@ -69,7 +69,8 @@ function int(params: Record<string, unknown>, key: string, min: number, max: num
 export function imageOptions(params: Record<string, unknown>): ImageOptions {
   let output = (str(params.output) ?? 'png').toLowerCase()
   if (output === 'jpeg') output = 'jpg'
-  if (!(IMAGE_OUTPUTS as readonly string[]).includes(output)) throw err('general_argument_invalid', `Param "output" must be one of ${IMAGE_OUTPUTS.join(', ')}.`)
+  if (!(IMAGE_OUTPUTS as readonly string[]).includes(output))
+    throw err('general_argument_invalid', `Param "output" must be one of ${IMAGE_OUTPUTS.join(', ')}.`)
   const scale = num(params.scale, 1)!
   // Below 1 the page still lays out at width × height and the bitmap shrinks: thumbnails without a second layout.
   if (!(scale >= 0.1 && scale <= 3)) throw err('general_argument_invalid', 'Param "scale" must be between 0.1 and 3.')
@@ -126,7 +127,7 @@ export function renderRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'render.write')
     const options = pdfOptions(params)
     const name = fileName(str(params.fileName), 'document', 'pdf')
-    if (bool(params.async, false)) return json(renderJobModel(ctx.render.enqueue('pdf', html(params), options, target(params, name))), 202)
+    if (bool(params.async, false)) return json(renderJobModel(await ctx.render.enqueue('pdf', html(params), options, target(params, name))), 202)
     const bytes = await ctx.render.pdf(html(params), options)
     return respond(ctx, params, bytes, name, 'application/pdf')
   })
@@ -135,13 +136,13 @@ export function renderRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'render.write')
     const options = imageOptions(params)
     const name = fileName(str(params.fileName), 'image', options.output!)
-    if (bool(params.async, false)) return json(renderJobModel(ctx.render.enqueue('image', html(params), options, target(params, name))), 202)
+    if (bool(params.async, false)) return json(renderJobModel(await ctx.render.enqueue('image', html(params), options, target(params, name))), 202)
     const { bytes, mime } = await ctx.render.image(html(params), options)
     return respond(ctx, params, bytes, name, mime)
   })
 
-  router.get('/render/jobs/:jobId', ({ ctx, path }) => {
+  router.get('/render/jobs/:jobId', async ({ ctx, path }) => {
     requireKey(ctx, 'render.read')
-    return json(renderJobModel(ctx.render.job(path.jobId!)))
+    return json(renderJobModel(await ctx.render.job(path.jobId!)))
   })
 }

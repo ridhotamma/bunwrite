@@ -10,7 +10,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import type { Caller } from '~/auth/caller'
 import { isLeader } from '~/cluster/role'
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import type { DocumentStore } from '~/documents/store'
 import { CREDENTIAL_HEADERS, functionVariables } from '~/lib/compat'
 import { addSeconds, formatDate, now } from '~/lib/datetime'
@@ -313,9 +313,13 @@ export class FunctionService {
   private inflight = new Set<string>()
   private timer: ReturnType<typeof setInterval> | null = null
   private lastTick = -1
+  /** Function IDs, so proxy collision checks can stay synchronous. */
+  private ids = new Set<string>()
+  /** A drain loop is already claiming; a second one would race it for rows. */
+  private draining = false
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private store: DocumentStore,
     private proxy: ProxyService,
@@ -327,26 +331,32 @@ export class FunctionService {
     } = {},
   ) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  fn(id: string): FunctionRow {
-    const row = this.sql.query<FunctionRow, [string]>('SELECT * FROM _functions WHERE id = ?').get(id)
+  async fn(id: string): Promise<FunctionRow> {
+    const row = await this.db.driver.get<FunctionRow>('SELECT * FROM _functions WHERE id = ?', [id])
     if (!row) throw err('function_not_found')
     return row
   }
 
-  list(): FunctionRow[] {
-    return this.sql.query<FunctionRow, []>('SELECT * FROM _functions ORDER BY seq').all()
+  async list(): Promise<FunctionRow[]> {
+    return this.db.driver.all<FunctionRow>('SELECT * FROM _functions ORDER BY seq')
   }
 
-  has(id: string): boolean {
-    return Boolean(this.sql.query('SELECT 1 FROM _functions WHERE id = ?').get(id))
+  async has(id: string): Promise<boolean> {
+    return Boolean(await this.db.driver.get('SELECT 1 FROM _functions WHERE id = ?', [id]))
+  }
+
+  /** Load the ID cache the proxy needs for synchronous host collision checks. */
+  async ready(): Promise<void> {
+    this.ids = new Set((await this.list()).map((f) => f.id))
+  }
+
+  /** Default function hosts, from the ID cache. */
+  hosts(): string[] {
+    return [...this.ids].map((id) => functionHost(this.config, id))
   }
 
   /** The function a request's Host header points at, if it is one of this project's. */
-  byHost(host: string): FunctionRow | null {
+  async byHost(host: string): Promise<FunctionRow | null> {
     const name = hostOf(host)
     const custom = this.proxy.byDomain(name)
     if (custom?.resource_type === 'function') return this.fn(custom.resource_id)
@@ -354,8 +364,7 @@ export class FunctionService {
     if (!name.endsWith(suffix)) return null
     const sub = name.slice(0, -suffix.length)
     if (sub.includes('.')) return null
-    const row = this.sql.query<FunctionRow, [string]>('SELECT * FROM _functions WHERE lower(id) = ?').get(sub)
-    return row ?? null
+    return this.db.driver.get<FunctionRow>('SELECT * FROM _functions WHERE lower(id) = ?', [sub])
   }
 
   /** `https://<id>.<FUNCTIONS_DOMAIN>`, with the API's port when it has one (local development). */
@@ -372,7 +381,7 @@ export class FunctionService {
     return this.proxy.domainsFor('function', f.id)
   }
 
-  update(
+  async update(
     id: string,
     fields: {
       enabled: boolean
@@ -381,13 +390,14 @@ export class FunctionService {
       execute: string[]
       deploymentRetention?: number
     },
-  ): FunctionRow {
-    const current = this.fn(id)
+  ): Promise<FunctionRow> {
+    const current = await this.fn(id)
     this.check(fields)
     const retention = fields.deploymentRetention ?? current.deployment_retention
-    this.sql
-      .query('UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, deployment_retention = ?, updated_at = ? WHERE id = ?')
-      .run(fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), retention, now(), id)
+    await this.db.driver.run(
+      'UPDATE _functions SET enabled = ?, schedule = ?, timeout = ?, execute = ?, deployment_retention = ?, updated_at = ? WHERE id = ?',
+      [fields.enabled ? 1 : 0, fields.schedule, fields.timeout, JSON.stringify(fields.execute), retention, now(), id],
+    )
     return this.fn(id)
   }
 
@@ -411,56 +421,82 @@ export class FunctionService {
   }
 
   /** Delete non-active deployments older than each function's retention setting. */
-  pruneDeployments(): number {
+  pruneDeployments(): Promise<number> {
     return new Deployments(this.db, this.config, this).pruneDeployments()
   }
 
   /** A new function (functions.create). Its code arrives later as a deployment. */
-  create(id: string, fields: FunctionSettings): FunctionRow {
+  async create(id: string, fields: FunctionSettings): Promise<FunctionRow> {
     this.check(fields)
-    if ([this, ...this.peers().filter((peer) => peer !== this)].some((peer) => peer.has(id))) throw err('function_already_exists')
+    const peers = [this, ...this.peers().filter((peer) => peer !== this)]
+    if ((await Promise.all(peers.map((peer) => peer.has(id)))).some(Boolean)) throw err('function_already_exists')
     const domains = this.proxy.normalizeAll(fields.domains ?? [])
     this.proxy.assertDefaultHost('function', id)
     const stamp = now()
-    this.sql.transaction(() => {
-      this.sql
-        .query(
-          `INSERT INTO _functions (id, path, name, runtime, entrypoint, execute, events, schedule, timeout, enabled, scopes, commands, logging,
-           build_specification, runtime_specification, deployment_retention, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp)
-      this.proxy.set('function', id, domains)
-    }).immediate()
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO _functions (id, path, name, runtime, entrypoint, execute, events, schedule, timeout, enabled, scopes, commands, logging,
+         build_specification, runtime_specification, deployment_retention, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, `functions/${id}`, ...this.settingValues(fields), stamp, stamp],
+      )
+      await this.proxy.set('function', id, domains)
+    })
+    this.ids.add(id)
     return this.fn(id)
   }
 
   /** Replace a function's settings (functions.update). */
-  save(id: string, fields: FunctionSettings): FunctionRow {
-    const current = this.fn(id)
+  async save(id: string, fields: FunctionSettings): Promise<FunctionRow> {
+    const current = await this.fn(id)
     this.check(fields)
     const domains = this.proxy.normalizeAll(fields.domains ?? this.domains(current), { type: 'function', id })
-    this.sql.transaction(() => {
-      this.sql
-        .query(
-          `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, execute = ?, events = ?, schedule = ?, timeout = ?, enabled = ?, scopes = ?,
-           commands = ?, logging = ?, build_specification = ?, runtime_specification = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
-        )
-        .run(...this.settingValues(fields), now(), id)
-      this.proxy.set('function', id, domains)
-    }).immediate()
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run(
+        `UPDATE _functions SET name = ?, runtime = ?, entrypoint = ?, execute = ?, events = ?, schedule = ?, timeout = ?, enabled = ?, scopes = ?,
+         commands = ?, logging = ?, build_specification = ?, runtime_specification = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
+        [...this.settingValues(fields), now(), id],
+      )
+      await this.proxy.set('function', id, domains)
+    })
     return this.fn(id)
   }
 
   /** Connect the function to a repository, or disconnect it with NO_PROVIDER. */
-  setProvider(id: string, provider: ProviderSettings): FunctionRow {
-    this.fn(id)
-    this.sql.query('UPDATE _functions SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?').run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
+  async setProvider(id: string, provider: ProviderSettings): Promise<FunctionRow> {
+    await this.fn(id)
+    await this.db.driver.run(
+      'UPDATE _functions SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?',
+      [
+        provider.installationId,
+        provider.providerRepositoryId,
+        provider.providerBranch,
+        provider.providerRootDirectory,
+        provider.providerSilentMode ? 1 : 0,
+        now(),
+        id,
+      ],
+    )
     return this.fn(id)
   }
 
   private settingValues(f: FunctionSettings) {
-    return [f.name, f.runtime, f.entrypoint, JSON.stringify(f.execute), JSON.stringify(f.events), f.schedule, f.timeout, f.enabled ? 1 : 0, JSON.stringify(f.scopes), f.commands, f.logging ? 1 : 0, f.buildSpecification, f.runtimeSpecification, f.deploymentRetention] as const
+    return [
+      f.name,
+      f.runtime,
+      f.entrypoint,
+      JSON.stringify(f.execute),
+      JSON.stringify(f.events),
+      f.schedule,
+      f.timeout,
+      f.enabled ? 1 : 0,
+      JSON.stringify(f.scopes),
+      f.commands,
+      f.logging ? 1 : 0,
+      f.buildSpecification,
+      f.runtimeSpecification,
+      f.deploymentRetention,
+    ] as const
   }
 
   /**
@@ -468,8 +504,8 @@ export class FunctionService {
    * missing or larger than `maxBytes`. Read as the function's user when
    * functions are isolated, since the server cannot read their folders.
    */
-  readEntry(f: FunctionRow, maxBytes: number): string | undefined {
-    const { dir, entrypoint } = this.codeDir(f)
+  async readEntry(f: FunctionRow, maxBytes: number): Promise<string | undefined> {
+    const { dir, entrypoint } = await this.codeDir(f)
     if (!dir) return undefined
     const sandbox = this.config.functionsSandbox
     if (!sandbox) {
@@ -477,66 +513,69 @@ export class FunctionService {
       if (!existsSync(path) || statSync(path).size > maxBytes) return undefined
       return readFileSync(path, 'utf8')
     }
-    const read = Bun.spawnSync(sandbox.wrap(sandbox.uidFor(this.config.projectId, f.id), dir, ['head', '-c', String(maxBytes + 1), '--', entrypoint]), { stdout: 'pipe', stderr: 'ignore' })
+    const read = Bun.spawnSync(sandbox.wrap(sandbox.uidFor(this.config.projectId, f.id), dir, ['head', '-c', String(maxBytes + 1), '--', entrypoint]), {
+      stdout: 'pipe',
+      stderr: 'ignore',
+    })
     if (read.exitCode !== 0 || read.stdout.length > maxBytes) return undefined
     return read.stdout.toString('utf8')
   }
 
   /** Delete a function with its variables, executions and deployments. */
-  remove(id: string): void {
-    this.fn(id)
-    this.sql.transaction(() => {
-      this.proxy.removeFor('function', id)
-      for (const table of ['_function_vars', '_executions', '_deployments']) this.sql.query(`DELETE FROM ${table} WHERE function_id = ?`).run(id)
-      this.sql.query('DELETE FROM _functions WHERE id = ?').run(id)
-    }).immediate()
+  async remove(id: string): Promise<void> {
+    await this.fn(id)
+    await this.db.driver.transaction(async (tx) => {
+      await this.proxy.removeFor('function', id)
+      for (const table of ['_function_vars', '_executions', '_deployments']) await tx.run(`DELETE FROM ${table} WHERE function_id = ?`, [id])
+      await tx.run('DELETE FROM _functions WHERE id = ?', [id])
+    })
+    this.ids.delete(id)
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, id))
   }
 
   /** A function's own variables, each with its deploy context. */
-  variables(functionId: string): { key: string; value: string; secret: number; function_id: string; context: string }[] {
-    return this.sql
-      .query<{ key: string; value: string; secret: number; function_id: string; context: string }, [string]>(
-        'SELECT key, value, secret, function_id, context FROM _function_vars WHERE function_id = ? ORDER BY key, context',
-      )
-      .all(functionId)
-  }
-
-  setVariable(functionId: string, key: string, value: string, secret: boolean, context: VariableContext = ''): void {
-    this.setVariables(functionId, [{ key, value }], secret, context)
-  }
-
-  setVariables(functionId: string, entries: EnvVariable[], secret: boolean, context: VariableContext = ''): void {
-    const stamp = now()
-    const statement = this.sql.prepare(
-      `INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(function_id, key, context) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
+  async variables(functionId: string): Promise<{ key: string; value: string; secret: number; function_id: string; context: string }[]> {
+    return this.db.driver.all<{ key: string; value: string; secret: number; function_id: string; context: string }>(
+      'SELECT key, value, secret, function_id, context FROM _function_vars WHERE function_id = ? ORDER BY key, context',
+      [functionId],
     )
-    this.sql.transaction(() => {
+  }
+
+  async setVariable(functionId: string, key: string, value: string, secret: boolean, context: VariableContext = ''): Promise<void> {
+    await this.setVariables(functionId, [{ key, value }], secret, context)
+  }
+
+  async setVariables(functionId: string, entries: EnvVariable[], secret: boolean, context: VariableContext = ''): Promise<void> {
+    const stamp = now()
+    await this.db.driver.transaction(async (tx) => {
       for (const { key, value } of entries) {
         if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
-        statement.run(functionId, key, value, secret ? 1 : 0, context, stamp, stamp)
+        await tx.run(
+          `INSERT INTO _function_vars (function_id, key, value, secret, context, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(function_id, key, context) DO UPDATE SET value = excluded.value, secret = excluded.secret, updated_at = excluded.updated_at`,
+          [functionId, key, value, secret ? 1 : 0, context, stamp, stamp],
+        )
       }
-    }).immediate()
+    })
   }
 
-  deleteVariable(functionId: string, key: string, context: VariableContext = ''): void {
-    this.sql.query('DELETE FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?').run(functionId, key, context)
+  async deleteVariable(functionId: string, key: string, context: VariableContext = ''): Promise<void> {
+    await this.db.driver.run('DELETE FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?', [functionId, key, context])
   }
 
   /** Forget every variable in a scope; returns how many were removed. */
-  clearVariables(functionId: string): number {
-    return Number(this.sql.query('DELETE FROM _function_vars WHERE function_id = ?').run(functionId).changes ?? 0)
+  async clearVariables(functionId: string): Promise<number> {
+    return (await this.db.driver.run('DELETE FROM _function_vars WHERE function_id = ?', [functionId])).changes
   }
 
-  execution(functionId: string, executionId: string): ExecutionRow {
-    const row = this.sql.query<ExecutionRow, [string, string]>('SELECT * FROM _executions WHERE id = ? AND function_id = ?').get(executionId, functionId)
+  async execution(functionId: string, executionId: string): Promise<ExecutionRow> {
+    const row = await this.db.driver.get<ExecutionRow>('SELECT * FROM _executions WHERE id = ? AND function_id = ?', [executionId, functionId])
     if (!row) throw err('execution_not_found')
     return row
   }
 
   async listExecutions(functionId: string, queries: unknown[], includeTotal = true) {
-    this.fn(functionId)
+    await this.fn(functionId)
     const scope = [
       JSON.stringify({
         method: 'equal',
@@ -548,7 +587,7 @@ export class FunctionService {
       scope,
       includeTotal,
     })
-    const rows = seqs.length ? (this.sql.query(`SELECT * FROM _executions WHERE seq IN (${seqs.map(() => '?').join(', ')})`).all(...seqs) as ExecutionRow[]) : []
+    const rows = seqs.length ? await this.db.driver.all<ExecutionRow>(`SELECT * FROM _executions WHERE seq IN (${seqs.map(() => '?').join(', ')})`, seqs) : []
     const bySeq = new Map(rows.map((r) => [r.seq, r]))
     return {
       total,
@@ -560,24 +599,29 @@ export class FunctionService {
   }
 
   /** The newest execution for each function, keyed by function ID. */
-  latestByFunction(): Map<string, ExecutionStatus> {
-    const rows = this.sql.query<ExecutionStatus, []>('SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)').all()
+  async latestByFunction(): Promise<Map<string, ExecutionStatus>> {
+    const rows = await this.db.driver.all<ExecutionStatus>(
+      'SELECT function_id, status, created_at FROM _executions WHERE seq IN (SELECT max(seq) FROM _executions GROUP BY function_id)',
+    )
     return new Map(rows.map((row) => [row.function_id, row]))
   }
 
   /** Recent executions across all functions, newest first. */
-  recent(limit = 6): ExecutionSummary[] {
-    return this.sql.query<ExecutionSummary, [number]>('SELECT id, function_id, status, trigger, duration, created_at FROM _executions ORDER BY seq DESC LIMIT ?').all(limit)
+  async recent(limit = 6): Promise<ExecutionSummary[]> {
+    return this.db.driver.all<ExecutionSummary>('SELECT id, function_id, status, trigger, duration, created_at FROM _executions ORDER BY seq DESC LIMIT ?', [
+      limit,
+    ])
   }
 
   /** Executions of one function, newest first. */
-  runsFor(functionId: string, limit = 20): ExecutionRow[] {
-    return this.sql.query<ExecutionRow, [string, number]>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT ?').all(functionId, limit)
+  async runsFor(functionId: string, limit = 20): Promise<ExecutionRow[]> {
+    return this.db.driver.all<ExecutionRow>('SELECT * FROM _executions WHERE function_id = ? ORDER BY seq DESC LIMIT ?', [functionId, limit])
   }
 
   /** Number of failed executions created after `since`, an ISO timestamp. */
-  failedSince(since: string): number {
-    return (this.sql.query<{ n: number }, [string]>("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?").get(since) as { n: number }).n
+  async failedSince(since: string): Promise<number> {
+    const row = await this.db.driver.get<{ n: number }>("SELECT count(*) AS n FROM _executions WHERE status = 'failed' AND created_at > ?", [since])
+    return Number(row?.n ?? 0)
   }
 
   /** Who may run it: API keys always; others need a role in `execute`. */
@@ -597,7 +641,12 @@ export class FunctionService {
   }
 
   /** Create an execution. Async ones return at once with status `waiting`. */
-  async execute(f: FunctionRow, request: ExecutionRequest, mode: 'sync' | 'async', stream?: ExecutionStream): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
+  async execute(
+    f: FunctionRow,
+    request: ExecutionRequest,
+    mode: 'sync' | 'async',
+    stream?: ExecutionStream,
+  ): Promise<{ execution: ExecutionRow; result: ExecutionResult | null }> {
     if (!f.enabled) throw err('function_not_found')
     request = {
       ...request,
@@ -608,25 +657,47 @@ export class FunctionService {
     const headers = this.headerList(request.headers)
     if (mode === 'sync') {
       // A sync run is not queued: the caller waits for it, so claim it here.
-      this.sql
-        .query(
-          `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, lease_until, created_at, updated_at)
-           VALUES (?, ?, ?, 'processing', ?, ?, ?, '', ?, 1, 1, ?, ?, ?)`,
-        )
-        .run(id, f.id, request.trigger, request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), request.userId ?? null, addSeconds(SYNC_TIMEOUT + 30), stamp, stamp)
-      const result = await this.run(id, f, request, Math.min(f.timeout, SYNC_TIMEOUT), { attempt: 1, maxAttempts: 1 }, stream)
-      return { execution: this.execution(f.id, id), result }
-    }
-    this.sql
-      .query(
-        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, available_at, created_at, updated_at)
-         VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+      await this.db.driver.run(
+        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, lease_until, created_at, updated_at)
+         VALUES (?, ?, ?, 'processing', ?, ?, ?, '', ?, 1, 1, ?, ?, ?)`,
+        [
+          id,
+          f.id,
+          request.trigger,
+          request.method ?? 'POST',
+          request.path ?? '/',
+          JSON.stringify(headers),
+          request.userId ?? null,
+          addSeconds(SYNC_TIMEOUT + 30),
+          stamp,
+          stamp,
+        ],
       )
-      .run(id, f.id, request.trigger, request.method ?? 'POST', request.path ?? '/', JSON.stringify(headers), request.body ?? '', request.userId ?? null, this.maxAttempts(f), stamp, stamp, stamp)
+      const result = await this.run(id, f, request, Math.min(f.timeout, SYNC_TIMEOUT), { attempt: 1, maxAttempts: 1 }, stream)
+      return { execution: await this.execution(f.id, id), result }
+    }
+    await this.db.driver.run(
+      `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, user_id, attempts, max_attempts, available_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'waiting', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
+      [
+        id,
+        f.id,
+        request.trigger,
+        request.method ?? 'POST',
+        request.path ?? '/',
+        JSON.stringify(headers),
+        request.body ?? '',
+        request.userId ?? null,
+        this.maxAttempts(f),
+        stamp,
+        stamp,
+        stamp,
+      ],
+    )
     // Start the queue drain without delaying the caller: async runs wait for a
     // free worker, and a restart picks up whatever is still `waiting`.
-    queueMicrotask(() => this.drain())
-    return { execution: this.execution(f.id, id), result: null }
+    queueMicrotask(() => void this.drain())
+    return { execution: await this.execution(f.id, id), result: null }
   }
 
   /** Attempts an execution gets before it stays failed. */
@@ -646,48 +717,55 @@ export class FunctionService {
    * even when the drain and the scheduler tick race. `attempts` and the lease
    * move forward before the first await, so a crashed run is reclaimable.
    */
-  private claim(stamp: string, lease: number, id?: string, dueAt = stamp): ExecutionRow | null {
+  private async claim(stamp: string, lease: number, id?: string, dueAt = stamp): Promise<ExecutionRow | null> {
     const params: (string | number)[] = [addSeconds(lease), stamp]
     const due = '(status = ? AND (available_at IS NULL OR available_at <= ?)) OR (status = ? AND scheduled_at IS NOT NULL AND scheduled_at <= ?)'
     if (id) params.push(id)
     params.push('waiting', stamp, 'scheduled', dueAt)
     const filter = id ? `id = ? AND (${due})` : due
-    const row = this.sql
-      .query<ExecutionRow, (string | number)[]>(
-        `UPDATE _executions SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
-         WHERE seq = (SELECT seq FROM _executions WHERE ${filter} ORDER BY seq LIMIT 1)
-         RETURNING *`,
-      )
-      .get(...params)
-    return row ?? null
+    return this.db.driver.get<ExecutionRow>(
+      `UPDATE _executions SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
+       WHERE seq = (SELECT seq FROM _executions WHERE ${filter} ORDER BY seq LIMIT 1)
+       RETURNING *`,
+      params,
+    )
   }
 
   /**
    * Start waiting runs while capacity is free. Called after enqueueing an
    * execution, when a run finishes, and on the scheduler tick.
    */
-  drain(): void {
-    while (this.inflight.size < this.concurrency) {
-      const row = this.claim(now(), this.leaseFor())
-      if (!row) break
-      let f: FunctionRow
-      try {
-        f = this.fn(row.function_id)
-      } catch {
-        this.sql
-          .query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
-          .run('The function was deleted before this execution ran.', now(), row.id, row.attempts)
-        continue
+  async drain(): Promise<void> {
+    // One drain at a time: the loop awaits between claims, and a second caller
+    // would otherwise hand the same row to two runs.
+    if (this.draining) return
+    this.draining = true
+    try {
+      while (this.inflight.size < this.concurrency) {
+        const row = await this.claim(now(), this.leaseFor())
+        if (!row) break
+        let f: FunctionRow
+        try {
+          f = await this.fn(row.function_id)
+        } catch {
+          await this.db.driver.run(
+            "UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?",
+            ['The function was deleted before this execution ran.', now(), row.id, row.attempts],
+          )
+          continue
+        }
+        const request: ExecutionRequest = {
+          trigger: row.trigger as ExecutionRequest['trigger'],
+          method: row.request_method,
+          path: row.request_path,
+          headers: Object.fromEntries(parse<{ name: string; value: string }[]>(row.request_headers, []).map((h) => [h.name, h.value])),
+          body: row.request_body,
+          userId: row.user_id,
+        }
+        this.startRun(row.id, f, request, f.timeout, { attempt: row.attempts, maxAttempts: row.max_attempts })
       }
-      const request: ExecutionRequest = {
-        trigger: row.trigger as ExecutionRequest['trigger'],
-        method: row.request_method,
-        path: row.request_path,
-        headers: Object.fromEntries(parse<{ name: string; value: string }[]>(row.request_headers, []).map((h) => [h.name, h.value])),
-        body: row.request_body,
-        userId: row.user_id,
-      }
-      this.startRun(row.id, f, request, f.timeout, { attempt: row.attempts, maxAttempts: row.max_attempts })
+    } finally {
+      this.draining = false
     }
   }
 
@@ -702,14 +780,20 @@ export class FunctionService {
     // newer run's slot when it exits.
     const slot = `${id}:${claim.attempt}`
     this.inflight.add(slot)
-    // The claim's lease was sized for the default timeout; fit it to this run.
-    this.sql
-      .query("UPDATE _executions SET lease_until = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
-      .run(addSeconds(this.leaseFor(timeout)), id, claim.attempt)
-    void this.run(id, f, request, timeout, claim).finally(() => {
-      this.inflight.delete(slot)
-      this.drain()
-    })
+    void (async () => {
+      // The claim's lease was sized for the default timeout; fit it to this run.
+      await this.db.driver.run("UPDATE _executions SET lease_until = ? WHERE id = ? AND status = 'processing' AND attempts = ?", [
+        addSeconds(this.leaseFor(timeout)),
+        id,
+        claim.attempt,
+      ])
+      await this.run(id, f, request, timeout, claim)
+    })()
+      .catch((error) => console.error('[functions] run failed:', error))
+      .finally(() => {
+        this.inflight.delete(slot)
+        void this.drain()
+      })
   }
 
   /**
@@ -718,28 +802,22 @@ export class FunctionService {
    * conditional UPDATE: a heartbeat that extended the lease, or another
    * process that claimed the row, no longer matches and is left alone.
    */
-  reap(): string[] {
+  async reap(): Promise<string[]> {
     if (!isLeader()) return []
     const stamp = now()
-    const rows = this.sql
-      .query<{ id: string; status: string }, [string, string, string, string]>(
-        `UPDATE _executions
-         SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
-             available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
-             lease_until = NULL,
-             errors = CASE WHEN attempts < max_attempts THEN errors ELSE ? END,
-             updated_at = ?
-         WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
-         RETURNING id, status`,
-      )
-      .all(
-        stamp,
-        'The execution stopped before it finished (the server restarted or the run was killed).',
-        stamp,
-        stamp,
-      )
+    const rows = await this.db.driver.all<{ id: string; status: string }>(
+      `UPDATE _executions
+       SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
+           available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
+           lease_until = NULL,
+           errors = CASE WHEN attempts < max_attempts THEN errors ELSE ? END,
+           updated_at = ?
+       WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
+       RETURNING id, status`,
+      [stamp, 'The execution stopped before it finished (the server restarted or the run was killed).', stamp, stamp],
+    )
     const retried = rows.filter((row) => row.status === 'waiting').map((row) => row.id)
-    if (retried.length) queueMicrotask(() => this.drain())
+    if (retried.length) queueMicrotask(() => void this.drain())
     return retried
   }
 
@@ -751,16 +829,27 @@ export class FunctionService {
    * caller gets back is the execution that eventually runs — it is never
    * replaced by a second row.
    */
-  schedule(f: FunctionRow, request: ExecutionRequest, scheduledAt: string): ExecutionRow {
+  async schedule(f: FunctionRow, request: ExecutionRequest, scheduledAt: string): Promise<ExecutionRow> {
     if (!f.enabled) throw err('function_not_found')
     const id = uniqueId()
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, scheduled_at, available_at, user_id, attempts, max_attempts, created_at, updated_at)
-         VALUES (?, ?, 'schedule', 'scheduled', ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?)`,
-      )
-      .run(id, f.id, request.method ?? 'POST', request.path ?? '/', JSON.stringify(this.headerList(request.headers)), request.body ?? '', scheduledAt, request.userId ?? null, this.maxAttempts(f), stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _executions (id, function_id, trigger, status, request_method, request_path, request_headers, request_body, scheduled_at, available_at, user_id, attempts, max_attempts, created_at, updated_at)
+       VALUES (?, ?, 'schedule', 'scheduled', ?, ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?)`,
+      [
+        id,
+        f.id,
+        request.method ?? 'POST',
+        request.path ?? '/',
+        JSON.stringify(this.headerList(request.headers)),
+        request.body ?? '',
+        scheduledAt,
+        request.userId ?? null,
+        this.maxAttempts(f),
+        stamp,
+        stamp,
+      ],
+    )
     return this.execution(f.id, id)
   }
 
@@ -774,7 +863,7 @@ export class FunctionService {
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
     const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
     // The function's own values for this deploy context; they win over project variables.
-    const vars = resolveContext(this.variables(f.id), context)
+    const vars = resolveContext(await this.variables(f.id), context)
     const projectVars = (await this.options.projectVariables?.(context)) ?? {}
     const [runtimeName, runtimeVersion] = f.runtime.split('-')
     const own = { ...projectVars, ...this.options.functionEnv, ...vars }
@@ -809,14 +898,17 @@ export class FunctionService {
    * relative to the code folder), then `<code folder>/functions/<id>`, the conventional layout. The
    * last one also repairs paths stored against the wrong folder by an uploaded import.
    */
-  codeDir(f: FunctionRow): {
+  async codeDir(f: FunctionRow): Promise<{
     dir: string | null
     tried: string[]
     entrypoint: string
     runtime: string
-  } {
+  }> {
     if (f.deployment_id) {
-      const deployment = this.sql.query<{ entrypoint: string; runtime: string }, [string, string]>("SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'").get(f.deployment_id, f.id)
+      const deployment = await this.db.driver.get<{ entrypoint: string; runtime: string }>(
+        "SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'",
+        [f.deployment_id, f.id],
+      )
       const dir = deploymentDir(this.config, f.id, f.deployment_id)
       // An isolated deployment folder is closed to the server; the build already checked the entrypoint.
       const present = existsSync(join(dir, deployment?.entrypoint ?? '')) || (Boolean(this.config.functionsSandbox) && existsSync(dir))
@@ -853,16 +945,26 @@ export class FunctionService {
     throw new Error(`Runtime ${f.runtime} is not supported on this server`)
   }
 
-  private async run(id: string, f: FunctionRow, request: ExecutionRequest, timeout: number, claim: ClaimToken, stream?: ExecutionStream): Promise<ExecutionResult> {
+  private async run(
+    id: string,
+    f: FunctionRow,
+    request: ExecutionRequest,
+    timeout: number,
+    claim: ClaimToken,
+    stream?: ExecutionStream,
+  ): Promise<ExecutionResult> {
     const started = performance.now()
     this.running.set(f.id, (this.running.get(f.id) ?? 0) + 1)
     // Keep the claim alive while the child runs, so the reaper leaves it alone.
     // A lease another worker reclaimed no longer matches, so this cannot steal it back.
     const heartbeat = setInterval(
       () => {
-        this.sql
-          .query("UPDATE _executions SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?")
-          .run(addSeconds(this.leaseFor(timeout)), now(), id, claim.attempt)
+        void this.db.driver.run("UPDATE _executions SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'processing' AND attempts = ?", [
+          addSeconds(this.leaseFor(timeout)),
+          now(),
+          id,
+          claim.attempt,
+        ])
       },
       Math.max(5_000, Math.floor((timeout * 1000) / 2)),
     )
@@ -875,9 +977,12 @@ export class FunctionService {
     /** Set once the function starts a streamed response. */
     let head: { statusCode: number; headers: Record<string, string>; ended: boolean } | null = null
     try {
-      const { dir, tried, entrypoint, runtime: runtimeId } = this.codeDir(f)
+      const { dir, tried, entrypoint, runtime: runtimeId } = await this.codeDir(f)
       if (!dir) {
-        throw new Error(`Function code not found. Looked for ${tried.join(' and ')}. ` + 'Set the code folder (the folder with bunwrite.config.json or appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.')
+        throw new Error(
+          `Function code not found. Looked for ${tried.join(' and ')}. ` +
+            'Set the code folder (the folder with bunwrite.config.json or appwrite.config.json) in Console > Settings > Functions, or FUNCTIONS_DIR.',
+        )
       }
       const sandbox = this.config.functionsSandbox
       const runtime = runtimeId && !f.runtime.startsWith('python') ? await ensureRuntime(this.config, runtimeId) : null
@@ -1047,22 +1152,42 @@ export class FunctionService {
     // A failed run goes back to the queue until it runs out of attempts.
     if (failed && claim.attempt < claim.maxAttempts) {
       const backoff = Math.min(60, 2 ** claim.attempt)
-      const written = this.sql
-        .query(
-          `UPDATE _executions SET status = 'waiting', response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, available_at = ?, lease_until = NULL, updated_at = ?
-           ${owned}`,
-        )
-        .run(statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, addSeconds(backoff), now(), id, claim.attempt)
+      const written = await this.db.driver.run(
+        `UPDATE _executions SET status = 'waiting', response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, available_at = ?, lease_until = NULL, updated_at = ?
+         ${owned}`,
+        [
+          statusCode,
+          body.slice(0, MAX_RECORDED_BYTES),
+          JSON.stringify(responseHeaders),
+          logs.slice(0, 1_000_000),
+          errors.slice(0, 1_000_000),
+          (performance.now() - started) / 1000,
+          addSeconds(backoff),
+          now(),
+          id,
+          claim.attempt,
+        ],
+      )
       // Wake the queue when the backoff ends; the scheduler tick also drains.
-      if (Number(written.changes ?? 0) > 0) setTimeout(() => this.drain(), backoff * 1000).unref?.()
+      if (Number(written.changes ?? 0) > 0) setTimeout(() => void this.drain(), backoff * 1000).unref?.()
       return { statusCode, headers, body }
     }
-    this.sql
-      .query(
-        `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', lease_until = NULL, updated_at = ?
-         ${owned}`,
-      )
-      .run(failed ? 'failed' : 'completed', statusCode, body.slice(0, MAX_RECORDED_BYTES), JSON.stringify(responseHeaders), logs.slice(0, 1_000_000), errors.slice(0, 1_000_000), (performance.now() - started) / 1000, now(), id, claim.attempt)
+    await this.db.driver.run(
+      `UPDATE _executions SET status = ?, response_status_code = ?, response_body = ?, response_headers = ?, logs = ?, errors = ?, duration = ?, request_body = '', lease_until = NULL, updated_at = ?
+       ${owned}`,
+      [
+        failed ? 'failed' : 'completed',
+        statusCode,
+        body.slice(0, MAX_RECORDED_BYTES),
+        JSON.stringify(responseHeaders),
+        logs.slice(0, 1_000_000),
+        errors.slice(0, 1_000_000),
+        (performance.now() - started) / 1000,
+        now(),
+        id,
+        claim.attempt,
+      ],
+    )
     return { statusCode, headers, body }
   }
 
@@ -1070,14 +1195,14 @@ export class FunctionService {
   start(): void {
     if (this.timer) return
     // Pick up what the previous process left in the queue before the first tick.
-    this.reap()
-    this.drain()
+    void this.reap()
+    void this.drain()
     this.timer = setInterval(() => {
       const date = new Date()
-      this.tick(date)
-      this.tickScheduled(date)
-      this.reap()
-      this.drain()
+      void this.tick(date)
+      void this.tickScheduled(date)
+      void this.reap()
+      void this.drain()
     }, 15_000)
     this.timer.unref?.()
   }
@@ -1088,13 +1213,13 @@ export class FunctionService {
   }
 
   /** Fire every function whose schedule matches this minute (once per minute). */
-  tick(date: Date): string[] {
+  async tick(date: Date): Promise<string[]> {
     if (!isLeader()) return []
     const minute = Math.floor(date.getTime() / 60_000)
     if (minute === this.lastTick) return []
     this.lastTick = minute
     const fired: string[] = []
-    for (const f of this.list()) {
+    for (const f of await this.list()) {
       if (!f.enabled || !f.schedule || this.config.skipSchedules.includes(f.id)) continue
       if ((this.running.get(f.id) ?? 0) > 0) continue // never overlap a slow run
       let due = false
@@ -1118,20 +1243,26 @@ export class FunctionService {
    * that function's queue for the next tick rather than overlapping it,
    * matching the cron path.
    */
-  tickScheduled(date: Date): string[] {
+  async tickScheduled(date: Date): Promise<string[]> {
     if (!isLeader()) return []
-    const due = this.sql.query<ExecutionRow, [string, number]>("SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?").all(formatDate(date), 50)
+    const due = await this.db.driver.all<ExecutionRow>(
+      "SELECT * FROM _executions WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY seq ASC LIMIT ?",
+      [formatDate(date), 50],
+    )
     const fired: string[] = []
     for (const row of due) {
       let f: FunctionRow
       try {
-        f = this.fn(row.function_id)
+        f = await this.fn(row.function_id)
       } catch {
-        this.sql.query("UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'scheduled'").run('The function was deleted before this execution ran.', now(), row.id)
+        await this.db.driver.run(
+          "UPDATE _executions SET status = 'failed', errors = ?, lease_until = NULL, updated_at = ? WHERE id = ? AND status = 'scheduled'",
+          ['The function was deleted before this execution ran.', now(), row.id],
+        )
         continue
       }
       if ((this.running.get(f.id) ?? 0) > 0) continue
-      const claimed = this.claim(now(), this.leaseFor(f.timeout), row.id, formatDate(date))
+      const claimed = await this.claim(now(), this.leaseFor(f.timeout), row.id, formatDate(date))
       if (!claimed) continue
       fired.push(row.id)
       const request: ExecutionRequest = {
@@ -1147,8 +1278,8 @@ export class FunctionService {
     return fired
   }
 
-  prune(days = 30): void {
+  async prune(days = 30): Promise<void> {
     const cutoff = new Date(Date.now() - days * 86400_000).toISOString().replace('Z', '+00:00')
-    this.sql.query("DELETE FROM _executions WHERE created_at < ? AND status IN ('completed', 'failed')").run(cutoff)
+    await this.db.driver.run("DELETE FROM _executions WHERE created_at < ? AND status IN ('completed', 'failed')", [cutoff])
   }
 }

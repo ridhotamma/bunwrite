@@ -39,16 +39,7 @@ const MAX_LOG = 16_000
 const POLL_MS = 100
 
 /** Headers that only describe one hop and must not be forwarded. */
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailer',
-  'transfer-encoding',
-  'upgrade',
-])
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
 
 /** What the runtime needs to start one deployment. */
 export interface SsrTarget {
@@ -190,7 +181,7 @@ export class SsrRuntime {
 
   constructor(
     private readonly config: Config,
-    private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null,
+    private readonly lookup: (siteId: string, deploymentId?: string | null) => SsrTarget | null | Promise<SsrTarget | null>,
     /** Project + site variables for a site in a deploy context; empty when the service does not have them. */
     private readonly variablesFor: (siteId: string, context: DeployContext) => Record<string, string> | Promise<Record<string, string>> = () => ({}),
   ) {
@@ -199,7 +190,7 @@ export class SsrRuntime {
 
   /** Answer a request by proxying it to the site's app (or a preview's), starting it if needed. */
   async handle(siteId: string, request: Request, deploymentId?: string | null): Promise<Response> {
-    const target = this.lookup(siteId, deploymentId)
+    const target = await this.lookup(siteId, deploymentId)
     if (!target) return sitePage(404, 'Nothing here yet', 'This site has no live app.')
     let app: RunningApp
     try {
@@ -321,10 +312,7 @@ export class SsrRuntime {
     try {
       proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
-        env: withRuntime(
-          siteRuntimeEnv(this.config, target.siteId, port, await this.variablesFor(target.siteId, target.context)),
-          runtime,
-        ),
+        env: withRuntime(siteRuntimeEnv(this.config, target.siteId, port, await this.variablesFor(target.siteId, target.context)), runtime),
         stdout: 'pipe',
         stderr: 'pipe',
         // One session per app: stopping it takes `npm start`'s children too.
@@ -545,7 +533,7 @@ export async function ssrResponse(services: Services, site: SiteRow, request: Re
   let deployment: SiteDeploymentRow | null
   const id = deploymentId || site.deployment_id
   try {
-    deployment = id ? services.sites.deployment(site.id, id) : null
+    deployment = id ? await services.sites.deployment(site.id, id) : null
   } catch {
     deployment = null
   }
@@ -555,7 +543,7 @@ export async function ssrResponse(services: Services, site: SiteRow, request: Re
   if (!site.api_function_id) return sitePage(502, 'No app', 'This SSR site has no start command and no API function.')
   let fn
   try {
-    fn = services.functions.fn(site.api_function_id)
+    fn = await services.functions.fn(site.api_function_id)
   } catch {
     return sitePage(502, 'No app', `The site's API function "${site.api_function_id}" does not exist.`)
   }

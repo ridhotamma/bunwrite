@@ -68,7 +68,11 @@ async function deploy(siteId: string, files: Record<string, string>, activate = 
     contentRange: null,
     uploadId: null,
   })
-  return until(`deployment ${first.id}`, () => server.services.sites.deployment(siteId, first.id), (d) => d.status === 'ready' || d.status === 'failed')
+  return until(
+    `deployment ${first.id}`,
+    () => server.services.sites.deployment(siteId, first.id),
+    (d) => d.status === 'ready' || d.status === 'failed',
+  )
 }
 
 const base = () => server.endpoint.replace(/\/v1$/, '')
@@ -144,8 +148,8 @@ beforeAll(() => {
   server = startServer(schema, { sitesSsrIdleMs: 5 * 60 * 1000, sitesSsrMaxProcesses: 2 }, dir)
 })
 
-afterAll(() => {
-  for (const site of server.services.sites.list()) server.services.sites.remove(site.id)
+afterAll(async () => {
+  for (const site of server.services.sites.list()) await server.services.sites.remove(site.id)
   server.services.sites.stop()
   server.stop()
   rmSync(dir, { recursive: true, force: true })
@@ -197,7 +201,7 @@ describe('SSR sites: API and frameworks', () => {
     expect(site.installCommand).toBe('npm install')
     expect(site.buildCommand).toBe('npm run build')
     expect(site.startCommand).toBe('node .output/server/index.mjs')
-    server.services.sites.remove('preset')
+    await server.services.sites.remove('preset')
   })
 
   test('startCommand can be set and updated through the API', async () => {
@@ -208,11 +212,9 @@ describe('SSR sites: API and frameworks', () => {
       })
     ).json()) as any
     expect(created.startCommand).toBe('bun app.js')
-    const updated = (await (
-      await api('/sites/api-ssr', { method: 'PUT', body: JSON.stringify({ startCommand: 'bun other.js' }) })
-    ).json()) as any
+    const updated = (await (await api('/sites/api-ssr', { method: 'PUT', body: JSON.stringify({ startCommand: 'bun other.js' }) })).json()) as any
     expect(updated.startCommand).toBe('bun other.js')
-    server.services.sites.remove('api-ssr')
+    await server.services.sites.remove('api-ssr')
   })
 
   test('an unknown adapter is rejected', async () => {
@@ -225,7 +227,7 @@ describe('SSR sites: API and frameworks', () => {
 
 describe('SSR sites: build and serve', () => {
   test('builds the upload, then proxies methods, headers, cookies and status', async () => {
-    createSite('app', {
+    await createSite('app', {
       name: 'App',
       installCommand: 'echo installed > installed.txt',
       buildCommand: 'echo built > built.txt',
@@ -285,7 +287,7 @@ describe('SSR sites: build and serve', () => {
     expect(second.status).toBe('ready')
     // The old deployment keeps serving until the new one is activated.
     expect(await (await visit('/marker')).text()).toBe('none')
-    server.services.sites.activate('app', second.id)
+    await server.services.sites.activate('app', second.id)
     expect(server.services.sites.ssr.running('app')).toBe(0)
     expect(await (await visit('/marker')).text()).toBe('none')
     expect(server.services.sites.ssr.running('app')).toBe(1)
@@ -293,8 +295,8 @@ describe('SSR sites: build and serve', () => {
   })
 
   test('two apps starting together get separate ports in this worker range', async () => {
-    createSite('port-a')
-    createSite('port-b')
+    await createSite('port-a')
+    await createSite('port-b')
     await deploy('port-a', { 'server.js': APP })
     await deploy('port-b', { 'server.js': APP })
     const [a, b] = await Promise.all([visit('/marker', { site: 'port-a' }), visit('/marker', { site: 'port-b' })])
@@ -340,26 +342,26 @@ describe('SSR sites: build and serve', () => {
   test('the live app and a preview of another build each get their own deploy context', async () => {
     const live = server.services.sites.site('app').deployment_id
     const preview = await deploy('app', { 'server.js': APP }, false)
-    const target = (id?: string) => (server.services.sites as any).ssrTarget('app', id)
-    expect(target().context).toBe('live')
-    expect(target(live).context).toBe('live')
-    expect(target(preview.id)).toMatchObject({ context: 'preview', key: `app/${preview.id}/preview` })
+    const target = async (id?: string) => (server.services.sites as any).ssrTarget('app', id)
+    expect((await target()).context).toBe('live')
+    expect((await target(live)).context).toBe('live')
+    expect(await target(preview.id)).toMatchObject({ context: 'preview', key: `app/${preview.id}/preview` })
   })
 
   test('a rollback runs the start command that belonged to that deployment', async () => {
-    server.services.sites.update('app', { ...server.services.sites.settingsOf(server.services.sites.site('app')), startCommand: 'bun server.js one' })
+    await server.services.sites.update('app', { ...server.services.sites.settingsOf(server.services.sites.site('app')), startCommand: 'bun server.js one' })
     const one = await deploy('app', { 'server.js': APP })
     expect(one.start_command).toBe('bun server.js one')
     expect(await (await visit('/marker')).text()).toBe('one')
 
-    server.services.sites.update('app', { ...server.services.sites.settingsOf(server.services.sites.site('app')), startCommand: 'bun server.js two' })
+    await server.services.sites.update('app', { ...server.services.sites.settingsOf(server.services.sites.site('app')), startCommand: 'bun server.js two' })
     const two = await deploy('app', { 'server.js': APP })
     expect(two.start_command).toBe('bun server.js two')
     expect(await (await visit('/marker')).text()).toBe('two')
 
-    server.services.sites.activate('app', one.id)
+    await server.services.sites.activate('app', one.id)
     expect(await (await visit('/marker')).text()).toBe('one')
-    server.services.sites.activate('app', two.id)
+    await server.services.sites.activate('app', two.id)
     expect(await (await visit('/marker')).text()).toBe('two')
   })
 
@@ -367,7 +369,7 @@ describe('SSR sites: build and serve', () => {
     const failed = await deploy('app', { 'server.js': APP })
     expect(failed.status).toBe('ready')
     const live = server.services.sites.site('app').deployment_id
-    server.services.sites.update('app', {
+    await server.services.sites.update('app', {
       ...server.services.sites.settingsOf(server.services.sites.site('app')),
       buildCommand: 'exit 9',
     })
@@ -375,51 +377,55 @@ describe('SSR sites: build and serve', () => {
     expect(bad.status).toBe('failed')
     expect(bad.build_logs).toContain('The build command exited with code 9.')
     expect(server.services.sites.site('app').deployment_id).toBe(live)
-    server.services.sites.activate('app', failed.id)
+    await server.services.sites.activate('app', failed.id)
     expect(await (await visit('/marker')).text()).toBe('two')
   })
 
   test('SITES_BUILD_COMMANDS=false skips install and build', async () => {
     server.config.sitesBuildCommands = false
     try {
-      createSite('no-build', { installCommand: 'echo installed > installed.txt', buildCommand: 'echo built > built.txt' })
+      await createSite('no-build', { installCommand: 'echo installed > installed.txt', buildCommand: 'echo built > built.txt' })
       const d = await deploy('no-build', { 'server.js': APP })
       expect(d.status).toBe('ready')
       expect(d.build_logs).toContain('Skipped install and build commands')
       expect(await (await visit('/files', { site: 'no-build' })).json()).toEqual({ installed: false, built: false })
     } finally {
       server.config.sitesBuildCommands = true
-      server.services.sites.remove('no-build')
+      await server.services.sites.remove('no-build')
     }
   })
 
   test('a failed start command answers 502 with the runtime log', async () => {
-    createSite('broken', { startCommand: 'sh -c "exit 7"' })
+    await createSite('broken', { startCommand: 'sh -c "exit 7"' })
     const d = await deploy('broken', { 'server.js': APP })
     expect(d.status).toBe('ready')
     const res = await visit('/', { site: 'broken' })
     expect(res.status).toBe(502)
     expect(await res.text()).toContain('did not start')
-    await until('the runtime log', () => server.services.sites.runtimeLogs('broken'), (log) => log.includes('exited with code 7'))
+    await until(
+      'the runtime log',
+      () => server.services.sites.runtimeLogs('broken'),
+      (log) => log.includes('exited with code 7'),
+    )
     // Give the backoff a moment, then a working deployment recovers the site.
-    server.services.sites.update('broken', { ...server.services.sites.settingsOf(server.services.sites.site('broken')), startCommand: 'bun server.js' })
+    await server.services.sites.update('broken', { ...server.services.sites.settingsOf(server.services.sites.site('broken')), startCommand: 'bun server.js' })
     await deploy('broken', { 'server.js': APP })
     expect(await (await visit('/marker', { site: 'broken' })).text()).toBe('none')
-    server.services.sites.remove('broken')
+    await server.services.sites.remove('broken')
   })
 
   test('an SSR site with no start command and no function says so', async () => {
-    createSite('empty', { startCommand: '' })
+    await createSite('empty', { startCommand: '' })
     const d = await deploy('empty', { 'index.html': '<h1>x</h1>' })
     expect(d.status).toBe('failed')
     expect(d.build_logs).toContain('needs a start command')
-    server.services.sites.remove('empty')
+    await server.services.sites.remove('empty')
   })
 })
 
 describe('SSR sites: modes and limits', () => {
   test('without a start command, every path runs the API function', async () => {
-    createSite('fn-site', { startCommand: '', apiFunctionId: 'renderer' })
+    await createSite('fn-site', { startCommand: '', apiFunctionId: 'renderer' })
     const d = await deploy('fn-site', { 'index.html': '<h1>rendered by a function</h1>' })
     expect(d.status).toBe('ready')
     expect(d.build_logs).toContain('requests run the function "renderer"')
@@ -441,26 +447,31 @@ describe('SSR sites: modes and limits', () => {
   })
 
   test('an idle app is stopped and starts again on the next request', async () => {
-    createSite('idle')
+    await createSite('idle')
     await deploy('idle', { 'server.js': APP })
     server.config.sitesSsrIdleMs = 300
     try {
       expect(await (await visit('/marker', { site: 'idle' })).text()).toBe('none')
       expect(server.services.sites.ssr.running('idle')).toBe(1)
-      await until('the idle app to stop', () => server.services.sites.ssr.running('idle'), (n) => n === 0, 5000)
+      await until(
+        'the idle app to stop',
+        () => server.services.sites.ssr.running('idle'),
+        (n) => n === 0,
+        5000,
+      )
       expect(await (await visit('/marker', { site: 'idle' })).text()).toBe('none')
       expect(server.services.sites.ssr.running('idle')).toBe(1)
     } finally {
       server.config.sitesSsrIdleMs = 5 * 60 * 1000
-      server.services.sites.remove('idle')
+      await server.services.sites.remove('idle')
     }
   })
 
   test('at most SITES_SSR_MAX_PROCESSES apps run, least recently used first out', async () => {
     server.config.sitesSsrMaxProcesses = 1
     try {
-      createSite('lru-a')
-      createSite('lru-b')
+      await createSite('lru-a')
+      await createSite('lru-b')
       await deploy('lru-a', { 'server.js': APP })
       await deploy('lru-b', { 'server.js': APP })
       expect(await (await visit('/marker', { site: 'lru-a' })).text()).toBe('none')
@@ -468,24 +479,29 @@ describe('SSR sites: modes and limits', () => {
       expect(server.services.sites.ssr.running('lru-a')).toBe(0)
       expect(server.services.sites.ssr.running('lru-b')).toBe(1)
     } finally {
-      server.services.sites.remove('lru-a')
-      server.services.sites.remove('lru-b')
+      await server.services.sites.remove('lru-a')
+      await server.services.sites.remove('lru-b')
       server.config.sitesSsrMaxProcesses = 2
     }
   })
 
   test('a crashed app answers 502 once and restarts on the next request', async () => {
-    createSite('crash')
+    await createSite('crash')
     await deploy('crash', { 'server.js': APP })
     expect((await visit('/exit', { site: 'crash' })).status).toBe(200)
-    await until('the crash', () => server.services.sites.ssr.running('crash'), (n) => n === 0, 5000)
+    await until(
+      'the crash',
+      () => server.services.sites.ssr.running('crash'),
+      (n) => n === 0,
+      5000,
+    )
     // The next request starts a fresh process.
     expect(await (await visit('/marker', { site: 'crash' })).text()).toBe('none')
-    server.services.sites.remove('crash')
+    await server.services.sites.remove('crash')
   })
 
   test('the console shows only the fields of the current framework group, and saves each card on its own', async () => {
-    createSite('static-console', { adapter: 'static', startCommand: '', installCommand: 'npm install', buildCommand: 'npm run build' })
+    await createSite('static-console', { adapter: 'static', startCommand: '', installCommand: 'npm install', buildCommand: 'npm run build' })
     try {
       const auth = new ConsoleAuth(server.db)
       await auth.upsert('ssr-admin@example.com', 'console-password')
@@ -537,7 +553,7 @@ describe('SSR sites: modes and limits', () => {
       const view = await (await fetch(`${base()}/console/sites/app/deployments/${live}`, { headers: { cookie } })).text()
       expect(view).toContain('Runtime')
     } finally {
-      server.services.sites.remove('static-console')
+      await server.services.sites.remove('static-console')
     }
   })
 })
@@ -568,14 +584,19 @@ describe('SSR sites: cleanup after the build', () => {
     expect(((await res.json()) as any).pruneMode).toBe('none')
     const bad = await api('/sites/prune-api', { method: 'PUT', body: JSON.stringify({ name: 'Prune', framework: 'sveltekit', pruneMode: 'everything' }) })
     expect(bad.status).toBe(400)
-    const defaults = (await (await api('/sites', { method: 'POST', body: JSON.stringify({ siteId: 'prune-default', name: 'Default', framework: 'nuxt' }) })).json()) as any
+    const defaults = (await (
+      await api('/sites', { method: 'POST', body: JSON.stringify({ siteId: 'prune-default', name: 'Default', framework: 'nuxt' }) })
+    ).json()) as any
     expect(defaults.pruneMode).toBe('auto')
-    server.services.sites.remove('prune-api')
-    server.services.sites.remove('prune-default')
+    await server.services.sites.remove('prune-api')
+    await server.services.sites.remove('prune-default')
   })
 
   test('a Next.js standalone build loses node_modules and gains its static files', async () => {
-    createSite('next-like', { buildCommand: 'mkdir -p node_modules/next .next/cache && echo x > .next/cache/big', startCommand: 'bun .next/standalone/server.js' })
+    await createSite('next-like', {
+      buildCommand: 'mkdir -p node_modules/next .next/cache && echo x > .next/cache/big',
+      startCommand: 'bun .next/standalone/server.js',
+    })
     try {
       const d = await deploy('next-like', {
         '.next/standalone/server.js': APP,
@@ -595,12 +616,12 @@ describe('SSR sites: cleanup after the build', () => {
       expect(readFileSync(join(root, '.next/standalone/.next/static/chunks/app.js'), 'utf8')).toBe('chunk')
       expect((await visit('/marker', { site: 'next-like' })).status).toBe(200)
     } finally {
-      server.services.sites.remove('next-like')
+      await server.services.sites.remove('next-like')
     }
   })
 
   test('auto removes dev dependencies when there is no standalone output', async () => {
-    createSite('kit-like', { installCommand: 'bun install', buildCommand: 'mkdir -p node_modules/vite && echo dev > node_modules/vite/index.js' })
+    await createSite('kit-like', { installCommand: 'bun install', buildCommand: 'mkdir -p node_modules/vite && echo dev > node_modules/vite/index.js' })
     try {
       const d = await deploy('kit-like', { 'server.js': APP, 'package.json': '{"name":"kit-like","devDependencies":{}}' })
       expect(d.status).toBe('ready')
@@ -608,12 +629,12 @@ describe('SSR sites: cleanup after the build', () => {
       expect(existsSync(join(folder('kit-like', d), 'node_modules/vite'))).toBe(false)
       expect(existsSync(join(folder('kit-like', d), 'server.js'))).toBe(true)
     } finally {
-      server.services.sites.remove('kit-like')
+      await server.services.sites.remove('kit-like')
     }
   })
 
   test('none keeps node_modules, and a failed cleanup does not fail the deployment', async () => {
-    createSite('keep', { buildCommand: 'mkdir -p node_modules/tool', pruneMode: 'none' })
+    await createSite('keep', { buildCommand: 'mkdir -p node_modules/tool', pruneMode: 'none' })
     try {
       const kept = await deploy('keep', { 'server.js': APP, 'package.json': '{"name":"keep"}' })
       expect(kept.build_logs).toContain('Kept node_modules as built (prune mode: none).')
@@ -621,27 +642,31 @@ describe('SSR sites: cleanup after the build', () => {
 
       // The production reinstall fails on a missing package: the old install is
       // put back and the deployment still goes live.
-      server.services.sites.update('keep', { ...server.services.sites.settingsOf(server.services.sites.site('keep')), installCommand: 'true bun', pruneMode: 'production' })
+      await server.services.sites.update('keep', {
+        ...server.services.sites.settingsOf(server.services.sites.site('keep')),
+        installCommand: 'true bun',
+        pruneMode: 'production',
+      })
       const failed = await deploy('keep', { 'server.js': APP, 'package.json': '{"name":"keep","dependencies":{"missing":"file:./nope"}}' })
       expect(failed.status).toBe('ready')
       expect(failed.build_logs).toContain('continuing with the packages that are left')
       expect(existsSync(join(folder('keep', failed), 'node_modules/tool'))).toBe(true)
     } finally {
-      server.services.sites.remove('keep')
+      await server.services.sites.remove('keep')
     }
   })
 
   test('SITES_SSR_KEEP_PREVIOUS sets how many earlier SSR deployments stay', async () => {
     server.config.sitesSsrKeepPrevious = 0
-    createSite('keep-none', { buildCommand: 'true' })
+    await createSite('keep-none', { buildCommand: 'true' })
     try {
       const one = await deploy('keep-none', { 'server.js': APP })
       const two = await deploy('keep-none', { 'server.js': APP })
-      expect(server.services.sites.deployments('keep-none').map((d) => d.id)).toEqual([two.id])
+      expect((await server.services.sites.deployments('keep-none')).map((d) => d.id)).toEqual([two.id])
       expect(existsSync(folder('keep-none', one))).toBe(false)
     } finally {
       server.config.sitesSsrKeepPrevious = 2
-      server.services.sites.remove('keep-none')
+      await server.services.sites.remove('keep-none')
     }
   })
 })

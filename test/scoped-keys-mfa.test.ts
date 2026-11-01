@@ -86,8 +86,8 @@ describe('console email MFA', () => {
     const origin = server.endpoint.replace(/\/v1$/, '')
     const auth = new ConsoleAuth(server.db)
     await auth.upsert('admin@example.com', 'password123')
-    const admin = auth.find('admin@example.com')!
-    auth.setMfa(admin.seq, true)
+    const admin = (await auth.find('admin@example.com'))!
+    await auth.setMfa(admin.seq, true)
 
     const started = await fetch(`${origin}/console/login`, {
       method: 'POST',
@@ -126,7 +126,7 @@ describe('console email MFA', () => {
     const cookie = verified.headers.get('set-cookie') ?? ''
     expect(cookie).toContain('bunwrite_console=')
     const secret = /bunwrite_console=([^;]+)/.exec(cookie)?.[1]
-    expect(auth.session(secret!)?.admin.email).toBe('admin@example.com')
+    expect((await auth.session(secret!))?.admin.email).toBe('admin@example.com')
   })
 
   test('the security page turns MFA on and off with the password', async () => {
@@ -155,16 +155,16 @@ describe('console email MFA', () => {
 
     const wrong = await post({ enabled: 'on', password: 'wrong-password' })
     expect(wrong.status).toBe(303)
-    expect(auth.find('admin@example.com')?.mfa).toBe(false)
+    expect((await auth.find('admin@example.com'))?.mfa).toBe(false)
 
     const on = await post({ enabled: 'on', password: 'password123' })
     expect(on.status).toBe(303)
-    expect(auth.find('admin@example.com')?.mfa).toBe(true)
+    expect((await auth.find('admin@example.com'))?.mfa).toBe(true)
     expect((await auth.authenticate('admin@example.com', 'password123')).status).toBe('mfa')
 
     const off = await post({ password: 'password123' })
     expect(off.status).toBe(303)
-    expect(auth.find('admin@example.com')?.mfa).toBe(false)
+    expect((await auth.find('admin@example.com'))?.mfa).toBe(false)
   })
 
   test('MFA requires an email provider when turning it on', async () => {
@@ -173,16 +173,16 @@ describe('console email MFA', () => {
     // The test mailer is enabled; a disabled mailer is covered by the page guard.
     const auth = new ConsoleAuth(server.db)
     await auth.upsert('admin@example.com', 'password123')
-    const admin = auth.find('admin@example.com')!
+    const admin = (await auth.find('admin@example.com'))!
     const result = await auth.authenticate('admin@example.com', 'password123')
     expect(result.status).toBe('ok')
-    auth.setMfa(admin.seq, true)
+    await auth.setMfa(admin.seq, true)
     const challenged = await auth.authenticate('admin@example.com', 'password123')
     expect(challenged.status).toBe('mfa')
     if (challenged.status !== 'mfa') return
     expect(challenged.code).toMatch(/^\d{6}$/)
-    expect(auth.verifyMfa(challenged.challenge, challenged.code)).toBeTruthy()
+    expect(await auth.verifyMfa(challenged.challenge, challenged.code)).toBeTruthy()
     // A code is single use.
-    expect(auth.verifyMfa(challenged.challenge, challenged.code)).toBeNull()
+    expect(await auth.verifyMfa(challenged.challenge, challenged.code)).toBeNull()
   })
 })

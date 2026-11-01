@@ -9,7 +9,7 @@
  * in a fixed layout, and the plain-text part is made from the HTML.
  */
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import type { Mail } from './mailer'
@@ -197,20 +197,41 @@ export function htmlToText(source: string): string {
 type Saved = Partial<Record<TemplateId, Partial<TemplateFields> & { updatedAt?: string }>>
 
 export class EmailTemplateService {
-  constructor(
-    private db: Db,
-    private config: Config,
-  ) {}
+  /** Parsed `emailTemplates` row; reads stay synchronous so render() can stay sync. */
+  private cache: Saved | null = null
 
-  private saved(): Saved {
-    const row = this.db.sqlite.query<{ value: string }, [string]>('SELECT value FROM _settings WHERE key = ?').get('emailTemplates')
+  constructor(
+    private db: SqlDatabase,
+    private config: Config,
+  ) {
+    if (db.dialect === 'sqlite') this.loadSync()
+  }
+
+  private parse(row: { value: string } | null): Saved {
     return row ? (JSON.parse(row.value) as Saved) : {}
   }
 
-  private write(saved: Saved): void {
-    this.db.sqlite
-      .query("INSERT INTO _settings (key, value, updated_at) VALUES ('emailTemplates', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
-      .run(JSON.stringify(saved), now())
+  private loadSync(): void {
+    this.cache = this.parse(
+      this.db.sqlite!.query<{ value: string }, [string]>('SELECT value FROM _settings WHERE key = ?').get('emailTemplates') ?? null,
+    )
+  }
+
+  /** Load the templates on a network backend; the boot path awaits this. */
+  async load(): Promise<void> {
+    this.cache = this.parse(await this.db.driver.get<{ value: string }>('SELECT value FROM _settings WHERE key = ?', ['emailTemplates']))
+  }
+
+  private saved(): Saved {
+    return this.cache ?? {}
+  }
+
+  private async write(saved: Saved): Promise<void> {
+    await this.db.driver.run(
+      "INSERT INTO _settings (key, value, updated_at) VALUES ('emailTemplates', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+      [JSON.stringify(saved), now()],
+    )
+    this.cache = saved
   }
 
   /** Whether the template was changed from its default. */
@@ -235,7 +256,7 @@ export class EmailTemplateService {
   }
 
   /** Save the fields given; others keep their current value. Saving the defaults back clears the customization. */
-  update(id: TemplateId, input: Partial<Record<keyof TemplateFields, unknown>>): TemplateFields {
+  async update(id: TemplateId, input: Partial<Record<keyof TemplateFields, unknown>>): Promise<TemplateFields> {
     const next = { ...this.get(id) }
     for (const key of Object.keys(next) as (keyof TemplateFields)[]) {
       const value = input[key]
@@ -244,18 +265,18 @@ export class EmailTemplateService {
       next[key] = value.trim() === '' && (key === 'subject' || key === 'message') ? DEFAULTS[id][key] : value
     }
     validate(next)
-    const saved = this.saved()
+    const saved = { ...this.saved() }
     const isDefault = JSON.stringify(next) === JSON.stringify(this.defaults(id))
     if (isDefault) delete saved[id]
     else saved[id] = { ...next, updatedAt: now() }
-    this.write(saved)
+    await this.write(saved)
     return this.get(id)
   }
 
-  reset(id: TemplateId): TemplateFields {
-    const saved = this.saved()
+  async reset(id: TemplateId): Promise<TemplateFields> {
+    const saved = { ...this.saved() }
     delete saved[id]
-    this.write(saved)
+    await this.write(saved)
     return this.get(id)
   }
 

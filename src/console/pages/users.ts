@@ -5,7 +5,23 @@ import type { ConsoleRouter } from '~/console/context'
 import { checked, lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { avatar, badge, copyableId, destroy, emptyState, header, icon, listCard, pageFooter, pager, plural, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import {
+  avatar,
+  badge,
+  copyableId,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  pageFooter,
+  pager,
+  plural,
+  searchForm,
+  settingsSection,
+  tabs,
+  when,
+} from '~/console/ui'
 
 const USERS = '/console/auth/users'
 const TEAMS = '/console/auth/teams'
@@ -37,10 +53,37 @@ export function userPages(router: ConsoleRouter): void {
     const pages = pageCount(total, limit)
     const create = html`<a class="btn primary" href="${USERS}/new">${icon('plus')}<span>Create user</span></a>`
     const body = users.length
-      ? html`<div class="scroll"><table><thead><tr><th>User</th><th class="hide-sm">Phone</th><th>Status</th><th class="hide-sm">Joined</th></tr></thead><tbody>
-          ${users.map((u) => html`<tr class="row-link" onclick="location='${userUrl(u.id)}'"><td><div class="member-cell">${avatar(u.name || u.email || u.id)}<div><a href="${userUrl(u.id)}"><b>${u.name || html`<span class="subdued">No name</span>`}</b></a><div class="subdued">${u.email ?? u.phone ?? u.id}</div></div></div></td>
-            <td class="hide-sm">${u.phone ?? html`<span class="subdued">—</span>`}</td><td>${userStatus(u)}</td><td class="hide-sm subdued">${when(u.registration)}</td></tr>`)}
-          </tbody></table></div>`
+      ? html`<div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th class="hide-sm">Phone</th>
+                <th>Status</th>
+                <th class="hide-sm">Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${users.map(
+                (u) =>
+                  html`<tr class="row-link" onclick="location='${userUrl(u.id)}'">
+                    <td>
+                      <div class="member-cell">
+                        ${avatar(u.name || u.email || u.id)}
+                        <div>
+                          <a href="${userUrl(u.id)}"><b>${u.name || html`<span class="subdued">No name</span>`}</b></a>
+                          <div class="subdued">${u.email ?? u.phone ?? u.id}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="hide-sm">${u.phone ?? html`<span class="subdued">—</span>`}</td>
+                    <td>${userStatus(u)}</td>
+                    <td class="hide-sm subdued">${when(u.registration)}</td>
+                  </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`
       : search
         ? emptyState('No users match', 'Try another name, email, phone or ID.', html`<a class="btn" href="${USERS}">Clear search</a>`)
         : emptyState('No users yet', 'People appear here when they sign up in your apps, or when you create one.', create)
@@ -61,27 +104,37 @@ export function userPages(router: ConsoleRouter): void {
       'Create user',
       'users',
       html`${header('Create user', { back: USERS })}
-      <form method="post" action="${USERS}">
-        ${settingsSection(
-          'Profile',
-          'The person can change these details later. At least an email or phone number is needed to sign in.',
-          html`<div class="fields"><label>Name<input name="name"></label><label>Email<input name="email" type="email"></label></div>
-            <div class="fields"><label>Phone<input name="phone" placeholder="+62…"></label><label>Password<input name="password" type="password" minlength="8"><small>Optional. At least 8 characters.</small></label></div>`,
-        )}
-        ${pageFooter(USERS, 'Create user')}
-      </form>`,
+        <form method="post" action="${USERS}">
+          ${settingsSection(
+            'Profile',
+            'The person can change these details later. At least an email or phone number is needed to sign in.',
+            html`<div class="fields">
+                <label>Name<input name="name" /></label><label>Email<input name="email" type="email" /></label>
+              </div>
+              <div class="fields">
+                <label>Phone<input name="phone" placeholder="+62…" /></label
+                ><label>Password<input name="password" type="password" minlength="8" /><small>Optional. At least 8 characters.</small></label>
+              </div>`,
+          )}
+          ${pageFooter(USERS, 'Create user')}
+        </form>`,
     ),
   )
 
   router.post(USERS, async ({ ctx }) => {
     const f = ctx.form
-    const user = await ctx.services.auth.createUser({ email: f.email || undefined, phone: f.phone || undefined, password: f.password || undefined, name: f.name })
+    const user = await ctx.services.auth.createUser({
+      email: f.email || undefined,
+      phone: f.phone || undefined,
+      password: f.password || undefined,
+      name: f.name,
+    })
     return ctx.go(userUrl(user.id), { tone: 'success', text: 'User created' })
   })
 
-  router.get(`${USERS}/:id`, ({ ctx, path }) => {
-    const u = ctx.services.auth.user(path.id!)
-    const sessions = ctx.services.auth.sessions(u.id)
+  router.get(`${USERS}/:id`, async ({ ctx, path }) => {
+    const u = await ctx.services.auth.user(path.id!)
+    const sessions = await ctx.services.auth.sessions(u.id)
     const model = userModel(u) as Record<string, unknown>
     const base = userUrl(u.id)
     return ctx.render(
@@ -92,10 +145,21 @@ export function userPages(router: ConsoleRouter): void {
         'Profile',
         'The name and contact details shown across the console and in your apps.',
         html`<form method="post" action="${base}">
-          <div class="fields"><label>Name<input name="name" value="${u.name}"></label><label>Email<input name="email" type="email" value="${u.email ?? ''}"></label></div>
-          <div class="fields"><label>Phone<input name="phone" value="${u.phone ?? ''}"></label><label>Labels<input name="labels" value="${Array.isArray(model.labels) ? model.labels.join(', ') : ''}"><small>Comma-separated. Grant <code>label:…</code> roles.</small></label></div>
-          <div class="fields"><label class="check"><input type="checkbox" name="emailVerification" ${u.email_verification ? 'checked' : ''}>Email verified</label>
-            <label class="check"><input type="checkbox" name="phoneVerification" ${u.phone_verification ? 'checked' : ''}>Phone verified</label></div>
+          <div class="fields">
+            <label>Name<input name="name" value="${u.name}" /></label><label>Email<input name="email" type="email" value="${u.email ?? ''}" /></label>
+          </div>
+          <div class="fields">
+            <label>Phone<input name="phone" value="${u.phone ?? ''}" /></label
+            ><label
+              >Labels<input name="labels" value="${Array.isArray(model.labels) ? model.labels.join(', ') : ''}" /><small
+                >Comma-separated. Grant <code>label:…</code> roles.</small
+              ></label
+            >
+          </div>
+          <div class="fields">
+            <label class="check"><input type="checkbox" name="emailVerification" ${u.email_verification ? 'checked' : ''} />Email verified</label>
+            <label class="check"><input type="checkbox" name="phoneVerification" ${u.phone_verification ? 'checked' : ''} />Phone verified</label>
+          </div>
           <div class="foot"><button class="primary">Save</button></div>
         </form>`,
         { id: 'user-profile' },
@@ -109,20 +173,47 @@ export function userPages(router: ConsoleRouter): void {
         </form>`,
       )}
       ${listCard('sessions', {
-        toolbar: html`<div class="toolbar"><h2 style="margin:0">Sessions</h2>${sessions.length ? html`<span style="margin-left:auto">${destroy(`${base}/sessions/delete`, 'Sign out everywhere', 'End every session of this user?')}</span>` : ''}</div>`,
+        toolbar: html`<div class="toolbar">
+          <h2 style="margin:0">Sessions</h2>
+          ${sessions.length ? html`<span style="margin-left:auto">${destroy(`${base}/sessions/delete`, 'Sign out everywhere', 'End every session of this user?')}</span>` : ''}
+        </div>`,
         body: sessions.length
-          ? html`<div class="scroll"><table><thead><tr><th>Provider</th><th class="hide-sm">IP</th><th>Created</th><th class="hide-sm">Expires</th><th></th></tr></thead><tbody>
-            ${sessions.map((s) => html`<tr><td>${s.provider}</td><td class="hide-sm mono">${s.ip || '—'}</td><td>${when(s.created_at)}</td><td class="hide-sm subdued">${when(s.expire)}</td>
-              <td class="num">${destroy(`${base}/sessions/delete`, 'End', 'End this session?', { sessionId: s.id })}</td></tr>`)}</tbody></table></div>`
+          ? html`<div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th class="hide-sm">IP</th>
+                    <th>Created</th>
+                    <th class="hide-sm">Expires</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sessions.map(
+                    (s) =>
+                      html`<tr>
+                        <td>${s.provider}</td>
+                        <td class="hide-sm mono">${s.ip || '—'}</td>
+                        <td>${when(s.created_at)}</td>
+                        <td class="hide-sm subdued">${when(s.expire)}</td>
+                        <td class="num">${destroy(`${base}/sessions/delete`, 'End', 'End this session?', { sessionId: s.id })}</td>
+                      </tr>`,
+                  )}
+                </tbody>
+              </table>
+            </div>`
           : emptyState('No active sessions', 'The user is signed out everywhere.'),
       })}`,
     )
   })
 
   router.get(`${USERS}/:id/settings`, async ({ ctx, path }) => {
-    const u = ctx.services.auth.user(path.id!)
-    const memberships = (await ctx.services.teams.listMemberships({ userId: u.id }, [JSON.stringify({ method: 'limit', values: [100] })])).memberships.map(membershipModel)
-    const identities = ctx.services.auth.identities(u.id)
+    const u = await ctx.services.auth.user(path.id!)
+    const memberships = (await ctx.services.teams.listMemberships({ userId: u.id }, [JSON.stringify({ method: 'limit', values: [100] })])).memberships.map(
+      membershipModel,
+    )
+    const identities = await ctx.services.auth.identities(u.id)
     const base = userUrl(u.id)
     return ctx.render(
       u.name || u.email || u.id,
@@ -131,19 +222,27 @@ export function userPages(router: ConsoleRouter): void {
       ${settingsSection(
         'Status',
         u.status ? 'The user can sign in and use their existing sessions.' : 'Blocked users cannot sign in or use existing sessions.',
-        html`<form method="post" action="${base}/status"><input type="hidden" name="status" value="${u.status ? '' : 'on'}"><button class="${u.status ? 'critical' : ''}">${u.status ? 'Block user' : 'Unblock user'}</button></form>`,
+        html`<form method="post" action="${base}/status">
+          <input type="hidden" name="status" value="${u.status ? '' : 'on'}" /><button class="${u.status ? 'critical' : ''}">
+            ${u.status ? 'Block user' : 'Unblock user'}
+          </button>
+        </form>`,
       )}
       ${settingsSection(
         'Password',
         'Set a new password for this user. They can sign in with it straight away.',
-        html`<form method="post" action="${base}/password"><label>New password<input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
-          <div class="foot"><button class="primary">Set password</button></div></form>`,
+        html`<form method="post" action="${base}/password">
+          <label>New password<input name="password" type="password" minlength="8" required autocomplete="new-password" /></label>
+          <div class="foot"><button class="primary">Set password</button></div>
+        </form>`,
       )}
       ${settingsSection(
         'Teams',
         'Teams this user belongs to, and the roles they get from each one.',
         memberships.length
-          ? html`<ul class="list">${memberships.map((m) => html`<li><a href="${TEAMS}/${encodeURIComponent(m.teamId)}">${m.teamName}</a><span class="subdued">${m.roles.join(', ') || 'member'}</span></li>`)}</ul>`
+          ? html`<ul class="list">
+              ${memberships.map((m) => html`<li><a href="${TEAMS}/${encodeURIComponent(m.teamId)}">${m.teamName}</a><span class="subdued">${m.roles.join(', ') || 'member'}</span></li>`)}
+            </ul>`
           : html`<p class="subdued" style="margin:0">Not in any team.</p>`,
       )}
       ${settingsSection(
@@ -165,11 +264,11 @@ export function userPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${USERS}/:id`, ({ ctx, path }) => {
+  router.post(`${USERS}/:id`, async ({ ctx, path }) => {
     const f = ctx.form
     const labels = lines(f.labels)
     if (labels.some((l) => !/^[a-zA-Z0-9]{1,36}$/.test(l))) throw err('general_argument_invalid', 'Labels may only contain letters and digits.')
-    ctx.services.auth.updateUser(path.id!, {
+    await ctx.services.auth.updateUser(path.id!, {
       name: String(f.name ?? '').slice(0, 128),
       email: f.email ? validEmail(f.email) : null,
       phone: f.phone ? validPhone(f.phone, 'phone') : null,
@@ -180,14 +279,14 @@ export function userPages(router: ConsoleRouter): void {
     return ctx.go(userUrl(path.id!), { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${USERS}/:id/prefs`, ({ ctx, path }) => {
-    ctx.services.auth.updateUser(path.id!, { prefs: JSON.stringify(parseJsonObject(ctx.form.prefs, 'Preferences must be a JSON object.')) })
+  router.post(`${USERS}/:id/prefs`, async ({ ctx, path }) => {
+    await ctx.services.auth.updateUser(path.id!, { prefs: JSON.stringify(parseJsonObject(ctx.form.prefs, 'Preferences must be a JSON object.')) })
     return ctx.go(userUrl(path.id!), { tone: 'success', text: 'Preferences saved' })
   })
 
-  router.post(`${USERS}/:id/status`, ({ ctx, path }) => {
+  router.post(`${USERS}/:id/status`, async ({ ctx, path }) => {
     const active = checked(ctx.form.status)
-    ctx.services.auth.updateUser(path.id!, { status: active ? 1 : 0 })
+    await ctx.services.auth.updateUser(path.id!, { status: active ? 1 : 0 })
     return ctx.go(`${userUrl(path.id!)}/settings`, { tone: 'success', text: active ? 'User unblocked' : 'User blocked' })
   })
 
@@ -196,15 +295,15 @@ export function userPages(router: ConsoleRouter): void {
     return ctx.go(`${userUrl(path.id!)}/settings`, { tone: 'success', text: 'Password set' })
   })
 
-  router.post(`${USERS}/:id/sessions/delete`, ({ ctx, path }) => {
+  router.post(`${USERS}/:id/sessions/delete`, async ({ ctx, path }) => {
     const sessionId = value(ctx.form, 'sessionId')
-    if (sessionId) ctx.services.auth.deleteSession(path.id!, sessionId)
-    else ctx.services.auth.deleteSessions(path.id!)
+    if (sessionId) await ctx.services.auth.deleteSession(path.id!, sessionId)
+    else await ctx.services.auth.deleteSessions(path.id!)
     return ctx.go(userUrl(path.id!), { tone: 'success', text: 'Signed out' })
   })
 
-  router.post(`${USERS}/:id/delete`, ({ ctx, path }) => {
-    ctx.services.auth.deleteUser(path.id!)
+  router.post(`${USERS}/:id/delete`, async ({ ctx, path }) => {
+    await ctx.services.auth.deleteUser(path.id!)
     return ctx.go(USERS, { tone: 'success', text: 'User deleted' })
   })
 }

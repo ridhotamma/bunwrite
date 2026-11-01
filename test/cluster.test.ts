@@ -297,7 +297,7 @@ describe('realtime bus', () => {
     const collection = writer.registry.collection('main', 'products', true)
     writer.realtime.publish([{ collection, action: 'create', document: { $id: 'doc-2', $permissions: [] } }])
 
-    const { n } = writer.db.sqlite.query<{ n: number }, []>('SELECT count(*) AS n FROM _realtime_events').get()!
+    const { n } = writer.db.sqlite!.query<{ n: number }, []>('SELECT count(*) AS n FROM _realtime_events').get()!
     expect(n).toBe(0)
   })
 })

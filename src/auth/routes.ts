@@ -14,9 +14,9 @@ import { FailedAttempts, RateLimiter } from '~/lib/limits'
 import type { AuthMethodId } from '~/settings/access'
 
 /** Appwrite's abuse limit for public auth endpoints: `limit` per hour per IP and subject. API keys are exempt. */
-function limit(route: { ctx: AppContext; request: Request }, name: string, subject: unknown, max = 10): void {
+async function limit(route: { ctx: AppContext; request: Request }, name: string, subject: unknown, max = 10): Promise<void> {
   if (route.ctx.caller.privileged) return
-  new RateLimiter(route.ctx.db).hit(`${name}:${requestInfo(route.request).ip}:${String(subject ?? '').toLowerCase()}`, max, 3600)
+  await new RateLimiter(route.ctx.db).hit(`${name}:${requestInfo(route.request).ip}:${String(subject ?? '').toLowerCase()}`, max, 3600)
 }
 
 const OTP_TTL = 15 * 60
@@ -38,7 +38,7 @@ function method(ctx: AppContext, id: AuthMethodId): void {
 }
 
 /** Account routes need a signed-in user (session or JWT). */
-function me(ctx: AppContext): UserRowFull {
+async function me(ctx: AppContext): Promise<UserRowFull> {
   if (!ctx.caller.user) missingScope(ctx, 'account')
   return ctx.auth.user(ctx.caller.user.id)
 }
@@ -80,15 +80,15 @@ function assertNoSession(ctx: AppContext): void {
   if (!ctx.caller.privileged && ctx.caller.sessionId) throw err('user_session_already_exists')
 }
 
-function sessionFromToken(route: RouteContext<AppContext>, user: UserRowFull, token: TokenRowFull): Response {
+async function sessionFromToken(route: RouteContext<AppContext>, user: UserRowFull, token: TokenRowFull): Promise<Response> {
   const { ctx } = route
   const info = requestInfo(route.request)
-  const provider = token.type === 'oauth2' ? token.provider ?? 'oauth2' : token.type === 'generic' ? 'token' : token.type
+  const provider = token.type === 'oauth2' ? (token.provider ?? 'oauth2') : token.type === 'generic' ? 'token' : token.type
   const factors = token.type === 'email' || token.type === 'magic-url' ? ['email'] : token.type === 'oauth2' ? ['email', 'oauth2'] : ['token']
-  const identity = token.type === 'oauth2' ? ctx.oauth.identity(user.id, provider) : null
-  ctx.auth.deleteToken(token.id)
-  if (token.type === 'email' || token.type === 'magic-url') ctx.auth.updateUser(user.id, { email_verification: 1 })
-  const { session, secret } = ctx.auth.createSession(user.id, {
+  const identity = token.type === 'oauth2' ? await ctx.oauth.identity(user.id, provider) : null
+  await ctx.auth.deleteToken(token.id)
+  if (token.type === 'email' || token.type === 'magic-url') await ctx.auth.updateUser(user.id, { email_verification: 1 })
+  const { session, secret } = await ctx.auth.createSession(user.id, {
     provider,
     factors,
     info,
@@ -116,27 +116,27 @@ async function jwtFor(ctx: AppContext, userId: string, sessionId: string, durati
 }
 
 export function accountRoutes(router: Router<AppContext>): void {
-  router.get('/account', ({ ctx }) => json(accountModel(me(ctx))))
+  router.get('/account', async ({ ctx }) => json(accountModel(await me(ctx))))
 
   router.post('/account', async (route) => {
     const { ctx, params } = route
     requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     method(ctx, 'email-password')
-    limit(route, 'account-create', '')
+    await limit(route, 'account-create', '')
     await ctx.access.assertUserLimit()
     ctx.access.assertPasswordPersonalData(params.password, { id: params.userId, name: params.name, email: params.email })
     const user = await ctx.auth.createUser({ id: params.userId, email: params.email, password: params.password ?? '', name: params.name })
     return json(accountModel(user), 201)
   })
 
-  router.patch('/account/name', ({ ctx, params }) => {
-    const user = me(ctx)
-    return json(accountModel(ctx.auth.updateUser(user.id, { name: String(params.name ?? '').slice(0, 128) })))
+  router.patch('/account/name', async ({ ctx, params }) => {
+    const user = await me(ctx)
+    return json(accountModel(await ctx.auth.updateUser(user.id, { name: String(params.name ?? '').slice(0, 128) })))
   })
 
   router.patch('/account/password', async ({ ctx, params }) => {
-    const user = me(ctx)
+    const user = await me(ctx)
     if (user.password && !(await verifyPassword(String(params.oldPassword ?? ''), user.password, user.hash, JSON.parse(user.hash_options)))) {
       throw err('user_invalid_credentials')
     }
@@ -145,59 +145,59 @@ export function accountRoutes(router: Router<AppContext>): void {
   })
 
   router.patch('/account/email', async ({ ctx, params }) => {
-    const user = me(ctx)
+    const user = await me(ctx)
     if (user.password && !(await verifyPassword(String(params.password ?? ''), user.password, user.hash, JSON.parse(user.hash_options)))) {
       throw err('user_invalid_credentials')
     }
-    return json(accountModel(ctx.auth.updateUser(user.id, { email: validEmail(params.email), email_verification: 0 })))
+    return json(accountModel(await ctx.auth.updateUser(user.id, { email: validEmail(params.email), email_verification: 0 })))
   })
 
-  router.get('/account/prefs', ({ ctx }) => json(JSON.parse(me(ctx).prefs)))
-  router.patch('/account/prefs', ({ ctx, params }) => {
-    const user = me(ctx)
-    return json(accountModel(ctx.auth.updateUser(user.id, { prefs: JSON.stringify(prefsObject(params.prefs)) })))
+  router.get('/account/prefs', async ({ ctx }) => json(JSON.parse((await me(ctx)).prefs)))
+  router.patch('/account/prefs', async ({ ctx, params }) => {
+    const user = await me(ctx)
+    return json(accountModel(await ctx.auth.updateUser(user.id, { prefs: JSON.stringify(prefsObject(params.prefs)) })))
   })
 
-  router.patch('/account/status', ({ ctx }) => {
-    const user = me(ctx)
-    const updated = ctx.auth.updateUser(user.id, { status: 0 })
-    ctx.auth.deleteSessions(user.id)
+  router.patch('/account/status', async ({ ctx }) => {
+    const user = await me(ctx)
+    const updated = await ctx.auth.updateUser(user.id, { status: 0 })
+    await ctx.auth.deleteSessions(user.id)
     return json(accountModel(updated))
   })
 
-  router.get('/account/sessions', ({ ctx }) => {
-    const user = me(ctx)
-    const sessions = ctx.auth.sessions(user.id).map((s) => sessionModel(s, { current: s.id === ctx.caller.sessionId }))
+  router.get('/account/sessions', async ({ ctx }) => {
+    const user = await me(ctx)
+    const sessions = (await ctx.auth.sessions(user.id)).map((s) => sessionModel(s, { current: s.id === ctx.caller.sessionId }))
     return json({ total: sessions.length, sessions })
   })
 
-  router.delete('/account/sessions', ({ ctx }) => {
-    ctx.auth.deleteSessions(me(ctx).id)
+  router.delete('/account/sessions', async ({ ctx }) => {
+    await ctx.auth.deleteSessions((await me(ctx)).id)
     return noContent()
   })
 
-  const sessionIdOf = (ctx: AppContext, id: string) => (id === 'current' ? ctx.caller.sessionId ?? '' : id)
+  const sessionIdOf = (ctx: AppContext, id: string) => (id === 'current' ? (ctx.caller.sessionId ?? '') : id)
 
-  router.get('/account/sessions/:sessionId', ({ ctx, path }) => {
-    const user = me(ctx)
+  router.get('/account/sessions/:sessionId', async ({ ctx, path }) => {
+    const user = await me(ctx)
     const id = sessionIdOf(ctx, path.sessionId!)
-    const session = ctx.auth.session(id)
+    const session = await ctx.auth.session(id)
     if (!session || session.user_id !== user.id) throw err('user_session_not_found')
     return json(sessionModel(session, { current: id === ctx.caller.sessionId }))
   })
 
-  router.patch('/account/sessions/:sessionId', ({ ctx, path }) => {
-    const user = me(ctx)
+  router.patch('/account/sessions/:sessionId', async ({ ctx, path }) => {
+    const user = await me(ctx)
     const id = sessionIdOf(ctx, path.sessionId!)
-    const session = ctx.auth.session(id)
+    const session = await ctx.auth.session(id)
     if (!session || session.user_id !== user.id) throw err('user_session_not_found')
     return json(sessionModel(session, { current: id === ctx.caller.sessionId }))
   })
 
-  router.delete('/account/sessions/:sessionId', ({ ctx, path, request }) => {
-    const user = me(ctx)
+  router.delete('/account/sessions/:sessionId', async ({ ctx, path, request }) => {
+    const user = await me(ctx)
     const id = sessionIdOf(ctx, path.sessionId!)
-    ctx.auth.deleteSession(user.id, id)
+    await ctx.auth.deleteSession(user.id, id)
     const headers = id === ctx.caller.sessionId ? { 'set-cookie': `${cookieName(ctx, request)}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/; HttpOnly` } : {}
     return new Response(null, { status: 204, headers })
   })
@@ -207,38 +207,38 @@ export function accountRoutes(router: Router<AppContext>): void {
     requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     method(ctx, 'email-password')
-    limit(route, 'sessions-email', params.email)
+    await limit(route, 'sessions-email', params.email)
     const email = typeof params.email === 'string' ? params.email.toLowerCase() : ''
-    const user = email ? ctx.auth.userByEmail(email) : null
+    const user = email ? await ctx.auth.userByEmail(email) : null
     const ok = user && (await verifyPassword(String(params.password ?? ''), user.password, user.hash, JSON.parse(user.hash_options)))
     if (!user || !ok) throw err('user_invalid_credentials')
     if (!user.status) throw err('user_blocked')
-    const { session, secret } = ctx.auth.createSession(user.id, { provider: 'email', factors: ['password'], info: requestInfo(route.request) })
+    const { session, secret } = await ctx.auth.createSession(user.id, { provider: 'email', factors: ['password'], info: requestInfo(route.request) })
     return sessionResponse(route, session, secret)
   })
 
   // Exchange any login token (email code, OAuth, users.createToken) for a session.
-  router.post('/account/sessions/token', (route) => {
+  router.post('/account/sessions/token', async (route) => {
     const { ctx, params } = route
     requireScope(ctx, 'users.write')
     assertNoSession(ctx)
     const userId = str(params.userId) ?? ''
-    limit(route, 'sessions-token', userId)
-    const user = ctx.auth.findUser(userId)
+    await limit(route, 'sessions-token', userId)
+    const user = await ctx.auth.findUser(userId)
     if (!user) throw err('user_invalid_token')
     const failures = new FailedAttempts(ctx.db)
     let token: TokenRowFull
     try {
-      token = ctx.auth.verifyToken(userId, params.secret, ['email', 'magic-url', 'oauth2', 'generic'])
+      token = await ctx.auth.verifyToken(userId, params.secret, ['email', 'magic-url', 'oauth2', 'generic'])
     } catch (error) {
       // A 6-digit code must not be guessable: ten wrong tries burn every outstanding code.
-      if (failures.fail(userId)) {
-        ctx.db.sqlite.query("DELETE FROM _tokens WHERE user_id = ? AND type IN ('email', 'magic-url')").run(userId)
-        failures.clear(userId)
+      if (await failures.fail(userId)) {
+        await ctx.db.driver.run("DELETE FROM _tokens WHERE user_id = ? AND type IN ('email', 'magic-url')", [userId])
+        await failures.clear(userId)
       }
       throw error
     }
-    failures.clear(userId)
+    await failures.clear(userId)
     if (!user.status) throw err('user_blocked')
     return sessionFromToken(route, user, token)
   })
@@ -247,14 +247,14 @@ export function accountRoutes(router: Router<AppContext>): void {
     const { ctx, params } = route
     requireScope(ctx, 'users.write')
     method(ctx, 'email-otp')
-    limit(route, 'tokens-email', params.email)
+    await limit(route, 'tokens-email', params.email)
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP disabled')
     const email = validEmail(params.email)
-    const user = ctx.auth.userByEmail(email) ?? (await ctx.auth.createUser({ id: params.userId, email }))
+    const user = (await ctx.auth.userByEmail(email)) ?? (await ctx.auth.createUser({ id: params.userId, email }))
     if (!user.status) throw err('user_blocked')
     const code = otpCode()
     const phrase = bool(params.phrase, false) ? `${pick(ADJECTIVES)} ${pick(NOUNS)}` : ''
-    const { token } = ctx.auth.createToken(user.id, 'email', { secret: code, ttl: OTP_TTL })
+    const { token } = await ctx.auth.createToken(user.id, 'email', { secret: code, ttl: OTP_TTL })
     await ctx.mailer.send(ctx.templates.render('otpSession', email, { user: user.name || email, otp: code, phrase }))
     return json(tokenModel(token, ctx.caller.privileged ? code : '', phrase), 201)
   })
@@ -276,21 +276,21 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.post('/account/jwts', async ({ ctx, params }) => {
     method(ctx, 'jwt')
-    const user = me(ctx)
+    const user = await me(ctx)
     return json(await jwtFor(ctx, user.id, ctx.caller.sessionId ?? '', num(params.duration, 900)!), 201)
   })
 
   router.post('/account/recovery', async (route) => {
     const { ctx, params } = route
     requireScope(ctx, 'users.write')
-    limit(route, 'recovery', params.email)
+    await limit(route, 'recovery', params.email)
     const email = validEmail(params.email)
     const url = assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP Disabled')
-    const user = ctx.auth.userByEmail(email)
+    const user = await ctx.auth.userByEmail(email)
     if (!user) throw err('user_not_found')
     if (!user.status) throw err('user_blocked')
-    const { token, secret } = ctx.auth.createToken(user.id, 'recovery', { ttl: RECOVERY_TTL })
+    const { token, secret } = await ctx.auth.createToken(user.id, 'recovery', { ttl: RECOVERY_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
     await ctx.mailer.send(ctx.templates.render('recovery', email, { user: user.name || email, redirect: link }))
     return json(tokenModel(token, ctx.caller.privileged ? secret : ''), 201)
@@ -299,52 +299,52 @@ export function accountRoutes(router: Router<AppContext>): void {
   router.put('/account/recovery', async (route) => {
     const { ctx, params } = route
     requireScope(ctx, 'users.write')
-    limit(route, 'recovery-update', params.userId)
-    const user = ctx.auth.findUser(str(params.userId) ?? '')
+    await limit(route, 'recovery-update', params.userId)
+    const user = await ctx.auth.findUser(str(params.userId) ?? '')
     if (!user) throw err('user_not_found')
-    const token = ctx.auth.verifyToken(user.id, params.secret, ['recovery'])
+    const token = await ctx.auth.verifyToken(user.id, params.secret, ['recovery'])
     ctx.access.assertPasswordPersonalData(params.password, user)
     await ctx.auth.setPassword(user.id, params.password)
-    ctx.auth.updateUser(user.id, { email_verification: 1 })
-    ctx.auth.deleteToken(token.id)
+    await ctx.auth.updateUser(user.id, { email_verification: 1 })
+    await ctx.auth.deleteToken(token.id)
     return json(tokenModel(token))
   })
 
   router.post('/account/verifications/email', async ({ ctx, params }) => {
-    const user = me(ctx)
+    const user = await me(ctx)
     const url = assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
     if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP Disabled')
     if (!user.email) throw err('user_email_not_found')
-    const { token, secret } = ctx.auth.createToken(user.id, 'verification', { ttl: VERIFICATION_TTL })
+    const { token, secret } = await ctx.auth.createToken(user.id, 'verification', { ttl: VERIFICATION_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
     await ctx.mailer.send(ctx.templates.render('verification', user.email, { user: user.name || user.email, redirect: link }))
     return json(tokenModel(token), 201)
   })
 
-  router.put('/account/verifications/email', ({ ctx, params }) => {
-    const user = ctx.auth.findUser(str(params.userId) ?? '')
+  router.put('/account/verifications/email', async ({ ctx, params }) => {
+    const user = await ctx.auth.findUser(str(params.userId) ?? '')
     if (!user) throw err('user_not_found')
-    const token = ctx.auth.verifyToken(user.id, params.secret, ['verification'])
-    ctx.auth.updateUser(user.id, { email_verification: 1 })
-    ctx.auth.deleteToken(token.id)
+    const token = await ctx.auth.verifyToken(user.id, params.secret, ['verification'])
+    await ctx.auth.updateUser(user.id, { email_verification: 1 })
+    await ctx.auth.deleteToken(token.id)
     return json(tokenModel(token))
   })
 }
 
 export function userRoutes(router: Router<AppContext>): void {
-  const user = (ctx: AppContext, id: string) => {
+  const user = async (ctx: AppContext, id: string) => {
     requireKey(ctx, 'users.read')
     return ctx.auth.user(id)
   }
-  const done = (ctx: AppContext, id: string) => json(userModel(ctx.auth.user(id)))
+  const done = async (ctx: AppContext, id: string) => json(userModel(await ctx.auth.user(id)))
   /** Mutating user routes need `users.write`, not only `users.read`. */
-  const writable = (ctx: AppContext, id: string) => {
+  const writable = async (ctx: AppContext, id: string) => {
     requireKey(ctx, 'users.write')
     return ctx.auth.user(id)
   }
 
   // Linked OAuth accounts. Registered before /users/:userId so "identities" is not taken as an ID.
-  router.get('/users/identities', ({ ctx, params }) => {
+  router.get('/users/identities', async ({ ctx, params }) => {
     requireKey(ctx, 'users.read')
     let limit = 25
     let offset = 0
@@ -355,11 +355,12 @@ export function userRoutes(router: Router<AppContext>): void {
       if (query?.method === 'limit') limit = Number(query.values?.[0] ?? 25)
       if (query?.method === 'offset') offset = Number(query.values?.[0] ?? 0)
       if (query?.method === 'cursorAfter') {
-        after = ctx.db.sqlite.query<{ seq: number }, [string]>('SELECT seq FROM _identities WHERE id = ?').get(String(query.values?.[0]))?.seq ?? 0
+        const row = await ctx.db.driver.get<{ seq: number }>('SELECT seq FROM _identities WHERE id = ?', [String(query.values?.[0])])
+        after = row?.seq ?? 0
       }
     }
-    const rows = ctx.db.sqlite.query<IdentityRow, [number, number, number]>('SELECT * FROM _identities WHERE seq > ? ORDER BY seq LIMIT ? OFFSET ?').all(after, limit, offset)
-    const total = (ctx.db.sqlite.query('SELECT count(*) AS n FROM _identities').get() as { n: number }).n
+    const rows = await ctx.db.driver.all<IdentityRow>('SELECT * FROM _identities WHERE seq > ? ORDER BY seq LIMIT ? OFFSET ?', [after, limit, offset])
+    const total = Number((await ctx.db.driver.get<{ n: number }>('SELECT count(*) AS n FROM _identities'))?.n ?? 0)
     return json({
       total,
       identities: rows.map((r) => ({
@@ -390,120 +391,123 @@ export function userRoutes(router: Router<AppContext>): void {
     return json(userModel(created), 201)
   })
 
-  router.get('/users/:userId', ({ ctx, path }) => json(userModel(user(ctx, path.userId!))))
+  router.get('/users/:userId', async ({ ctx, path }) => json(userModel(await user(ctx, path.userId!))))
 
-  router.delete('/users/:userId', ({ ctx, path }) => {
+  router.delete('/users/:userId', async ({ ctx, path }) => {
     requireKey(ctx, 'users.write')
-    ctx.auth.deleteUser(path.userId!)
+    await ctx.auth.deleteUser(path.userId!)
     return noContent()
   })
 
-  router.patch('/users/:userId/name', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.updateUser(path.userId!, { name: String(params.name ?? '').slice(0, 128) })
+  router.patch('/users/:userId/name', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.updateUser(path.userId!, { name: String(params.name ?? '').slice(0, 128) })
     return done(ctx, path.userId!)
   })
 
-  router.patch('/users/:userId/email', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
+  router.patch('/users/:userId/email', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
     const email = params.email === '' ? null : validEmail(params.email)
-    ctx.auth.updateUser(path.userId!, { email, email_verification: 0 })
+    await ctx.auth.updateUser(path.userId!, { email, email_verification: 0 })
     return done(ctx, path.userId!)
   })
 
-  router.patch('/users/:userId/phone', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
+  router.patch('/users/:userId/phone', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
     const phone = params.number === '' ? null : validPhone(params.number)
-    ctx.auth.updateUser(path.userId!, { phone, phone_verification: 0 })
+    await ctx.auth.updateUser(path.userId!, { phone, phone_verification: 0 })
     return done(ctx, path.userId!)
   })
 
   router.patch('/users/:userId/password', async ({ ctx, path, params }) => {
-    const target = writable(ctx, path.userId!)
+    const target = await writable(ctx, path.userId!)
     if (params.password !== '') ctx.access.assertPasswordPersonalData(params.password, target)
-    if (params.password === '') ctx.auth.updateUser(path.userId!, { password: null, password_update: now() })
+    if (params.password === '') await ctx.auth.updateUser(path.userId!, { password: null, password_update: now() })
     else await ctx.auth.setPassword(path.userId!, params.password)
     return done(ctx, path.userId!)
   })
 
-  router.patch('/users/:userId/status', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.updateUser(path.userId!, { status: bool(params.status, true) ? 1 : 0 })
+  router.patch('/users/:userId/status', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.updateUser(path.userId!, { status: bool(params.status, true) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
-  router.patch('/users/:userId/verification', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.updateUser(path.userId!, { email_verification: bool(params.emailVerification, false) ? 1 : 0 })
+  router.patch('/users/:userId/verification', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.updateUser(path.userId!, { email_verification: bool(params.emailVerification, false) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
-  router.patch('/users/:userId/verification/phone', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.updateUser(path.userId!, { phone_verification: bool(params.phoneVerification, false) ? 1 : 0 })
+  router.patch('/users/:userId/verification/phone', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.updateUser(path.userId!, { phone_verification: bool(params.phoneVerification, false) ? 1 : 0 })
     return done(ctx, path.userId!)
   })
 
-  router.put('/users/:userId/labels', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
+  router.put('/users/:userId/labels', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
     const labels = list(params.labels)
     if (labels.length > 1000 || labels.some((l) => typeof l !== 'string' || !/^[a-zA-Z0-9]{1,36}$/.test(l))) {
-      throw err('general_argument_invalid', 'Invalid `labels` param: Value must be a valid array and each element must be alphanumeric and no longer than 36 chars.')
+      throw err(
+        'general_argument_invalid',
+        'Invalid `labels` param: Value must be a valid array and each element must be alphanumeric and no longer than 36 chars.',
+      )
     }
-    ctx.auth.updateUser(path.userId!, { labels: JSON.stringify([...new Set(labels)]) })
+    await ctx.auth.updateUser(path.userId!, { labels: JSON.stringify([...new Set(labels)]) })
     return done(ctx, path.userId!)
   })
 
-  router.get('/users/:userId/prefs', ({ ctx, path }) => json(JSON.parse(user(ctx, path.userId!).prefs)))
-  router.patch('/users/:userId/prefs', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
+  router.get('/users/:userId/prefs', async ({ ctx, path }) => json(JSON.parse((await user(ctx, path.userId!)).prefs)))
+  router.patch('/users/:userId/prefs', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
     const prefs = prefsObject(params.prefs)
-    ctx.auth.updateUser(path.userId!, { prefs: JSON.stringify(prefs) })
+    await ctx.auth.updateUser(path.userId!, { prefs: JSON.stringify(prefs) })
     return json(prefs)
   })
 
   router.get('/users/:userId/memberships', async ({ ctx, path, params }) => {
-    user(ctx, path.userId!)
+    await user(ctx, path.userId!)
     const { total, memberships } = await ctx.teams.listMemberships({ userId: path.userId! }, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, memberships: memberships.map(membershipModel) })
   })
 
-  router.get('/users/:userId/sessions', ({ ctx, path }) => {
-    user(ctx, path.userId!)
-    const sessions = ctx.auth.sessions(path.userId!).map((s) => sessionModel(s))
+  router.get('/users/:userId/sessions', async ({ ctx, path }) => {
+    await user(ctx, path.userId!)
+    const sessions = (await ctx.auth.sessions(path.userId!)).map((s) => sessionModel(s))
     return json({ total: sessions.length, sessions })
   })
 
-  router.post('/users/:userId/sessions', (route) => {
+  router.post('/users/:userId/sessions', async (route) => {
     const { ctx, path } = route
-    writable(ctx, path.userId!)
-    const { session, secret } = ctx.auth.createSession(path.userId!, { provider: 'server', factors: ['server'], info: requestInfo(route.request) })
+    await writable(ctx, path.userId!)
+    const { session, secret } = await ctx.auth.createSession(path.userId!, { provider: 'server', factors: ['server'], info: requestInfo(route.request) })
     return json(sessionModel(session, { secret }), 201)
   })
 
-  router.delete('/users/:userId/sessions', ({ ctx, path }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.deleteSessions(path.userId!)
+  router.delete('/users/:userId/sessions', async ({ ctx, path }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.deleteSessions(path.userId!)
     return noContent()
   })
 
-  router.delete('/users/:userId/sessions/:sessionId', ({ ctx, path }) => {
-    writable(ctx, path.userId!)
-    ctx.auth.deleteSession(path.userId!, path.sessionId!)
+  router.delete('/users/:userId/sessions/:sessionId', async ({ ctx, path }) => {
+    await writable(ctx, path.userId!)
+    await ctx.auth.deleteSession(path.userId!, path.sessionId!)
     return noContent()
   })
 
-  router.post('/users/:userId/tokens', ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
-    const { token, secret } = ctx.auth.createGenericToken(path.userId!, num(params.length, 6), num(params.expire, 900))
+  router.post('/users/:userId/tokens', async ({ ctx, path, params }) => {
+    await writable(ctx, path.userId!)
+    const { token, secret } = await ctx.auth.createGenericToken(path.userId!, num(params.length, 6), num(params.expire, 900))
     return json(tokenModel(token, secret), 201)
   })
 
   router.post('/users/:userId/jwts', async ({ ctx, path, params }) => {
-    writable(ctx, path.userId!)
+    await writable(ctx, path.userId!)
     let sessionId = str(params.sessionId) ?? ''
-    if (!sessionId || sessionId === 'recent') sessionId = ctx.auth.sessions(path.userId!).at(-1)?.id ?? ''
-    else if (ctx.auth.session(sessionId)?.user_id !== path.userId) throw err('user_session_not_found')
+    if (!sessionId || sessionId === 'recent') sessionId = (await ctx.auth.sessions(path.userId!)).at(-1)?.id ?? ''
+    else if ((await ctx.auth.session(sessionId))?.user_id !== path.userId) throw err('user_session_not_found')
     return json(await jwtFor(ctx, path.userId!, sessionId, num(params.duration, 900)!), 201)
   })
 }

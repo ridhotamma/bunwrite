@@ -14,7 +14,7 @@
  */
 import type { Config, OAuthConfig, OAuthProviderId } from '~/config'
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import type { Params } from '~/lib/http'
 import { now } from '~/lib/datetime'
 import { BunwriteError, err } from '~/lib/errors'
@@ -55,7 +55,7 @@ const isProvider = (value: string): value is OAuthProviderId => (OAUTH_PROVIDER_
 
 export class OAuthService {
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private auth: AuthService,
     /** Redirect targets: the project's allowed origins and its sites. */
@@ -129,7 +129,7 @@ export class OAuthService {
       if (!identity.uid) throw err('user_missing_id')
 
       const userId = await this.resolveUser(id, identity, tokens)
-      const { secret } = this.auth.createToken(userId, 'oauth2', { ttl: OAUTH2_TOKEN_TTL, provider: id })
+      const { secret } = await this.auth.createToken(userId, 'oauth2', { ttl: OAUTH2_TOKEN_TTL, provider: id })
       return withQuery(state.success, { userId, secret })
     } catch (error) {
       const e = error instanceof BunwriteError ? error : err('general_unknown', 'Server Error')
@@ -140,16 +140,16 @@ export class OAuthService {
 
   /** Link by identity, then by verified email, otherwise create — Appwrite's order. */
   private async resolveUser(provider: OAuthProviderId, identity: OAuthIdentity, tokens: OAuthTokens): Promise<string> {
-    const sql = this.db.sqlite
     const stamp = now()
     const expiry = tokens.expires_in ? new Date(Date.now() + Number(tokens.expires_in) * 1000).toISOString().replace('Z', '+00:00') : ''
-    const linked = sql
-      .query<{ user_id: string }, [string, string]>('SELECT user_id FROM _identities WHERE provider = ? AND provider_uid = ?')
-      .get(provider, identity.uid)
+    const linked = await this.db.driver.get<{ user_id: string }>('SELECT user_id FROM _identities WHERE provider = ? AND provider_uid = ?', [
+      provider,
+      identity.uid,
+    ])
 
     let userId = linked?.user_id ?? ''
     if (!userId && identity.email) {
-      const existing = this.auth.userByEmail(identity.email)
+      const existing = await this.auth.userByEmail(identity.email)
       if (existing) {
         // Appwrite refuses to attach an unverified provider email to an existing account.
         if (!identity.emailVerified) throw err('general_bad_request')
@@ -160,34 +160,30 @@ export class OAuthService {
       userId = (await this.auth.createUser({ email: identity.email || undefined, name: identity.name, emailVerification: identity.emailVerified })).id
     }
 
-    let user = this.auth.user(userId)
+    let user = await this.auth.user(userId)
     if (!user.status) throw err('user_blocked')
     if (identity.emailVerified && user.email === identity.email && !user.email_verification) {
-      user = this.auth.updateUser(userId, { email_verification: 1 })
+      user = await this.auth.updateUser(userId, { email_verification: 1 })
     }
-    if (!user.name && identity.name) this.auth.updateUser(userId, { name: identity.name })
+    if (!user.name && identity.name) await this.auth.updateUser(userId, { name: identity.name })
 
     if (linked) {
-      sql
-        .query(
-          'UPDATE _identities SET provider_email = ?, provider_access_token = ?, provider_refresh_token = ?, provider_access_token_expiry = ?, updated_at = ? WHERE provider = ? AND provider_uid = ?',
-        )
-        .run(identity.email, tokens.access_token, tokens.refresh_token ?? '', expiry, stamp, provider, identity.uid)
+      await this.db.driver.run(
+        'UPDATE _identities SET provider_email = ?, provider_access_token = ?, provider_refresh_token = ?, provider_access_token_expiry = ?, updated_at = ? WHERE provider = ? AND provider_uid = ?',
+        [identity.email, tokens.access_token, tokens.refresh_token ?? '', expiry, stamp, provider, identity.uid],
+      )
     } else {
-      sql
-        .query(
-          `INSERT INTO _identities (id, user_id, provider, provider_uid, provider_email, provider_access_token, provider_access_token_expiry, provider_refresh_token, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(uniqueId(), userId, provider, identity.uid, identity.email, tokens.access_token, expiry, tokens.refresh_token ?? '', stamp, stamp)
+      await this.db.driver.run(
+        `INSERT INTO _identities (id, user_id, provider, provider_uid, provider_email, provider_access_token, provider_access_token_expiry, provider_refresh_token, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [uniqueId(), userId, provider, identity.uid, identity.email, tokens.access_token, expiry, tokens.refresh_token ?? '', stamp, stamp],
+      )
     }
     return userId
   }
 
   /** Provider details a session created from an oauth2 token carries. */
-  identity(userId: string, provider: string) {
-    return this.db.sqlite
-      .query<IdentityRow, [string, string]>('SELECT * FROM _identities WHERE user_id = ? AND provider = ? ORDER BY seq DESC LIMIT 1')
-      .get(userId, provider)
+  async identity(userId: string, provider: string): Promise<IdentityRow | null> {
+    return this.db.driver.get<IdentityRow>('SELECT * FROM _identities WHERE user_id = ? AND provider = ? ORDER BY seq DESC LIMIT 1', [userId, provider])
   }
 }

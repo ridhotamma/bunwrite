@@ -53,7 +53,7 @@ export function settingsPages(router: ConsoleRouter): void {
     const id = templateOf(path.id)
     const fields = templateForm(ctx.form)
     try {
-      ctx.services.templates.update(id, fields)
+      await ctx.services.templates.update(id, fields)
     } catch (error) {
       // Keep what was typed on the page instead of losing it on a redirect.
       if (!(error instanceof BunwriteError)) throw error
@@ -62,9 +62,9 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(templatePath(id), { tone: 'success', text: 'Template updated' })
   })
 
-  router.post(`${SETTINGS}/templates/:id/reset`, ({ ctx, path }) => {
+  router.post(`${SETTINGS}/templates/:id/reset`, async ({ ctx, path }) => {
     const id = templateOf(path.id)
-    ctx.services.templates.reset(id)
+    await ctx.services.templates.reset(id)
     return ctx.go(templatePath(id), { tone: 'success', text: 'Template reset to the default' })
   })
 
@@ -88,7 +88,7 @@ export function settingsPages(router: ConsoleRouter): void {
       sessionDuration: Math.round(days * 86400),
       sessionsLimit: Math.round(limit),
     })
-    ctx.projects.update(ctx.currentProject.id, { name: projectName })
+    await ctx.projects.update(ctx.currentProject.id, { name: projectName })
     return ctx.go(tabPath('general'), { tone: 'success', text: 'Project settings saved' })
   })
 
@@ -230,7 +230,7 @@ export function settingsPages(router: ConsoleRouter): void {
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')
     if (key === 'backups') return ctx.go('/console/organization/backups')
     await ctx.services.settings.reset(key)
-    if (key === 'project') ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
+    if (key === 'project') await ctx.projects.update(ctx.currentProject.id, { name: ctx.services.config.projectName })
     if (key === 'logs') await ctx.services.requestLogs.prune()
     if (key === 'cache') ctx.services.storage.prunePreviews(true)
     return ctx.go(tabPath(TAB_OF_SETTING[key]), { tone: 'success', text: 'Setting reset' })

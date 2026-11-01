@@ -1,10 +1,17 @@
 import { afterAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { openDatabase, parseDatabaseBackend, describeDatabase, sqliteDatabase } from '~/db'
 import { configFromEnv } from '~/config'
 import { openDb } from '~/db/connection'
 import { toPostgres } from '~/db/dialect'
 import { uniqueViolation, UnsupportedFeatureError } from '~/db/driver'
+import { bootstrapInstanceAsync } from '~/instance/bootstrap'
+import { createServices } from '~/services'
+import { createProjectManager } from '~/projects/manager'
+import { projectNamespace } from '~/projects/paths'
 import {
   postgresCollectionVersionStatements,
   postgresDocumentIndexStatements,
@@ -58,6 +65,16 @@ describe('backend selection', () => {
     expect(sqlite.capabilities.fullTextSearch).toBe('fts5')
     expect(sqlite.capabilities.localFile).toBe(true)
     expect(sqliteDatabase(sqlite).dialect).toBe('sqlite')
+  })
+
+  test('per-project network namespaces stay readable and within the identifier limit', () => {
+    expect(projectNamespace('bunwrite', 'project-b')).toBe('bunwrite_project_b')
+    expect(projectNamespace(undefined, 'abcdef')).toBe('bunwrite_abcdef')
+    // A reserved Postgres prefix is moved out of the way, and a long ID is hashed.
+    expect(projectNamespace('pg_main', 'p1')).toBe('bw_pg_main_p1')
+    const long = projectNamespace('a'.repeat(80), 'project-with-a-long-id')
+    expect(long.length).toBeLessThanOrEqual(63)
+    expect(long).toStartWith('a'.repeat(46))
   })
 })
 
@@ -377,6 +394,81 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     const registry = new Registry(handle)
     await registry.load()
     expect(registry.collections.get('main/products')?.attributeMap.has('name')).toBe(true)
+  })
+
+  test('boots services and opens each project in its own schema', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const dataDir = mkdtempSync(join(tmpdir(), 'bunwrite-pg-projects-'))
+    const config = testConfig({
+      databasePath: ':memory:',
+      databaseDriver: 'postgres',
+      databaseUrl: postgresUrl,
+      databaseNamespace: namespace,
+      projectId: 'pg-control',
+      orgId: 'org_pg',
+      projectName: 'PG Control',
+      secret: 'p'.repeat(40),
+      instanceKey: `pg-${suffix}`,
+    })
+    const instance = await bootstrapInstanceAsync(handle, {
+      ORG_ID: config.orgId,
+      PROJECT_ID: config.projectId,
+      PROJECT_NAME: config.projectName,
+      SECRET: config.secret,
+    })
+    config.projectId = instance.projectId
+    config.orgId = instance.orgId
+    config.projectName = instance.projectName
+
+    const control = createServices(config, handle)
+    const manager = createProjectManager({
+      config,
+      db: handle,
+      services: control,
+      dataDir,
+      database: { backend: 'postgres', url: postgresUrl, namespace },
+    })
+    try {
+      await manager.ready()
+      const created = await manager.create({ id: 'project-pg', name: 'Project PG', orgId: config.orgId })
+      expect(created.apiKey).toStartWith('standard_')
+      const project = created.project.services
+      expect(project.db.dialect).toBe('postgres')
+      // The runtime has its own schema and instance record.
+      const projectSchema = projectNamespace(namespace, 'project-pg')
+      expect(await driver.get(`SELECT 1 FROM information_schema.schemata WHERE schema_name = ?`, [projectSchema])).not.toBeNull()
+      const stored = await project.db.driver.get<{ value: string }>(`SELECT value FROM _settings WHERE key = 'instance'`)
+      expect(JSON.parse(stored!.value)).toMatchObject({ projectId: 'project-pg' })
+
+      // A collection can be pushed to that project's schema and queried there.
+      await pushConfigPostgres(project.db.driver as PostgresDriver, {
+        tablesDB: [{ $id: 'main', name: 'Main', enabled: true }],
+        tables: [
+          {
+            $id: 'items',
+            databaseId: 'main',
+            name: 'Items',
+            enabled: true,
+            rowSecurity: true,
+            $permissions: [],
+            columns: [{ key: 'name', type: 'string', required: false, array: false, size: 100 }],
+            indexes: [],
+          },
+        ],
+      })
+      await project.registry.load()
+      const collection = project.registry.collection('main', 'items', true)
+      const doc = await project.store.createDocument(keyCaller(), collection, { id: 'pg-item', data: { name: 'Only here' }, permissions: [] })
+      expect(doc.name).toBe('Only here')
+      // The control schema does not see the project's collection rows.
+      expect(await driver.get(`SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?`, [namespace, collection.table])).toBeNull()
+
+      await manager.delete('project-pg')
+      expect(await driver.get(`SELECT 1 FROM information_schema.schemata WHERE schema_name = ?`, [projectSchema])).toBeNull()
+    } finally {
+      await manager.close()
+      rmSync(dataDir, { recursive: true, force: true })
+    }
   })
 
   test('the document store and transactions run on Postgres', async () => {

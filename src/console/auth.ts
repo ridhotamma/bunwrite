@@ -4,8 +4,11 @@
  * /console, stored as sha256. Lax (not Strict) so the cookie is sent when a
  * GitHub round trip lands back on the console; Lax still withholds it from
  * cross-site POSTs, and the console checks Origin as well.
+ *
+ * Everything goes through the database port so the console can run on a
+ * network backend as well as SQLite.
  */
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256 } from '~/lib/ids'
@@ -24,32 +27,32 @@ export interface Admin {
   mfa: boolean
 }
 
-export type LoginResult =
-  | { status: 'ok'; secret: string }
-  | { status: 'mfa'; challenge: string; code: string; email: string }
-  | { status: 'invalid' }
+export type LoginResult = { status: 'ok'; secret: string } | { status: 'mfa'; challenge: string; code: string; email: string } | { status: 'invalid' }
+
+interface AdminRow {
+  seq: number
+  email: string
+  mfa: number
+  created_at: string
+}
+
+const toAdmin = (row: AdminRow) => ({ ...row, mfa: Boolean(row.mfa) })
 
 export class ConsoleAuth {
-  constructor(private db: Db) {}
+  constructor(private db: SqlDatabase) {}
 
-  count(): number {
-    return (this.db.sqlite.query('SELECT count(*) AS n FROM _console_admins').get() as { n: number }).n
+  async count(): Promise<number> {
+    return Number((await this.db.driver.get<{ n: number }>('SELECT count(*) AS n FROM _console_admins'))?.n ?? 0)
   }
 
-  list(): (Admin & { created_at: string })[] {
-    return this.db.sqlite
-      .query<Omit<Admin, 'mfa'> & { mfa: number; created_at: string }, []>('SELECT seq, email, mfa, created_at FROM _console_admins ORDER BY seq')
-      .all()
-      .map((row) => ({ ...row, mfa: Boolean(row.mfa) }))
+  async list(): Promise<(Admin & { created_at: string })[]> {
+    const rows = await this.db.driver.all<AdminRow>('SELECT seq, email, mfa, created_at FROM _console_admins ORDER BY seq')
+    return rows.map(toAdmin)
   }
 
-  find(email: string): (Admin & { created_at: string }) | null {
-    const row = this.db.sqlite
-      .query<Omit<Admin, 'mfa'> & { mfa: number; created_at: string }, [string]>(
-        'SELECT seq, email, mfa, created_at FROM _console_admins WHERE email = ?',
-      )
-      .get(email.trim().toLowerCase())
-    return row ? { ...row, mfa: Boolean(row.mfa) } : null
+  async find(email: string): Promise<(Admin & { created_at: string }) | null> {
+    const row = await this.db.driver.get<AdminRow>('SELECT seq, email, mfa, created_at FROM _console_admins WHERE email = ?', [email.trim().toLowerCase()])
+    return row ? toAdmin(row) : null
   }
 
   /** Create an admin, or reset the password of an existing one. */
@@ -57,46 +60,45 @@ export class ConsoleAuth {
     const address = validEmail(email)
     const hash = await hashPassword(validatePassword(password))
     const stamp = now()
-    this.db.sqlite
-      .query(
-        `INSERT INTO _console_admins (email, password, created_at, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT(email) DO UPDATE SET password = excluded.password, updated_at = excluded.updated_at`,
-      )
-      .run(address, hash, stamp, stamp)
-  }
-
-  remove(seq: number): void {
-    if (this.count() <= 1) throw err('general_argument_invalid', 'The last admin cannot be removed.')
-    this.db.sqlite.query('DELETE FROM _console_admins WHERE seq = ?').run(seq)
-  }
-
-  /** Whether this admin must enter an emailed code after the password. */
-  mfaEnabled(email: string): boolean {
-    return Boolean(
-      this.db.sqlite
-        .query<{ mfa: number }, [string]>('SELECT mfa FROM _console_admins WHERE email = ?')
-        .get(email.trim().toLowerCase())?.mfa,
+    await this.db.driver.run(
+      `INSERT INTO _console_admins (email, password, created_at, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET password = excluded.password, updated_at = excluded.updated_at`,
+      [address, hash, stamp, stamp],
     )
   }
 
+  async remove(seq: number): Promise<void> {
+    if ((await this.count()) <= 1) throw err('general_argument_invalid', 'The last admin cannot be removed.')
+    await this.db.driver.run('DELETE FROM _console_admins WHERE seq = ?', [seq])
+  }
+
+  /** Whether this admin must enter an emailed code after the password. */
+  async mfaEnabled(email: string): Promise<boolean> {
+    const row = await this.db.driver.get<{ mfa: number }>('SELECT mfa FROM _console_admins WHERE email = ?', [email.trim().toLowerCase()])
+    return Boolean(row?.mfa)
+  }
+
   /** Turn email MFA on or off for one admin. */
-  setMfa(seq: number, enabled: boolean): void {
-    this.db.sqlite.query('UPDATE _console_admins SET mfa = ?, updated_at = ? WHERE seq = ?').run(enabled ? 1 : 0, now(), seq)
+  async setMfa(seq: number, enabled: boolean): Promise<void> {
+    await this.db.driver.run('UPDATE _console_admins SET mfa = ?, updated_at = ? WHERE seq = ?', [enabled ? 1 : 0, now(), seq])
   }
 
   /** Re-check the password for a sensitive console action. */
   async verifyPassword(seq: number, password: string): Promise<boolean> {
-    const admin = this.db.sqlite.query<{ password: string }, [number]>('SELECT password FROM _console_admins WHERE seq = ?').get(seq)
+    const admin = await this.db.driver.get<{ password: string }>('SELECT password FROM _console_admins WHERE seq = ?', [seq])
     if (!admin) return false
     return Bun.password.verify(password, admin.password).catch(() => false)
   }
 
-  private newSession(adminSeq: number): string {
+  private async newSession(adminSeq: number): Promise<string> {
     const secret = randomSecret(32)
-    this.db.sqlite
-      .query('INSERT INTO _console_sessions (admin_id, secret_hash, expire, created_at) VALUES (?, ?, ?, ?)')
-      .run(adminSeq, sha256(secret), addSeconds(SESSION_TTL), now())
-    this.db.sqlite.query('DELETE FROM _console_sessions WHERE expire < ?').run(now())
+    await this.db.driver.run('INSERT INTO _console_sessions (admin_id, secret_hash, expire, created_at) VALUES (?, ?, ?, ?)', [
+      adminSeq,
+      sha256(secret),
+      addSeconds(SESSION_TTL),
+      now(),
+    ])
+    await this.db.driver.run('DELETE FROM _console_sessions WHERE expire < ?', [now()])
     return secret
   }
 
@@ -105,45 +107,48 @@ export class ConsoleAuth {
    * challenge with a one-time code to email instead of a session.
    */
   async authenticate(email: string, password: string): Promise<LoginResult> {
-    const admin = this.db.sqlite
-      .query<{ seq: number; password: string; mfa: number }, [string]>(
-        'SELECT seq, password, mfa FROM _console_admins WHERE email = ?',
-      )
-      .get(email.trim().toLowerCase())
+    const admin = await this.db.driver.get<{ seq: number; password: string; mfa: number }>('SELECT seq, password, mfa FROM _console_admins WHERE email = ?', [
+      email.trim().toLowerCase(),
+    ])
     // Verify against a dummy hash when the email is unknown so timing does not tell.
-    const ok = await Bun.password.verify(password, admin?.password ?? '$argon2id$v=19$m=7168,t=5,p=1$c2FsdHNhbHRzYWx0$Zq3U7Wo3l1nq5y3V5i0l0g').catch(() => false)
+    const ok = await Bun.password
+      .verify(password, admin?.password ?? '$argon2id$v=19$m=7168,t=5,p=1$c2FsdHNhbHRzYWx0$Zq3U7Wo3l1nq5y3V5i0l0g')
+      .catch(() => false)
     if (!admin || !ok) return { status: 'invalid' }
-    if (!admin.mfa) return { status: 'ok', secret: this.newSession(admin.seq) }
+    if (!admin.mfa) return { status: 'ok', secret: await this.newSession(admin.seq) }
     const challenge = randomSecret(32)
     const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0')
     const stamp = now()
-    this.db.sqlite.query('DELETE FROM _console_mfa_challenges WHERE admin_id = ? OR expire < ?').run(admin.seq, stamp)
-    this.db.sqlite
-      .query('INSERT INTO _console_mfa_challenges (admin_id, secret_hash, code_hash, expire, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(admin.seq, sha256(challenge), sha256(code), addSeconds(MFA_TTL), stamp)
+    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE admin_id = ? OR expire < ?', [admin.seq, stamp])
+    await this.db.driver.run('INSERT INTO _console_mfa_challenges (admin_id, secret_hash, code_hash, expire, created_at) VALUES (?, ?, ?, ?, ?)', [
+      admin.seq,
+      sha256(challenge),
+      sha256(code),
+      addSeconds(MFA_TTL),
+      stamp,
+    ])
     return { status: 'mfa', challenge, code, email: email.trim().toLowerCase() }
   }
 
   /** Complete an email challenge; returns the session secret, or null for a wrong or expired code. */
-  verifyMfa(challenge: string, code: string): string | null {
-    const row = this.db.sqlite
-      .query<{ seq: number; admin_id: number; code_hash: string; attempts: number; expire: string }, [string]>(
-        'SELECT seq, admin_id, code_hash, attempts, expire FROM _console_mfa_challenges WHERE secret_hash = ?',
-      )
-      .get(sha256(challenge))
+  async verifyMfa(challenge: string, code: string): Promise<string | null> {
+    const row = await this.db.driver.get<{ seq: number; admin_id: number; code_hash: string; attempts: number; expire: string }>(
+      'SELECT seq, admin_id, code_hash, attempts, expire FROM _console_mfa_challenges WHERE secret_hash = ?',
+      [sha256(challenge)],
+    )
     if (!row || row.expire < now()) {
-      if (row) this.db.sqlite.query('DELETE FROM _console_mfa_challenges WHERE seq = ?').run(row.seq)
+      if (row) await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
       return null
     }
     if (row.attempts >= MFA_ATTEMPTS) {
-      this.db.sqlite.query('DELETE FROM _console_mfa_challenges WHERE seq = ?').run(row.seq)
+      await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
       return null
     }
     if (row.code_hash !== sha256(code.trim())) {
-      this.db.sqlite.query('UPDATE _console_mfa_challenges SET attempts = attempts + 1 WHERE seq = ?').run(row.seq)
+      await this.db.driver.run('UPDATE _console_mfa_challenges SET attempts = attempts + 1 WHERE seq = ?', [row.seq])
       return null
     }
-    this.db.sqlite.query('DELETE FROM _console_mfa_challenges WHERE seq = ?').run(row.seq)
+    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
     return this.newSession(row.admin_id)
   }
 
@@ -156,20 +161,27 @@ export class ConsoleAuth {
     return result.status === 'ok' ? result.secret : null
   }
 
-  admin(request: Request): Admin | null {
+  async admin(request: Request): Promise<Admin | null> {
     const secret = parseCookies(request.headers.get('cookie') ?? '')[CONSOLE_COOKIE]
-    return secret ? (this.session(secret)?.admin ?? null) : null
+    return secret ? ((await this.session(secret))?.admin ?? null) : null
   }
 
   /** The live session behind a secret (the console cookie, or the API's `a_session_console`). */
-  session(secret: string): { seq: number; expire: string; createdAt: string; admin: Admin & { created_at: string } } | null {
-    const row = this.db.sqlite
-      .query<{ session_seq: number; expire: string; session_created: string; seq: number; email: string; mfa: number; created_at: string }, [string, string]>(
-        `SELECT s.seq AS session_seq, s.expire, s.created_at AS session_created, a.seq, a.email, a.mfa, a.created_at
-         FROM _console_sessions s JOIN _console_admins a ON a.seq = s.admin_id
-         WHERE s.secret_hash = ? AND s.expire > ?`,
-      )
-      .get(sha256(secret), now())
+  async session(secret: string): Promise<{ seq: number; expire: string; createdAt: string; admin: Admin & { created_at: string } } | null> {
+    const row = await this.db.driver.get<{
+      session_seq: number
+      expire: string
+      session_created: string
+      seq: number
+      email: string
+      mfa: number
+      created_at: string
+    }>(
+      `SELECT s.seq AS session_seq, s.expire, s.created_at AS session_created, a.seq, a.email, a.mfa, a.created_at
+       FROM _console_sessions s JOIN _console_admins a ON a.seq = s.admin_id
+       WHERE s.secret_hash = ? AND s.expire > ?`,
+      [sha256(secret), now()],
+    )
     if (!row) return null
     return {
       seq: row.session_seq,
@@ -179,13 +191,13 @@ export class ConsoleAuth {
     }
   }
 
-  endSession(secret: string): void {
-    this.db.sqlite.query('DELETE FROM _console_sessions WHERE secret_hash = ?').run(sha256(secret))
+  async endSession(secret: string): Promise<void> {
+    await this.db.driver.run('DELETE FROM _console_sessions WHERE secret_hash = ?', [sha256(secret)])
   }
 
-  logout(request: Request): void {
+  async logout(request: Request): Promise<void> {
     const secret = parseCookies(request.headers.get('cookie') ?? '')[CONSOLE_COOKIE]
-    if (secret) this.db.sqlite.query('DELETE FROM _console_sessions WHERE secret_hash = ?').run(sha256(secret))
+    if (secret) await this.db.driver.run('DELETE FROM _console_sessions WHERE secret_hash = ?', [sha256(secret)])
   }
 
   cookie(secret: string, secure: boolean): string {

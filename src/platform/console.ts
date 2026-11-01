@@ -41,7 +41,7 @@ interface ConsoleApiContext {
   projects: ProjectResolver
   auth: ConsoleAuth
   organizations: OrganizationService
-  session: ReturnType<ConsoleAuth['session']>
+  session: Awaited<ReturnType<ConsoleAuth['session']>>
   secret: string | null
 }
 
@@ -152,11 +152,11 @@ function routes(): Router<ConsoleApiContext> {
 
   router.post('/account/sessions/email', async ({ ctx }) => {
     const email = str(ctx.params.email) ?? ''
-    new RateLimiter(ctx.projects.control.db).hit(`console-api-login:${requestInfo(ctx.request).ip}:${email.toLowerCase()}`, 10, 900)
+    await new RateLimiter(ctx.projects.control.db).hit(`console-api-login:${requestInfo(ctx.request).ip}:${email.toLowerCase()}`, 10, 900)
     const secret = await ctx.auth.login(email, str(ctx.params.password) ?? '')
     if (!secret) throw err('user_invalid_credentials')
-    const session = ctx.auth.session(secret)!
-    ctx.organizations.ensureAdmin(ctx.projects.control.config.orgId, session.admin.email)
+    const session = (await ctx.auth.session(secret))!
+    await ctx.organizations.ensureAdmin(ctx.projects.control.config.orgId, session.admin.email)
     const secure = ctx.projects.control.config.publicEndpoint.startsWith('https') ? '; Secure' : ''
     const expires = new Date(addSeconds(SESSION_TTL)).toUTCString()
     return json(sessionOf(session, ctx.request), 201, {
@@ -164,9 +164,9 @@ function routes(): Router<ConsoleApiContext> {
     })
   })
 
-  router.get('/account', ({ ctx }) => {
+  router.get('/account', async ({ ctx }) => {
     const session = signedIn(ctx)
-    const org = ctx.organizations.get(ctx.projects.control.config.orgId)
+    const org = await ctx.organizations.get(ctx.projects.control.config.orgId)
     return json(accountOf(session.admin, org?.name ?? ''))
   })
 
@@ -178,17 +178,33 @@ function routes(): Router<ConsoleApiContext> {
 
   // `appwrite logout` names the session by the CLI's own local ID, which the
   // server never saw, so any ID ends the session whose cookie came with it.
-  router.delete('/account/sessions/:sessionId', ({ ctx }) => {
+  router.delete('/account/sessions/:sessionId', async ({ ctx }) => {
     signedIn(ctx)
-    ctx.auth.endSession(ctx.secret!)
-    return new Response(null, { status: 204, headers: { 'set-cookie': `${sessionCookieName(ctx.projects.control.config, ctx.request, CONSOLE_PROJECT)}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` } })
+    await ctx.auth.endSession(ctx.secret!)
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'set-cookie': `${sessionCookieName(ctx.projects.control.config, ctx.request, CONSOLE_PROJECT)}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+      },
+    })
   })
 
   // Organizations are Appwrite "teams" in the console project.
-  router.get('/teams', ({ ctx }) => {
+  router.get('/teams', async ({ ctx }) => {
     signedIn(ctx)
-    const org = ctx.organizations.get(ctx.projects.control.config.orgId)
-    const teams = org ? [{ $id: org.id, $createdAt: org.createdAt, $updatedAt: org.updatedAt, name: org.name, total: ctx.organizations.members(org.id).length, prefs: {} }] : []
+    const org = await ctx.organizations.get(ctx.projects.control.config.orgId)
+    const teams = org
+      ? [
+          {
+            $id: org.id,
+            $createdAt: org.createdAt,
+            $updatedAt: org.updatedAt,
+            name: org.name,
+            total: (await ctx.organizations.members(org.id)).length,
+            prefs: {},
+          },
+        ]
+      : []
     return json({ total: teams.length, teams })
   })
 
@@ -200,16 +216,19 @@ function routes(): Router<ConsoleApiContext> {
   router.get('/organization/projects', ({ ctx }) => {
     signedIn(ctx)
     const orgId = orgOf(ctx)
-    const all = ctx.projects.list().filter((p) => p.info.orgId === orgId).map(modelOf)
+    const all = ctx.projects
+      .list()
+      .filter((p) => p.info.orgId === orgId)
+      .map(modelOf)
     const { total, items } = page(all, list(ctx.params.queries), { search: str(ctx.params.search), searchFields: ['$id', 'name'] })
     return json({ total, projects: items })
   })
 
-  router.post('/organization/projects', ({ ctx }) => {
+  router.post('/organization/projects', async ({ ctx }) => {
     signedIn(ctx)
     const orgId = orgOf(ctx)
     try {
-      const created = ctx.projects.create({ id: ctx.params.projectId, name: ctx.params.name, orgId })
+      const created = await ctx.projects.create({ id: ctx.params.projectId, name: ctx.params.name, orgId })
       return json(modelOf(created.project), 201)
     } catch (error) {
       if (error instanceof BunwriteError) throw error
@@ -226,11 +245,17 @@ function routes(): Router<ConsoleApiContext> {
     signedIn(ctx)
     const target = orgProject(ctx, path.projectId!)
     const name = str(ctx.params.name)?.trim()
-    if (!name || name.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
+    if (!name || name.length > 128)
+      throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
     // Same as renaming in the console: the project's own setting and the registry.
     const c = target.services.config
-    await target.services.settings.set('project', { projectName: name, allowedOrigins: c.allowedOrigins, sessionDuration: c.sessionDuration, sessionsLimit: c.sessionsLimit })
-    ctx.projects.update(target.info.id, { name })
+    await target.services.settings.set('project', {
+      projectName: name,
+      allowedOrigins: c.allowedOrigins,
+      sessionDuration: c.sessionDuration,
+      sessionsLimit: c.sessionsLimit,
+    })
+    await ctx.projects.update(target.info.id, { name })
     return json(modelOf(project(ctx, target.info.id)))
   })
 
@@ -249,26 +274,33 @@ export function createConsoleApi(projects: ProjectResolver) {
   const control = projects.control
   const auth = new ConsoleAuth(control.db)
   const organizations = new OrganizationService(control.db)
-  organizations.ensure(control.config.orgId, control.config.projectName)
+  const organizationsReady = organizations.ensure(control.config.orgId, control.config.projectName)
   const router = routes()
 
   return {
     /** Serve a console-project API call; undefined when no route here matches. */
     async handle(request: Request, pathname: string): Promise<Response | undefined> {
+      await organizationsReady
       const match = router.match(request.method, pathname)
       if (!match) return undefined
       const url = new URL(request.url)
       const params = await readParams(request, url)
       const secret = sessionSecret(request)
-      const session = secret ? auth.session(secret) : null
-      return match.handler({ request, url, params, path: match.path, ctx: { request, params, path: match.path, projects, auth, organizations, session, secret } })
+      const session = secret ? await auth.session(secret) : null
+      return match.handler({
+        request,
+        url,
+        params,
+        path: match.path,
+        ctx: { request, params, path: match.path, projects, auth, organizations, session, secret },
+      })
     },
 
     /** A console admin acting on a project: their session cookie plus `X-Bunwrite-Mode: admin` (or X-Appwrite-Mode). */
-    adminOf(request: Request): Admin | null {
+    async adminOf(request: Request): Promise<Admin | null> {
       if (apiHeader(request, 'mode') !== 'admin') return null
       const secret = sessionSecret(request)
-      return secret ? (auth.session(secret)?.admin ?? null) : null
+      return secret ? ((await auth.session(secret))?.admin ?? null) : null
     },
   }
 }

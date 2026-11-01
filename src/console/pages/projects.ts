@@ -27,9 +27,9 @@ async function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProj
     stats.set(project.info.id, { requests, spark: hours.map((hour) => perHour.get(hour) ?? 0) })
   }
 
-  const org = ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
-  const members = ctx.organizations.members(org.id).filter((member) => member.status === 'active').length
-  const manager = ctx.organizations.roleOf(org.id, ctx.admin.email) === 'owner'
+  const org = await ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
+  const members = (await ctx.organizations.members(org.id)).filter((member) => member.status === 'active').length
+  const manager = (await ctx.organizations.roleOf(org.id, ctx.admin.email)) === 'owner'
   const create = html`<button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>`
   return ctx.render(
     org.name,
@@ -57,8 +57,8 @@ export function projectPages(router: ConsoleRouter): void {
   router.get('/console', ({ ctx, url }) => projectsPage(ctx, url))
   router.get('/console/projects', ({ ctx }) => ctx.go('/console'))
 
-  router.post('/console', ({ ctx }) => {
-    const created = ctx.projects.create({
+  router.post('/console', async ({ ctx }) => {
+    const created = await ctx.projects.create({
       id: value(ctx.form, 'id'),
       name: value(ctx.form, 'name'),
       orgId: ctx.projects.control.config.orgId,
@@ -97,7 +97,7 @@ export function projectPages(router: ConsoleRouter): void {
       sessionDuration: project.services.config.sessionDuration,
       sessionsLimit: project.services.config.sessionsLimit,
     })
-    ctx.projects.update(path.id!, { name })
+    await ctx.projects.update(path.id!, { name })
     return ctx.go('/console', { tone: 'success', text: 'Project renamed' })
   })
 

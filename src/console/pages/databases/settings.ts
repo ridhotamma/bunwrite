@@ -18,10 +18,17 @@ export function collectionSettingsPages(router: ConsoleRouter): void {
         'General',
         'The name shown here, and whether apps can use the collection.',
         html`<form method="post" action="${collectionUrl(c)}/settings">
-          <input type="hidden" name="section" value="general">
-          <label>Name<input name="name" value="${c.name}" required></label>
-          <label>ID<div class="copy-row"><input id="collection-id" class="mono" readonly value="${c.id}"><button type="button" data-copy-target="#collection-id">${icon('copy')}<span data-copy-label>Copy</span></button></div></label>
-          <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''}>Enabled for apps</label>
+          <input type="hidden" name="section" value="general" />
+          <label>Name<input name="name" value="${c.name}" required /></label>
+          <label
+            >ID
+            <div class="copy-row">
+              <input id="collection-id" class="mono" readonly value="${c.id}" /><button type="button" data-copy-target="#collection-id">
+                ${icon('copy')}<span data-copy-label>Copy</span>
+              </button>
+            </div></label
+          >
+          <label class="check"><input type="checkbox" name="enabled" ${c.enabled ? 'checked' : ''} />Enabled for apps</label>
           <div class="foot"><button class="primary">Save</button></div>
         </form>`,
         { id: 'collection-general' },
@@ -30,10 +37,10 @@ export function collectionSettingsPages(router: ConsoleRouter): void {
         'Access',
         'Choose how documents are protected, and who can create, read, update and delete them. API keys and server functions always have full access.',
         html`<form method="post" action="${collectionUrl(c)}/settings">
-          <input type="hidden" name="section" value="access">
+          <input type="hidden" name="section" value="access" />
           ${securityChoice('documentSecurity', c.documentSecurity, 'document')}
           <h3 class="field-heading">Collection permissions</h3>
-          ${permissionsField(ctx, { value: c.permissions, actions: COLLECTION_ACTIONS, note: html`Applies to every document.` })}
+          ${await permissionsField(ctx, { value: c.permissions, actions: COLLECTION_ACTIONS, note: html`Applies to every document.` })}
           <div class="foot"><button class="primary">Save</button></div>
         </form>`,
         { id: 'collection-access' },

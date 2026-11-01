@@ -29,16 +29,16 @@ export interface ProjectResolver {
   get(id: string): ProjectRuntime | null
   list(): ProjectRuntime[]
   /** Function HTTP endpoints have no project header, so find the owner by function ID. */
-  findFunction(functionId: string): ProjectRuntime | null
+  findFunction(functionId: string): Promise<ProjectRuntime | null>
   /** The project and function a request's Host header points at, if any. */
-  findFunctionByHost(host: string): { project: ProjectRuntime; fn: FunctionRow } | null
+  findFunctionByHost(host: string): Promise<{ project: ProjectRuntime; fn: FunctionRow } | null>
   /** The project and site a request's Host header points at, if any. */
-  findSite(host: string): { project: ProjectRuntime; site: SiteRow; deploymentId: string | null } | null
+  findSite(host: string): Promise<{ project: ProjectRuntime; site: SiteRow; deploymentId: string | null } | null>
   /** Notice projects added, removed or changed by another process. */
   sync?(): void | Promise<void>
-  create(input: ProjectCreateInput): { project: ProjectRuntime; apiKey?: string }
+  create(input: ProjectCreateInput): Promise<{ project: ProjectRuntime; apiKey?: string }>
   /** Keep the registry in step with a project's Settings page. */
-  update(id: string, fields: { name?: string; orgId?: string }): ProjectInfo
+  update(id: string, fields: { name?: string; orgId?: string }): Promise<ProjectInfo>
   /** Delete a non-default project and its database, uploads and backups. */
   delete(id: string): Promise<void>
 }
@@ -57,19 +57,19 @@ export function singleProjectResolver(services: Services): ProjectResolver {
     defaultProject: () => runtime,
     get: (id) => (id === info.id ? runtime : null),
     list: () => [runtime],
-    findFunction: (functionId) => (services.functions.list().some((f) => f.id === functionId) ? runtime : null),
-    findFunctionByHost: (host) => {
-      const fn = services.functions.byHost(host)
+    findFunction: async (functionId) => ((await services.functions.list()).some((f) => f.id === functionId) ? runtime : null),
+    findFunctionByHost: async (host) => {
+      const fn = await services.functions.byHost(host)
       return fn ? { project: runtime, fn } : null
     },
-    findSite: (host) => {
-      const found = services.sites.resolveHost(host)
+    findSite: async (host) => {
+      const found = await services.sites.resolveHost(host)
       return found ? { project: runtime, ...found } : null
     },
-    create: () => {
+    create: async () => {
       throw new Error('Project creation needs a ProjectManager.')
     },
-    update: (id, fields) => {
+    update: async (id, fields) => {
       if (id !== info.id) throw new Error('Unknown project.')
       if (fields.name !== undefined) {
         info.name = fields.name

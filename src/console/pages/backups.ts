@@ -16,21 +16,21 @@ import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 
 const orgId = (ctx: ConsoleContext) => ctx.projects.control.config.orgId
-const canManage = (ctx: ConsoleContext) => ctx.organizations.roleOf(orgId(ctx), ctx.admin.email) === 'owner'
+const canManage = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(orgId(ctx), ctx.admin.email)) === 'owner'
 
-function requireOwner(ctx: ConsoleContext): void {
-  if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can manage backups.')
+async function requireOwner(ctx: ConsoleContext): Promise<void> {
+  if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can manage backups.')
 }
 
-function backupsPage(ctx: ConsoleContext) {
-  if (!canManage(ctx)) return ctx.go('/console')
+async function backupsPage(ctx: ConsoleContext) {
+  if (!(await canManage(ctx))) return ctx.go('/console')
   const control = ctx.projects.control
-  const org = ctx.organizations.ensure(orgId(ctx), control.config.projectName)
+  const org = await ctx.organizations.ensure(orgId(ctx), control.config.projectName)
   const header = organizationHeader(
     org,
     {
       projects: ctx.projects.list().length,
-      members: ctx.organizations.members(org.id).filter((member) => member.status === 'active').length,
+      members: (await ctx.organizations.members(org.id)).filter((member) => member.status === 'active').length,
     },
     'backups',
     true,
@@ -42,7 +42,7 @@ export function backupPages(router: ConsoleRouter): void {
   router.get(BACKUPS, ({ ctx }) => backupsPage(ctx))
 
   router.post(BACKUPS, async ({ ctx }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     const keep = Number(ctx.form.backupsKeep)
     if (!Number.isInteger(keep) || keep < 1 || keep > 100) {
       throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
@@ -56,24 +56,24 @@ export function backupPages(router: ConsoleRouter): void {
   })
 
   router.post(`${BACKUPS}/reset`, async ({ ctx }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     await ctx.projects.control.settings.reset('backups')
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings reset' })
   })
 
   router.post(`${BACKUPS}/create`, async ({ ctx }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     const backup = await ctx.projects.control.backups.create('manual')
     return ctx.go(BACKUPS, { tone: 'success', text: `Created ${backup.name}` })
   })
 
   router.get(`${BACKUPS}/:name/download`, async ({ ctx, path }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     return ctx.projects.control.backups.serve(path.name!)
   })
 
   router.post(`${BACKUPS}/restore`, async ({ ctx }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     const file = ctx.form.backup
     if (!(file instanceof Blob) || file.size === 0) throw err('general_argument_invalid', 'Choose a backup archive to restore.')
     const config = ctx.projects.control.config
@@ -105,8 +105,8 @@ export function backupPages(router: ConsoleRouter): void {
     return ctx.go(BACKUPS, { tone: 'success', text: 'Archive validated and staged. Restart Bunwrite to apply it.' })
   })
 
-  router.post(`${BACKUPS}/restore/cancel`, ({ ctx }) => {
-    requireOwner(ctx)
+  router.post(`${BACKUPS}/restore/cancel`, async ({ ctx }) => {
+    await requireOwner(ctx)
     const removed = cancelPendingRestore(ctx.projects.control.config.databasePath)
     return ctx.go(BACKUPS, {
       tone: 'info',
@@ -115,7 +115,7 @@ export function backupPages(router: ConsoleRouter): void {
   })
 
   router.post(`${BACKUPS}/:name/delete`, async ({ ctx, path }) => {
-    requireOwner(ctx)
+    await requireOwner(ctx)
     await ctx.projects.control.backups.delete(path.name!)
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup deleted' })
   })

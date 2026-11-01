@@ -5,6 +5,7 @@
  * project config shape the project keeps in its repo.
  */
 import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import type { BucketRow } from '~/storage/service'
 import { collectionVersionKey } from '~/cluster/versions'
 import { now } from '~/lib/datetime'
@@ -16,9 +17,21 @@ import { attributeDefinition, normalizeAttribute, normalizeIndex, tableName, typ
 
 export class SchemaAdmin {
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private registry: Registry,
   ) {}
+
+  /**
+   * Collection DDL still runs on the synchronous SQLite path. The console and
+   * the schema REST routes report that clearly on a network backend instead of
+   * failing with a missing-connection error.
+   */
+  private get local(): Db {
+    if (this.db.dialect !== 'sqlite' || !this.db.sqlite) {
+      throw err('general_not_implemented', 'Schema changes are not available on this database backend yet; apply collections with db:migrate --schema.')
+    }
+    return this.db as Db
+  }
 
   private def(databaseId: string, collectionId: string): ConfigCollection {
     const c = this.registry.collection(databaseId, collectionId, true)
@@ -36,7 +49,7 @@ export class SchemaAdmin {
 
   private apply(def: ConfigCollection): string[] {
     const log: string[] = []
-    this.db.sqlite.transaction(() => pushCollection(this.db, def, now(), (l) => log.push(l))).immediate()
+    this.local.sqlite.transaction(() => pushCollection(this.local, def, now(), (l) => log.push(l))).immediate()
     this.registry.reload()
     return log
   }
@@ -45,25 +58,25 @@ export class SchemaAdmin {
     if (!isValidId(id)) throw err('general_argument_invalid', 'Database ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
     if (this.registry.databases.has(id)) throw err('database_already_exists')
     const stamp = now()
-    this.db.sqlite.query('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)').run(id, name || id, stamp, stamp)
+    this.local.sqlite.query('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)').run(id, name || id, stamp, stamp)
     this.registry.reload()
   }
 
   updateDatabase(id: string, name: string, enabled: boolean): void {
     this.registry.database(id, true)
-    this.db.sqlite.query('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?').run(name, enabled ? 1 : 0, now(), id)
+    this.local.sqlite.query('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?').run(name, enabled ? 1 : 0, now(), id)
     this.registry.reload()
   }
 
   deleteDatabase(id: string): void {
     const database = this.registry.database(id, true)
-    this.db.sqlite.transaction(() => {
+    this.local.sqlite.transaction(() => {
       for (const c of [...this.registry.collections.values()].filter((c) => c.databaseId === id)) {
-        dropCollectionTables(this.db, tableName(database.seq, c.id))
+        dropCollectionTables(this.local, tableName(database.seq, c.id))
       }
-      this.db.sqlite.query('DELETE FROM _collections WHERE database_id = ?').run(id)
-      this.db.sqlite.query('DELETE FROM _databases WHERE id = ?').run(id)
-      this.db.sqlite.query('DELETE FROM _meta WHERE key LIKE ?').run(`collection:${id}/%`)
+      this.local.sqlite.query('DELETE FROM _collections WHERE database_id = ?').run(id)
+      this.local.sqlite.query('DELETE FROM _databases WHERE id = ?').run(id)
+      this.local.sqlite.query('DELETE FROM _meta WHERE key LIKE ?').run(`collection:${id}/%`)
     }).immediate()
     this.registry.reload()
   }
@@ -82,10 +95,10 @@ export class SchemaAdmin {
 
   deleteCollection(databaseId: string, id: string): void {
     const c = this.registry.collection(databaseId, id, true)
-    this.db.sqlite.transaction(() => {
-      dropCollectionTables(this.db, c.table)
-      this.db.sqlite.query('DELETE FROM _collections WHERE database_id = ? AND id = ?').run(databaseId, id)
-      this.db.sqlite.query('DELETE FROM _meta WHERE key = ?').run(collectionVersionKey(databaseId, id))
+    this.local.sqlite.transaction(() => {
+      dropCollectionTables(this.local, c.table)
+      this.local.sqlite.query('DELETE FROM _collections WHERE database_id = ? AND id = ?').run(databaseId, id)
+      this.local.sqlite.query('DELETE FROM _meta WHERE key = ?').run(collectionVersionKey(databaseId, id))
     }).immediate()
     this.registry.reload()
   }
@@ -219,7 +232,7 @@ export class SchemaAdmin {
 
   /** Current schema in project config shape (tablesDB/tables/buckets). */
   export(): Record<string, unknown> {
-    const sql = this.db.sqlite
+    const sql = this.local.sqlite
     const buckets = sql.query<BucketRow, []>('SELECT * FROM _buckets ORDER BY seq').all()
     return {
       tablesDB: [...this.registry.databases.values()].map((d) => ({ $id: d.id, name: d.name, enabled: d.enabled })),
@@ -245,10 +258,10 @@ export class SchemaAdmin {
    */
   importConfig(config: unknown, options: { baseDir?: string; prune?: boolean; dryRun?: boolean }): string[] {
     const log: string[] = []
-    const sql = this.db.sqlite
+    const sql = this.local.sqlite
     sql.run('SAVEPOINT schema_import')
     try {
-      pushConfig(this.db, config, { baseDir: options.baseDir, prune: options.prune, log: (l) => log.push(l) })
+      pushConfig(this.local, config, { baseDir: options.baseDir, prune: options.prune, log: (l) => log.push(l) })
       if (options.dryRun) sql.run('ROLLBACK TO schema_import')
       sql.run('RELEASE schema_import')
     } catch (error) {

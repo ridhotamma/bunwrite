@@ -148,7 +148,7 @@ terminator per host.
 | `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the default project. |
 | `DB_DRIVER` | `sqlite` | Storage backend: `sqlite`, `postgres` or `mongodb`. This is the switch; a `DATABASE_URL` alone does not move the server off SQLite. See [DATABASE.md](DATABASE.md). |
 | `DATABASE_URL` | unset | Postgres or MongoDB connection URL for `DB_DRIVER`. |
-| `DATABASE_SCHEMA` | `public` | Postgres schema used for the built-in tables. |
+| `DATABASE_SCHEMA` | `public` | Postgres control schema. Additional projects use `<schema>_<project-id>`; see [DATABASE.md](DATABASE.md#boot-path). |
 | `MONGO_DATABASE` | `bunwrite` | MongoDB database for project data. |
 | `DATABASE_POOL_MAX` | `10` | Connection-pool size for Postgres/MongoDB. |
 | `DATABASE_SSL` | `false` | Require TLS for Postgres. |

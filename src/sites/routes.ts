@@ -54,8 +54,8 @@ export function siteDeploymentModel(d: SiteDeploymentRow) {
 }
 
 export async function siteModel(ctx: AppContext, s: SiteRow) {
-  const latest = ctx.sites.latest(s.id)
-  const live = s.deployment_id ? ctx.sites.deployment(s.id, s.deployment_id) : null
+  const latest = await ctx.sites.latest(s.id)
+  const live = s.deployment_id ? await ctx.sites.deployment(s.id, s.deployment_id) : null
   const domains = ctx.proxy.domainsFor('site', s.id)
   return {
     $id: s.id,
@@ -98,9 +98,9 @@ export async function siteModel(ctx: AppContext, s: SiteRow) {
   }
 }
 
-function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSettings {
+async function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): Promise<SiteSettings> {
   const apiFunctionId = str(p.apiFunctionId) ?? base.apiFunctionId
-  if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.functions.fn(apiFunctionId)
+  if (apiFunctionId && apiFunctionId !== base.apiFunctionId) await ctx.functions.fn(apiFunctionId)
   const domains = p.domains !== undefined ? list(p.domains).map(String) : p.domain !== undefined ? (str(p.domain) ? [str(p.domain)!] : []) : base.domains
   return {
     name: str(p.name) ?? base.name,
@@ -123,7 +123,10 @@ function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): SiteSetti
 export function siteRoutes(router: Router<AppContext>): void {
   router.get('/sites', async ({ ctx, params }) => {
     requireKey(ctx, 'sites.read')
-    const { total, items } = page(await Promise.all(ctx.sites.list().map((s) => siteModel(ctx, s))), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'framework'] })
+    const { total, items } = page(await Promise.all(ctx.sites.list().map((s) => siteModel(ctx, s))), list(params.queries), {
+      search: str(params.search),
+      searchFields: ['$id', 'name', 'framework'],
+    })
     return json({ total, sites: items })
   })
 
@@ -133,7 +136,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     if (!raw) throw err('general_argument_invalid', 'Param "siteId" is not optional.')
     const id = raw === 'unique()' ? uniqueId() : raw
     const framework = frameworkOf(str(params.framework))
-    const settings = settingsFrom(ctx, params, {
+    const settings = await settingsFrom(ctx, params, {
       name: id,
       enabled: true,
       framework: framework.key,
@@ -149,12 +152,12 @@ export function siteRoutes(router: Router<AppContext>): void {
       pruneMode: 'auto',
       deploymentRetention: 0,
     })
-    const created = ctx.sites.create(id, settings)
+    const created = await ctx.sites.create(id, settings)
     try {
       await applyProvider(ctx, 'site', created.id, params, NO_PROVIDER)
     } catch (error) {
       ctx.hub.forget(ctx.config.projectId, 'site', created.id)
-      ctx.sites.remove(created.id)
+      await ctx.sites.remove(created.id)
       throw error
     }
     return json(await siteModel(ctx, ctx.sites.site(created.id)), 201)
@@ -184,9 +187,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     }),
   )
 
-  router.get('/sites/specifications', () =>
-    json({ total: 1, specifications: [{ memory: 512, cpus: 1, enabled: true, slug: 's-1vcpu-512mb' }] }),
-  )
+  router.get('/sites/specifications', () => json({ total: 1, specifications: [{ memory: 512, cpus: 1, enabled: true, slug: 's-1vcpu-512mb' }] }))
 
   router.get('/sites/:siteId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.read')
@@ -196,14 +197,14 @@ export function siteRoutes(router: Router<AppContext>): void {
   router.put('/sites/:siteId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'sites.write')
     const s = ctx.sites.site(path.siteId!)
-    const updated = ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
+    const updated = await ctx.sites.update(s.id, await settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
     await applyProvider(ctx, 'site', updated.id, params, providerOf(s))
     return json(await siteModel(ctx, ctx.sites.site(updated.id)))
   })
 
-  router.delete('/sites/:siteId', ({ ctx, path }) => {
+  router.delete('/sites/:siteId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.write')
-    ctx.sites.remove(path.siteId!)
+    await ctx.sites.remove(path.siteId!)
     ctx.hub.forget(ctx.config.projectId, 'site', path.siteId!)
     return noContent()
   })
@@ -212,16 +213,26 @@ export function siteRoutes(router: Router<AppContext>): void {
   router.post('/sites/:siteId/deployments/vcs', async ({ ctx, path, params }) => {
     requireKey(ctx, 'sites.write')
     const s = ctx.sites.site(path.siteId!)
-    const d = await ctx.hub.deployReference(projectOf(ctx), 'site', s.id, str(params.type) ?? 'branch', str(params.reference) ?? '', bool(params.activate, false))
-    return json(siteDeploymentModel(ctx.sites.deployment(s.id, d.id)), 202)
+    const d = await ctx.hub.deployReference(
+      projectOf(ctx),
+      'site',
+      s.id,
+      str(params.type) ?? 'branch',
+      str(params.reference) ?? '',
+      bool(params.activate, false),
+    )
+    return json(siteDeploymentModel(await ctx.sites.deployment(s.id, d.id)), 202)
   })
 
   // ---- Deployments ----
 
-  router.get('/sites/:siteId/deployments', ({ ctx, path, params }) => {
+  router.get('/sites/:siteId/deployments', async ({ ctx, path, params }) => {
     requireKey(ctx, 'sites.read')
     ctx.sites.site(path.siteId!)
-    const { total, items } = page(ctx.sites.deployments(path.siteId!).map(siteDeploymentModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'status'] })
+    const { total, items } = page((await ctx.sites.deployments(path.siteId!)).map(siteDeploymentModel), list(params.queries), {
+      search: str(params.search),
+      searchFields: ['$id', 'status'],
+    })
     return json({ total, deployments: items })
   })
 
@@ -232,7 +243,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     if (!(code instanceof Blob)) throw err('general_argument_invalid', 'Param "code" must be a .tar.gz or .zip file.')
     // Build settings sent with a deployment update the site, as on Appwrite.
     const changes = ['installCommand', 'buildCommand', 'startCommand', 'outputDirectory', 'pruneMode'].filter((k) => str(params[k]) !== undefined)
-    if (changes.length) ctx.sites.update(s.id, settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
+    if (changes.length) ctx.sites.update(s.id, await settingsFrom(ctx, params, ctx.sites.settingsOf(s)))
     const deployment = await ctx.sites.upload(ctx.sites.site(s.id), {
       code,
       activate: bool(params.activate, false),
@@ -242,14 +253,14 @@ export function siteRoutes(router: Router<AppContext>): void {
     return json(siteDeploymentModel(deployment), 202)
   })
 
-  router.get('/sites/:siteId/deployments/:deploymentId', ({ ctx, path }) => {
+  router.get('/sites/:siteId/deployments/:deploymentId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.read')
-    return json(siteDeploymentModel(ctx.sites.deployment(path.siteId!, path.deploymentId!)))
+    return json(siteDeploymentModel(await ctx.sites.deployment(path.siteId!, path.deploymentId!)))
   })
 
-  router.delete('/sites/:siteId/deployments/:deploymentId', ({ ctx, path }) => {
+  router.delete('/sites/:siteId/deployments/:deploymentId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.write')
-    ctx.sites.removeDeployment(path.siteId!, path.deploymentId!)
+    await ctx.sites.removeDeployment(path.siteId!, path.deploymentId!)
     return noContent()
   })
 
@@ -269,7 +280,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'sites.write')
     const deploymentId = str(params.deploymentId)
     if (!deploymentId) throw err('general_argument_invalid', 'Param "deploymentId" is not optional.')
-    return json(await siteModel(ctx, ctx.sites.activate(path.siteId!, deploymentId)))
+    return json(await siteModel(ctx, await ctx.sites.activate(path.siteId!, deploymentId)))
   })
 
   // ---- Variables ----
@@ -304,13 +315,7 @@ export function siteRoutes(router: Router<AppContext>): void {
   router.get('/sites/:siteId/variables/:variableId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.read')
     ctx.sites.site(path.siteId!)
-    return json(
-      variableModel(
-        await ctx.variables.get(siteScope(path.siteId!), path.variableId!),
-        'site',
-        path.siteId!,
-      ),
-    )
+    return json(variableModel(await ctx.variables.get(siteScope(path.siteId!), path.variableId!), 'site', path.siteId!))
   })
 
   router.put('/sites/:siteId/variables/:variableId', async ({ ctx, path, params }) => {

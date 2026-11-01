@@ -101,55 +101,58 @@ beforeAll(async () => {
 afterAll(() => server.stop())
 
 describe('deployment retention', () => {
-  test('sites delete old non-live deployments only', () => {
+  test('sites delete old non-live deployments only', async () => {
     const sites = server.services.sites
-    const site = sites.create('retention-site', siteSettings({ deploymentRetention: 1 }))
+    const site = await sites.create('retention-site', siteSettings({ deploymentRetention: 1 }))
     addSiteDeployment(site.id, 'site-live', OLD)
     addSiteDeployment(site.id, 'site-old', OLD)
     addSiteDeployment(site.id, 'site-building', OLD, 'building')
     makeLiveSite(site.id, 'site-live')
 
-    expect(sites.pruneDeployments()).toBe(1)
-    expect(sites.deployment(site.id, 'site-live').id).toBe('site-live')
-    expect(sites.deployment(site.id, 'site-building').status).toBe('building')
-    expect(() => sites.deployment(site.id, 'site-old')).toThrow()
+    expect(await sites.pruneDeployments()).toBe(1)
+    expect((await sites.deployment(site.id, 'site-live')).id).toBe('site-live')
+    expect((await sites.deployment(site.id, 'site-building')).status).toBe('building')
+    await expect(sites.deployment(site.id, 'site-old')).rejects.toThrow()
 
-    sites.remove(site.id)
+    await sites.remove(site.id)
   })
 
-  test('a site keeps every deployment when retention is 0', () => {
+  test('a site keeps every deployment when retention is 0', async () => {
     const sites = server.services.sites
-    const site = sites.create('keep-site', siteSettings({ deploymentRetention: 0 }))
+    const site = await sites.create('keep-site', siteSettings({ deploymentRetention: 0 }))
     addSiteDeployment(site.id, 'keep-old', OLD)
 
-    expect(sites.pruneDeployments()).toBe(0)
-    expect(sites.deployment(site.id, 'keep-old').id).toBe('keep-old')
+    expect(await sites.pruneDeployments()).toBe(0)
+    expect((await sites.deployment(site.id, 'keep-old')).id).toBe('keep-old')
 
-    sites.remove(site.id)
+    await sites.remove(site.id)
   })
 
-  test('functions delete old non-active deployments only', () => {
+  test('functions delete old non-active deployments only', async () => {
     const functions = server.services.functions
-    const f = functions.create('retention-fn', functionSettings({ deploymentRetention: 1 }))
+    const f = await functions.create('retention-fn', functionSettings({ deploymentRetention: 1 }))
     addFunctionDeployment(f.id, 'fn-active', OLD)
     addFunctionDeployment(f.id, 'fn-old', OLD)
     addFunctionDeployment(f.id, 'fn-building', OLD, 'building')
     makeLiveFunction(f.id, 'fn-active')
 
-    expect(functions.pruneDeployments()).toBe(1)
-    const remaining = server.db.sqlite.query<{ id: string }, [string]>('SELECT id FROM _deployments WHERE function_id = ? ORDER BY id').all(f.id).map((row) => row.id)
+    expect(await functions.pruneDeployments()).toBe(1)
+    const remaining = server.db.sqlite
+      .query<{ id: string }, [string]>('SELECT id FROM _deployments WHERE function_id = ? ORDER BY id')
+      .all(f.id)
+      .map((row) => row.id)
     expect(remaining).toEqual(['fn-active', 'fn-building'])
 
-    functions.remove(f.id)
+    await functions.remove(f.id)
   })
 })
 
 describe('list bulk delete', () => {
   test('the sites list deletes the selected sites', async () => {
     const sites = server.services.sites
-    sites.create('list-site-one', siteSettings())
-    sites.create('list-site-two', siteSettings())
-    sites.create('list-site-three', siteSettings())
+    await sites.create('list-site-one', siteSettings())
+    await sites.create('list-site-two', siteSettings())
+    await sites.create('list-site-three', siteSettings())
 
     const page = await (await fetch(`${base}/console/sites`, { headers: { cookie } })).text()
     expect(page).toContain('data-bulk-select-all')
@@ -159,7 +162,7 @@ describe('list bulk delete', () => {
     expect(res.status).toBe(303)
     expect(sites.list().map((site) => site.id)).toEqual(['list-site-three'])
 
-    sites.remove('list-site-three')
+    await sites.remove('list-site-three')
   })
 
   test('the functions list deletes the selected functions', async () => {
@@ -174,16 +177,16 @@ describe('list bulk delete', () => {
 
     const res = await post('/console/functions/bulk-delete', { ids: ['list-fn-one', 'list-fn-two'] })
     expect(res.status).toBe(303)
-    expect(functions.list().map((f) => f.id)).toEqual(['list-fn-three'])
+    expect((await functions.list()).map((f) => f.id)).toEqual(['list-fn-three'])
 
-    functions.remove('list-fn-three')
+    await functions.remove('list-fn-three')
   })
 })
 
 describe('deployment bulk delete', () => {
   test('the sites deployments table has checkboxes and deletes the selected rows', async () => {
     const sites = server.services.sites
-    const site = sites.create('bulk-site', siteSettings())
+    const site = await sites.create('bulk-site', siteSettings())
     addSiteDeployment(site.id, 'bulk-one', NEW)
     addSiteDeployment(site.id, 'bulk-two', NEW)
     addSiteDeployment(site.id, 'bulk-live', NEW)
@@ -196,14 +199,14 @@ describe('deployment bulk delete', () => {
 
     const res = await post(`/console/sites/${site.id}/deployments/bulk-delete`, { ids: ['bulk-one', 'bulk-two', 'bulk-live'] })
     expect(res.status).toBe(303)
-    expect(sites.deployments(site.id).map((d) => d.id)).toEqual(['bulk-live'])
+    expect((await sites.deployments(site.id)).map((d) => d.id)).toEqual(['bulk-live'])
 
-    sites.remove(site.id)
+    await sites.remove(site.id)
   })
 
   test('the functions deployments table has checkboxes and deletes the selected rows', async () => {
     const functions = server.services.functions
-    const f = functions.create('bulk-fn', functionSettings())
+    const f = await functions.create('bulk-fn', functionSettings())
     addFunctionDeployment(f.id, 'bulk-fn-one', NEW)
     addFunctionDeployment(f.id, 'bulk-fn-two', NEW)
     addFunctionDeployment(f.id, 'bulk-fn-active', NEW)
@@ -216,9 +219,12 @@ describe('deployment bulk delete', () => {
 
     const res = await post(`/console/functions/${f.id}/deployments/bulk-delete`, { ids: ['bulk-fn-one', 'bulk-fn-two', 'bulk-fn-active'] })
     expect(res.status).toBe(303)
-    const remaining = server.db.sqlite.query<{ id: string }, [string]>('SELECT id FROM _deployments WHERE function_id = ?').all(f.id).map((row) => row.id)
+    const remaining = server.db.sqlite
+      .query<{ id: string }, [string]>('SELECT id FROM _deployments WHERE function_id = ?')
+      .all(f.id)
+      .map((row) => row.id)
     expect(remaining).toEqual(['bulk-fn-active'])
 
-    functions.remove(f.id)
+    await functions.remove(f.id)
   })
 })

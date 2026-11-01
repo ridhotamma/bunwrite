@@ -19,7 +19,12 @@ let cookie = ''
 async function form(path: string, fields: Record<string, string | string[]>, headers: Record<string, string> = {}) {
   const body = new URLSearchParams()
   for (const [k, v] of Object.entries(fields)) for (const one of ([] as string[]).concat(v)) body.append(k, one)
-  return fetch(`${base}${path}`, { method: 'POST', body, redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', ...headers } })
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    body,
+    redirect: 'manual',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', ...headers },
+  })
 }
 
 const get = (path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' })
@@ -112,7 +117,11 @@ describe('schema through the console', () => {
   })
 
   test('a bad attribute comes back as an error message', async () => {
-    const res = await form('/console/databases/shop/collections/orders/attributes', { key: 'code', type: 'string' }, { referer: `${base}/console/databases/shop/collections/orders/attributes/new` })
+    const res = await form(
+      '/console/databases/shop/collections/orders/attributes',
+      { key: 'code', type: 'string' },
+      { referer: `${base}/console/databases/shop/collections/orders/attributes/new` },
+    )
     expect(flash(res).get('err')).toContain('already exists')
   })
 
@@ -123,11 +132,16 @@ describe('schema through the console', () => {
   })
 
   test('documents can be edited and deleted', async () => {
-    const saved = await form('/console/databases/shop/collections/orders/documents/o1', { data: JSON.stringify({ code: 'A1', total: 12.5, state: 'paid' }), permissions: 'read("any")' })
+    const saved = await form('/console/databases/shop/collections/orders/documents/o1', {
+      data: JSON.stringify({ code: 'A1', total: 12.5, state: 'paid' }),
+      permissions: 'read("any")',
+    })
     expect(flash(saved).get('ok')).toBe('Saved')
     const doc = await adminClient(server.endpoint).databases.getDocument({ databaseId: 'shop', collectionId: 'orders', documentId: 'o1' })
     expect([doc.total, doc.state, doc.$permissions]).toEqual([12.5, 'paid', ['read("any")']])
-    const list = await get(`/console/databases/shop/collections/orders/documents?q=${encodeURIComponent('{"method":"equal","attribute":"state","values":["paid"]}')}`)
+    const list = await get(
+      `/console/databases/shop/collections/orders/documents?q=${encodeURIComponent('{"method":"equal","attribute":"state","values":["paid"]}')}`,
+    )
     expect(await list.text()).toContain('>o1</a>')
     await form('/console/databases/shop/collections/orders/documents/o1/delete', {})
     expect((await adminClient(server.endpoint).databases.listDocuments({ databaseId: 'shop', collectionId: 'orders' })).total).toBe(0)
@@ -150,12 +164,18 @@ describe('schema through the console', () => {
     // The preview changed nothing.
     expect(server.services.registry.collection('shop', 'orders', true).attributeMap.has('note')).toBe(false)
 
-    const config = /name="config" value="([^"]*)"/.exec(html)![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
+    const config = /name="config" value="([^"]*)"/
+      .exec(html)![1]!
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#39;/g, "'")
     const applied = await form('/console/schema/apply', { config, baseDir: '' })
     expect(flash(applied).get('ok')).toBe('Applied 1 change')
     expect(server.services.registry.collection('shop', 'orders', true).attributeMap.has('note')).toBe(true)
-    expect(server.services.db.sqlite.query('SELECT 1 FROM _functions WHERE id = ?').get('skipped-fn')).toBeNull()
-    expect(server.services.db.sqlite.query('SELECT 1 FROM _buckets WHERE id = ?').get('skipped-bucket')).toBeNull()
+    expect(server.services.db.sqlite!.query('SELECT 1 FROM _functions WHERE id = ?').get('skipped-fn')).toBeNull()
+    expect(server.services.db.sqlite!.query('SELECT 1 FROM _buckets WHERE id = ?').get('skipped-bucket')).toBeNull()
   })
 
   test('collections can be exported and imported with a review', async () => {
@@ -173,7 +193,12 @@ describe('schema through the console', () => {
     const review = await preview.text()
     expect(review).toContain('Orders renamed')
     const hidden = /name="collections" value="([^"]*)"/.exec(review)![1]!
-    const json = hidden.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'")
+    const json = hidden
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#39;/g, "'")
     const applied = await form('/console/schema/import/apply', { collections: json, prune: '' })
     expect(flash(applied).get('ok')).toContain('Applied')
 
@@ -382,7 +407,15 @@ describe('webhooks through the console', () => {
     })
     try {
       const url = `http://localhost:${receiver.port}/hook`
-      await form('/console/webhooks', { name: 'Tester', id: 'tester', url, enabled: 'on', tls: 'on', events: ['databases.*.collections.*.documents.*.create'], secret: 'test-secret' })
+      await form('/console/webhooks', {
+        name: 'Tester',
+        id: 'tester',
+        url,
+        enabled: 'on',
+        tls: 'on',
+        events: ['databases.*.collections.*.documents.*.create'],
+        secret: 'test-secret',
+      })
       const page = await (await get('/console/webhooks/tester')).text()
       expect(page).toContain('Send test event')
 
@@ -430,7 +463,12 @@ describe('settings through the console', () => {
 
   test('project settings apply at once and can reset to their defaults', async () => {
     await form('/console/settings/project', { projectName: 'Toko Saya', allowedOrigins: 'shop.example.com', sessionDays: '30', sessionsLimit: '3' })
-    expect([server.config.projectName, server.config.allowedOrigins, server.config.sessionDuration, server.config.sessionsLimit]).toEqual(['Toko Saya', ['shop.example.com'], 2592000, 3])
+    expect([server.config.projectName, server.config.allowedOrigins, server.config.sessionDuration, server.config.sessionsLimit]).toEqual([
+      'Toko Saya',
+      ['shop.example.com'],
+      2592000,
+      3,
+    ])
     const cors = await fetch(`${server.endpoint}/health`, { headers: { origin: 'https://shop.example.com' } })
     expect(cors.headers.get('access-control-allow-origin')).toBe('https://shop.example.com')
     await form('/console/settings/project/reset', {})
@@ -438,7 +476,15 @@ describe('settings through the console', () => {
   })
 
   test('SMTP settings switch email on; the password is kept when left blank', async () => {
-    await form('/console/settings/smtp', { host: 'smtp.example.com', port: '465', user: 'u', password: 'p', senderEmail: 'hi@example.com', senderName: 'Hi', secure: 'on' })
+    await form('/console/settings/smtp', {
+      host: 'smtp.example.com',
+      port: '465',
+      user: 'u',
+      password: 'p',
+      senderEmail: 'hi@example.com',
+      senderName: 'Hi',
+      secure: 'on',
+    })
     expect(server.config.smtp).toMatchObject({ host: 'smtp.example.com', port: 465, secure: true, password: 'p' })
     await form('/console/settings/smtp', { host: 'smtp2.example.com', port: '587', user: 'u', password: '', senderEmail: 'hi@example.com', senderName: 'Hi' })
     expect(server.config.smtp).toMatchObject({ host: 'smtp2.example.com', password: 'p' })
@@ -505,7 +551,14 @@ describe('settings through the console', () => {
   })
 
   test('S3 storage settings validate required fields and endpoints', async () => {
-    const bad = await form('/console/settings/storage', { s3Enabled: 'on', s3Endpoint: 'not-a-url', s3Bucket: 'b', s3Region: 'r', s3AccessKey: 'a', s3Secret: 's' })
+    const bad = await form('/console/settings/storage', {
+      s3Enabled: 'on',
+      s3Endpoint: 'not-a-url',
+      s3Bucket: 'b',
+      s3Region: 'r',
+      s3AccessKey: 'a',
+      s3Secret: 's',
+    })
     expect(flash(bad).get('err')).toContain('valid URL')
     const missing = await form('/console/settings/storage', { s3Enabled: 'on' })
     expect(flash(missing).get('err')).toContain('required')
@@ -561,7 +614,12 @@ describe('settings through the console', () => {
     const post = (path: string, fields: Record<string, string | string[]>) => {
       const body = new URLSearchParams()
       for (const [k, v] of Object.entries(fields)) for (const one of ([] as string[]).concat(v)) body.append(k, one)
-      return fetch(`${fileBase}${path}`, { method: 'POST', body, redirect: 'manual', headers: { cookie: fileCookie, 'content-type': 'application/x-www-form-urlencoded' } })
+      return fetch(`${fileBase}${path}`, {
+        method: 'POST',
+        body,
+        redirect: 'manual',
+        headers: { cookie: fileCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      })
     }
     const read = (path: string) => fetch(`${fileBase}${path}`, { headers: { cookie: fileCookie }, redirect: 'manual' })
     try {
@@ -661,19 +719,27 @@ describe('settings through the console', () => {
 
   test('Google sign-in can be set up from the console', async () => {
     await form('/console/settings/google', { clientId: 'gid', clientSecret: 'gsecret' })
-    const res = await fetch(`${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
+    const res = await fetch(
+      `${server.endpoint}/account/tokens/oauth2/google?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`,
+      { redirect: 'manual' },
+    )
     expect(res.status).toBe(301)
     expect(new URL(res.headers.get('location')!).searchParams.get('client_id')).toBe('gid')
   })
 
   test('Facebook, GitHub and Apple sign-in can be set up from the console', async () => {
     await form('/console/settings/github', { clientId: 'ghid', clientSecret: 'ghsecret' })
-    let res = await fetch(`${server.endpoint}/account/tokens/oauth2/github?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
+    let res = await fetch(
+      `${server.endpoint}/account/tokens/oauth2/github?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`,
+      { redirect: 'manual' },
+    )
     expect(res.status).toBe(301)
     expect(new URL(res.headers.get('location')!).searchParams.get('client_id')).toBe('ghid')
 
     await form('/console/settings/apple', { clientId: 'aid', teamId: 'team-id', keyId: 'key-id', privateKey: 'p8-key' })
-    res = await fetch(`${server.endpoint}/account/tokens/oauth2/apple?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, { redirect: 'manual' })
+    res = await fetch(`${server.endpoint}/account/tokens/oauth2/apple?project=${PROJECT}&success=${encodeURIComponent('https://dashboard.example.com/cb')}`, {
+      redirect: 'manual',
+    })
     expect(res.status).toBe(301)
     const location = new URL(res.headers.get('location')!)
     expect(location.searchParams.get('client_id')).toBe('aid')
@@ -742,7 +808,15 @@ describe('settings through the console', () => {
       expect(await functionsPage.text()).toContain('Functions')
 
       // bucket usage query on the storage page
-      const created = await form('/console/storage', { id: 'page-bucket', name: 'Page bucket', maxMb: '5', extensions: '', enabled: 'on', transformations: 'on', permissions: '' })
+      const created = await form('/console/storage', {
+        id: 'page-bucket',
+        name: 'Page bucket',
+        maxMb: '5',
+        extensions: '',
+        enabled: 'on',
+        transformations: 'on',
+        permissions: '',
+      })
       expect(created.status).toBe(303)
       const upload = new FormData()
       upload.set('file', new File(['hello'], 'hello.txt', { type: 'text/plain' }))
@@ -761,7 +835,9 @@ describe('settings through the console', () => {
       expect(files).not.toContain('Bucket permissions</h3>')
       // Private files get a signed API link that opens without a console session.
       const privateId = (server.db.sqlite.query("SELECT id FROM _files WHERE bucket_id = 'page-bucket'").get() as { id: string }).id
-      const signed = new RegExp(`href="(${server.endpoint}/storage/buckets/page-bucket/files/${privateId}/view\\?project=${PROJECT}&amp;token=[^"]+)"`).exec(files)
+      const signed = new RegExp(`href="(${server.endpoint}/storage/buckets/page-bucket/files/${privateId}/view\\?project=${PROJECT}&amp;token=[^"]+)"`).exec(
+        files,
+      )
       expect(signed).not.toBeNull()
       expect(files).toContain('Copy link')
       const signedUrl = signed![1]!.replaceAll('&amp;', '&')
@@ -771,7 +847,11 @@ describe('settings through the console', () => {
       expect((await fetch(signedUrl.replace(/token=[^&]+/, 'token=1.bad'))).status).toBe(404)
       expect((await fetch(signedUrl.replace(/token=[^&]+/, ''))).status).toBe(404)
       // Behind a proxy, links use the public host the browser used.
-      const proxied = await (await fetch(`${base}/console/storage/page-bucket`, { headers: { cookie, 'x-forwarded-host': 'files.example.com', 'x-forwarded-proto': 'https', 'x-forwarded-for': '203.0.113.9' } })).text()
+      const proxied = await (
+        await fetch(`${base}/console/storage/page-bucket`, {
+          headers: { cookie, 'x-forwarded-host': 'files.example.com', 'x-forwarded-proto': 'https', 'x-forwarded-for': '203.0.113.9' },
+        })
+      ).text()
       expect(proxied).toContain(`href="https://files.example.com/v1/storage/buckets/page-bucket/files/${privateId}/view?project=${PROJECT}&amp;token=`)
       const settingsPage = await (await get('/console/storage/page-bucket/settings')).text()
       expect(settingsPage).toContain('Delete bucket')
@@ -781,7 +861,7 @@ describe('settings through the console', () => {
       // Saving one settings card keeps the other fields
       const saved = await form('/console/storage/page-bucket/settings', { section: 'access', fileSecurity: 'on', permissions: 'read("any")' })
       expect(saved.status).toBe(303)
-      const bucket = server.services.storage.bucket('page-bucket', true)
+      const bucket = await server.services.storage.bucket('page-bucket', true)
       expect(bucket).toMatchObject({ name: 'Page bucket', enabled: 1, transformations: 1, file_security: 1, maximum_file_size: 5_000_000 })
       expect(JSON.parse(bucket.permissions)).toEqual(['read("any")'])
 
@@ -857,7 +937,7 @@ describe('settings through the console', () => {
     }
 
     // Functions split runs, deployments, variables and settings into tabs.
-    const fn = server.services.functions.create('tab-fn', {
+    const fn = await server.services.functions.create('tab-fn', {
       name: 'Tab function',
       runtime: 'node-22',
       execute: [],
@@ -883,7 +963,7 @@ describe('settings through the console', () => {
       expect(await (await get(`/console/functions/${fn.id}/settings`)).text()).toContain('Delete function')
       expect((await get(`/console/functions/${fn.id}/deploy`)).status).toBe(200)
     } finally {
-      server.services.functions.remove(fn.id)
+      await server.services.functions.remove(fn.id)
     }
   })
 
@@ -932,7 +1012,10 @@ describe('pages outside the API', () => {
     expect(page.headers.get('content-type')).toContain('text/html')
     expect(await page.text()).toContain('Page not found')
 
-    for (const [path, headers] of [['/v1/nope', html], ['/nope', { accept: 'application/json' }]] as const) {
+    for (const [path, headers] of [
+      ['/v1/nope', html],
+      ['/nope', { accept: 'application/json' }],
+    ] as const) {
       const res = await fetch(`${base}${path}`, { headers: { ...headers, 'x-appwrite-project': PROJECT } })
       expect(res.status).toBe(404)
       expect(((await res.json()) as any).type).toBe('general_route_not_found')

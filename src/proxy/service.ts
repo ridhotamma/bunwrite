@@ -4,7 +4,7 @@
  * `<id>.<sitesDomain>` / `<id>.<functionsDomain>` addresses are not rows.
  */
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { functionHost, functionsDomainOf, hostOf, siteHost, sitesDomainOf } from '~/lib/hosts'
@@ -63,34 +63,40 @@ export class ProxyService {
   private wildcards: { suffix: string; rule: ProxyRuleRow }[] | null = null
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
   ) {}
 
-  private get sql() {
-    return this.db.sqlite
+  /** Load the rule cache. SQLite loads lazily; a network backend awaits this at boot. */
+  async ready(): Promise<void> {
+    const rows = await this.db.driver.all<ProxyRuleRow>('SELECT * FROM _proxy_rules ORDER BY seq')
+    this.load(rows)
+  }
+
+  private load(rows: ProxyRuleRow[]): void {
+    this.byId = new Map(rows.map((row) => [row.id, row]))
+    this.byHost = new Map(rows.map((row) => [row.domain, row]))
+    this.wildcards = rows
+      .filter((row) => row.domain.startsWith('*.'))
+      .map((row) => ({ suffix: row.domain.slice(1), rule: row }))
+      .sort((a, b) => b.suffix.length - a.suffix.length)
   }
 
   private cache() {
     if (!this.byId || !this.byHost || !this.wildcards) {
-      const rows = this.sql.query<ProxyRuleRow, []>('SELECT * FROM _proxy_rules ORDER BY seq').all()
-      this.byId = new Map(rows.map((row) => [row.id, row]))
-      this.byHost = new Map(rows.map((row) => [row.domain, row]))
-      this.wildcards = rows
-        .filter((row) => row.domain.startsWith('*.'))
-        .map((row) => ({ suffix: row.domain.slice(1), rule: row }))
-        .sort((a, b) => b.suffix.length - a.suffix.length)
+      // SQLite keeps its synchronous lazy load; a network backend must have
+      // awaited ready() before serving requests.
+      const sqlite = this.db.sqlite
+      if (sqlite) this.load(sqlite.query<ProxyRuleRow, []>('SELECT * FROM _proxy_rules ORDER BY seq').all())
+      else throw new Error('Proxy rules are not loaded yet. Await proxy.ready() before serving requests.')
     }
-    return { byId: this.byId, byHost: this.byHost }
+    return { byId: this.byId!, byHost: this.byHost! }
   }
 
-  private changed() {
+  /** Drop the cached rules, then reload them from the database. */
+  async reload(): Promise<void> {
     this.byId = this.byHost = this.wildcards = null
-  }
-
-  /** Drop the cached rules after the database was replaced. */
-  reload(): void {
-    this.changed()
+    await this.ready()
   }
 
   list(): ProxyRuleRow[] {
@@ -138,48 +144,58 @@ export class ProxyService {
   }
 
   /** Replace every custom domain of a resource; unchanged rows keep their rule ID. */
-  set(type: ProxyResourceType, id: string, domains: string[]): ProxyRuleRow[] {
+  async set(type: ProxyResourceType, id: string, domains: string[]): Promise<ProxyRuleRow[]> {
     const wanted = this.normalizeAll(domains, { type, id })
     const current = this.forResource(type, id)
     const stamp = now()
-    this.sql.transaction(() => {
+    await this.db.driver.transaction(async (tx) => {
       for (const row of current) {
-        if (!wanted.includes(row.domain)) this.sql.query('DELETE FROM _proxy_rules WHERE id = ?').run(row.id)
+        if (!wanted.includes(row.domain)) await tx.run('DELETE FROM _proxy_rules WHERE id = ?', [row.id])
       }
       const have = new Set(current.map((row) => row.domain))
       for (const domain of wanted) {
         if (have.has(domain)) continue
-        this.sql
-          .query('INSERT INTO _proxy_rules (id, resource_type, resource_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(uniqueId(), type, id, domain, stamp, stamp)
+        await tx.run('INSERT INTO _proxy_rules (id, resource_type, resource_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+          uniqueId(),
+          type,
+          id,
+          domain,
+          stamp,
+          stamp,
+        ])
       }
-    }).immediate()
-    this.changed()
+    })
+    await this.reload()
     return this.forResource(type, id)
   }
 
-  create(type: ProxyResourceType, id: string, domain: string): ProxyRuleRow {
+  async create(type: ProxyResourceType, id: string, domain: string): Promise<ProxyRuleRow> {
     const host = normalizeDomain(domain)
     if (!host) throw err('general_argument_invalid', 'Param "domain" is not optional.')
     this.assertAvailable(host)
     const stamp = now()
     const ruleId = uniqueId()
-    this.sql
-      .query('INSERT INTO _proxy_rules (id, resource_type, resource_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(ruleId, type, id, host, stamp, stamp)
-    this.changed()
+    await this.db.driver.run('INSERT INTO _proxy_rules (id, resource_type, resource_id, domain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+      ruleId,
+      type,
+      id,
+      host,
+      stamp,
+      stamp,
+    ])
+    await this.reload()
     return this.get(ruleId)
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     this.get(id)
-    this.sql.query('DELETE FROM _proxy_rules WHERE id = ?').run(id)
-    this.changed()
+    await this.db.driver.run('DELETE FROM _proxy_rules WHERE id = ?', [id])
+    await this.reload()
   }
 
-  removeFor(type: ProxyResourceType, id: string): void {
-    this.sql.query('DELETE FROM _proxy_rules WHERE resource_type = ? AND resource_id = ?').run(type, id)
-    this.changed()
+  async removeFor(type: ProxyResourceType, id: string): Promise<void> {
+    await this.db.driver.run('DELETE FROM _proxy_rules WHERE resource_type = ? AND resource_id = ?', [type, id])
+    await this.reload()
   }
 
   /**
@@ -211,8 +227,7 @@ export class ProxyService {
     }
 
     const everyone = [this, ...this.peers().filter((peer) => peer !== this)]
-    const used = (peer: ProxyService) =>
-      peer.list().some((row) => row.domain === domain && !(row.resource_type === self?.type && row.resource_id === self?.id))
+    const used = (peer: ProxyService) => peer.list().some((row) => row.domain === domain && !(row.resource_type === self?.type && row.resource_id === self?.id))
     if (everyone.some(used)) throw err('rule_already_exists')
   }
 
@@ -220,11 +235,7 @@ export class ProxyService {
   assertDefaultHost(type: ProxyResourceType, id: string): void {
     const host = type === 'site' ? `${id}.${sitesDomainOf(this.config)}` : `${id}.${functionsDomainOf(this.config)}`
     const everyone = [this, ...this.peers().filter((peer) => peer !== this)]
-    if (
-      everyone.some((peer) =>
-        peer.list().some((row) => row.domain === host || (matchesWildcard(host, row.domain) && row.resource_type === type)),
-      )
-    ) {
+    if (everyone.some((peer) => peer.list().some((row) => row.domain === host || (matchesWildcard(host, row.domain) && row.resource_type === type)))) {
       throw err('general_argument_invalid', `${host} is already used by a custom domain.`)
     }
   }

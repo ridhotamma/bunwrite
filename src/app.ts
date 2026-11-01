@@ -59,8 +59,7 @@ const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.u
 
 // htmx sends its own headers on every request; a browser preflight rejects them
 // unless they are listed here, so cross-origin htmx clients need these too.
-const HTMX_REQUEST_HEADERS =
-  'HX-Request, HX-Current-URL, HX-Trigger, HX-Trigger-Name, HX-Target, HX-Prompt, HX-Boosted, HX-History-Restore-Request'
+const HTMX_REQUEST_HEADERS = 'HX-Request, HX-Current-URL, HX-Trigger, HX-Trigger-Name, HX-Target, HX-Prompt, HX-Boosted, HX-History-Restore-Request'
 
 const HTMX_RESPONSE_HEADERS =
   'HX-Location, HX-Push-Url, HX-Redirect, HX-Refresh, HX-Replace-Url, HX-Reswap, HX-Retarget, HX-Reselect, HX-Trigger, HX-Trigger-After-Swap, HX-Trigger-After-Settle'
@@ -89,7 +88,7 @@ async function syncServices(services: Services): Promise<void> {
     await services.access.load()
   }
   if (changed.catalog) {
-    services.proxy.reload()
+    await services.proxy.reload()
     services.sites.reload()
   }
 }
@@ -120,10 +119,10 @@ export function createApp(source: Services | ProjectResolver) {
   queueRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
-  const cors = (request: Request, allowedOrigins: string[]): Record<string, string> => {
+  const cors = async (request: Request, allowedOrigins: string[]): Promise<Record<string, string>> => {
     const origin = request.headers.get('origin')
     // Sites hosted here may call the API from the browser without being listed.
-    if (!origin || !(originAllowed(origin, allowedOrigins) || siteOfOrigin(origin))) return {}
+    if (!origin || !(originAllowed(origin, allowedOrigins) || (await siteOfOrigin(origin)))) return {}
     return {
       'access-control-allow-origin': origin,
       'access-control-allow-credentials': 'true',
@@ -136,35 +135,35 @@ export function createApp(source: Services | ProjectResolver) {
   }
 
   /** Apply CORS to a response; keep a handler's Vary (for example Accept-Encoding) and add Origin beside it. */
-  const corsResponse = (request: Request, response: Response, allowedOrigins: string[]): Response => {
-    for (const [k, v] of Object.entries(cors(request, allowedOrigins))) {
+  const corsResponse = async (request: Request, response: Response, allowedOrigins: string[]): Promise<Response> => {
+    for (const [k, v] of Object.entries(await cors(request, allowedOrigins))) {
       if (k === 'vary') addVary(response.headers, v)
       else response.headers.set(k, v)
     }
     return response
   }
 
-  const siteOfOrigin = (origin: string) => {
+  const siteOfOrigin = async (origin: string) => {
     try {
       const host = new URL(origin).host
-      return projects.findSite(host) ?? projects.findFunctionByHost(host)
+      return (await projects.findSite(host)) ?? (await projects.findFunctionByHost(host))
     } catch {
       return null
     }
   }
 
   /** A site's own domain: `<siteId>.<SITES_DOMAIN>` or one of its custom domains. */
-  function siteFor(request: Request) {
+  async function siteFor(request: Request) {
     const host = request.headers.get('host')
     const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
-    return (host ? projects.findSite(host) : null) ?? (forwarded ? projects.findSite(forwarded) : null)
+    return (host ? await projects.findSite(host) : null) ?? (forwarded ? await projects.findSite(forwarded) : null)
   }
 
   /** A function's own domain: `<functionId>.<FUNCTIONS_DOMAIN>` or one of its custom domains. */
-  function functionFor(request: Request) {
+  async function functionFor(request: Request) {
     const host = request.headers.get('host')
     const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
-    return (host ? projects.findFunctionByHost(host) : null) ?? (forwarded ? projects.findFunctionByHost(forwarded) : null)
+    return (host ? await projects.findFunctionByHost(host) : null) ?? (forwarded ? await projects.findFunctionByHost(forwarded) : null)
   }
 
   const consoleApp = createConsole(projects, hub)
@@ -173,7 +172,7 @@ export function createApp(source: Services | ProjectResolver) {
   /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
   async function callerOf(services: Services, request: Request, meta: RequestMeta): Promise<Caller> {
     if (!apiHeader(request, 'key')) {
-      const admin = consoleApi.adminOf(request)
+      const admin = await consoleApi.adminOf(request)
       if (admin) {
         meta.auth = `console:${admin.email}`
         return keyCaller()
@@ -206,7 +205,7 @@ export function createApp(source: Services | ProjectResolver) {
   }
 
   /** Which project's services handle this request. */
-  function runtimeFor(request: Request, url: URL): ProjectRuntime {
+  async function runtimeFor(request: Request, url: URL): Promise<ProjectRuntime> {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     // Browser preflights carry no custom project header.
     if (request.method === 'OPTIONS') return projects.defaultProject()
@@ -241,7 +240,7 @@ export function createApp(source: Services | ProjectResolver) {
         if (!byHeader) throw err('project_not_found')
         return byHeader
       }
-      const owner = projects.findFunction(decodeURIComponent(fn[1]!))
+      const owner = await projects.findFunction(decodeURIComponent(fn[1]!))
       if (owner) return owner
       throw err('project_not_found')
     }
@@ -258,12 +257,7 @@ export function createApp(source: Services | ProjectResolver) {
     return project
   }
 
-  async function handle(
-    request: Request,
-    server: Server<SocketData> | undefined,
-    meta: RequestMeta,
-    runtime: ProjectRuntime,
-  ): Promise<Response | undefined> {
+  async function handle(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta, runtime: ProjectRuntime): Promise<Response | undefined> {
     const url = new URL(request.url)
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     const services = runtime.services
@@ -316,16 +310,16 @@ export function createApp(source: Services | ProjectResolver) {
       assertCompatHeaders(request)
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
-      return corsResponse(request, errorResponse(error), control.config.allowedOrigins)
+      return await corsResponse(request, errorResponse(error), control.config.allowedOrigins)
     }
-    const hosted = siteFor(request)
+    const hosted = await siteFor(request)
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
       if (hosted.project.services !== control) await syncServices(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
-    const hostedFunction = functionFor(request)
+    const hostedFunction = await functionFor(request)
     if (hostedFunction) {
       meta.project = hostedFunction.project.info.id
       meta.auth = `function:${hostedFunction.fn.id}`
@@ -353,7 +347,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (url.pathname === '/v1/vcs/github/manifest' && request.method === 'GET') return hub.completeManifest(url)
     if ((url.pathname === '/.well-known/bunwrite/site-domain' || url.pathname === '/.well-known/bunwrite/host') && request.method === 'GET') {
       const domain = url.searchParams.get('domain') ?? ''
-      return new Response(null, { status: domain && (projects.findSite(domain) || projects.findFunctionByHost(domain)) ? 200 : 404 })
+      return new Response(null, { status: domain && ((await projects.findSite(domain)) || (await projects.findFunctionByHost(domain))) ? 200 : 404 })
     }
     const brand = BRAND_FILES[url.pathname]
     if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
@@ -386,7 +380,7 @@ export function createApp(source: Services | ProjectResolver) {
         response = await consoleApi.handle(request, pathname.replace(/^\/v1(?=\/|$)/, '') || '/')
         if (response) meta.auth ??= 'console'
       }
-      if (!response) runtime = runtimeFor(request, url)
+      if (!response) runtime = await runtimeFor(request, url)
       response ??= await handle(request, server, meta, runtime)
       if (!response) return undefined
     } catch (error) {
@@ -399,7 +393,7 @@ export function createApp(source: Services | ProjectResolver) {
       response = errorResponse(error)
       if (!(error instanceof BunwriteError)) console.error(error)
     }
-    return corsResponse(request, response, runtime.services.config.allowedOrigins)
+    return await corsResponse(request, response, runtime.services.config.allowedOrigins)
   }
 
   return {
@@ -433,7 +427,9 @@ export function createApp(source: Services | ProjectResolver) {
         responseBytes = Number(response.headers.get('content-length') ?? 0) || 0
         response.headers.set('x-request-id', id)
         // HEAD runs the GET handler so headers and cache validation match, then drops the body.
-        return request.method === 'HEAD' ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers }) : response
+        return request.method === 'HEAD'
+          ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
+          : response
       } finally {
         const skip = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
         const runtime = meta.project ? projects.get(meta.project) : undefined

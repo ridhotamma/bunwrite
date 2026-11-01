@@ -5,6 +5,7 @@
  */
 import type { Config } from '~/config'
 import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import type { GithubAppCredentials, GithubManifestApp } from './github'
 
@@ -23,12 +24,18 @@ interface AppRow {
 
 export class GithubAppStore {
   constructor(
-    private readonly db: Db,
+    private readonly db: SqlDatabase,
     private readonly config: Config,
   ) {}
 
+  /** The VCS console has not moved to the driver port yet; it is SQLite-only. */
+  private get sqlite(): Db['sqlite'] {
+    if (!this.db.sqlite) throw new Error('GitHub App setup is not available on this database backend yet.')
+    return this.db.sqlite
+  }
+
   private row(): AppRow | null {
-    return this.db.sqlite.query<AppRow, []>("SELECT * FROM _vcs_github_app WHERE key = 'github'").get()
+    return this.sqlite.query<AppRow, []>("SELECT * FROM _vcs_github_app WHERE key = 'github'").get()
   }
 
   /** True when the env vars alone define a complete app. */
@@ -61,7 +68,7 @@ export class GithubAppStore {
   /** Store the app GitHub made from our manifest. */
   save(app: GithubManifestApp): void {
     const stamp = now()
-    this.db.sqlite
+    this.sqlite
       .query(
         `INSERT INTO _vcs_github_app (key, app_id, slug, name, owner, html_url, client_id, client_secret, webhook_secret, private_key, created_at, updated_at)
          VALUES ('github', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -74,7 +81,7 @@ export class GithubAppStore {
 
   /** Forget the console-made app. The app itself stays on GitHub until deleted there. */
   remove(): boolean {
-    return this.db.sqlite.query("DELETE FROM _vcs_github_app WHERE key = 'github'").run().changes > 0
+    return this.sqlite.query("DELETE FROM _vcs_github_app WHERE key = 'github'").run().changes > 0
   }
 
   /** True when the console stored an app (so the console may remove it). */

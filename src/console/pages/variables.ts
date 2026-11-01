@@ -19,7 +19,9 @@ import { variableContext, type VariableContext } from '~/variables/context'
  * port one at a time, and the handler awaits either.
  */
 export interface VariableStore {
-  variables(scope: string): { key: string; value: string; secret: number; context: string }[] | Promise<{ key: string; value: string; secret: number; context: string }[]>
+  variables(
+    scope: string,
+  ): { key: string; value: string; secret: number; context: string }[] | Promise<{ key: string; value: string; secret: number; context: string }[]>
   setVariable(scope: string, key: string, value: string, secret: boolean, context?: VariableContext): void | Promise<void>
   setVariables(scope: string, entries: EnvVariable[], secret: boolean, context?: VariableContext): void | Promise<void>
   deleteVariable(scope: string, key: string, context?: VariableContext): void | Promise<void>
@@ -30,7 +32,7 @@ export interface VariableRouteOptions {
   /** Where variables are saved, e.g. `/console/functions/:id/variables`. */
   base: string
   /** The scope a request acts on: `project`, `site:<id>`, or a function ID. */
-  scope: (route: ConsoleRoute) => string
+  scope: (route: ConsoleRoute) => string | Promise<string>
   /** The service that owns the scope; functions and project/site variables share the same shape. */
   store: (ctx: ConsoleContext) => VariableStore
   /** Restart anything that cached the old environment (SSR apps). */
@@ -44,7 +46,7 @@ export function registerVariableRoutes(router: ConsoleRouter, options: VariableR
 
   router.post(base, async (route) => {
     const { ctx } = route
-    const scope = options.scope(route)
+    const scope = await options.scope(route)
     const store = options.store(ctx)
     const key = value(ctx.form, 'key')
     const context = variableContext(ctx.form.context)
@@ -58,22 +60,22 @@ export function registerVariableRoutes(router: ConsoleRouter, options: VariableR
   })
 
   router.post(`${base}/delete`, async (route) => {
-    const scope = options.scope(route)
+    const scope = await options.scope(route)
     await options.store(route.ctx).deleteVariable(scope, value(route.ctx.form, 'key'), variableContext(route.ctx.form.context))
     options.changed?.(route.ctx, scope)
     return route.ctx.go(options.then(route, scope), { tone: 'success', text: 'Variable removed' })
   })
 
   router.post(`${base}/clear`, async (route) => {
-    const scope = options.scope(route)
+    const scope = await options.scope(route)
     const count = await options.store(route.ctx).clearVariables(scope)
     options.changed?.(route.ctx, scope)
     const text = count ? `Removed ${count} variable${count === 1 ? '' : 's'}` : 'No variables to remove'
     return route.ctx.go(options.then(route, scope), { tone: 'success', text })
   })
 
-  router.post(`${base}/bulk`, (route) => {
-    const scope = options.scope(route)
+  router.post(`${base}/bulk`, async (route) => {
+    const scope = await options.scope(route)
     return importEnvVariables(
       route.ctx,
       async (vars, secret) => {

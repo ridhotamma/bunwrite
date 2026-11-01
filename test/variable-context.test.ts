@@ -60,7 +60,11 @@ describe('project and site variables', () => {
     expect((await api('POST', '/project/variables', { variableId: 'unique()', key: 'MODE', value: 'x', context: 'staging' })).status).toBe(400)
 
     const listed = (await api('GET', '/project/variables')).body.variables
-    expect(listed.map((v: any) => [v.key, v.context]).sort()).toEqual([['MODE', ''], ['MODE', 'live'], ['MODE', 'preview']])
+    expect(listed.map((v: any) => [v.key, v.context]).sort()).toEqual([
+      ['MODE', ''],
+      ['MODE', 'live'],
+      ['MODE', 'preview'],
+    ])
 
     const vars = server.services.variables
     expect((await vars.projectEnvironment('live')).MODE).toBe('live')
@@ -110,7 +114,7 @@ describe('function variables', () => {
       expect((await api('PUT', '/functions/ctx-fn/variables/STRIPE_KEY.preview', { value: 'sk_test_2' })).body.$id).toBe('STRIPE_KEY.preview')
 
       await server.services.variables.setVariable('project', 'GLOBAL', 'preview global', false, 'preview')
-      const fn = server.services.functions.fn('ctx-fn')
+      const fn = await server.services.functions.fn('ctx-fn')
       const live = await server.services.functions.env(fn, 'http')
       const build = await server.services.functions.env(fn, 'build', 'preview')
       expect([live.STRIPE_KEY, live.SHARED, live.GLOBAL]).toEqual(['sk_live', 'everywhere', undefined])
@@ -141,7 +145,7 @@ describe('function variables', () => {
         { key: 'LEGACY_GLOBAL', value: 'kept' },
         { key: 'SHARED', value: 'project value' },
       ])
-      expect(server.services.functions.variables('*')).toEqual([])
+      expect(await server.services.functions.variables('*')).toEqual([])
     } finally {
       await server.services.variables.clearVariables('project')
     }
@@ -159,7 +163,12 @@ describe('console', () => {
     })
     const cookie = `${(login.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ')}; console_project=${PROJECT}`
     const post = (path: string, fields: Record<string, string>) =>
-      fetch(`${base}${path}`, { method: 'POST', body: new URLSearchParams(fields), redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' } })
+      fetch(`${base}${path}`, {
+        method: 'POST',
+        body: new URLSearchParams(fields),
+        redirect: 'manual',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      })
 
     await post('/console/settings/variables', { key: 'API_URL', value: 'https://api.example.com' })
     await post('/console/settings/variables', { key: 'API_URL', value: 'https://staging.example.com', context: 'preview' })

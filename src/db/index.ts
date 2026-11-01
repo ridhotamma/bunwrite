@@ -10,7 +10,7 @@
  * keeps working while services migrate to `db.driver`.
  */
 import { openDb, type Db } from './connection'
-import type { DatabaseBackend, Dialect, DocumentDriver, DriverCapabilities, SqlDriver } from './driver'
+import type { DatabaseBackend, Dialect, DocumentDriver, DriverCapabilities, SqlDatabase, SqlDialect, SqlDriver } from './driver'
 import { parseDatabaseBackend } from './driver'
 import { MongoDriver } from './mongo-driver'
 import { ensureMongoSchema } from './mongo-schema'
@@ -75,6 +75,18 @@ export function databaseOptionsOf(config: {
     poolMax: config.databasePoolMax,
     ssl: config.databaseSsl,
   }
+}
+
+/**
+ * The handle the services expect: a driver plus its dialect and capabilities.
+ * SQLite also carries its synchronous connection for the fast path.
+ */
+export function sqlDatabaseOf(database: Database): SqlDatabase {
+  if (database.sqlite) return database.sqlite
+  if (!database.sql) {
+    throw new Error('MongoDB does not expose the SQL port; the remaining SQL-shaped services need a Postgres or SQLite database.')
+  }
+  return { driver: database.sql, dialect: database.dialect as SqlDialect, capabilities: database.capabilities }
 }
 
 /** Wrap the existing synchronous SQLite connection in the async port. */
@@ -158,6 +170,36 @@ export async function openDatabase(options: DatabaseOptions): Promise<Database> 
     sqlite: null,
     close: () => driver.close(),
     ping: () => driver.ping(),
+  }
+}
+
+/**
+ * Remove one network-backed project database. SQLite files are owned by the
+ * project folder and removed with it, and the shared `public` schema is never
+ * dropped.
+ */
+export async function dropDatabase(options: DatabaseOptions): Promise<void> {
+  if (options.backend === 'sqlite') return
+  const url = options.url
+  if (!url) return
+  if (options.backend === 'postgres') {
+    const namespace = options.namespace
+    if (!namespace || namespace === 'public') return
+    const driver = new PostgresDriver({ url, max: options.poolMax, tls: options.ssl, schema: namespace })
+    try {
+      const quoted = `"${namespace.replace(/"/g, '""')}"`
+      await driver.exec(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`)
+    } finally {
+      await driver.close().catch(() => {})
+    }
+    return
+  }
+  if (!options.namespace) return
+  const driver = await MongoDriver.open({ url, database: options.namespace, maxPoolSize: options.poolMax })
+  try {
+    await driver.database.command({ dropDatabase: 1 })
+  } finally {
+    await driver.close().catch(() => {})
   }
 }
 

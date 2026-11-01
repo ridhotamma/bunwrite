@@ -21,7 +21,7 @@ import type { ServerWebSocket } from 'bun'
 import { callerHasScope, sessionCaller, type Caller } from '~/auth/caller'
 import { accountModel, type UserRowFull } from '~/auth/models'
 import { grants } from '~/auth/permissions'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import type { DocEvent } from '~/documents/store'
 import { now } from '~/lib/datetime'
 import type { Collection } from '~/schema/types'
@@ -114,13 +114,11 @@ export class RealtimeHub {
   private lastDropWarning = 0
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     options: RealtimeHubOptions = {},
   ) {
     this.collectionOf = options.collectionOf
-    this.bus = options.bus
-      ? new RealtimeBus(db, options.bus.projectId, options.bus.pollMs, (events) => this.deliver(events))
-      : null
+    this.bus = options.bus ? new RealtimeBus(db, options.bus.projectId, options.bus.pollMs, (events) => this.deliver(events)) : null
   }
 
   open(ws: Socket): void {
@@ -139,7 +137,7 @@ export class RealtimeHub {
     this.bus?.setSockets(this.sockets.size)
   }
 
-  message(ws: Socket, raw: string | Buffer): void {
+  async message(ws: Socket, raw: string | Buffer): Promise<void> {
     let message: { type?: string; data?: unknown }
     try {
       message = JSON.parse(String(raw))
@@ -154,7 +152,7 @@ export class RealtimeHub {
       case 'authentication': {
         const data = message.data && typeof message.data === 'object' ? (message.data as Record<string, unknown>) : {}
         const secret = data.session
-        const caller = typeof secret === 'string' ? sessionCaller(this.db, secret) : null
+        const caller = typeof secret === 'string' ? await sessionCaller(this.db, secret) : null
         if (!caller) {
           send(ws, 'error', { code: 1003, message: 'Session is not valid.' })
           return

@@ -35,27 +35,28 @@ function readerFor(ctx: AppContext, url: URL, bucketId: string, fileId: string) 
 }
 
 export function storageRoutes(router: Router<AppContext>): void {
-  router.get('/storage/buckets', ({ ctx, params }) => {
+  router.get('/storage/buckets', async ({ ctx, params }) => {
     requireKey(ctx, 'buckets.read')
-    const { total, items } = page(ctx.storage.buckets().map(bucketModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name'] })
+    const buckets = await ctx.storage.buckets()
+    const { total, items } = page(buckets.map(bucketModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name'] })
     return json({ total, buckets: items })
   })
 
-  router.post('/storage/buckets', ({ ctx, params }) => {
+  router.post('/storage/buckets', async ({ ctx, params }) => {
     requireKey(ctx, 'buckets.write')
     const bucketId = params.bucketId === 'unique()' ? uniqueId() : String(params.bucketId ?? '')
-    return json(bucketModel(ctx.storage.saveBucket(bucketInput(params, bucketId, null), true)), 201)
+    return json(bucketModel(await ctx.storage.saveBucket(bucketInput(params, bucketId, null), true)), 201)
   })
 
-  router.get('/storage/buckets/:bucketId', ({ ctx, path }) => {
+  router.get('/storage/buckets/:bucketId', async ({ ctx, path }) => {
     requireKey(ctx, 'buckets.read')
-    return json(bucketModel(ctx.storage.bucket(path.bucketId!, true)))
+    return json(bucketModel(await ctx.storage.bucket(path.bucketId!, true)))
   })
 
-  router.put('/storage/buckets/:bucketId', ({ ctx, path, params }) => {
+  router.put('/storage/buckets/:bucketId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'buckets.write')
-    const current = ctx.storage.bucket(path.bucketId!, true)
-    return json(bucketModel(ctx.storage.saveBucket(bucketInput(params, current.id, current), false)))
+    const current = await ctx.storage.bucket(path.bucketId!, true)
+    return json(bucketModel(await ctx.storage.saveBucket(bucketInput(params, current.id, current), false)))
   })
 
   router.delete('/storage/buckets/:bucketId', async ({ ctx, path }) => {
@@ -81,13 +82,13 @@ export function storageRoutes(router: Router<AppContext>): void {
     ),
   )
 
-  router.get(`${FILES}/:fileId`, ({ ctx, path }) => {
-    const { bucket, file } = ctx.storage.file(ctx.caller, path.bucketId!, path.fileId!)
+  router.get(`${FILES}/:fileId`, async ({ ctx, path }) => {
+    const { bucket, file } = await ctx.storage.file(ctx.caller, path.bucketId!, path.fileId!)
     return json(fileModel(file, bucket))
   })
 
-  router.put(`${FILES}/:fileId`, ({ ctx, path, params }) =>
-    json(ctx.storage.updateFile(ctx.caller, path.bucketId!, path.fileId!, params.name, params.permissions)),
+  router.put(`${FILES}/:fileId`, async ({ ctx, path, params }) =>
+    json(await ctx.storage.updateFile(ctx.caller, path.bucketId!, path.fileId!, params.name, params.permissions)),
   )
 
   router.delete(`${FILES}/:fileId`, async ({ ctx, path }) => {
@@ -95,18 +96,18 @@ export function storageRoutes(router: Router<AppContext>): void {
     return noContent()
   })
 
-  router.get(`${FILES}/:fileId/view`, ({ ctx, path, request, url }) => {
-    const { file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
+  router.get(`${FILES}/:fileId/view`, async ({ ctx, path, request, url }) => {
+    const { file } = await ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.serve(request, path.bucketId!, file, 'inline')
   })
 
-  router.get(`${FILES}/:fileId/download`, ({ ctx, path, request, url }) => {
-    const { file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
+  router.get(`${FILES}/:fileId/download`, async ({ ctx, path, request, url }) => {
+    const { file } = await ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.serve(request, path.bucketId!, file, 'attachment')
   })
 
-  router.get(`${FILES}/:fileId/preview`, ({ ctx, path, request, url }) => {
-    const { bucket, file } = ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
+  router.get(`${FILES}/:fileId/preview`, async ({ ctx, path, request, url }) => {
+    const { bucket, file } = await ctx.storage.file(readerFor(ctx, url, path.bucketId!, path.fileId!), path.bucketId!, path.fileId!, 'read', true)
     return ctx.storage.preview(request, url, bucket, file)
   })
 }

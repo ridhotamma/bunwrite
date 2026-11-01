@@ -95,9 +95,14 @@ const IN_PROGRESS = new Set(['waiting', 'processing', 'building'])
 
 /** A folder inside the repository: no `..`, no leading slash; '' for the top. */
 export function rootDirectory(value: string): string {
-  const cleaned = value.trim().replace(/\\/g, '/').replace(/^\.?\/+/, '').replace(/\/+$/, '')
+  const cleaned = value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.?\/+/, '')
+    .replace(/\/+$/, '')
   if (!cleaned || cleaned === '.') return ''
-  if (isAbsolute(cleaned) || cleaned.split('/').includes('..')) throw err('general_argument_invalid', 'The root directory must be a folder inside the repository.')
+  if (isAbsolute(cleaned) || cleaned.split('/').includes('..'))
+    throw err('general_argument_invalid', 'The root directory must be a folder inside the repository.')
   return cleaned
 }
 
@@ -133,6 +138,8 @@ export class VcsHub {
   private importLegacyInstallations(): void {
     for (const project of this.projects.list()) {
       if (project.services.db === this.projects.control.db) continue
+      // Installations only ever lived in the project's SQLite file.
+      if (!project.services.db.sqlite) continue
       let rows: InstallationRow[]
       try {
         rows = project.services.db.sqlite.query<InstallationRow, []>('SELECT * FROM _vcs_installations ORDER BY seq').all()
@@ -255,14 +262,19 @@ export class VcsHub {
     const state = readState<{ kind: string; returnTo: string; installationId?: string }>(this.secret, url.searchParams.get('state'))
     if (state?.kind !== 'install') return new Response('This link has expired. Start the installation again from the console.', { status: 400 })
     const back = (key: 'ok' | 'err', text: string) => redirect(withFlash(state.returnTo, key, text))
-    if (url.searchParams.get('setup_action') === 'request') return back('ok', 'GitHub asked an organization owner to approve the installation. Add it again once they have.')
+    if (url.searchParams.get('setup_action') === 'request')
+      return back('ok', 'GitHub asked an organization owner to approve the installation. Add it again once they have.')
     const installationId = url.searchParams.get('installation_id') || state.installationId || ''
     if (!/^\d+$/.test(installationId)) return back('err', 'GitHub did not say which installation to add.')
     const app = this.apps.get()
     if (!app) return back('err', 'The GitHub App is not set up any more.')
     const code = url.searchParams.get('code')
     if (!code) {
-      if (!app.clientId) return back('err', 'The GitHub App has no client ID, so this server cannot check who installed it. Set VCS_GITHUB_CLIENT_ID and VCS_GITHUB_CLIENT_SECRET.')
+      if (!app.clientId)
+        return back(
+          'err',
+          'The GitHub App has no client ID, so this server cannot check who installed it. Set VCS_GITHUB_CLIENT_ID and VCS_GITHUB_CLIENT_SECRET.',
+        )
       // Ask GitHub who is signed in, then come back here with the installation in the state.
       const next = signState(this.secret, { kind: 'install', returnTo: state.returnTo, installationId }, 600)
       const authorize = `${this.github.webUrl}/login/oauth/authorize?client_id=${encodeURIComponent(app.clientId)}&state=${encodeURIComponent(next)}&redirect_uri=${encodeURIComponent(`${this.publicBase}/v1/vcs/github/callback`)}`
@@ -288,11 +300,11 @@ export class VcsHub {
    * Remove a server-wide installation and disconnect every site and function
    * that deployed from it. GitHub keeps the app installed.
    */
-  removeInstallation(installationId: string): void {
+  async removeInstallation(installationId: string): Promise<void> {
     const installation = this.installations.get(installationId)
     for (const link of this.links.removeForInstallation(installation.id)) {
       const project = this.projects.get(link.project_id)
-      if (project) this.clearProvider(project, link.resource_type, link.resource_id)
+      if (project) await this.clearProvider(project, link.resource_type, link.resource_id)
     }
     this.installations.remove(installation.id)
     this.github.forget(installation.provider_installation_id)
@@ -305,9 +317,9 @@ export class VcsHub {
    * repository is given. Checks that the project's installation can see it.
    */
   async link(project: ProjectRuntime, type: ResourceType, id: string, provider: ProviderSettings): Promise<void> {
-    this.resource(project, type, id)
+    await this.resource(project, type, id)
     if (!provider.installationId || !provider.providerRepositoryId) {
-      this.unlink(project, type, id)
+      await this.unlink(project, type, id)
       return
     }
     const installation = this.installations.get(provider.installationId)
@@ -325,8 +337,8 @@ export class VcsHub {
       providerRootDirectory: rootDirectory(provider.providerRootDirectory),
       providerSilentMode: provider.providerSilentMode,
     }
-    if (type === 'function') project.services.functions.setProvider(id, settings)
-    else project.services.sites.setProvider(id, settings)
+    if (type === 'function') await project.services.functions.setProvider(id, settings)
+    else await project.services.sites.setProvider(id, settings)
     this.links.link({
       projectId: project.info.id,
       resourceType: type,
@@ -338,9 +350,9 @@ export class VcsHub {
     })
   }
 
-  unlink(project: ProjectRuntime, type: ResourceType, id: string): void {
+  async unlink(project: ProjectRuntime, type: ResourceType, id: string): Promise<void> {
     this.links.unlink(project.info.id, type, id)
-    this.clearProvider(project, type, id)
+    await this.clearProvider(project, type, id)
   }
 
   /** The resource was deleted: forget its link. */
@@ -348,36 +360,36 @@ export class VcsHub {
     this.links.unlink(projectId, type, id)
   }
 
-  private clearProvider(project: ProjectRuntime, type: ResourceType, id: string): void {
+  private async clearProvider(project: ProjectRuntime, type: ResourceType, id: string): Promise<void> {
     try {
-      if (type === 'function') project.services.functions.setProvider(id, NO_PROVIDER)
-      else project.services.sites.setProvider(id, NO_PROVIDER)
+      if (type === 'function') await project.services.functions.setProvider(id, NO_PROVIDER)
+      else await project.services.sites.setProvider(id, NO_PROVIDER)
     } catch {
       /* the resource is gone */
     }
   }
 
-  private resource(project: ProjectRuntime, type: ResourceType, id: string): FunctionRow | SiteRow {
+  private async resource(project: ProjectRuntime, type: ResourceType, id: string): Promise<FunctionRow | SiteRow> {
     return type === 'function' ? project.services.functions.fn(id) : project.services.sites.site(id)
   }
 
   /** The linked target for one resource, or null when it has no repository. */
-  target(project: ProjectRuntime, type: ResourceType, id: string): HubTarget | null {
+  async target(project: ProjectRuntime, type: ResourceType, id: string): Promise<HubTarget | null> {
     const link = this.links.forResource(project.info.id, type, id)
     return link ? this.toTarget(link) : null
   }
 
   /** Every resource a repository deploys. Links to deleted projects or resources are dropped. */
-  targets(providerRepositoryId: string): HubTarget[] {
+  async targets(providerRepositoryId: string): Promise<HubTarget[]> {
     const out: HubTarget[] = []
     for (const link of this.links.byRepository(providerRepositoryId)) {
-      const target = this.toTarget(link)
+      const target = await this.toTarget(link)
       if (target) out.push(target)
     }
     return out
   }
 
-  private toTarget(link: RepositoryRow): HubTarget | null {
+  private async toTarget(link: RepositoryRow): Promise<HubTarget | null> {
     const project = this.projects.get(link.project_id)
     if (!project) {
       this.links.removeForProject(link.project_id)
@@ -385,7 +397,7 @@ export class VcsHub {
     }
     let row: FunctionRow | SiteRow
     try {
-      row = this.resource(project, link.resource_type, link.resource_id)
+      row = await this.resource(project, link.resource_type, link.resource_id)
     } catch {
       this.links.unlink(link.project_id, link.resource_type, link.resource_id)
       return null
@@ -452,8 +464,8 @@ export class VcsHub {
     activate: boolean,
     options: { branch?: string } = {},
   ): Promise<AnyDeployment> {
-    this.resource(project, type, id)
-    const target = this.target(project, type, id)
+    await this.resource(project, type, id)
+    const target = await this.target(project, type, id)
     if (!target) throw err('general_argument_invalid', 'Connect a Git repository first (installationId and providerRepositoryId).')
     if (!['branch', 'commit', 'tag'].includes(refType)) throw err('general_argument_invalid', 'Type must be one of: branch, commit, tag.')
     const ref = reference.trim() || target.provider.providerBranch
@@ -462,7 +474,8 @@ export class VcsHub {
     try {
       commit = await this.github.commit(target.link.provider_installation_id, target.link.provider_repository_id, ref)
     } catch (error) {
-      if (error instanceof GithubError && (error.status === 404 || error.status === 422)) throw err('general_argument_invalid', `"${ref}" is not a ${refType} of ${target.link.provider_repository_name}.`)
+      if (error instanceof GithubError && (error.status === 404 || error.status === 422))
+        throw err('general_argument_invalid', `"${ref}" is not a ${refType} of ${target.link.provider_repository_name}.`)
       throw error
     }
     const branch = options.branch?.trim() || (refType === 'branch' ? ref : target.provider.providerBranch)
@@ -477,7 +490,7 @@ export class VcsHub {
   }
 
   /** Create the deployment now; fetch the code and build it in the background. */
-  private start(target: HubTarget, commit: GithubCommit, options: BuildOptions): AnyDeployment {
+  private async start(target: HubTarget, commit: GithubCommit, options: BuildOptions): Promise<AnyDeployment> {
     const source: DeploymentSource = {
       repository: options.repository,
       branch: options.branch,
@@ -491,8 +504,8 @@ export class VcsHub {
     const services = target.project.services
     const row =
       target.type === 'function'
-        ? this.deploymentsOf(target.project).startGit(services.functions.fn(target.id), source, options.activate)
-        : services.sites.startGit(services.sites.site(target.id), source, options.activate)
+        ? await this.deploymentsOf(target.project).startGit(await services.functions.fn(target.id), source, options.activate)
+        : await services.sites.startGit(services.sites.site(target.id), source, options.activate)
     this.enqueue(target.link.provider_repository_id, () => this.finish(target, row.id, commit, options))
     if (options.comment) this.scheduleComment(target.link.provider_repository_id, options.comment)
     return row
@@ -517,7 +530,9 @@ export class VcsHub {
       try {
         await this.github.setStatus(installationId, repositoryId, commit.sha, { state, context, description, targetUrl })
       } catch (error) {
-        console.warn(`[vcs] commit status for ${target.link.provider_repository_name}@${commit.sha.slice(0, 7)}: ${error instanceof Error ? error.message : String(error)}`)
+        console.warn(
+          `[vcs] commit status for ${target.link.provider_repository_name}@${commit.sha.slice(0, 7)}: ${error instanceof Error ? error.message : String(error)}`,
+        )
       }
     }
     await report('pending', `Building ${target.name}…`, logsUrl)
@@ -528,22 +543,23 @@ export class VcsHub {
     try {
       const bytes = await this.fetchSource(installationId, repositoryId, commit.sha, target.provider.providerRootDirectory, dir)
       if (target.type === 'function') {
-        deployments.setSourceSize(deploymentId, bytes)
+        await deployments.setSourceSize(deploymentId, bytes)
         final = await deployments.build(target.id, deploymentId, { unpacked: true })
       } else {
-        services.sites.setSourceSize(deploymentId, bytes)
+        await services.sites.setSourceSize(deploymentId, bytes)
         final = await services.sites.process(target.id, deploymentId, { unpacked: true })
       }
     } catch (error) {
       const message = `Could not fetch ${target.link.provider_repository_name}@${commit.sha.slice(0, 7)}: ${error instanceof Error ? error.message : String(error)}`
-      final = target.type === 'function' ? deployments.fail(target.id, deploymentId, message) : services.sites.fail(target.id, deploymentId, message)
+      final =
+        target.type === 'function' ? await deployments.fail(target.id, deploymentId, message) : await services.sites.fail(target.id, deploymentId, message)
     }
 
     const ok = final.status === 'ready'
     let url = logsUrl
     if (target.type === 'site') {
       const site = services.sites.site(target.id)
-      if (ok && !options.activate) services.sites.setBranchPreview(target.id, options.previewBranch, deploymentId)
+      if (ok && !options.activate) await services.sites.setBranchPreview(target.id, options.previewBranch, deploymentId)
       if (ok) url = options.activate ? services.sites.url(site) : services.sites.deploymentUrl(site, deploymentId)
     } else if (!options.activate) {
       deployments.prune(target.id)
@@ -601,12 +617,13 @@ export class VcsHub {
     if (event === 'push') return this.onPush(payload)
     if (event === 'pull_request') return this.onPullRequest(payload)
     if (event === 'delete' && payload.ref_type === 'branch') return this.onBranchDeleted(String(payload.repository?.id ?? ''), String(payload.ref ?? ''))
-    if (event === 'installation' && (payload.action === 'deleted' || payload.action === 'suspend')) return this.onInstallationGone(String(payload.installation?.id ?? ''))
+    if (event === 'installation' && (payload.action === 'deleted' || payload.action === 'suspend'))
+      return this.onInstallationGone(String(payload.installation?.id ?? ''))
     if (event === 'installation_repositories' && payload.action === 'removed') {
       for (const repo of payload.repositories_removed ?? []) {
         for (const link of this.links.byRepository(String(repo.id))) {
           const project = this.projects.get(link.project_id)
-          if (project && link.provider_installation_id === String(payload.installation?.id)) this.unlink(project, link.resource_type, link.resource_id)
+          if (project && link.provider_installation_id === String(payload.installation?.id)) await this.unlink(project, link.resource_type, link.resource_id)
         }
       }
     }
@@ -621,7 +638,7 @@ export class VcsHub {
     const head = payload.head_commit
     if (!head || !payload.after) return
     if (/\[(skip ci|ci skip)\]/i.test(String(head.message ?? ''))) return
-    const targets = this.targets(repositoryId)
+    const targets = await this.targets(repositoryId)
     if (!targets.length) return
     const username = head.author?.username ? String(head.author.username) : ''
     const commit: GithubCommit = {
@@ -642,7 +659,7 @@ export class VcsHub {
     }
     for (const target of targets) {
       const production = branch === target.provider.providerBranch
-      this.start(target, commit, {
+      await this.start(target, commit, {
         repository: String(payload.repository?.full_name ?? target.link.provider_repository_name),
         branch,
         activate: production,
@@ -658,10 +675,10 @@ export class VcsHub {
     if (!pr) return
     const repositoryId = String(payload.repository?.id ?? pr.base.repo.id)
     const fork = pr.head.repo?.id !== pr.base.repo.id
-    const targets = this.targets(repositoryId)
+    const targets = await this.targets(repositoryId)
     if (!targets.length) return
     if (payload.action === 'closed') {
-      if (fork) for (const t of targets) if (t.type === 'site') t.project.services.sites.removeBranch(t.id, `pr-${pr.number}`)
+      if (fork) for (const t of targets) if (t.type === 'site') await t.project.services.sites.removeBranch(t.id, `pr-${pr.number}`)
       return
     }
     if (!payload.action || !['opened', 'reopened', 'synchronize'].includes(payload.action)) return
@@ -681,7 +698,7 @@ export class VcsHub {
     const first = targets[0]!
     const commit = await this.github.commit(first.link.provider_installation_id, first.link.provider_repository_id, pr.head.sha)
     for (const target of targets) {
-      this.start(target, commit, {
+      await this.start(target, commit, {
         repository: target.link.provider_repository_name,
         branch: pr.head.ref,
         activate: false,
@@ -703,20 +720,20 @@ export class VcsHub {
     if (!Number.isInteger(number) || number < 1) throw err('general_argument_invalid', 'Param "providerPullRequestId" must be a pull request number.')
     const pr = await this.github.pull(link.provider_installation_id, link.provider_repository_id, number)
     const updated = this.links.approve(link.id, String(number))
-    const target = this.toTarget(updated)
+    const target = await this.toTarget(updated)
     if (target && pr.state === 'open') await this.buildPull([target], pr)
     return updated
   }
 
-  private onBranchDeleted(repositoryId: string, branch: string): void {
-    for (const target of this.targets(repositoryId)) {
-      if (target.type === 'site') target.project.services.sites.removeBranch(target.id, branch)
+  private async onBranchDeleted(repositoryId: string, branch: string): Promise<void> {
+    for (const target of await this.targets(repositoryId)) {
+      if (target.type === 'site') await target.project.services.sites.removeBranch(target.id, branch)
     }
   }
 
-  private onInstallationGone(providerInstallationId: string): void {
+  private async onInstallationGone(providerInstallationId: string): Promise<void> {
     const installation = this.installations.byProvider(providerInstallationId)
-    if (installation) this.removeInstallation(installation.id)
+    if (installation) await this.removeInstallation(installation.id)
     this.github.forget(providerInstallationId)
   }
 
@@ -741,9 +758,9 @@ export class VcsHub {
 
   /** Create or edit the one comment that lists every linked resource for a pull request. */
   private async writeComment(repositoryId: string, pull: PullRef): Promise<void> {
-    const targets = this.targets(repositoryId).filter((t) => !t.provider.providerSilentMode)
+    const targets = (await this.targets(repositoryId)).filter((t) => !t.provider.providerSilentMode)
     if (!targets.length) return
-    const body = this.commentBody(targets, pull)
+    const body = await this.commentBody(targets, pull)
     const installationId = targets[0]!.link.provider_installation_id
     const existing = this.links.comment(repositoryId, pull.number)
     if (existing && (await this.github.updateComment(installationId, repositoryId, existing, body))) return
@@ -752,26 +769,34 @@ export class VcsHub {
   }
 
   /** The comment's Markdown. */
-  commentBody(targets: HubTarget[], pull: PullRef): string {
-    const rows = targets.map((t) => {
-      const kind = t.type === 'site' ? 'Site' : 'Function'
-      const resource = `${kind} **${escapeCell(t.name)}** \`${t.id}\``
-      const project = escapeCell(t.project.info.name)
-      if (pull.fork && !approvedPulls(t.link).includes(String(pull.number))) {
-        const approve = this.consoleUrl(t.project.info.id, `/console/vcs/approve?repository=${t.link.id}&pr=${pull.number}`)
-        return `| ${project} | ${resource} | 🔒 Waiting for approval | [Approve builds](${approve}) | |`
-      }
-      const d = t.type === 'site' ? t.project.services.sites.latestForBranch(t.id, pull.branch, pull.fork ? pull.number : 0) : this.deploymentsOf(t.project).latestForBranch(t.id, pull.branch, pull.fork ? pull.number : 0)
-      if (!d) return `| ${project} | ${resource} | ⏳ Waiting | | |`
-      const status = d.status === 'ready' ? '✅ Ready' : d.status === 'failed' ? '❌ Failed' : IN_PROGRESS.has(d.status) ? '⏳ Building' : escapeCell(d.status)
-      const links = [`[Logs](${this.consoleDeploymentUrl(t, d.id)})`]
-      if (t.type === 'site' && d.status === 'ready') {
-        const site = t.project.services.sites.site(t.id)
-        links.unshift(`[Preview](${t.project.services.sites.branchUrl(site, pull.fork ? `pr-${pull.number}` : pull.branch)})`)
-      }
-      const commit = d.provider_commit_hash ? `\`${d.provider_commit_hash.slice(0, 7)}\` ${escapeCell(firstLine(d.provider_commit_message)).slice(0, 60)}` : ''
-      return `| ${project} | ${resource} | ${status} | ${links.join(' · ')} | ${commit} |`
-    })
+  async commentBody(targets: HubTarget[], pull: PullRef): Promise<string> {
+    const rows = await Promise.all(
+      targets.map(async (t) => {
+        const kind = t.type === 'site' ? 'Site' : 'Function'
+        const resource = `${kind} **${escapeCell(t.name)}** \`${t.id}\``
+        const project = escapeCell(t.project.info.name)
+        if (pull.fork && !approvedPulls(t.link).includes(String(pull.number))) {
+          const approve = this.consoleUrl(t.project.info.id, `/console/vcs/approve?repository=${t.link.id}&pr=${pull.number}`)
+          return `| ${project} | ${resource} | 🔒 Waiting for approval | [Approve builds](${approve}) | |`
+        }
+        const d =
+          t.type === 'site'
+            ? await t.project.services.sites.latestForBranch(t.id, pull.branch, pull.fork ? pull.number : 0)
+            : await this.deploymentsOf(t.project).latestForBranch(t.id, pull.branch, pull.fork ? pull.number : 0)
+        if (!d) return `| ${project} | ${resource} | ⏳ Waiting | | |`
+        const status =
+          d.status === 'ready' ? '✅ Ready' : d.status === 'failed' ? '❌ Failed' : IN_PROGRESS.has(d.status) ? '⏳ Building' : escapeCell(d.status)
+        const links = [`[Logs](${this.consoleDeploymentUrl(t, d.id)})`]
+        if (t.type === 'site' && d.status === 'ready') {
+          const site = t.project.services.sites.site(t.id)
+          links.unshift(`[Preview](${t.project.services.sites.branchUrl(site, pull.fork ? `pr-${pull.number}` : pull.branch)})`)
+        }
+        const commit = d.provider_commit_hash
+          ? `\`${d.provider_commit_hash.slice(0, 7)}\` ${escapeCell(firstLine(d.provider_commit_message)).slice(0, 60)}`
+          : ''
+        return `| ${project} | ${resource} | ${status} | ${links.join(' · ')} | ${commit} |`
+      }),
+    )
     return [
       '### Bunwrite deployments',
       '',
@@ -779,7 +804,9 @@ export class VcsHub {
       '| --- | --- | --- | --- | --- |',
       ...rows,
       '',
-      pull.fork ? '<sub>Pull requests from forks build only after a project admin approves them, because builds run on the server.</sub>' : '<sub>Updated on every push to this branch.</sub>',
+      pull.fork
+        ? '<sub>Pull requests from forks build only after a project admin approves them, because builds run on the server.</sub>'
+        : '<sub>Updated on every push to this branch.</sub>',
     ].join('\n')
   }
 }

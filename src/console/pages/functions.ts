@@ -1,4 +1,3 @@
-
 import { gitSection } from '~/console/views/vcs'
 import { detectRuntime } from '~/vcs/detect'
 import { rootDirectory } from '~/vcs/hub'
@@ -9,7 +8,27 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { gitDeploySource } from '~/console/git-deploy'
 import { arrayOf, checked, lines, value, wholeNumber } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { alert, badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, poll, settingsSection, stat, statusBadge, tabs, when } from '~/console/ui'
+import {
+  alert,
+  badge,
+  bulkDeleteForm,
+  bulkSelectAll,
+  bulkSelectRow,
+  copyableId,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  menu,
+  plural,
+  poll,
+  settingsSection,
+  stat,
+  statusBadge,
+  tabs,
+  when,
+} from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
 import { deployForm, functionCreateView, deploymentsCard, deploymentView, IN_PROGRESS } from '~/console/views/functions'
 import { variableList } from '~/console/views/variables'
@@ -30,9 +49,7 @@ const functionHttpUrl = (ctx: ConsoleContext, f: FunctionRow) =>
 const deploymentsOf = (ctx: ConsoleContext) => new Deployments(ctx.services.db, ctx.services.config, ctx.services.functions)
 
 /** The entry file's text, when it is small enough to edit in the console. */
-function currentCode(ctx: ConsoleContext, f: FunctionRow): string | undefined {
-  return ctx.services.functions.readEntry(f, MAX_EDIT_BYTES)
-}
+const currentCode = (ctx: ConsoleContext, f: FunctionRow) => ctx.services.functions.readEntry(f, MAX_EDIT_BYTES)
 
 /** What the code form asks for, checked before anything is created. */
 type CodeSource = { kind: 'template' } | { kind: 'upload'; file: File } | { kind: 'paste'; text: string }
@@ -66,7 +83,7 @@ async function createFromGit(ctx: ConsoleContext, id: string, name: string, runt
     const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
     found = await detectRuntime(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
   }
-  const f = ctx.services.functions.create(id, {
+  const f = await ctx.services.functions.create(id, {
     name,
     runtime: found.runtime,
     execute: ['any'],
@@ -85,13 +102,19 @@ async function createFromGit(ctx: ConsoleContext, id: string, name: string, runt
   })
   const project = ctx.projects.get(ctx.currentProject.id)!
   try {
-    await ctx.hub.link(project, 'function', f.id, { installationId: installation.id, providerRepositoryId: repositoryId, providerBranch: branch, providerRootDirectory: root, providerSilentMode: false })
-    const linked = ctx.services.functions.fn(f.id)
+    await ctx.hub.link(project, 'function', f.id, {
+      installationId: installation.id,
+      providerRepositoryId: repositoryId,
+      providerBranch: branch,
+      providerRootDirectory: root,
+      providerSilentMode: false,
+    })
+    const linked = await ctx.services.functions.fn(f.id)
     await ctx.hub.deployReference(project, 'function', f.id, 'branch', linked.provider_branch, true)
     return ctx.go(functionUrl(f.id), { tone: 'success', text: `Function created; deploying ${linked.provider_branch}` })
   } catch (error) {
     ctx.hub.forget(project.info.id, 'function', f.id)
-    ctx.services.functions.remove(f.id)
+    await ctx.services.functions.remove(f.id)
     throw error
   }
 }
@@ -102,7 +125,14 @@ function entrypointFrom(ctx: ConsoleContext): string {
   return entrypoint
 }
 
-async function deploy(ctx: ConsoleContext, f: FunctionRow, source: CodeSource, entrypoint: string, commands: string, activate: boolean): Promise<DeploymentRow> {
+async function deploy(
+  ctx: ConsoleContext,
+  f: FunctionRow,
+  source: CodeSource,
+  entrypoint: string,
+  commands: string,
+  activate: boolean,
+): Promise<DeploymentRow> {
   const deployments = deploymentsOf(ctx)
   if (source.kind === 'upload') {
     return deployments.upload(f, { code: source.file, entrypoint, commands, activate, contentRange: null, uploadId: null })
@@ -112,8 +142,8 @@ async function deploy(ctx: ConsoleContext, f: FunctionRow, source: CodeSource, e
 }
 
 /** A short status for the functions list when no code is live yet. */
-function codeBadge(ctx: ConsoleContext, f: FunctionRow, latest: DeploymentRow | null): Html {
-  if (ctx.services.functions.codeDir(f).dir) return html``
+async function codeBadge(ctx: ConsoleContext, f: FunctionRow, latest: DeploymentRow | null): Promise<Html> {
+  if ((await ctx.services.functions.codeDir(f)).dir) return html``
   if (latest && IN_PROGRESS.includes(latest.status)) return html` ${badge('Building', 'info')}`
   if (latest?.status === 'failed') return html` ${badge('Build failed', 'critical')}`
   return html` ${badge('Code missing', 'critical')}`
@@ -121,13 +151,39 @@ function codeBadge(ctx: ConsoleContext, f: FunctionRow, latest: DeploymentRow | 
 
 function runsList(fnId: string, runs: ExecutionRow[], live: boolean): Html {
   return html`<div class="card flush" id="runs" ${live ? poll(functionUrl(fnId), 'runs', 5) : ''}>
-    <div class="toolbar"><h2 style="margin:0">Runs</h2>${live ? html`<span class="subdued" style="margin-left:auto">Running now…</span>` : ''}</div>
-    ${runs.length
-      ? html`<div class="scroll"><table><thead><tr><th>Started</th><th>Status</th><th class="hide-sm">Trigger</th><th class="num hide-sm">Code</th><th class="num">Time</th></tr></thead><tbody>
-        ${runs.map((r) => html`<tr class="row-link" onclick="location='${functionUrl(fnId)}/executions/${r.id}'"><td><a href="${functionUrl(fnId)}/executions/${r.id}">${when(r.created_at)}</a></td>
-          <td>${statusBadge(r.status)}</td><td class="hide-sm">${r.trigger}</td><td class="num hide-sm">${r.response_status_code || '—'}</td><td class="num">${r.duration.toFixed(2)}s</td></tr>`)}
-        </tbody></table></div>`
-      : emptyState('No runs yet', 'Run it now, or wait for its schedule.')}
+    <div class="toolbar">
+      <h2 style="margin:0">Runs</h2>
+      ${live ? html`<span class="subdued" style="margin-left:auto">Running now…</span>` : ''}
+    </div>
+    ${
+      runs.length
+        ? html`<div class="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Started</th>
+                  <th>Status</th>
+                  <th class="hide-sm">Trigger</th>
+                  <th class="num hide-sm">Code</th>
+                  <th class="num">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${runs.map(
+                  (r) =>
+                    html`<tr class="row-link" onclick="location='${functionUrl(fnId)}/executions/${r.id}'">
+                      <td><a href="${functionUrl(fnId)}/executions/${r.id}">${when(r.created_at)}</a></td>
+                      <td>${statusBadge(r.status)}</td>
+                      <td class="hide-sm">${r.trigger}</td>
+                      <td class="num hide-sm">${r.response_status_code || '—'}</td>
+                      <td class="num">${r.duration.toFixed(2)}s</td>
+                    </tr>`,
+                )}
+              </tbody>
+            </table>
+          </div>`
+        : emptyState('No runs yet', 'Run it now, or wait for its schedule.')
+    }
   </div>`
 }
 
@@ -154,19 +210,23 @@ function functionActions(f: FunctionRow, active: 'runs' | 'deployments' | 'varia
   const base = functionUrl(f.id)
   if (active === 'variables' || active === 'settings') return undefined
   const deploy = html`<a class="btn" href="${base}/deploy">${icon('upload-simple')}<span>Deploy</span></a>`
-  const more = menu(destroy(`${base}/delete`, 'Delete function', `Delete ${f.name}? Its deployments, runs and variables are removed too.`), { label: 'More actions' })
+  const more = menu(destroy(`${base}/delete`, 'Delete function', `Delete ${f.name}? Its deployments, runs and variables are removed too.`), {
+    label: 'More actions',
+  })
   return active === 'runs'
-    ? html`${deploy}<form method="post" action="${base}/run" class="inline"><button class="primary">Run now</button></form>${more}`
+    ? html`${deploy}
+        <form method="post" action="${base}/run" class="inline"><button class="primary">Run now</button></form>
+        ${more}`
     : html`${deploy}${more}`
 }
 
 /** Header, tabs and code notice shared by every function tab. */
-function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'deployments' | 'variables' | 'settings', body: Html): Html {
+async function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'deployments' | 'variables' | 'settings', body: Html): Promise<Html> {
   const base = functionUrl(f.id)
-  const deployments = deploymentsOf(ctx).list(f.id)
+  const deployments = await deploymentsOf(ctx).list(f.id)
   const latest = deployments[0]
   const building = deployments.find((d) => IN_PROGRESS.includes(d.status))
-  const code = ctx.services.functions.codeDir(f)
+  const code = await ctx.services.functions.codeDir(f)
   const paused = ctx.services.config.skipSchedules.includes(f.id)
   const notice = code.dir
     ? ''
@@ -176,26 +236,32 @@ function functionShell(ctx: ConsoleContext, f: FunctionRow, active: 'runs' | 'de
         ? alert('critical', html`The last deployment failed. <a href="${base}/deployments/${latest.id}">See the build logs</a>, then deploy again.`)
         : deployments.length
           ? alert('warning', html`No deployment is live. Make one live from Deployments.`)
-          : alert('critical', html`Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Deploy code below, or set the code folder in <a href="/console/settings/functions">Settings</a>.`)
+          : alert(
+              'critical',
+              html`Code not found. Looked for ${code.tried.map((t, i) => html`${i ? ' and ' : ''}<code>${t}</code>`)}. Deploy code below, or set the code folder
+                in <a href="/console/settings/functions">Settings</a>.`,
+            )
   return html`${header(f.name, { back: FN, actions: functionActions(f, active) })}${functionTabs(f.id, active)}
-  ${paused && f.schedule ? alert('warning', html`The schedule is paused in Settings.`) : ''}
-  <div id="code-status">${notice}</div>
-  ${body}`
+    ${paused && f.schedule ? alert('warning', html`The schedule is paused in Settings.`) : ''}
+    <div id="code-status">${notice}</div>
+    ${body}`
 }
 
 export function functionPages(router: ConsoleRouter): void {
-  router.get(FN, ({ ctx, url }) => {
+  router.get(FN, async ({ ctx, url }) => {
     // Old links opened a dialog; creating now has its own page.
     if (url.searchParams.get('create') === '1') return ctx.go(`${FN}/new`)
-    const fns = ctx.services.functions.list()
-    const last = ctx.services.functions.latestByFunction()
+    const fns = await ctx.services.functions.list()
+    const last = await ctx.services.functions.latestByFunction()
     const skipped = ctx.services.config.skipSchedules
     const deployments = deploymentsOf(ctx)
-    const latest = new Map(fns.map((f) => [f.id, deployments.latest(f.id)]))
+    const latest = new Map(await Promise.all(fns.map(async (f) => [f.id, await deployments.latest(f.id)] as const)))
     // Functions with no code folder and nothing deployed: the code folder setting is likely wrong.
-    const missing = fns.filter((f) => !ctx.services.functions.codeDir(f).dir && !latest.get(f.id)).length
+    const dirs = await Promise.all(fns.map((f) => ctx.services.functions.codeDir(f)))
+    const missing = fns.filter((f, i) => !dirs[i]!.dir && !latest.get(f.id)).length
     const create = html`<a class="btn primary" href="${FN}/new">${icon('plus')}<span>Create function</span></a>`
     const bulkId = 'bulk-functions'
+    const badges = await Promise.all(fns.map((f) => codeBadge(ctx, f, latest.get(f.id) ?? null)))
     return ctx.render(
       'Functions',
       'functions',
@@ -205,19 +271,45 @@ export function functionPages(router: ConsoleRouter): void {
       ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with the project config file (bunwrite.config.json or appwrite.config.json).`) : ''}
       ${listCard('functions', {
         toolbar: fns.length
-          ? html`<div class="toolbar"><span class="subdued">Select functions to delete</span>${bulkDeleteForm({ id: bulkId, action: `${FN}/bulk-delete`, confirm: 'Delete the selected functions? Their deployments, runs and variables are removed too. This cannot be undone.' })}</div>`
+          ? html`<div class="toolbar">
+              <span class="subdued">Select functions to delete</span
+              >${bulkDeleteForm({ id: bulkId, action: `${FN}/bulk-delete`, confirm: 'Delete the selected functions? Their deployments, runs and variables are removed too. This cannot be undone.' })}
+            </div>`
           : undefined,
         body: fns.length
-          ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId)}</th><th>Function</th><th class="hide-sm">Runtime</th><th>Schedule</th><th>Last run</th></tr></thead><tbody>
-            ${fns.map((f) => {
-              const run = last.get(f.id)
-              return html`<tr class="row-link" onclick="location='${functionUrl(f.id)}'"><td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, f.id, `Select ${f.name}`)}</td>
-                <td><a href="${functionUrl(f.id)}">${f.name}</a><div class="mono subdued cell-sub">${f.id}</div>${f.enabled ? '' : html`${badge('Disabled')}`}${codeBadge(ctx, f, latest.get(f.id) ?? null)}</td>
-                <td class="hide-sm subdued">${f.runtime}</td>
-                <td class="mono">${f.schedule ? html`${f.schedule}${skipped.includes(f.id) ? html` ${badge('Paused')}` : ''}` : html`<span class="subdued">—</span>`}</td>
-                <td>${run ? html`${statusBadge(run.status)} <span class="subdued hide-sm">${when(run.created_at)}</span>` : html`<span class="subdued">Never</span>`}</td></tr>`
-            })}
-            </tbody></table></div>`
+          ? html`<div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="select-col">${bulkSelectAll(bulkId)}</th>
+                    <th>Function</th>
+                    <th class="hide-sm">Runtime</th>
+                    <th>Schedule</th>
+                    <th>Last run</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${fns.map((f, i) => {
+                    const run = last.get(f.id)
+                    return html`<tr class="row-link" onclick="location='${functionUrl(f.id)}'">
+                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, f.id, `Select ${f.name}`)}</td>
+                      <td>
+                        <a href="${functionUrl(f.id)}">${f.name}</a>
+                        <div class="mono subdued cell-sub">${f.id}</div>
+                        ${f.enabled ? '' : html`${badge('Disabled')}`}${badges[i]}
+                      </td>
+                      <td class="hide-sm subdued">${f.runtime}</td>
+                      <td class="mono">
+                        ${f.schedule ? html`${f.schedule}${skipped.includes(f.id) ? html` ${badge('Paused')}` : ''}` : html`<span class="subdued">—</span>`}
+                      </td>
+                      <td>
+                        ${run ? html`${statusBadge(run.status)} <span class="subdued hide-sm">${when(run.created_at)}</span>` : html`<span class="subdued">Never</span>`}
+                      </td>
+                    </tr>`
+                  })}
+                </tbody>
+              </table>
+            </div>`
           : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
       })}`,
     )
@@ -238,7 +330,11 @@ export function functionPages(router: ConsoleRouter): void {
 
   router.post(FN, async ({ ctx }) => {
     const id = value(ctx.form, 'id')
-    if (!FUNCTION_ID.test(id)) throw err('general_argument_invalid', 'Function ID: up to 36 characters of a-z, A-Z, 0-9, period, hyphen and underscore, starting with a letter or digit.')
+    if (!FUNCTION_ID.test(id))
+      throw err(
+        'general_argument_invalid',
+        'Function ID: up to 36 characters of a-z, A-Z, 0-9, period, hyphen and underscore, starting with a letter or digit.',
+      )
     const name = value(ctx.form, 'name') || id
     const runtime = value(ctx.form, 'runtime')
     if (!SUPPORTED_RUNTIME_IDS.includes(runtime)) throw err('general_argument_invalid', 'Choose a runtime.')
@@ -246,7 +342,7 @@ export function functionPages(router: ConsoleRouter): void {
     const entrypoint = entrypointFrom(ctx)
     const commands = value(ctx.form, 'commands')
     const source = codeSource(ctx)
-    const f = ctx.services.functions.create(id, {
+    const f = await ctx.services.functions.create(id, {
       name,
       runtime,
       // Appwrite's default: client SDKs and guests may call it until the admin narrows this.
@@ -275,12 +371,12 @@ export function functionPages(router: ConsoleRouter): void {
   })
 
   // Before /:id, which would otherwise read "bulk-delete" as a function ID.
-  router.post(`${FN}/bulk-delete`, ({ ctx }) => {
+  router.post(`${FN}/bulk-delete`, async ({ ctx }) => {
     const ids = [...new Set(arrayOf(ctx.form.ids))]
     let removed = 0
     for (const id of ids) {
-      if (!ctx.services.functions.has(id)) continue
-      ctx.services.functions.remove(id)
+      if (!(await ctx.services.functions.has(id))) continue
+      await ctx.services.functions.remove(id)
       ctx.hub.forget(ctx.currentProject.id, 'function', id)
       removed++
     }
@@ -288,38 +384,41 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.go(FN, { tone: 'success', text: `${plural(removed, 'function')} deleted` })
   })
 
-  router.get(`${FN}/:id`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    const runs = ctx.services.functions.runsFor(f.id)
+  router.get(`${FN}/:id`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
+    const runs = await ctx.services.functions.runsFor(f.id)
     const live = runs.some((r) => r.status === 'waiting' || r.status === 'processing')
-    return ctx.render(f.name, 'functions', functionShell(ctx, f, 'runs', runsList(f.id, runs, live)))
+    return ctx.render(f.name, 'functions', await functionShell(ctx, f, 'runs', runsList(f.id, runs, live)))
   })
 
   router.get(`${FN}/:id/deploy`, async ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
+    const f = await ctx.services.functions.fn(path.id!)
     const git = await gitDeploySource(ctx, 'function', f.id)
     return ctx.render(
       `Deploy to ${f.name}`,
       'functions',
       html`${header('Deploy new code', { back: functionUrl(f.id) })}
-      <div class="card">${deployForm(f, currentCode(ctx, f), ctx.services.config.functionsBuildCommands, git)}
-        <div class="foot" style="margin-top:12px"><a class="btn" href="${functionUrl(f.id)}">Cancel</a><button type="submit" form="deploy-page-form" class="primary">Deploy</button></div>
-      </div>`,
+        <div class="card">
+          ${deployForm(f, await currentCode(ctx, f), ctx.services.config.functionsBuildCommands, git)}
+          <div class="foot" style="margin-top:12px">
+            <a class="btn" href="${functionUrl(f.id)}">Cancel</a><button type="submit" form="deploy-page-form" class="primary">Deploy</button>
+          </div>
+        </div>`,
     )
   })
 
-  router.get(`${FN}/:id/deployments`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    return ctx.render(f.name, 'functions', functionShell(ctx, f, 'deployments', deploymentsCard(f, deploymentsOf(ctx).list(f.id))))
+  router.get(`${FN}/:id/deployments`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
+    return ctx.render(f.name, 'functions', await functionShell(ctx, f, 'deployments', deploymentsCard(f, await deploymentsOf(ctx).list(f.id))))
   })
 
-  router.get(`${FN}/:id/variables`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    const vars = ctx.services.functions.variables(f.id)
+  router.get(`${FN}/:id/variables`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
+    const vars = await ctx.services.functions.variables(f.id)
     return ctx.render(
       f.name,
       'functions',
-      functionShell(
+      await functionShell(
         ctx,
         f,
         'variables',
@@ -335,7 +434,7 @@ export function functionPages(router: ConsoleRouter): void {
               clear: { action: `${functionUrl(f.id)}/variables/clear`, confirm: `Delete all ${vars.length} variables for ${f.name}? This cannot be undone.` },
               empty: html`<p class="hint" style="margin:0">None set here. Values from the functions env file still apply.</p>`,
             })}
-          <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>`,
+            <p class="help">Global variables from <a href="/console/settings/functions">Settings</a> also apply; a variable here with the same name wins.</p>`,
           { id: 'function-variables' },
         ),
       ),
@@ -343,9 +442,9 @@ export function functionPages(router: ConsoleRouter): void {
   })
 
   router.get(`${FN}/:id/settings`, async ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    const code = ctx.services.functions.codeDir(f)
-    const deployments = deploymentsOf(ctx).list(f.id)
+    const f = await ctx.services.functions.fn(path.id!)
+    const code = await ctx.services.functions.codeDir(f)
+    const deployments = await deploymentsOf(ctx).list(f.id)
     const fromDeployment = Boolean(f.deployment_id) && code.dir === deploymentDir(ctx.services.config, f.id, f.deployment_id)
     const domainSettings = await customDomainsSection({
       ctx,
@@ -358,7 +457,7 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(
       f.name,
       'functions',
-      functionShell(
+      await functionShell(
         ctx,
         f,
         'settings',
@@ -366,11 +465,24 @@ export function functionPages(router: ConsoleRouter): void {
           'Schedule and limits',
           'When the function runs, how long it may take, and who can call it.',
           html`<form method="post" action="${functionUrl(f.id)}">
-            <label>Schedule<input name="schedule" class="mono" value="${f.schedule}" placeholder="0 * * * *"><small>Cron, in UTC. Empty for none.</small></label>
-            <div class="fields"><label>Timeout (seconds)<input name="timeout" type="number" min="1" max="900" value="${f.timeout}"></label>
-              <label>Who may run it<input name="execute" value="${JSON.parse(f.execute).join(', ')}" placeholder="any, users, team:ID"><small>Roles, comma-separated. <code>any</code> lets everyone call it, <code>users</code> only signed-in users. Empty means API keys only; API keys always may.</small></label></div>
-            <label>Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${f.deployment_retention}"><small>Days. Older non-active deployments are deleted automatically; 0 keeps every deployment.</small></label>
-            <label class="check"><input type="checkbox" name="enabled" ${f.enabled ? 'checked' : ''}>Enabled</label>
+            <label
+              >Schedule<input name="schedule" class="mono" value="${f.schedule}" placeholder="0 * * * *" /><small>Cron, in UTC. Empty for none.</small></label
+            >
+            <div class="fields">
+              <label>Timeout (seconds)<input name="timeout" type="number" min="1" max="900" value="${f.timeout}" /></label>
+              <label
+                >Who may run it<input name="execute" value="${JSON.parse(f.execute).join(', ')}" placeholder="any, users, team:ID" /><small
+                  >Roles, comma-separated. <code>any</code> lets everyone call it, <code>users</code> only signed-in users. Empty means API keys only; API keys
+                  always may.</small
+                ></label
+              >
+            </div>
+            <label
+              >Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${f.deployment_retention}" /><small
+                >Days. Older non-active deployments are deleted automatically; 0 keeps every deployment.</small
+              ></label
+            >
+            <label class="check"><input type="checkbox" name="enabled" ${f.enabled ? 'checked' : ''} />Enabled</label>
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
           { id: 'function-settings' },
@@ -379,19 +491,27 @@ export function functionPages(router: ConsoleRouter): void {
           'Code',
           'Where the live code comes from and how to reach it over HTTP.',
           html`<ul class="list" id="code-card">
-            <li><span class="subdued">Function ID</span>${copyableId(f.id, 'function-id-label')}</li>
-            <li><span class="subdued">Runtime</span><span class="mono">${f.runtime}</span></li>
-            <li><span class="subdued">Source</span><span>${fromDeployment ? 'Live deployment' : code.dir ? 'Code folder' : html`<span style="color:var(--critical)">None</span>`}</span></li>
-            ${code.dir && !fromDeployment ? html`<li><span class="subdued">Folder</span><span class="mono clip">${code.dir}</span></li>` : ''}
-            <li><span class="subdued">Entry file</span><span class="mono">${code.entrypoint}</span></li>
-            <li><span class="subdued">Function URL</span>${copyableId(ctx.services.functions.url(f), 'function-domain-url', 'Copy function URL')}</li>
-            ${ctx.services.functions.urls(f).slice(1).map((url, i) => html`<li><span class="subdued">Custom domain</span>${copyableId(url, `function-domain-${i}`, 'Copy domain URL')}</li>`)}
-            <li><span class="subdued">HTTP endpoint</span>${copyableId(functionHttpUrl(ctx, f), 'function-http-url', 'Copy function URL')}</li>
-          </ul>
-          <p class="help">${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'} <a href="${functionUrl(f.id)}/deployments">View deployments</a></p>`,
+              <li><span class="subdued">Function ID</span>${copyableId(f.id, 'function-id-label')}</li>
+              <li><span class="subdued">Runtime</span><span class="mono">${f.runtime}</span></li>
+              <li>
+                <span class="subdued">Source</span
+                ><span>${fromDeployment ? 'Live deployment' : code.dir ? 'Code folder' : html`<span style="color:var(--critical)">None</span>`}</span>
+              </li>
+              ${code.dir && !fromDeployment ? html`<li><span class="subdued">Folder</span><span class="mono clip">${code.dir}</span></li>` : ''}
+              <li><span class="subdued">Entry file</span><span class="mono">${code.entrypoint}</span></li>
+              <li><span class="subdued">Function URL</span>${copyableId(ctx.services.functions.url(f), 'function-domain-url', 'Copy function URL')}</li>
+              ${ctx.services.functions
+                .urls(f)
+                .slice(1)
+                .map((url, i) => html`<li><span class="subdued">Custom domain</span>${copyableId(url, `function-domain-${i}`, 'Copy domain URL')}</li>`)}
+              <li><span class="subdued">HTTP endpoint</span>${copyableId(functionHttpUrl(ctx, f), 'function-http-url', 'Copy function URL')}</li>
+            </ul>
+            <p class="help">
+              ${deployments.length ? `${plural(deployments.length, 'deployment')} saved.` : 'No deployments yet.'}
+              <a href="${functionUrl(f.id)}/deployments">View deployments</a>
+            </p>`,
         )}
-        ${gitSection(ctx, { type: 'function', row: f, base: functionUrl(f.id) })}
-        ${domainSettings}
+        ${gitSection(ctx, { type: 'function', row: f, base: functionUrl(f.id) })} ${domainSettings}
         ${settingsSection(
           'Delete function',
           'Permanently removes the function, its deployments, runs and variables. This cannot be undone.',
@@ -401,28 +521,28 @@ export function functionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${FN}/:id`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
+  router.post(`${FN}/:id`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
     const retention = ctx.form.deployment_retention === undefined ? f.deployment_retention : wholeNumber(ctx.form.deployment_retention)
-    ctx.services.functions.update(f.id, {
+    await ctx.services.functions.update(f.id, {
       enabled: checked(ctx.form.enabled),
       schedule: value(ctx.form, 'schedule'),
       timeout: Number(ctx.form.timeout),
       execute: lines(ctx.form.execute),
       deploymentRetention: retention,
     })
-    if (retention !== f.deployment_retention) ctx.services.functions.pruneDeployments()
+    if (retention !== f.deployment_retention) await ctx.services.functions.pruneDeployments()
     return ctx.go(`${functionUrl(f.id)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
   registerDomainRoutes(router, {
     base: `${FN}/:id/domains`,
-    target: ({ ctx, path }) => ({ type: 'function', id: ctx.services.functions.fn(path.id!).id }),
+    target: async ({ ctx, path }) => ({ type: 'function', id: (await ctx.services.functions.fn(path.id!)).id }),
     then: (_route, target) => `${functionUrl(target.id)}/settings`,
   })
 
   router.post(`${FN}/:id/run`, async ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
+    const f = await ctx.services.functions.fn(path.id!)
     const { execution } = await ctx.services.functions.execute(f, { trigger: 'http', method: 'POST', path: '/' }, 'async')
     return ctx.go(`${functionUrl(f.id)}/executions/${execution.id}`, { tone: 'success', text: 'Started' })
   })
@@ -430,44 +550,44 @@ export function functionPages(router: ConsoleRouter): void {
   registerVariableRoutes(router, {
     base: `${FN}/:id/variables`,
     // Looking the function up here also answers 404 for an ID that is not there.
-    scope: ({ ctx, path }) => ctx.services.functions.fn(path.id!).id,
+    scope: async ({ ctx, path }) => (await ctx.services.functions.fn(path.id!)).id,
     store: (ctx) => ctx.services.functions,
     then: (_route, scope) => `${functionUrl(scope)}/variables`,
   })
 
-  router.post(`${FN}/:id/delete`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    ctx.services.functions.remove(f.id)
+  router.post(`${FN}/:id/delete`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
+    await ctx.services.functions.remove(f.id)
     ctx.hub.forget(ctx.currentProject.id, 'function', f.id)
     return ctx.go(FN, { tone: 'success', text: `${f.name} deleted` })
   })
 
   router.post(`${FN}/:id/deployments`, async ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
+    const f = await ctx.services.functions.fn(path.id!)
     const entrypoint = entrypointFrom(ctx)
     const source = codeSource(ctx)
     const d = await deploy(ctx, f, source, entrypoint, value(ctx.form, 'commands'), checked(ctx.form.activate))
     return ctx.go(`${functionUrl(f.id)}/deployments/${d.id}`, { tone: 'success', text: 'Deploying' })
   })
 
-  router.get(`${FN}/:id/deployments/:did`, ({ ctx, path }) => {
-    const f = ctx.services.functions.fn(path.id!)
-    const d = deploymentsOf(ctx).get(f.id, path.did!)
+  router.get(`${FN}/:id/deployments/:did`, async ({ ctx, path }) => {
+    const f = await ctx.services.functions.fn(path.id!)
+    const d = await deploymentsOf(ctx).get(f.id, path.did!)
     return ctx.render(`Deployment · ${f.name}`, 'functions', deploymentView(f, d))
   })
 
-  router.post(`${FN}/:id/deployments/:did/activate`, ({ ctx, path }) => {
-    deploymentsOf(ctx).activate(path.id!, path.did!)
+  router.post(`${FN}/:id/deployments/:did/activate`, async ({ ctx, path }) => {
+    await deploymentsOf(ctx).activate(path.id!, path.did!)
     return ctx.go(`${functionUrl(path.id!)}/deployments`, { tone: 'success', text: 'Deployment is live' })
   })
 
-  router.post(`${FN}/:id/deployments/:did/delete`, ({ ctx, path }) => {
-    deploymentsOf(ctx).remove(path.id!, path.did!)
+  router.post(`${FN}/:id/deployments/:did/delete`, async ({ ctx, path }) => {
+    await deploymentsOf(ctx).remove(path.id!, path.did!)
     return ctx.go(`${functionUrl(path.id!)}/deployments`, { tone: 'success', text: 'Deployment deleted' })
   })
 
-  router.post(`${FN}/:id/deployments/bulk-delete`, ({ ctx, path }) => {
-    const { removed, skipped } = deploymentsOf(ctx).removeMany(path.id!, arrayOf(ctx.form.ids))
+  router.post(`${FN}/:id/deployments/bulk-delete`, async ({ ctx, path }) => {
+    const { removed, skipped } = await deploymentsOf(ctx).removeMany(path.id!, arrayOf(ctx.form.ids))
     if (!removed) return ctx.go(`${functionUrl(path.id!)}/deployments`, { tone: 'warning', text: 'No deployments were deleted.' })
     return ctx.go(`${functionUrl(path.id!)}/deployments`, {
       tone: 'success',
@@ -475,9 +595,9 @@ export function functionPages(router: ConsoleRouter): void {
     })
   })
 
-  router.get(`${FN}/:id/executions/:eid`, ({ ctx, path }) => {
-    const e = ctx.services.functions.execution(path.id!, path.eid!)
-    const f = ctx.services.functions.fn(path.id!)
+  router.get(`${FN}/:id/executions/:eid`, async ({ ctx, path }) => {
+    const e = await ctx.services.functions.execution(path.id!, path.eid!)
+    const f = await ctx.services.functions.fn(path.id!)
     const live = e.status === 'waiting' || e.status === 'processing'
     return ctx.render(
       `Run ${e.id}`,
@@ -489,13 +609,25 @@ export function functionPages(router: ConsoleRouter): void {
           ${stat('Trigger', e.trigger)}
           <div class="stat"><span>Started</span><b style="font-size:14px">${when(e.created_at)}</b></div>
           <div class="stat"><span>Run ID</span><b style="font-size:13px">${copyableId(e.id, 'execution-id-label')}</b></div>
-          ${stat('Response', e.response_status_code || '—')}
-          ${stat('Time', `${e.duration.toFixed(2)}s`)}
+          ${stat('Response', e.response_status_code || '—')} ${stat('Time', `${e.duration.toFixed(2)}s`)}
           ${stat('Request', `${e.request_method} ${e.request_path}`)}
         </div>
-        ${e.errors ? html`<div class="card"><h2>Errors</h2><pre>${e.errors}</pre></div>` : ''}
-        <div class="card"><h2>Logs</h2>${e.logs ? html`<pre>${e.logs}</pre>` : html`<p class="subdued" style="margin:0">${live ? 'Running…' : 'Nothing logged.'}</p>`}</div>
-        <div class="card"><h2>Response body</h2>${e.response_body ? html`<pre>${pretty(e.response_body)}</pre>` : html`<p class="subdued" style="margin:0">Empty.</p>`}</div>
+        ${
+          e.errors
+            ? html`<div class="card">
+                <h2>Errors</h2>
+                <pre>${e.errors}</pre>
+              </div>`
+            : ''
+        }
+        <div class="card">
+          <h2>Logs</h2>
+          ${e.logs ? html`<pre>${e.logs}</pre>` : html`<p class="subdued" style="margin:0">${live ? 'Running…' : 'Nothing logged.'}</p>`}
+        </div>
+        <div class="card">
+          <h2>Response body</h2>
+          ${e.response_body ? html`<pre>${pretty(e.response_body)}</pre>` : html`<p class="subdued" style="margin:0">Empty.</p>`}
+        </div>
       </div>`,
     )
   })

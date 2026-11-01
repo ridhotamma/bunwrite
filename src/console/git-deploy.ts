@@ -6,7 +6,7 @@ import type { ResourceType } from '~/vcs/repositories'
 /** The repository data for `type`/`id`, or null when it has no Git connection. */
 export async function gitDeploySource(ctx: ConsoleContext, type: ResourceType, id: string): Promise<GitDeploySource | null> {
   const project = ctx.projects.get(ctx.currentProject.id)
-  const target = project ? ctx.hub.target(project, type, id) : null
+  const target = project ? await ctx.hub.target(project, type, id) : null
   if (!target) return null
   return {
     repository: target.link.provider_repository_name,

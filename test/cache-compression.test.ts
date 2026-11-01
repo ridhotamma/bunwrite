@@ -20,7 +20,12 @@ const api = (path: string, headers: Record<string, string> = {}) =>
   fetch(`${server.endpoint}${path}`, { headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY, ...headers }, decompress: false } as RequestInit)
 
 async function form(path: string, fields: Record<string, string>) {
-  return fetch(`${base}${path}`, { method: 'POST', body: new URLSearchParams(fields), redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' } })
+  return fetch(`${base}${path}`, {
+    method: 'POST',
+    body: new URLSearchParams(fields),
+    redirect: 'manual',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+  })
 }
 
 beforeAll(async () => {
@@ -32,11 +37,37 @@ beforeAll(async () => {
   cookie = `${login.headers.get('set-cookie')!.split(';')[0]}; console_project=${PROJECT}`
 
   const s = server.services.storage
-  s.saveBucket({ id: 'cache', name: 'Cache', enabled: true, fileSecurity: false, permissions: [], maximumFileSize: 10_000_000, allowedFileExtensions: [], transformations: true }, true)
+  await s.saveBucket(
+    {
+      id: 'cache',
+      name: 'Cache',
+      enabled: true,
+      fileSecurity: false,
+      permissions: [],
+      maximumFileSize: 10_000_000,
+      allowedFileExtensions: [],
+      transformations: true,
+    },
+    true,
+  )
   const text = 'hello compression '.repeat(500)
-  await s.createFile(keyCaller(), 'cache', { fileId: 'notes', file: new File([text], 'notes.txt', { type: 'text/plain' }), permissions: [], contentRange: null, uploadId: null })
-  const png = await sharp({ create: { width: 64, height: 64, channels: 4, background: { r: 10, g: 120, b: 200, alpha: 1 } } }).png().toBuffer()
-  await s.createFile(keyCaller(), 'cache', { fileId: 'logo', file: new File([png], 'logo.png', { type: 'image/png' }), permissions: [], contentRange: null, uploadId: null })
+  await s.createFile(keyCaller(), 'cache', {
+    fileId: 'notes',
+    file: new File([text], 'notes.txt', { type: 'text/plain' }),
+    permissions: [],
+    contentRange: null,
+    uploadId: null,
+  })
+  const png = await sharp({ create: { width: 64, height: 64, channels: 4, background: { r: 10, g: 120, b: 200, alpha: 1 } } })
+    .png()
+    .toBuffer()
+  await s.createFile(keyCaller(), 'cache', {
+    fileId: 'logo',
+    file: new File([png], 'logo.png', { type: 'image/png' }),
+    permissions: [],
+    contentRange: null,
+    uploadId: null,
+  })
 })
 
 afterAll(() => {

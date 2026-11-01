@@ -11,7 +11,8 @@ import type { Caller } from '~/auth/caller'
 import { assertCallerScope } from '~/auth/caller'
 import { aggregatePermissions, grants, parsePermission, type PermissionType } from '~/auth/permissions'
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
+import { uniqueViolation } from '~/db/driver'
 import type { DocumentStore } from '~/documents/store'
 import { isCompressible } from '~/lib/compress'
 import { now } from '~/lib/datetime'
@@ -107,8 +108,20 @@ const FILES: Collection = (() => {
     ] as const
   ).map(([key, type]) => normalizeAttribute({ key, type, size: 1_000_000 }))
   return {
-    seq: 0, databaseId: '', databaseSeq: 0, id: 'files', name: 'files', enabled: true, documentSecurity: false,
-    permissions: [], attributes, indexes: [], createdAt: '', updatedAt: '', table: 'v_files', permsTable: '',
+    seq: 0,
+    databaseId: '',
+    databaseSeq: 0,
+    id: 'files',
+    name: 'files',
+    enabled: true,
+    documentSecurity: false,
+    permissions: [],
+    attributes,
+    indexes: [],
+    createdAt: '',
+    updatedAt: '',
+    table: 'v_files',
+    permsTable: '',
     attributeMap: new Map(attributes.map((a) => [a.key, a])),
   }
 })()
@@ -179,17 +192,13 @@ export interface UploadInput {
 
 export class StorageService {
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private store: DocumentStore,
   ) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  bucket(id: string, privileged: boolean): BucketRow {
-    const b = this.sql.query<BucketRow, [string]>('SELECT * FROM _buckets WHERE id = ?').get(id)
+  async bucket(id: string, privileged: boolean): Promise<BucketRow> {
+    const b = await this.db.driver.get<BucketRow>('SELECT * FROM _buckets WHERE id = ?', [id])
     if (!b || (!b.enabled && !privileged)) throw err('storage_bucket_not_found')
     return b
   }
@@ -199,7 +208,7 @@ export class StorageService {
    * kept as set (so the CLI sees no drift) but files are stored as uploaded.
    * Left out on an update, they keep their current value.
    */
-  saveBucket(
+  async saveBucket(
     input: {
       id: string
       name: string
@@ -214,14 +223,15 @@ export class StorageService {
       antivirus?: boolean
     },
     create: boolean,
-  ): BucketRow {
+  ): Promise<BucketRow> {
     if (create && !isValidId(input.id)) throw err('general_argument_invalid', 'Bucket ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
-    if (!Number.isInteger(input.maximumFileSize) || input.maximumFileSize < 1) throw err('general_argument_invalid', 'Maximum file size must be a positive number of bytes.')
+    if (!Number.isInteger(input.maximumFileSize) || input.maximumFileSize < 1)
+      throw err('general_argument_invalid', 'Maximum file size must be a positive number of bytes.')
     if (input.compression !== undefined && !['none', 'gzip', 'zstd'].includes(input.compression)) {
       throw err('general_argument_invalid', 'Invalid `compression` param: Value must be one of (none, gzip, zstd)')
     }
     const stamp = now()
-    const current = create ? null : this.bucket(input.id, true)
+    const current = create ? null : await this.bucket(input.id, true)
     const values = [
       input.name || input.id,
       input.enabled ? 1 : 0,
@@ -235,53 +245,53 @@ export class StorageService {
       (input.antivirus ?? Boolean(current?.antivirus)) ? 1 : 0,
     ]
     if (create) {
-      if (this.sql.query('SELECT 1 FROM _buckets WHERE id = ?').get(input.id)) throw err('storage_bucket_already_exists')
-      this.sql
-        .query(
+      if (await this.db.driver.get('SELECT 1 FROM _buckets WHERE id = ?', [input.id])) throw err('storage_bucket_already_exists')
+      try {
+        await this.db.driver.run(
           'INSERT INTO _buckets (name, enabled, file_security, permissions, maximum_file_size, allowed_file_extensions, transformations, compression, encryption, antivirus, created_at, updated_at, id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [...values, stamp, stamp, input.id],
         )
-        .run(...values, stamp, stamp, input.id)
+      } catch (error) {
+        if (uniqueViolation(error)) throw err('storage_bucket_already_exists')
+        throw error
+      }
     } else {
-      this.sql
-        .query(
-          'UPDATE _buckets SET name = ?, enabled = ?, file_security = ?, permissions = ?, maximum_file_size = ?, allowed_file_extensions = ?, transformations = ?, compression = ?, encryption = ?, antivirus = ?, updated_at = ? WHERE id = ?',
-        )
-        .run(...values, stamp, input.id)
+      await this.db.driver.run(
+        'UPDATE _buckets SET name = ?, enabled = ?, file_security = ?, permissions = ?, maximum_file_size = ?, allowed_file_extensions = ?, transformations = ?, compression = ?, encryption = ?, antivirus = ?, updated_at = ? WHERE id = ?',
+        [...values, stamp, input.id],
+      )
     }
     return this.bucket(input.id, true)
   }
 
   async deleteBucket(id: string): Promise<void> {
-    this.bucket(id, true)
-    this.sql.transaction(() => {
-      this.sql.query('DELETE FROM _files WHERE bucket_id = ?').run(id)
-      this.sql.query('DELETE FROM _buckets WHERE id = ?').run(id)
-    }).immediate()
+    await this.bucket(id, true)
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run('DELETE FROM _files WHERE bucket_id = ?', [id])
+      await tx.run('DELETE FROM _buckets WHERE id = ?', [id])
+    })
     if (this.config.s3.enabled) await this.deletePrefix(`${this.prefix() ? `${this.prefix()}/` : ''}${id}/`)
     else rmSync(join(this.config.storagePath, id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.previews', id), { recursive: true, force: true })
     rmSync(join(this.config.storagePath, '.uploads', id), { recursive: true, force: true })
   }
 
-  buckets(): BucketRow[] {
-    return this.sql.query<BucketRow, []>('SELECT * FROM _buckets ORDER BY seq').all()
+  async buckets(): Promise<BucketRow[]> {
+    return this.db.driver.all<BucketRow>('SELECT * FROM _buckets ORDER BY seq')
   }
 
   /** File count and total original bytes per bucket. */
-  usageByBucket(): Map<string, { files: number; bytes: number }> {
-    const rows = this.sql
-      .query<{ bucket_id: string; files: number; bytes: number }, []>(
-        'SELECT bucket_id, count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files GROUP BY bucket_id',
-      )
-      .all()
+  async usageByBucket(): Promise<Map<string, { files: number; bytes: number }>> {
+    const rows = await this.db.driver.all<{ bucket_id: string; files: number; bytes: number }>(
+      'SELECT bucket_id, count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files GROUP BY bucket_id',
+    )
     return new Map(rows.map((row) => [row.bucket_id, { files: row.files, bytes: row.bytes }]))
   }
 
   /** File count and total original bytes across all buckets. */
-  totals(): { files: number; bytes: number } {
-    return this.sql
-      .query<{ files: number; bytes: number }, []>('SELECT count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files')
-      .get() as { files: number; bytes: number }
+  async totals(): Promise<{ files: number; bytes: number }> {
+    const row = await this.db.driver.get<{ files: number; bytes: number }>('SELECT count(*) AS files, coalesce(sum(size_original), 0) AS bytes FROM _files')
+    return { files: Number(row?.files ?? 0), bytes: Number(row?.bytes ?? 0) }
   }
 
   path(bucketId: string, fileId: string): string {
@@ -312,8 +322,8 @@ export class StorageService {
     })
   }
 
-  private row(bucketId: string, fileId: string): FileRow | null {
-    return this.sql.query<FileRow, [string, string]>('SELECT * FROM _files WHERE bucket_id = ? AND id = ?').get(bucketId, fileId) ?? null
+  private async row(bucketId: string, fileId: string): Promise<FileRow | null> {
+    return this.db.driver.get<FileRow>('SELECT * FROM _files WHERE bucket_id = ? AND id = ?', [bucketId, fileId])
   }
 
   private can(caller: Caller, bucket: BucketRow, file: FileRow, type: PermissionType): boolean {
@@ -322,10 +332,10 @@ export class StorageService {
   }
 
   /** A file the caller may act on; unreadable files look missing. */
-  file(caller: Caller, bucketId: string, fileId: string, type: PermissionType = 'read', complete = false): { bucket: BucketRow; file: FileRow } {
+  async file(caller: Caller, bucketId: string, fileId: string, type: PermissionType = 'read', complete = false): Promise<{ bucket: BucketRow; file: FileRow }> {
     assertCallerScope(caller, type === 'read' ? 'files.read' : 'files.write')
-    const bucket = this.bucket(bucketId, caller.privileged)
-    const file = this.row(bucketId, fileId)
+    const bucket = await this.bucket(bucketId, caller.privileged)
+    const file = await this.row(bucketId, fileId)
     if (!file || (complete && file.chunks_uploaded < file.chunks_total)) throw err('storage_file_not_found')
     if (!this.can(caller, bucket, file, 'read') && !caller.privileged) throw err('storage_file_not_found')
     if (type !== 'read' && !this.can(caller, bucket, file, type)) throw err('user_unauthorized')
@@ -334,16 +344,14 @@ export class StorageService {
 
   async listFiles(caller: Caller, bucketId: string, queries: unknown[], search?: string, includeTotal = true) {
     assertCallerScope(caller, 'files.read')
-    const bucket = this.bucket(bucketId, caller.privileged)
+    const bucket = await this.bucket(bucketId, caller.privileged)
     const scope = [JSON.stringify({ method: 'equal', attribute: 'bucketId', values: [bucketId] })]
     const { total, seqs } = await listSeqs(this.store, FILES, queries, {
       scope,
       includeTotal,
       search: search ? { term: search, fields: ['name', '$id'] } : undefined,
     })
-    const rows = seqs.length
-      ? (this.sql.query(`SELECT * FROM _files WHERE seq IN (${seqs.map(() => '?').join(', ')})`).all(...seqs) as FileRow[])
-      : []
+    const rows = seqs.length ? await this.db.driver.all<FileRow>(`SELECT * FROM _files WHERE seq IN (${seqs.map(() => '?').join(', ')})`, seqs) : []
     const bySeq = new Map(rows.map((r) => [r.seq, r]))
     let files = seqs.map((s) => bySeq.get(s)!).filter(Boolean)
     if (!caller.privileged && !grants(JSON.parse(bucket.permissions), 'read', caller.roles)) {
@@ -372,7 +380,7 @@ export class StorageService {
 
   async createFile(caller: Caller, bucketId: string, input: UploadInput) {
     assertCallerScope(caller, 'files.write')
-    const bucket = this.bucket(bucketId, caller.privileged)
+    const bucket = await this.bucket(bucketId, caller.privileged)
     if (!caller.privileged && !grants(JSON.parse(bucket.permissions), 'create', caller.roles)) throw err('user_unauthorized')
     const file = input.file
     if (!(file instanceof Blob)) throw err('storage_invalid_file')
@@ -396,7 +404,7 @@ export class StorageService {
 
     const fileId = input.uploadId && start > 0 ? input.uploadId : resolveId(input.fileId, 'File ID')
     if (input.uploadId && !isValidId(input.uploadId)) throw err('storage_invalid_appwrite_id')
-    const existing = this.row(bucketId, fileId)
+    const existing = await this.row(bucketId, fileId)
     const chunked = total > file.size
     const stamp = now()
 
@@ -436,40 +444,47 @@ export class StorageService {
     }
 
     if (existing) {
-      this.sql
-        .query('UPDATE _files SET chunks_uploaded = ?, signature = ?, size_original = ?, updated_at = ? WHERE seq = ?')
-        .run(done ? chunksTotal : uploaded, signature, total, stamp, existing.seq)
+      await this.db.driver.run('UPDATE _files SET chunks_uploaded = ?, signature = ?, size_original = ?, updated_at = ? WHERE seq = ?', [
+        done ? chunksTotal : uploaded,
+        signature,
+        total,
+        stamp,
+        existing.seq,
+      ])
     } else {
-      this.sql
-        .query(
-          `INSERT INTO _files (id, bucket_id, name, permissions, signature, mime_type, size_original, chunks_total, chunks_uploaded, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(fileId, bucketId, name, JSON.stringify(permissions), signature, mime, total, chunksTotal, done ? chunksTotal : 1, stamp, stamp)
+      await this.db.driver.run(
+        `INSERT INTO _files (id, bucket_id, name, permissions, signature, mime_type, size_original, chunks_total, chunks_uploaded, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [fileId, bucketId, name, JSON.stringify(permissions), signature, mime, total, chunksTotal, done ? chunksTotal : 1, stamp, stamp],
+      )
     }
-    return fileModel(this.row(bucketId, fileId)!, bucket)
+    return fileModel((await this.row(bucketId, fileId))!, bucket)
   }
 
-  updateFile(caller: Caller, bucketId: string, fileId: string, name: unknown, permissions: unknown) {
-    const { bucket, file } = this.file(caller, bucketId, fileId, 'update')
+  async updateFile(caller: Caller, bucketId: string, fileId: string, name: unknown, permissions: unknown) {
+    const { bucket, file } = await this.file(caller, bucketId, fileId, 'update')
     const fields: Record<string, string> = {}
     if (typeof name === 'string' && name) fields.name = name
     if (permissions !== undefined && permissions !== null) fields.permissions = JSON.stringify(this.permissionsFor(caller, permissions))
     const keys = Object.keys(fields)
     if (keys.length) {
-      this.sql.query(`UPDATE _files SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE seq = ?`).run(...keys.map((k) => fields[k]!), now(), file.seq)
+      await this.db.driver.run(`UPDATE _files SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE seq = ?`, [
+        ...keys.map((k) => fields[k]!),
+        now(),
+        file.seq,
+      ])
     }
-    return fileModel(this.row(bucketId, fileId)!, bucket)
+    return fileModel((await this.row(bucketId, fileId))!, bucket)
   }
 
   async deleteFile(caller: Caller, bucketId: string, fileId: string): Promise<void> {
-    const { file } = this.file(caller, bucketId, fileId, 'delete')
+    const { file } = await this.file(caller, bucketId, fileId, 'delete')
     if (this.config.s3.enabled) await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucketId, fileId)).delete())
     for (const p of [this.path(bucketId, fileId), `${this.path(bucketId, fileId)}.part`]) rmSync(p, { force: true })
     const staging = this.stagingPath(bucketId, fileId)
     for (const p of [staging, `${staging}.part`]) rmSync(p, { force: true })
     rmSync(join(this.config.storagePath, '.previews', bucketId, fileId), { recursive: true, force: true })
-    this.sql.query('DELETE FROM _files WHERE seq = ?').run(file.seq)
+    await this.db.driver.run('DELETE FROM _files WHERE seq = ?', [file.seq])
   }
 
   /** Serve the bytes, honouring a Range header. */
@@ -554,7 +569,10 @@ export class StorageService {
     const format = options.format
     const key = previewKey(options)
     const cached = join(this.config.storagePath, '.previews', bucket.id, file.id, key)
-    const caching = cacheHeaders(this.config.cache.previewMaxAge, `"${fileEtag(file).slice(1, -1)}-${createHash('sha1').update(key).digest('hex').slice(0, 12)}"`)
+    const caching = cacheHeaders(
+      this.config.cache.previewMaxAge,
+      `"${fileEtag(file).slice(1, -1)}-${createHash('sha1').update(key).digest('hex').slice(0, 12)}"`,
+    )
     const unchanged = notModified(request, caching)
     if (unchanged) return unchanged
     if (!existsSync(cached)) {
@@ -567,7 +585,9 @@ export class StorageService {
       let job = this.rendering.get(cached)
       if (!job) {
         job = this.withPreviewSlot(async () => {
-          const source = this.config.s3.enabled ? await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes()) : this.path(bucket.id, file.id)
+          const source = this.config.s3.enabled
+            ? await s3Call(this.config.s3, () => s3Client(this.config.s3).file(this.objectKey(bucket.id, file.id)).bytes())
+            : this.path(bucket.id, file.id)
           const out = await renderPreview(sharp, source, options)
           mkdirSync(dirname(cached), { recursive: true })
           const tmp = `${cached}.${process.pid}.${Date.now()}.tmp`

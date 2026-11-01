@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, write
 import { dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
 
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { chunkRange, chunksFor, liftSingleFolder, packFolder, unpackArchive, writeChunk } from '~/functions/deployments'
 import { removeTree } from '~/functions/sandbox'
@@ -125,7 +125,11 @@ export const SITE_IN_PROGRESS = ['waiting', 'processing', 'building']
 
 /** A relative folder or file inside the site: no `..`, no leading slash. */
 function relativePath(value: string, what: string): string {
-  const cleaned = value.trim().replace(/\\/g, '/').replace(/^\.?\/+/, '').replace(/\/+$/, '')
+  const cleaned = value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.?\/+/, '')
+    .replace(/\/+$/, '')
   if (!cleaned || cleaned === '.') return ''
   if (isAbsolute(cleaned) || cleaned.split('/').includes('..')) throw err('general_argument_invalid', `${what} must be a path inside the site.`)
   return cleaned
@@ -159,7 +163,7 @@ export class SiteService {
   private byId: Map<string, SiteRow> | null = null
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private proxy: ProxyService,
     private variables: VariablesService,
@@ -171,25 +175,33 @@ export class SiteService {
     )
   }
 
-  private get sql() {
-    return this.db.sqlite
+  /** Load the site cache. SQLite loads lazily; a network backend awaits this at boot. */
+  async ready(): Promise<void> {
+    const rows = await this.db.driver.all<SiteRow>('SELECT * FROM _sites ORDER BY seq')
+    this.byId = new Map(rows.map((row) => [row.id, row]))
   }
 
   private cache() {
     if (!this.byId) {
-      const rows = this.sql.query<SiteRow, []>('SELECT * FROM _sites ORDER BY seq').all()
-      this.byId = new Map(rows.map((row) => [row.id, row]))
+      // SQLite keeps its synchronous lazy load; a network backend must have
+      // awaited ready() before serving requests.
+      const sqlite = this.db.sqlite
+      if (sqlite)
+        this.byId = new Map(
+          sqlite
+            .query<SiteRow, []>('SELECT * FROM _sites ORDER BY seq')
+            .all()
+            .map((row) => [row.id, row]),
+        )
+      else throw new Error('Sites are not loaded yet. Await sites.ready() before serving requests.')
     }
     return { byId: this.byId }
   }
 
-  private changed() {
+  /** Drop the cached sites, then reload them from the database. */
+  async reload(): Promise<void> {
     this.byId = null
-  }
-
-  /** Drop the cached sites after the database was replaced. */
-  reload(): void {
-    this.changed()
+    await this.ready()
   }
 
   // ---- Sites ----
@@ -209,8 +221,8 @@ export class SiteService {
   }
 
   /** The site a request's Host header points at, if it is one of this project's. */
-  byHost(host: string): SiteRow | null {
-    return this.resolveHost(host)?.site ?? null
+  async byHost(host: string): Promise<SiteRow | null> {
+    return (await this.resolveHost(host))?.site ?? null
   }
 
   /**
@@ -218,7 +230,7 @@ export class SiteService {
    * (`<siteId>--git-<branch>` or `<siteId>--<deploymentId>`), the deployment
    * it shows instead of the live one.
    */
-  resolveHost(host: string): { site: SiteRow; deploymentId: string | null } | null {
+  async resolveHost(host: string): Promise<{ site: SiteRow; deploymentId: string | null } | null> {
     const name = hostOf(host)
     const custom = this.proxy.byDomain(name)
     if (custom?.resource_type === 'site') return { site: this.site(custom.resource_id), deploymentId: null }
@@ -232,10 +244,16 @@ export class SiteService {
     const site = preview ? this.cache().byId.get(preview.siteId) : undefined
     if (!preview || !site) return null
     if (preview.branchSlug) {
-      const row = this.sql.query<{ deployment_id: string }, [string, string]>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?').get(site.id, preview.branchSlug)
+      const row = await this.db.driver.get<{ deployment_id: string }>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?', [
+        site.id,
+        preview.branchSlug,
+      ])
       return row ? { site, deploymentId: row.deployment_id } : null
     }
-    const d = this.sql.query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND id = ? AND status = 'ready'").get(site.id, preview.deploymentId!)
+    const d = await this.db.driver.get<{ id: string }>("SELECT id FROM _site_deployments WHERE site_id = ? AND id = ? AND status = 'ready'", [
+      site.id,
+      preview.deploymentId!,
+    ])
     return d ? { site, deploymentId: d.id } : null
   }
 
@@ -252,46 +270,55 @@ export class SiteService {
   }
 
   /** Branch previews of a site, newest first. */
-  branches(siteId: string): { branch: string; slug: string; deployment_id: string; updated_at: string }[] {
-    return this.sql
-      .query<{ branch: string; slug: string; deployment_id: string; updated_at: string }, [string]>('SELECT branch, slug, deployment_id, updated_at FROM _site_branches WHERE site_id = ? ORDER BY updated_at DESC')
-      .all(siteId)
+  async branches(siteId: string): Promise<{ branch: string; slug: string; deployment_id: string; updated_at: string }[]> {
+    return this.db.driver.all<{ branch: string; slug: string; deployment_id: string; updated_at: string }>(
+      'SELECT branch, slug, deployment_id, updated_at FROM _site_branches WHERE site_id = ? ORDER BY updated_at DESC',
+      [siteId],
+    )
   }
 
   /** Point a branch's preview host at a ready deployment, and drop the build it showed before. */
-  setBranchPreview(siteId: string, branch: string, deploymentId: string): void {
+  async setBranchPreview(siteId: string, branch: string, deploymentId: string): Promise<void> {
     const site = this.site(siteId)
     const slug = branchSlug(site.id, branch)
-    const before = this.sql.query<{ deployment_id: string }, [string, string]>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?').get(site.id, slug)
+    const before = await this.db.driver.get<{ deployment_id: string }>('SELECT deployment_id FROM _site_branches WHERE site_id = ? AND slug = ?', [
+      site.id,
+      slug,
+    ])
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _site_branches (site_id, branch, slug, deployment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(site_id, slug) DO UPDATE SET branch = excluded.branch, deployment_id = excluded.deployment_id, updated_at = excluded.updated_at`,
-      )
-      .run(site.id, branch, slug, deploymentId, stamp, stamp)
-    if (before && before.deployment_id !== deploymentId) this.dropPreview(site, before.deployment_id)
+    await this.db.driver.run(
+      `INSERT INTO _site_branches (site_id, branch, slug, deployment_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(site_id, slug) DO UPDATE SET branch = excluded.branch, deployment_id = excluded.deployment_id, updated_at = excluded.updated_at`,
+      [site.id, branch, slug, deploymentId, stamp, stamp],
+    )
+    if (before && before.deployment_id !== deploymentId) await this.dropPreview(site, before.deployment_id)
   }
 
   /** A branch is gone (deleted, or its pull request closed): drop its preview host and builds. */
-  removeBranch(siteId: string, branch: string): number {
+  async removeBranch(siteId: string, branch: string): Promise<number> {
     const site = this.site(siteId)
-    this.sql.query('DELETE FROM _site_branches WHERE site_id = ? AND slug = ?').run(site.id, branchSlug(site.id, branch))
+    await this.db.driver.run('DELETE FROM _site_branches WHERE site_id = ? AND slug = ?', [site.id, branchSlug(site.id, branch)])
     const pr = /^pr-(\d+)$/.exec(branch)
     const rows = pr
-      ? this.sql.query<{ id: string }, [string, number]>("SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = ?").all(site.id, Number(pr[1]))
-      : this.sql.query<{ id: string }, [string, string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = 0 AND provider_branch = ?").all(site.id, branch)
+      ? await this.db.driver.all<{ id: string }>(
+          "SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = ?",
+          [site.id, Number(pr[1])],
+        )
+      : await this.db.driver.all<{ id: string }>(
+          "SELECT id FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND activate = 0 AND provider_pull_request = 0 AND provider_branch = ?",
+          [site.id, branch],
+        )
     let removed = 0
-    for (const { id } of rows) if (this.dropPreview(site, id)) removed++
+    for (const { id } of rows) if (await this.dropPreview(site, id)) removed++
     return removed
   }
 
   /** Delete a preview deployment that is not live and no branch shows. */
-  private dropPreview(site: SiteRow, deploymentId: string): boolean {
+  private async dropPreview(site: SiteRow, deploymentId: string): Promise<boolean> {
     if (this.site(site.id).deployment_id === deploymentId) return false
-    if (this.sql.query('SELECT 1 FROM _site_branches WHERE site_id = ? AND deployment_id = ?').get(site.id, deploymentId)) return false
+    if (await this.db.driver.get('SELECT 1 FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [site.id, deploymentId])) return false
     this.ssr.stopDeployment(site.id, deploymentId)
-    this.sql.query('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?').run(deploymentId, site.id)
+    await this.db.driver.run('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?', [deploymentId, site.id])
     removeTree(this.config.functionsSandbox, sitesDir(this.config, site.id, deploymentId))
     return true
   }
@@ -352,41 +379,75 @@ export class SiteService {
     }
   }
 
-  create(id: string, input: SiteSettings): SiteRow {
+  async create(id: string, input: SiteSettings): Promise<SiteRow> {
     if (!SITE_ID.test(id)) {
-      throw err('general_argument_invalid', 'Site ID: up to 36 lowercase letters, digits and hyphens, starting and ending with a letter or digit. It becomes the subdomain.')
+      throw err(
+        'general_argument_invalid',
+        'Site ID: up to 36 lowercase letters, digits and hyphens, starting and ending with a letter or digit. It becomes the subdomain.',
+      )
     }
     if (RESERVED_IDS.has(id)) throw err('general_argument_invalid', `The site ID "${id}" is reserved.`)
     const s = this.clean(input)
     this.assertUnique(id)
     this.proxy.assertDefaultHost('site', id)
     const stamp = now()
-    this.sql.transaction(() => {
-      this.sql
-        .query(
-          `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, prune_mode, deployment_retention, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(id, s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, stamp, stamp)
-      this.proxy.set('site', id, s.domains)
-    }).immediate()
-    this.changed()
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run(
+        `INSERT INTO _sites (id, name, enabled, framework, output_directory, fallback_file, domain, api_function_id, install_command, build_command, start_command, build_runtime, adapter, prune_mode, deployment_retention, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          s.name,
+          s.enabled ? 1 : 0,
+          s.framework,
+          s.outputDirectory,
+          s.fallbackFile,
+          s.domains[0] ?? '',
+          s.apiFunctionId,
+          s.installCommand,
+          s.buildCommand,
+          s.startCommand,
+          s.buildRuntime,
+          s.adapter,
+          s.pruneMode,
+          s.deploymentRetention ?? 0,
+          stamp,
+          stamp,
+        ],
+      )
+    })
+    await this.proxy.set('site', id, s.domains)
+    await this.reload()
     return this.site(id)
   }
 
-  update(id: string, input: SiteSettings): SiteRow {
+  async update(id: string, input: SiteSettings): Promise<SiteRow> {
     const before = this.site(id)
     const s = this.clean(input, { type: 'site', id })
-    this.sql.transaction(() => {
-      this.sql
-        .query(
-          `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
-           install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, prune_mode = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
-        )
-        .run(s.name, s.enabled ? 1 : 0, s.framework, s.outputDirectory, s.fallbackFile, s.domains[0] ?? '', s.apiFunctionId, s.installCommand, s.buildCommand, s.startCommand, s.buildRuntime, s.adapter, s.pruneMode, s.deploymentRetention ?? 0, now(), id)
-      this.proxy.set('site', id, s.domains)
-    }).immediate()
-    this.changed()
+    await this.db.driver.run(
+      `UPDATE _sites SET name = ?, enabled = ?, framework = ?, output_directory = ?, fallback_file = ?, domain = ?, api_function_id = ?,
+       install_command = ?, build_command = ?, start_command = ?, build_runtime = ?, adapter = ?, prune_mode = ?, deployment_retention = ?, updated_at = ? WHERE id = ?`,
+      [
+        s.name,
+        s.enabled ? 1 : 0,
+        s.framework,
+        s.outputDirectory,
+        s.fallbackFile,
+        s.domains[0] ?? '',
+        s.apiFunctionId,
+        s.installCommand,
+        s.buildCommand,
+        s.startCommand,
+        s.buildRuntime,
+        s.adapter,
+        s.pruneMode,
+        s.deploymentRetention ?? 0,
+        now(),
+        id,
+      ],
+    )
+    await this.proxy.set('site', id, s.domains)
+    await this.reload()
     // A different adapter, folder or on/off state changes how the live app runs.
     // Start commands are snapshotted per deployment, so changing one alone does
     // not disturb the app that is already serving.
@@ -395,12 +456,21 @@ export class SiteService {
   }
 
   /** Connect the site to a repository, or disconnect it with NO_PROVIDER. */
-  setProvider(id: string, provider: ProviderSettings): SiteRow {
+  async setProvider(id: string, provider: ProviderSettings): Promise<SiteRow> {
     this.site(id)
-    this.sql
-      .query('UPDATE _sites SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?')
-      .run(provider.installationId, provider.providerRepositoryId, provider.providerBranch, provider.providerRootDirectory, provider.providerSilentMode ? 1 : 0, now(), id)
-    this.changed()
+    await this.db.driver.run(
+      'UPDATE _sites SET installation_id = ?, provider_repository_id = ?, provider_branch = ?, provider_root_directory = ?, provider_silent_mode = ?, updated_at = ? WHERE id = ?',
+      [
+        provider.installationId,
+        provider.providerRepositoryId,
+        provider.providerBranch,
+        provider.providerRootDirectory,
+        provider.providerSilentMode ? 1 : 0,
+        now(),
+        id,
+      ],
+    )
+    await this.reload()
     return this.site(id)
   }
 
@@ -423,18 +493,18 @@ export class SiteService {
     }
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
     this.site(id)
     this.ssr.stopSite(id)
-    this.sql.transaction(() => {
-      this.proxy.removeFor('site', id)
-      this.sql.query('DELETE FROM _site_deployments WHERE site_id = ?').run(id)
-      this.sql.query('DELETE FROM _site_branches WHERE site_id = ?').run(id)
-      this.sql.query('DELETE FROM _sites WHERE id = ?').run(id)
-    }).immediate()
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run('DELETE FROM _site_deployments WHERE site_id = ?', [id])
+      await tx.run('DELETE FROM _site_branches WHERE site_id = ?', [id])
+      await tx.run('DELETE FROM _sites WHERE id = ?', [id])
+    })
+    await this.proxy.removeFor('site', id)
     // Best-effort cleanup: the site row is already gone and these rows are unreachable.
     void this.variables.removeSite(id).catch((error) => console.error('[sites] could not remove variables:', error))
-    this.changed()
+    await this.reload()
     // A request could have started the old app between the first stop and here.
     this.ssr.forget(id)
     removeTree(this.config.functionsSandbox, sitesDir(this.config, id))
@@ -454,13 +524,11 @@ export class SiteService {
 
   /** The live SSR app, when the deployment has a start command. */
   /** The live SSR app, or with `deploymentId` a preview's app. */
-  private ssrTarget(siteId: string, deploymentId?: string | null): SsrTarget | null {
+  private async ssrTarget(siteId: string, deploymentId?: string | null): Promise<SsrTarget | null> {
     const site = this.cache().byId.get(siteId)
     const id = deploymentId || site?.deployment_id
     if (!site || !site.enabled || site.adapter !== 'ssr' || !id) return null
-    const deployment = this.sql
-      .query<SiteDeploymentRow, [string, string]>('SELECT * FROM _site_deployments WHERE id = ? AND site_id = ?')
-      .get(id, site.id)
+    const deployment = await this.db.driver.get<SiteDeploymentRow>('SELECT * FROM _site_deployments WHERE id = ? AND site_id = ?', [id, site.id])
     if (!deployment || deployment.status !== 'ready') return null
     const command = deployment.start_command.trim()
     if (!command) return null
@@ -478,42 +546,54 @@ export class SiteService {
 
   // ---- Deployments ----
 
-  deployment(siteId: string, id: string): SiteDeploymentRow {
-    const row = this.sql.query<SiteDeploymentRow, [string, string]>('SELECT * FROM _site_deployments WHERE id = ? AND site_id = ?').get(id, siteId)
+  async deployment(siteId: string, id: string): Promise<SiteDeploymentRow> {
+    const row = await this.db.driver.get<SiteDeploymentRow>('SELECT * FROM _site_deployments WHERE id = ? AND site_id = ?', [id, siteId])
     if (!row) throw err('deployment_not_found')
     return row
   }
 
-  deployments(siteId: string): SiteDeploymentRow[] {
-    return this.sql.query<SiteDeploymentRow, [string]>('SELECT * FROM _site_deployments WHERE site_id = ? ORDER BY seq DESC').all(siteId)
+  async deployments(siteId: string): Promise<SiteDeploymentRow[]> {
+    return this.db.driver.all<SiteDeploymentRow>('SELECT * FROM _site_deployments WHERE site_id = ? ORDER BY seq DESC', [siteId])
   }
 
   /** The newest Git build of a branch, or of a fork's pull request when `pullRequest` is set. */
-  latestForBranch(siteId: string, branch: string, pullRequest = 0): SiteDeploymentRow | null {
+  async latestForBranch(siteId: string, branch: string, pullRequest = 0): Promise<SiteDeploymentRow | null> {
     return pullRequest
-      ? this.sql.query<SiteDeploymentRow, [string, number]>("SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1").get(siteId, pullRequest)
-      : this.sql
-          .query<SiteDeploymentRow, [string, string]>("SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1")
-          .get(siteId, branch)
+      ? this.db.driver.get<SiteDeploymentRow>(
+          "SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1",
+          [siteId, pullRequest],
+        )
+      : this.db.driver.get<SiteDeploymentRow>(
+          "SELECT * FROM _site_deployments WHERE site_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1",
+          [siteId, branch],
+        )
   }
 
-  latest(siteId: string): SiteDeploymentRow | null {
-    return this.sql.query<SiteDeploymentRow, [string]>('SELECT * FROM _site_deployments WHERE site_id = ? ORDER BY seq DESC LIMIT 1').get(siteId)
+  async latest(siteId: string): Promise<SiteDeploymentRow | null> {
+    return this.db.driver.get<SiteDeploymentRow>('SELECT * FROM _site_deployments WHERE site_id = ? ORDER BY seq DESC LIMIT 1', [siteId])
   }
 
   private archivePath(siteId: string, id: string) {
     return join(sitesDir(this.config, siteId), `${id}.upload`)
   }
 
-  private insert(siteId: string, id: string, status: string, size: number, activate: boolean, chunks: number, uploaded: number, startCommand: string): void {
+  private async insert(
+    siteId: string,
+    id: string,
+    status: string,
+    size: number,
+    activate: boolean,
+    chunks: number,
+    uploaded: number,
+    startCommand: string,
+  ): Promise<void> {
     const stamp = now()
     const runtime = this.site(siteId).build_runtime
-    this.sql
-      .query(
-        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, siteId, status, size, startCommand, runtime, activate ? 1 : 0, chunks, uploaded, stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, siteId, status, size, startCommand, runtime, activate ? 1 : 0, chunks, uploaded, stamp, stamp],
+    )
   }
 
   /** Store one upload (or one chunk of it). The files go live once every chunk is in. */
@@ -522,20 +602,21 @@ export class SiteService {
     const { start, total } = chunkRange(input.contentRange, bytes.length)
     let row: SiteDeploymentRow
     if (input.uploadId && total > bytes.length && start > 0) {
-      row = this.deployment(site.id, input.uploadId)
+      row = await this.deployment(site.id, input.uploadId)
       if (row.status !== 'waiting') throw err('general_argument_invalid', 'This deployment has already been uploaded.')
     } else {
       const id = input.uploadId || uniqueId()
-      this.insert(site.id, id, 'waiting', total, input.activate, chunksFor(total), 0, site.start_command)
-      row = this.deployment(site.id, id)
+      await this.insert(site.id, id, 'waiting', total, input.activate, chunksFor(total), 0, site.start_command)
+      row = await this.deployment(site.id, id)
       mkdirSync(sitesDir(this.config, site.id), { recursive: true })
     }
     writeChunk(this.archivePath(site.id, row.id), bytes, start)
-    const counted = this.sql
-      .query<{ chunks_uploaded: number }, [string, string]>('UPDATE _site_deployments SET chunks_uploaded = chunks_uploaded + 1, updated_at = ? WHERE id = ? RETURNING chunks_uploaded')
-      .get(now(), row.id)!
+    const counted = (await this.db.driver.get<{ chunks_uploaded: number }>(
+      'UPDATE _site_deployments SET chunks_uploaded = chunks_uploaded + 1, updated_at = ? WHERE id = ? RETURNING chunks_uploaded',
+      [now(), row.id],
+    ))!
     if (counted.chunks_uploaded >= row.chunks_total) {
-      this.sql.query("UPDATE _site_deployments SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), row.id)
+      await this.db.driver.run("UPDATE _site_deployments SET status = 'processing', updated_at = ? WHERE id = ?", [now(), row.id])
       // Unpacking is quick for static sites; an SSR build may take minutes, so
       // it runs in the background like a function build.
       if (site.adapter === 'ssr') {
@@ -552,15 +633,14 @@ export class SiteService {
    * sitesDir(config, site.id, id), then calls process(…, { unpacked: true }),
    * or fail() when the code could not be fetched.
    */
-  startGit(site: SiteRow, source: DeploymentSource, activate: boolean): SiteDeploymentRow {
+  async startGit(site: SiteRow, source: DeploymentSource, activate: boolean): Promise<SiteDeploymentRow> {
     const id = uniqueId()
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
-         VALUES (?, ?, 'processing', 0, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, site.id, site.start_command, site.build_runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _site_deployments (id, site_id, status, source_size, start_command, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+       VALUES (?, ?, 'processing', 0, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, site.id, site.start_command, site.build_runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp],
+    )
     const dir = sitesDir(this.config, site.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -568,14 +648,18 @@ export class SiteService {
   }
 
   /** Mark a deployment failed before it was processed (the code could not be fetched). */
-  fail(siteId: string, id: string, message: string): SiteDeploymentRow {
-    this.sql.query("UPDATE _site_deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?").run(message.slice(-MAX_LOG), now(), id)
+  async fail(siteId: string, id: string, message: string): Promise<SiteDeploymentRow> {
+    await this.db.driver.run("UPDATE _site_deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?", [
+      message.slice(-MAX_LOG),
+      now(),
+      id,
+    ])
     removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
     return this.deployment(siteId, id)
   }
 
-  setSourceSize(id: string, bytes: number): void {
-    this.sql.query('UPDATE _site_deployments SET source_size = ?, updated_at = ? WHERE id = ?').run(bytes, now(), id)
+  async setSourceSize(id: string, bytes: number): Promise<void> {
+    await this.db.driver.run('UPDATE _site_deployments SET source_size = ?, updated_at = ? WHERE id = ?', [bytes, now(), id])
   }
 
   /** Deploy files given directly: pasted HTML from the console, or a starter page. */
@@ -589,7 +673,7 @@ export class SiteService {
       const target = resolve(root, file.path)
       if (!file.path || isAbsolute(file.path) || !target.startsWith(root + sep)) throw err('general_argument_invalid', `Invalid file path: ${file.path}`)
     }
-    this.insert(site.id, id, 'processing', size, activate, 1, 1, site.start_command)
+    await this.insert(site.id, id, 'processing', size, activate, 1, 1, site.start_command)
     removeTree(this.config.functionsSandbox, dir)
     for (const file of files) {
       const target = resolve(root, file.path)
@@ -612,10 +696,12 @@ export class SiteService {
     const archive = this.archivePath(siteId, id)
     const dir = sitesDir(this.config, siteId, id)
     const logs: string[] = []
-    const set = (status: string, counts = { files: 0, bytes: 0 }) =>
-      this.sql
-        .query('UPDATE _site_deployments SET status = ?, build_logs = ?, build_duration = ?, file_count = ?, total_size = ?, updated_at = ? WHERE id = ?')
-        .run(status, logs.join('\n').slice(-MAX_LOG), (performance.now() - started) / 1000, counts.files, counts.bytes, now(), id)
+    const set = async (status: string, counts = { files: 0, bytes: 0 }): Promise<void> => {
+      await this.db.driver.run(
+        'UPDATE _site_deployments SET status = ?, build_logs = ?, build_duration = ?, file_count = ?, total_size = ?, updated_at = ? WHERE id = ?',
+        [status, logs.join('\n').slice(-MAX_LOG), (performance.now() - started) / 1000, counts.files, counts.bytes, now(), id],
+      )
+    }
     try {
       const site = this.site(siteId)
       if (!options.unpacked) {
@@ -627,19 +713,26 @@ export class SiteService {
           rmSync(archive, { force: true })
         }
       }
-      const fromGit = this.deployment(siteId, id).type === 'vcs'
+      const fromGit = (await this.deployment(siteId, id)).type === 'vcs'
       const counts =
         site.adapter === 'ssr'
           ? await this.buildSsr(site, id, dir, logs, set)
           : fromGit
-            ? await this.buildStatic(site, this.deployment(siteId, id).runtime, dir, logs, set, buildContext(this.deployment(siteId, id).activate))
+            ? await this.buildStatic(
+                site,
+                (await this.deployment(siteId, id)).runtime,
+                dir,
+                logs,
+                set,
+                buildContext((await this.deployment(siteId, id)).activate),
+              )
             : this.checkStatic(site, dir, logs)
       logs.push('Ready.')
-      set('ready', counts)
-      if (this.deployment(siteId, id).activate) this.activate(siteId, id)
+      await set('ready', counts)
+      if ((await this.deployment(siteId, id)).activate) await this.activate(siteId, id)
     } catch (error) {
       logs.push(error instanceof Error ? error.message : String(error))
-      set('failed')
+      await set('failed')
       rmSync(archive, { force: true })
       removeTree(this.config.functionsSandbox, dir)
     }
@@ -656,11 +749,15 @@ export class SiteService {
     }
     const out = join(dir, site.output_directory)
     if (!existsSync(out) || !statSync(out).isDirectory()) {
-      throw new Error(`Output directory "${site.output_directory}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`)
+      throw new Error(
+        `Output directory "${site.output_directory}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`,
+      )
     }
     const counts = countFiles(out)
     if (!counts.files) throw new Error('The upload has no files.')
-    logs.push(`${counts.files} file${counts.files === 1 ? '' : 's'}, ${formatSize(counts.bytes)}${site.output_directory ? ` in ${normalize(site.output_directory)}/` : ''}.`)
+    logs.push(
+      `${counts.files} file${counts.files === 1 ? '' : 's'}, ${formatSize(counts.bytes)}${site.output_directory ? ` in ${normalize(site.output_directory)}/` : ''}.`,
+    )
     if (!existsSync(join(out, 'index.html'))) logs.push('Note: there is no index.html at the top, so the home page will be a 404.')
     return counts
   }
@@ -676,7 +773,7 @@ export class SiteService {
     runtime: string,
     dir: string,
     logs: string[],
-    set: (status: string, counts?: { files: number; bytes: number }) => void,
+    set: (status: string, counts?: { files: number; bytes: number }) => void | Promise<void>,
     context: DeployContext,
   ): Promise<{ files: number; bytes: number }> {
     if (!site.install_command.trim() && !site.build_command.trim()) return this.checkStatic(site, dir, logs, true)
@@ -702,7 +799,12 @@ export class SiteService {
       const out = site.output_directory || '.'
       const pack = Bun.spawn(sandbox.wrap(uid, work, ['tar', '-cf', '-', out]), { stdout: 'pipe', stderr: 'pipe' })
       const unpack = Bun.spawn(['tar', '-xf', '-', '-C', dir], { stdin: pack.stdout, stdout: 'ignore', stderr: 'pipe' })
-      const [packErr, unpackErr, packCode, unpackCode] = await Promise.all([new Response(pack.stderr).text(), new Response(unpack.stderr).text(), pack.exited, unpack.exited])
+      const [packErr, unpackErr, packCode, unpackCode] = await Promise.all([
+        new Response(pack.stderr).text(),
+        new Response(unpack.stderr).text(),
+        pack.exited,
+        unpack.exited,
+      ])
       if (packCode !== 0 || unpackCode !== 0) throw new Error(`Could not copy the build output: ${(packErr || unpackErr).trim() || 'tar failed'}`)
     } finally {
       removeTree(sandbox, work)
@@ -719,9 +821,9 @@ export class SiteService {
     id: string,
     dir: string,
     logs: string[],
-    set: (status: string, counts?: { files: number; bytes: number }) => void,
+    set: (status: string, counts?: { files: number; bytes: number }) => void | Promise<void>,
   ): Promise<{ files: number; bytes: number }> {
-    const deployment = this.deployment(site.id, id)
+    const deployment = await this.deployment(site.id, id)
     const marker = site.output_directory || 'package.json'
     const lifted = liftSingleFolder(dir, marker)
     if (lifted) logs.push(`Using the "${lifted}" folder inside the upload as the app folder.`)
@@ -755,8 +857,10 @@ export class SiteService {
     if (command) logs.push(`Start command: ${command}`)
     else logs.push(`No start command: requests run the function "${site.api_function_id}".`)
 
-    const counts = isolated ? (await this.measureTree(cwd, sandbox, uid)) ?? source : countFiles(cwd)
-    logs.push(`${counts.files} file${counts.files === 1 ? '' : 's'}, ${formatSize(counts.bytes)}${site.output_directory ? ` in ${normalize(site.output_directory)}/` : ''}.`)
+    const counts = isolated ? ((await this.measureTree(cwd, sandbox, uid)) ?? source) : countFiles(cwd)
+    logs.push(
+      `${counts.files} file${counts.files === 1 ? '' : 's'}, ${formatSize(counts.bytes)}${site.output_directory ? ` in ${normalize(site.output_directory)}/` : ''}.`,
+    )
     return counts
   }
 
@@ -764,7 +868,7 @@ export class SiteService {
   private async measureTree(dir: string, sandbox: NonNullable<Config['functionsSandbox']>, uid: number): Promise<{ files: number; bytes: number } | null> {
     try {
       const result = await runShell({
-        command: "find . -type f | wc -l; du -sk . | cut -f1",
+        command: 'find . -type f | wc -l; du -sk . | cut -f1',
         wrap: (argv) => sandbox.wrap(uid, dir, argv),
         signal: (pid, signal) => sandbox.signal(pid, signal),
         timeoutMs: 60_000,
@@ -812,7 +916,9 @@ export class SiteService {
     const output = result.output.replace(new RegExp(`^${SIZE_MARKER} .*$`, 'm'), '').trim()
     if (output) logs.push(output)
     if (result.code !== 0 || result.timedOut) {
-      logs.push(`The cleanup ${result.timedOut ? 'timed out' : `exited with code ${result.code}`}; continuing with the packages that are left. If the app does not start, set the prune mode to "none" and deploy again.`)
+      logs.push(
+        `The cleanup ${result.timedOut ? 'timed out' : `exited with code ${result.code}`}; continuing with the packages that are left. If the app does not start, set the prune mode to "none" and deploy again.`,
+      )
       return
     }
     if (size) logs.push(`Deployment size: ${formatSize(Number(size[1]) * 1024)} → ${formatSize(Number(size[2]) * 1024)}.`)
@@ -828,7 +934,7 @@ export class SiteService {
     runtimeId: string,
     dir: string,
     logs: string[],
-    set: (status: string, counts?: { files: number; bytes: number }) => void,
+    set: (status: string, counts?: { files: number; bytes: number }) => void | Promise<void>,
     sandboxed: { sandbox: NonNullable<Config['functionsSandbox']>; uid: number } | null,
     /** Builds that go live see live values; previews see preview values. */
     context: DeployContext,
@@ -841,19 +947,16 @@ export class SiteService {
       logs.push('No install or build command; using the upload as it is.')
       return null
     }
-    set('building')
+    await set('building')
     const runtime = await ensureRuntime(this.config, runtimeId, (line) => {
       logs.push(line)
-      set('building')
+      void set('building')
     })
     logs.push(`Runtime: ${runtime.version ? `${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}` : `this server's Bun ${process.versions.bun}`}`)
-    const env = withRuntime(
-      siteBaseEnv(this.config, site.id, await this.variables.siteEnvironment(site.id, context)),
-      runtime,
-    )
+    const env = withRuntime(siteBaseEnv(this.config, site.id, await this.variables.siteEnvironment(site.id, context)), runtime)
     for (const [label, command] of commands) {
       logs.push(`$ ${command}`)
-      set('building')
+      await set('building')
       const result = await runShell({
         command,
         cwd: sandboxed ? undefined : dir,
@@ -870,51 +973,51 @@ export class SiteService {
   }
 
   /** Make a ready deployment the one that is served. Instant, so it is also how you roll back. */
-  activate(siteId: string, id: string): SiteRow {
-    const d = this.deployment(siteId, id)
+  async activate(siteId: string, id: string): Promise<SiteRow> {
+    const d = await this.deployment(siteId, id)
     if (d.status !== 'ready') throw err('build_not_ready')
     const previous = this.site(siteId).deployment_id
-    this.sql.query('UPDATE _sites SET deployment_id = ?, updated_at = ? WHERE id = ?').run(id, now(), siteId)
-    this.changed()
+    await this.db.driver.run('UPDATE _sites SET deployment_id = ?, updated_at = ? WHERE id = ?', [id, now(), siteId])
+    await this.reload()
     // The next request starts the new deployment; the old app is stopped now.
     if (previous && previous !== id) this.ssr.stopDeployment(siteId, previous)
     this.ssr.stopDeployment(siteId, id)
-    this.prune(siteId)
+    await this.prune(siteId)
     return this.site(siteId)
   }
 
-  removeDeployment(siteId: string, id: string): void {
-    this.deployment(siteId, id)
+  async removeDeployment(siteId: string, id: string): Promise<void> {
+    await this.deployment(siteId, id)
     if (this.site(siteId).deployment_id === id) throw err('general_argument_invalid', 'The live deployment cannot be deleted. Make another one live first.')
-    this.removeStored(siteId, id)
+    await this.removeStored(siteId, id)
   }
 
   /**
    * Delete several deployments at once. The live deployment and builds that
    * have not finished are kept. Returns what was removed and what was skipped.
    */
-  removeDeployments(siteId: string, ids: readonly string[]): { removed: number; skipped: number } {
+  async removeDeployments(siteId: string, ids: readonly string[]): Promise<{ removed: number; skipped: number }> {
     const site = this.site(siteId)
     let removed = 0
     let skipped = 0
     for (const id of new Set(ids)) {
-      const deployment = this.sql.query<{ status: string }, [string, string]>('SELECT status FROM _site_deployments WHERE id = ? AND site_id = ?').get(id, site.id)
+      const deployment = await this.db.driver.get<{ status: string }>('SELECT status FROM _site_deployments WHERE id = ? AND site_id = ?', [id, site.id])
       if (!deployment || id === site.deployment_id || SITE_IN_PROGRESS.includes(deployment.status)) {
         skipped++
         continue
       }
-      this.removeStored(siteId, id)
+      await this.removeStored(siteId, id)
       removed++
     }
     return { removed, skipped }
   }
 
   /** Delete a deployment's row, preview link and files. Callers check that it may be deleted. */
-  private removeStored(siteId: string, id: string): void {
+  private async removeStored(siteId: string, id: string): Promise<void> {
     this.ssr.stopDeployment(siteId, id)
-    this.sql.query('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?').run(id, siteId)
+    await this.db.driver.run('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?', [id, siteId])
     // A branch preview that pointed here has nothing left to serve.
-    this.sql.query('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?').run(siteId, id)
+    await this.db.driver.run('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [siteId, id])
     removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
     rmSync(this.archivePath(siteId, id), { force: true })
   }
@@ -922,7 +1025,7 @@ export class SiteService {
   /** The deployment's files as .tar.gz. For SSR sites these are the sources after the build. */
   async download(siteId: string, id: string): Promise<Blob> {
     const site = this.site(siteId)
-    this.deployment(siteId, id)
+    await this.deployment(siteId, id)
     const dir = sitesDir(this.config, siteId, id)
     if (!existsSync(dir)) throw err('deployment_not_found', 'The files of this deployment are no longer kept on this server.')
     // Installed packages are large and can be installed again on the server.
@@ -931,46 +1034,49 @@ export class SiteService {
     const sandbox = this.config.functionsSandbox
     if (!sandbox) return packFolder(dir, exclude)
     const uid = sandbox.uidFor(this.config.projectId, `site:${siteId}`)
-    const pack = Bun.spawn(sandbox.wrap(uid, dir, ['tar', '-czf', '-', ...exclude.map((pattern) => `--exclude=${pattern}`), '.']), { stdout: 'pipe', stderr: 'pipe' })
+    const pack = Bun.spawn(sandbox.wrap(uid, dir, ['tar', '-czf', '-', ...exclude.map((pattern) => `--exclude=${pattern}`), '.']), {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
     const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
     if (code !== 0) throw new Error(`Could not pack deployment ${id}: ${errText.trim()}`)
     return new Blob([bytes], { type: 'application/gzip' })
   }
 
   /** Delete non-live deployments older than each site's retention setting. Returns how many were deleted. */
-  pruneDeployments(): number {
+  async pruneDeployments(): Promise<number> {
     let removed = 0
-    for (const site of this.list()) removed += this.pruneSiteRetention(site)
+    for (const site of this.list()) removed += await this.pruneSiteRetention(site)
     return removed
   }
 
   /** Apply one site's retention setting. */
-  private pruneSiteRetention(site: SiteRow): number {
+  private async pruneSiteRetention(site: SiteRow): Promise<number> {
     if (site.deployment_retention <= 0) return 0
     const cutoff = addSeconds(-site.deployment_retention * 86400)
-    const old = this.sql
-      .query<{ id: string }, [string, string, string]>(
-        "SELECT id FROM _site_deployments WHERE site_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
-      )
-      .all(site.id, site.deployment_id, cutoff)
-    for (const { id } of old) this.removeStored(site.id, id)
+    const old = await this.db.driver.all<{ id: string }>(
+      "SELECT id FROM _site_deployments WHERE site_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
+      [site.id, site.deployment_id, cutoff],
+    )
+    for (const { id } of old) await this.removeStored(site.id, id)
     return old.length
   }
 
   /** Keep disk use flat: the live deployment plus the last few ready ones, then apply retention. */
-  private prune(siteId: string): void {
+  private async prune(siteId: string): Promise<void> {
     const site = this.site(siteId)
     const keep = site.adapter === 'ssr' ? this.config.sitesSsrKeepPrevious : KEEP_PREVIOUS
     const live = site.deployment_id
     // Branch previews (Git builds that were not made live) are kept by their branch, not here.
-    const ready = this.sql
-      .query<{ id: string }, [string, string]>(
-        "SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? AND NOT (type = 'vcs' AND activate = 0) ORDER BY seq DESC",
-      )
-      .all(siteId, live)
-    for (const { id } of ready.slice(keep)) this.removeStored(siteId, id)
-    const failed = this.sql.query<{ id: string }, [string]>("SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'failed' ORDER BY seq DESC").all(siteId)
-    for (const { id } of failed.slice(keep)) this.removeStored(siteId, id)
-    this.pruneSiteRetention(site)
+    const ready = await this.db.driver.all<{ id: string }>(
+      "SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'ready' AND id != ? AND NOT (type = 'vcs' AND activate = 0) ORDER BY seq DESC",
+      [siteId, live],
+    )
+    for (const { id } of ready.slice(keep)) await this.removeStored(siteId, id)
+    const failed = await this.db.driver.all<{ id: string }>("SELECT id FROM _site_deployments WHERE site_id = ? AND status = 'failed' ORDER BY seq DESC", [
+      siteId,
+    ])
+    for (const { id } of failed.slice(keep)) await this.removeStored(siteId, id)
+    await this.pruneSiteRetention(site)
   }
 }

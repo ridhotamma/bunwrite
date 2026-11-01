@@ -19,8 +19,10 @@ const strings = (value: unknown, fallback: string[]): string[] => (value === und
 
 const deploymentsOf = (ctx: AppContext) => new Deployments(ctx.db, ctx.config, ctx.functions)
 
-const model = (ctx: AppContext, f: FunctionRow) =>
-  functionModel(f, deploymentsOf(ctx).latest(f.id), Boolean(ctx.functions.codeDir(f).dir), ctx.functions.domains(f), ctx.functions.url(f))
+async function model(ctx: AppContext, f: FunctionRow) {
+  const deployments = deploymentsOf(ctx)
+  return functionModel(f, await deployments.latest(f.id), Boolean((await ctx.functions.codeDir(f)).dir), ctx.functions.domains(f), ctx.functions.url(f))
+}
 
 /** Settings from a create or update call; anything left out keeps `base`. */
 function settingsFrom(p: Params, base: FunctionSettings): FunctionSettings {
@@ -85,22 +87,22 @@ const variableModel = (v: VariableRow) => ({
   resourceId: v.function_id,
 })
 
-function variableOf(ctx: AppContext, functionId: string, id: string): VariableRow {
+async function variableOf(ctx: AppContext, functionId: string, id: string): Promise<VariableRow> {
   const { key, context } = parseFunctionVariableId(id)
-  const row = ctx.db.sqlite
-    .query<VariableRow, [string, string, string]>('SELECT * FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?')
-    .get(functionId, key, context)
+  const row = await ctx.db.driver.get<VariableRow>('SELECT * FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?', [functionId, key, context])
   if (!row) throw err('variable_not_found')
   return row
 }
 
-const variableExists = (ctx: AppContext, functionId: string, key: string, context: string) =>
-  Boolean(ctx.db.sqlite.query('SELECT 1 FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?').get(functionId, key, context))
+const variableExists = async (ctx: AppContext, functionId: string, key: string, context: string) =>
+  Boolean(await ctx.db.driver.get('SELECT 1 FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?', [functionId, key, context]))
 
 export function functionRoutes(router: Router<AppContext>): void {
-  router.get('/functions', ({ ctx, params }) => {
+  router.get('/functions', async ({ ctx, params }) => {
     requireKey(ctx, 'functions.read')
-    const { total, items } = page(ctx.functions.list().map((f) => model(ctx, f)), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'runtime'] })
+    const functions = await ctx.functions.list()
+    const models = await Promise.all(functions.map((f) => model(ctx, f)))
+    const { total, items } = page(models, list(params.queries), { search: str(params.search), searchFields: ['$id', 'name', 'runtime'] })
     return json({ total, functions: items })
   })
 
@@ -109,7 +111,8 @@ export function functionRoutes(router: Router<AppContext>): void {
     const raw = str(params.functionId)
     if (!raw) throw err('general_argument_invalid', 'Param "functionId" is not optional.')
     const id = raw === 'unique()' ? uniqueId() : raw
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(id)) throw err('general_argument_invalid', 'Function ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(id))
+      throw err('general_argument_invalid', 'Function ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
     if (!str(params.runtime)) throw err('general_argument_invalid', 'Param "runtime" is not optional.')
     const settings = settingsFrom(params, {
       name: id,
@@ -129,34 +132,34 @@ export function functionRoutes(router: Router<AppContext>): void {
       deploymentRetention: 0,
       domains: [],
     })
-    const created = ctx.functions.create(id, settings)
+    const created = await ctx.functions.create(id, settings)
     try {
       await applyProvider(ctx, 'function', created.id, params, NO_PROVIDER)
     } catch (error) {
       // A repository that cannot be connected fails the whole create, as on Appwrite.
       ctx.hub.forget(ctx.config.projectId, 'function', created.id)
-      ctx.functions.remove(created.id)
+      await ctx.functions.remove(created.id)
       throw error
     }
-    return json(model(ctx, ctx.functions.fn(created.id)), 201)
+    return json(await model(ctx, await ctx.functions.fn(created.id)), 201)
   })
 
-  router.get('/functions/:functionId', ({ ctx, path }) => {
+  router.get('/functions/:functionId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.read')
-    return json(model(ctx, ctx.functions.fn(path.functionId!)))
+    return json(await model(ctx, await ctx.functions.fn(path.functionId!)))
   })
 
   router.put('/functions/:functionId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
-    const f = ctx.functions.fn(path.functionId!)
-    const saved = ctx.functions.save(f.id, settingsFrom(params, settingsOf(ctx, f)))
+    const f = await ctx.functions.fn(path.functionId!)
+    const saved = await ctx.functions.save(f.id, settingsFrom(params, settingsOf(ctx, f)))
     await applyProvider(ctx, 'function', saved.id, params, providerOf(f))
-    return json(model(ctx, ctx.functions.fn(saved.id)))
+    return json(await model(ctx, await ctx.functions.fn(saved.id)))
   })
 
-  router.delete('/functions/:functionId', ({ ctx, path }) => {
+  router.delete('/functions/:functionId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
-    ctx.functions.remove(path.functionId!)
+    await ctx.functions.remove(path.functionId!)
     ctx.hub.forget(ctx.config.projectId, 'function', path.functionId!)
     return noContent()
   })
@@ -164,23 +167,31 @@ export function functionRoutes(router: Router<AppContext>): void {
   // Appwrite's createVcsDeployment: build a branch, tag or commit of the connected repository.
   router.post('/functions/:functionId/deployments/vcs', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
-    const f = ctx.functions.fn(path.functionId!)
-    const d = await ctx.hub.deployReference(projectOf(ctx), 'function', f.id, str(params.type) ?? 'branch', str(params.reference) ?? '', bool(params.activate, false))
-    return json(deploymentModel(deploymentsOf(ctx).get(f.id, d.id)), 202)
+    const f = await ctx.functions.fn(path.functionId!)
+    const d = await ctx.hub.deployReference(
+      projectOf(ctx),
+      'function',
+      f.id,
+      str(params.type) ?? 'branch',
+      str(params.reference) ?? '',
+      bool(params.activate, false),
+    )
+    return json(deploymentModel(await deploymentsOf(ctx).get(f.id, d.id)), 202)
   })
 
   // ---- Deployments ----
 
-  router.get('/functions/:functionId/deployments', ({ ctx, path, params }) => {
+  router.get('/functions/:functionId/deployments', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.read')
-    ctx.functions.fn(path.functionId!)
-    const { total, items } = page(deploymentsOf(ctx).list(path.functionId!).map(deploymentModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'status'] })
+    await ctx.functions.fn(path.functionId!)
+    const deployments = await deploymentsOf(ctx).list(path.functionId!)
+    const { total, items } = page(deployments.map(deploymentModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'status'] })
     return json({ total, deployments: items })
   })
 
   router.get('/functions/:functionId/deployments/:deploymentId/download', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.read')
-    ctx.functions.fn(path.functionId!)
+    await ctx.functions.fn(path.functionId!)
     const type = str(params.type) === 'output' ? 'output' : 'source'
     const archive = await deploymentsOf(ctx).download(path.functionId!, path.deploymentId!, type)
     return new Response(archive, {
@@ -194,7 +205,7 @@ export function functionRoutes(router: Router<AppContext>): void {
 
   router.post('/functions/:functionId/deployments', async ({ ctx, path, params, request }) => {
     requireKey(ctx, 'functions.write')
-    const f = ctx.functions.fn(path.functionId!)
+    const f = await ctx.functions.fn(path.functionId!)
     const code = params.code
     if (!(code instanceof Blob)) throw err('general_argument_invalid', 'Param "code" must be a .tar.gz file.')
     const deployment = await deploymentsOf(ctx).upload(f, {
@@ -208,75 +219,75 @@ export function functionRoutes(router: Router<AppContext>): void {
     return json(deploymentModel(deployment), 202)
   })
 
-  router.get('/functions/:functionId/deployments/:deploymentId', ({ ctx, path }) => {
+  router.get('/functions/:functionId/deployments/:deploymentId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.read')
-    return json(deploymentModel(deploymentsOf(ctx).get(path.functionId!, path.deploymentId!)))
+    return json(deploymentModel(await deploymentsOf(ctx).get(path.functionId!, path.deploymentId!)))
   })
 
-  router.delete('/functions/:functionId/deployments/:deploymentId', ({ ctx, path }) => {
+  router.delete('/functions/:functionId/deployments/:deploymentId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
-    deploymentsOf(ctx).remove(path.functionId!, path.deploymentId!)
+    await deploymentsOf(ctx).remove(path.functionId!, path.deploymentId!)
     return noContent()
   })
 
-  router.patch('/functions/:functionId/deployment', ({ ctx, path, params }) => {
+  router.patch('/functions/:functionId/deployment', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
-    ctx.functions.fn(path.functionId!)
+    await ctx.functions.fn(path.functionId!)
     const deploymentId = str(params.deploymentId)
     if (!deploymentId) throw err('general_argument_invalid', 'Param "deploymentId" is not optional.')
-    return json(model(ctx, deploymentsOf(ctx).activate(path.functionId!, deploymentId)))
+    return json(await model(ctx, await deploymentsOf(ctx).activate(path.functionId!, deploymentId)))
   })
 
   // ---- Variables ----
 
-  router.get('/functions/:functionId/variables', ({ ctx, path }) => {
+  router.get('/functions/:functionId/variables', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.read')
-    ctx.functions.fn(path.functionId!)
-    const rows = ctx.db.sqlite.query<VariableRow, [string]>('SELECT * FROM _function_vars WHERE function_id = ? ORDER BY key, context').all(path.functionId!)
+    await ctx.functions.fn(path.functionId!)
+    const rows = await ctx.db.driver.all<VariableRow>('SELECT * FROM _function_vars WHERE function_id = ? ORDER BY key, context', [path.functionId!])
     return json({ total: rows.length, variables: rows.map(variableModel) })
   })
 
-  router.post('/functions/:functionId/variables', ({ ctx, path, params }) => {
+  router.post('/functions/:functionId/variables', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
-    const f = ctx.functions.fn(path.functionId!)
+    const f = await ctx.functions.fn(path.functionId!)
     const key = str(params.key) ?? ''
     if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
     const context = variableContext(params.context)
-    if (variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
-    ctx.functions.setVariable(f.id, key, str(params.value) ?? '', bool(params.secret, false), context)
-    return json(variableModel(variableOf(ctx, f.id, functionVariableId(key, context))), 201)
+    if (await variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
+    await ctx.functions.setVariable(f.id, key, str(params.value) ?? '', bool(params.secret, false), context)
+    return json(variableModel(await variableOf(ctx, f.id, functionVariableId(key, context))), 201)
   })
 
-  router.get('/functions/:functionId/variables/:variableId', ({ ctx, path }) => {
+  router.get('/functions/:functionId/variables/:variableId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.read')
-    ctx.functions.fn(path.functionId!)
-    return json(variableModel(variableOf(ctx, path.functionId!, path.variableId!)))
+    await ctx.functions.fn(path.functionId!)
+    return json(variableModel(await variableOf(ctx, path.functionId!, path.variableId!)))
   })
 
-  router.put('/functions/:functionId/variables/:variableId', ({ ctx, path, params }) => {
+  router.put('/functions/:functionId/variables/:variableId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'functions.write')
-    const f = ctx.functions.fn(path.functionId!)
-    const current = variableOf(ctx, f.id, path.variableId!)
+    const f = await ctx.functions.fn(path.functionId!)
+    const current = await variableOf(ctx, f.id, path.variableId!)
     const key = str(params.key) ?? current.key
     if (!ENV_KEY_RE.test(key)) throw err('general_argument_invalid', 'Variable names use letters, digits and underscores.')
     const secret = bool(params.secret, Boolean(current.secret))
     if (current.secret && !secret) throw err('variable_cannot_unset_secret')
     const context = params.context === undefined ? (current.context as VariableContext) : variableContext(params.context)
-    ctx.db.sqlite.transaction(() => {
+    await ctx.db.driver.transaction(async (tx) => {
       if (key !== current.key || context !== current.context) {
-        if (variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
-        ctx.functions.deleteVariable(f.id, current.key, current.context as VariableContext)
+        if (await variableExists(ctx, f.id, key, context)) throw err('variable_already_exists')
+        await tx.run('DELETE FROM _function_vars WHERE function_id = ? AND key = ? AND context = ?', [f.id, current.key, current.context])
       }
-      ctx.functions.setVariable(f.id, key, str(params.value) ?? current.value, secret, context)
-    }).immediate()
-    return json(variableModel(variableOf(ctx, f.id, functionVariableId(key, context))))
+      await ctx.functions.setVariable(f.id, key, str(params.value) ?? current.value, secret, context)
+    })
+    return json(variableModel(await variableOf(ctx, f.id, functionVariableId(key, context))))
   })
 
-  router.delete('/functions/:functionId/variables/:variableId', ({ ctx, path }) => {
+  router.delete('/functions/:functionId/variables/:variableId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
-    ctx.functions.fn(path.functionId!)
-    const current = variableOf(ctx, path.functionId!, path.variableId!)
-    ctx.functions.deleteVariable(path.functionId!, current.key, current.context as VariableContext)
+    await ctx.functions.fn(path.functionId!)
+    const current = await variableOf(ctx, path.functionId!, path.variableId!)
+    await ctx.functions.deleteVariable(path.functionId!, current.key, current.context as VariableContext)
     return noContent()
   })
 
@@ -305,7 +316,7 @@ export function functionRoutes(router: Router<AppContext>): void {
 
   router.post('/functions/:functionId/executions', async ({ ctx, path, params }) => {
     requireScope(ctx, 'execution.write')
-    const f = ctx.functions.fn(path.functionId!)
+    const f = await ctx.functions.fn(path.functionId!)
     ctx.functions.assertCanExecute(ctx.caller, f)
     const headers = params.headers && typeof params.headers === 'object' ? (params.headers as Record<string, string>) : {}
     const request = {
@@ -328,26 +339,22 @@ export function functionRoutes(router: Router<AppContext>): void {
       if (!when || Date.parse(when) < Date.now() + 60_000) {
         throw err('general_bad_request', 'Execution schedule must be a valid date, and at least 1 minute from now')
       }
-      return json(executionModel(ctx.functions.schedule(f, request, when)), 202)
+      return json(executionModel(await ctx.functions.schedule(f, request, when)), 202)
     }
 
-    const { execution } = await ctx.functions.execute(
-      f,
-      request,
-      bool(params.async, false) ? 'async' : 'sync',
-    )
+    const { execution } = await ctx.functions.execute(f, request, bool(params.async, false) ? 'async' : 'sync')
     return json(executionModel(execution), 201)
   })
 
-  router.get('/functions/:functionId/executions/:executionId', ({ ctx, path }) => {
+  router.get('/functions/:functionId/executions/:executionId', async ({ ctx, path }) => {
     requireKey(ctx, 'execution.read')
-    return json(executionModel(ctx.functions.execution(path.functionId!, path.executionId!)))
+    return json(executionModel(await ctx.functions.execution(path.functionId!, path.executionId!)))
   })
 
-  router.delete('/functions/:functionId/executions/:executionId', ({ ctx, path }) => {
+  router.delete('/functions/:functionId/executions/:executionId', async ({ ctx, path }) => {
     requireKey(ctx, 'execution.write')
-    ctx.functions.execution(path.functionId!, path.executionId!)
-    ctx.db.sqlite.query('DELETE FROM _executions WHERE id = ?').run(path.executionId!)
+    await ctx.functions.execution(path.functionId!, path.executionId!)
+    await ctx.db.driver.run('DELETE FROM _executions WHERE id = ?', [path.executionId!])
     return noContent()
   })
 
@@ -359,7 +366,8 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.on(
     'ANY',
     '/functions/:functionId/http/*',
-    async ({ ctx, path, request, url }) => functionHttpResponse(ctx, ctx.functions.fn(path.functionId!), ctx.caller, request, `/${path.rest ?? ''}${url.search}`),
+    async ({ ctx, path, request, url }) =>
+      functionHttpResponse(ctx, await ctx.functions.fn(path.functionId!), ctx.caller, request, `/${path.rest ?? ''}${url.search}`),
     { raw: true },
   )
 }

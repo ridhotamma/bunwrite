@@ -8,7 +8,23 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { gitDeploySource } from '~/console/git-deploy'
 import { arrayOf, checked, value, wholeNumber } from '~/console/forms'
 import { html, type Html } from '~/console/html'
-import { alert, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, header, icon, listCard, menu, plural, settingsSection, tabs, when } from '~/console/ui'
+import {
+  alert,
+  bulkDeleteForm,
+  bulkSelectAll,
+  bulkSelectRow,
+  copyableId,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  menu,
+  plural,
+  settingsSection,
+  tabs,
+  when,
+} from '~/console/ui'
 import { customDomainsSection } from '~/console/views/domains'
 import { variableList } from '~/console/views/variables'
 import {
@@ -112,7 +128,17 @@ interface BuildSettings {
 }
 
 /** A static Plain HTML site: what the starter and Write HTML always make, whatever else the form says. */
-const PLAIN_FILES: BuildSettings = { framework: 'other', adapter: 'static', outputDirectory: '', fallbackFile: '', installCommand: '', buildCommand: '', startCommand: '', buildRuntime: '', pruneMode: 'auto' }
+const PLAIN_FILES: BuildSettings = {
+  framework: 'other',
+  adapter: 'static',
+  outputDirectory: '',
+  fallbackFile: '',
+  installCommand: '',
+  buildCommand: '',
+  startCommand: '',
+  buildRuntime: '',
+  pruneMode: 'auto',
+}
 
 /**
  * Build settings from the Create site form. `select` is the framework select
@@ -158,7 +184,7 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   }
   const preset = frameworkOf(fields.framework)
   const id = value(ctx.form, 'id')
-  const site = ctx.services.sites.create(id, {
+  const site = await ctx.services.sites.create(id, {
     name: value(ctx.form, 'name') || id,
     enabled: true,
     domains: [],
@@ -179,7 +205,7 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
     return ctx.go(siteUrl(site.id), { tone: 'success', text: `Site created as ${preset.name}; deploying ${linked.provider_branch}` })
   } catch (error) {
     ctx.hub.forget(project.info.id, 'site', site.id)
-    ctx.services.sites.remove(site.id)
+    await ctx.services.sites.remove(site.id)
     throw error
   }
 }
@@ -194,14 +220,9 @@ const siteTabs = (id: string, on: 'deployments' | 'variables' | 'settings') =>
     on,
   )
 
-function siteShell(
-  ctx: ConsoleContext,
-  site: SiteRow,
-  active: 'deployments' | 'variables' | 'settings',
-  body: Html,
-): Html {
+async function siteShell(ctx: ConsoleContext, site: SiteRow, active: 'deployments' | 'variables' | 'settings', body: Html): Promise<Html> {
   const url = ctx.services.sites.url(site)
-  const latest = ctx.services.sites.latest(site.id)
+  const latest = await ctx.services.sites.latest(site.id)
   const actions = html`<a class="btn" href="${url}" target="_blank" rel="noopener">Open site</a>
     ${active === 'deployments' ? html`<a class="btn primary" href="${siteUrl(site.id)}/deploy">${icon('upload-simple')}<span>Deploy</span></a>` : ''}
     ${menu(destroy(`${siteUrl(site.id)}/delete`, 'Delete site', `Delete ${site.name}? Its deployments and files are removed too.`), { label: 'More actions' })}`
@@ -210,9 +231,7 @@ function siteShell(
     : !site.deployment_id && latest?.status === 'failed'
       ? alert('critical', html`The last deployment failed. <a href="${siteUrl(site.id)}/deployments/${latest.id}">See why</a>, then deploy again.`)
       : ''
-  return html`${header(site.name, { back: SITES, actions })}${siteTabs(site.id, active)}
-    ${notice}
-    ${body}`
+  return html`${header(site.name, { back: SITES, actions })}${siteTabs(site.id, active)} ${notice} ${body}`
 }
 
 /**
@@ -220,7 +239,7 @@ function siteShell(
  * so a field that is absent (or hidden/disabled for the current adapter) keeps
  * its stored value instead of being cleared.
  */
-function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: string): SiteSettings {
+async function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: string): Promise<SiteSettings> {
   const form = ctx.form
   const text = (key: string, current: string) => (key in form ? value(form, key) : current)
   if (section === 'general') {
@@ -244,14 +263,14 @@ function settingsFromForm(ctx: ConsoleContext, base: SiteSettings, section: stri
   }
   if (section === 'api') {
     const apiFunctionId = text('api_function_id', base.apiFunctionId)
-    if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.services.functions.fn(apiFunctionId)
+    if (apiFunctionId && apiFunctionId !== base.apiFunctionId) await ctx.services.functions.fn(apiFunctionId)
     return { ...base, apiFunctionId }
   }
   if (section === 'deployments') {
     return { ...base, deploymentRetention: wholeNumber(form.deployment_retention) }
   }
   const apiFunctionId = text('api_function_id', base.apiFunctionId)
-  if (apiFunctionId && apiFunctionId !== base.apiFunctionId) ctx.services.functions.fn(apiFunctionId)
+  if (apiFunctionId && apiFunctionId !== base.apiFunctionId) await ctx.services.functions.fn(apiFunctionId)
   return {
     ...base,
     name: text('name', base.name) || base.name,
@@ -285,10 +304,11 @@ function addressesSection(ctx: ConsoleContext, site: SiteRow): Html {
 }
 
 export function sitePages(router: ConsoleRouter): void {
-  router.get(SITES, ({ ctx, url }) => {
+  router.get(SITES, async ({ ctx, url }) => {
     // Old links opened a dialog; creating now has its own page.
     if (url.searchParams.get('create') === '1') return ctx.go(`${SITES}/new`)
     const sites = ctx.services.sites.list()
+    const latests = new Map(await Promise.all(sites.map(async (s) => [s.id, await ctx.services.sites.latest(s.id)] as const)))
     const create = html`<a class="btn primary" href="${SITES}/new">${icon('plus')}<span>Create site</span></a>`
     const bulkId = 'bulk-sites'
     return ctx.render(
@@ -297,33 +317,56 @@ export function sitePages(router: ConsoleRouter): void {
       html`${header('Sites', { actions: sites.length ? create : undefined })}
       ${listCard('sites', {
         toolbar: sites.length
-          ? html`<div class="toolbar"><span class="subdued">Select sites to delete</span>${bulkDeleteForm({ id: bulkId, action: `${SITES}/bulk-delete`, confirm: 'Delete the selected sites? Their deployments and files are removed too. This cannot be undone.' })}</div>`
+          ? html`<div class="toolbar">
+              <span class="subdued">Select sites to delete</span
+              >${bulkDeleteForm({ id: bulkId, action: `${SITES}/bulk-delete`, confirm: 'Delete the selected sites? Their deployments and files are removed too. This cannot be undone.' })}
+            </div>`
           : undefined,
         body: sites.length
-          ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId)}</th><th>Site</th><th>Address</th><th>Status</th><th class="hide-sm">Updated</th></tr></thead><tbody>
-            ${sites.map((s) => {
-              const latest = ctx.services.sites.latest(s.id)
-              const address = ctx.services.sites.url(s)
-              const domain = ctx.services.proxy.domainsFor('site', s.id)[0]
-              return html`<tr class="row-link" onclick="location='${siteUrl(s.id)}'"><td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, s.id, `Select ${s.name}`)}</td>
-                <td><a href="${siteUrl(s.id)}">${s.name}</a><div class="mono subdued cell-sub">${s.id}</div></td>
-                <td class="mono clip"><a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${domain || new URL(address).host}</a></td>
-                <td>${siteStatus(s, latest)}</td>
-                <td class="subdued hide-sm">${when(latest?.created_at ?? s.updated_at)}</td></tr>`
-            })}
-            </tbody></table></div>`
+          ? html`<div class="scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="select-col">${bulkSelectAll(bulkId)}</th>
+                    <th>Site</th>
+                    <th>Address</th>
+                    <th>Status</th>
+                    <th class="hide-sm">Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${sites.map((s) => {
+                    const latest = latests.get(s.id) ?? null
+                    const address = ctx.services.sites.url(s)
+                    const domain = ctx.services.proxy.domainsFor('site', s.id)[0]
+                    return html`<tr class="row-link" onclick="location='${siteUrl(s.id)}'">
+                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, s.id, `Select ${s.name}`)}</td>
+                      <td>
+                        <a href="${siteUrl(s.id)}">${s.name}</a>
+                        <div class="mono subdued cell-sub">${s.id}</div>
+                      </td>
+                      <td class="mono clip">
+                        <a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${domain || new URL(address).host}</a>
+                      </td>
+                      <td>${siteStatus(s, latest)}</td>
+                      <td class="subdued hide-sm">${when(latest?.created_at ?? s.updated_at)}</td>
+                    </tr>`
+                  })}
+                </tbody>
+              </table>
+            </div>`
           : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
       })}`,
     )
   })
 
   // Before /:id, which would otherwise read "bulk-delete" as a site ID.
-  router.post(`${SITES}/bulk-delete`, ({ ctx }) => {
+  router.post(`${SITES}/bulk-delete`, async ({ ctx }) => {
     const ids = [...new Set(arrayOf(ctx.form.ids))]
     let removed = 0
     for (const id of ids) {
       if (!ctx.services.sites.has(id)) continue
-      ctx.services.sites.remove(id)
+      await ctx.services.sites.remove(id)
       ctx.hub.forget(ctx.currentProject.id, 'site', id)
       removed++
     }
@@ -335,12 +378,7 @@ export function sitePages(router: ConsoleRouter): void {
     ctx.render(
       'Create site',
       'sites',
-      siteCreateView(
-        sitesDomainOf(ctx.services.config),
-        ctx.hub.installations.list(),
-        Boolean(ctx.hub.apps.get()),
-        url.searchParams.get('source') ?? '',
-      ),
+      siteCreateView(sitesDomainOf(ctx.services.config), ctx.hub.installations.list(), Boolean(ctx.hub.apps.get()), url.searchParams.get('source') ?? ''),
     ),
   )
 
@@ -350,7 +388,7 @@ export function sitePages(router: ConsoleRouter): void {
     const source = filesSource(ctx)
     // Only an upload has a framework; the starter and Write HTML are plain files.
     const fields = source.kind === 'upload' ? buildFromForm(ctx, 'framework', false) : PLAIN_FILES
-    const site = ctx.services.sites.create(id, {
+    const site = await ctx.services.sites.create(id, {
       name: value(ctx.form, 'name') || id,
       enabled: true,
       domains: [],
@@ -358,13 +396,14 @@ export function sitePages(router: ConsoleRouter): void {
       ...fields,
     })
     const d = await deploy(ctx, site, source, true)
-    if (d.status === 'failed') return ctx.go(`${siteUrl(site.id)}/deployments/${d.id}`, { tone: 'critical', text: 'Site created, but its files could not be deployed' })
+    if (d.status === 'failed')
+      return ctx.go(`${siteUrl(site.id)}/deployments/${d.id}`, { tone: 'critical', text: 'Site created, but its files could not be deployed' })
     return ctx.go(siteUrl(site.id), { tone: 'success', text: 'Site created and live' })
   })
 
-  router.get(`${SITES}/:id`, ({ ctx, path }) => {
+  router.get(`${SITES}/:id`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    return ctx.render(site.name, 'sites', siteShell(ctx, site, 'deployments', siteDeploymentsCard(site, ctx.services.sites.deployments(site.id))))
+    return ctx.render(site.name, 'sites', await siteShell(ctx, site, 'deployments', siteDeploymentsCard(site, await ctx.services.sites.deployments(site.id))))
   })
 
   router.get(`${SITES}/:id/deploy`, async ({ ctx, path }) => {
@@ -374,9 +413,12 @@ export function sitePages(router: ConsoleRouter): void {
       `Deploy to ${site.name}`,
       'sites',
       html`${header('Deploy', { back: siteUrl(site.id) })}
-      <div class="card">${deploySiteForm(site, git)}
-        <div class="foot" style="margin-top:12px"><a class="btn" href="${siteUrl(site.id)}">Cancel</a><button type="submit" form="deploy-site-page-form" class="primary">Deploy</button></div>
-      </div>`,
+        <div class="card">
+          ${deploySiteForm(site, git)}
+          <div class="foot" style="margin-top:12px">
+            <a class="btn" href="${siteUrl(site.id)}">Cancel</a><button type="submit" form="deploy-site-page-form" class="primary">Deploy</button>
+          </div>
+        </div>`,
     )
   })
 
@@ -387,11 +429,14 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.go(siteUrl(site.id), { tone: 'success', text: d.activate ? 'Deployed and live' : 'Deployed' })
   })
 
-  router.get(`${SITES}/:id/deployments/:did`, ({ ctx, path }) => {
+  router.get(`${SITES}/:id/deployments/:did`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    const deployment = ctx.services.sites.deployment(site.id, path.did!)
+    const deployment = await ctx.services.sites.deployment(site.id, path.did!)
     // A Git build that is not live can still be opened on its own preview address.
-    const preview = deployment.type === 'vcs' && deployment.status === 'ready' && deployment.id !== site.deployment_id ? ctx.services.sites.deploymentUrl(site, deployment.id) : ''
+    const preview =
+      deployment.type === 'vcs' && deployment.status === 'ready' && deployment.id !== site.deployment_id
+        ? ctx.services.sites.deploymentUrl(site, deployment.id)
+        : ''
     return ctx.render(`Deployment · ${site.name}`, 'sites', siteDeploymentView(site, deployment, ctx.services.sites.runtimeLogs(site.id), preview))
   })
 
@@ -402,18 +447,18 @@ export function sitePages(router: ConsoleRouter): void {
     })
   })
 
-  router.post(`${SITES}/:id/deployments/:did/activate`, ({ ctx, path }) => {
-    ctx.services.sites.activate(path.id!, path.did!)
+  router.post(`${SITES}/:id/deployments/:did/activate`, async ({ ctx, path }) => {
+    await ctx.services.sites.activate(path.id!, path.did!)
     return ctx.go(siteUrl(path.id!), { tone: 'success', text: 'Deployment is live' })
   })
 
-  router.post(`${SITES}/:id/deployments/:did/delete`, ({ ctx, path }) => {
-    ctx.services.sites.removeDeployment(path.id!, path.did!)
+  router.post(`${SITES}/:id/deployments/:did/delete`, async ({ ctx, path }) => {
+    await ctx.services.sites.removeDeployment(path.id!, path.did!)
     return ctx.go(siteUrl(path.id!), { tone: 'success', text: 'Deployment deleted' })
   })
 
-  router.post(`${SITES}/:id/deployments/bulk-delete`, ({ ctx, path }) => {
-    const { removed, skipped } = ctx.services.sites.removeDeployments(path.id!, arrayOf(ctx.form.ids))
+  router.post(`${SITES}/:id/deployments/bulk-delete`, async ({ ctx, path }) => {
+    const { removed, skipped } = await ctx.services.sites.removeDeployments(path.id!, arrayOf(ctx.form.ids))
     if (!removed) return ctx.go(siteUrl(path.id!), { tone: 'warning', text: 'No deployments were deleted.' })
     return ctx.go(siteUrl(path.id!), {
       tone: 'success',
@@ -427,26 +472,25 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.render(
       `Variables · ${site.name}`,
       'sites',
-      siteShell(
+      await siteShell(
         ctx,
         site,
         'variables',
         settingsSection(
           'Site variables',
           'Available only to this site. A variable here wins over a global variable with the same name. Changes apply the next time the app starts; redeploy to bake them into a build.',
-          html`
-            ${variableList(vars, {
-              id: 'site-vars',
-              save: `${siteUrl(site.id)}/variables`,
-              remove: `${siteUrl(site.id)}/variables/delete`,
-              addLabel: 'Add variable',
-              bulk: { id: 'bulk-site-vars', title: `Import variables for ${site.name}`, action: `${siteUrl(site.id)}/variables/bulk` },
-              clear: {
-                action: `${siteUrl(site.id)}/variables/clear`,
-                confirm: `Delete all ${vars.length} variables for ${site.name}? This cannot be undone.`,
-              },
-              empty: html`<p class="hint" style="margin:0">None set. Global variables from Settings also apply.</p>`,
-            })}`,
+          html` ${variableList(vars, {
+            id: 'site-vars',
+            save: `${siteUrl(site.id)}/variables`,
+            remove: `${siteUrl(site.id)}/variables/delete`,
+            addLabel: 'Add variable',
+            bulk: { id: 'bulk-site-vars', title: `Import variables for ${site.name}`, action: `${siteUrl(site.id)}/variables/bulk` },
+            clear: {
+              action: `${siteUrl(site.id)}/variables/clear`,
+              confirm: `Delete all ${vars.length} variables for ${site.name}? This cannot be undone.`,
+            },
+            empty: html`<p class="hint" style="margin:0">None set. Global variables from Settings also apply.</p>`,
+          })}`,
           { id: 'site-variables' },
         ),
       ),
@@ -476,7 +520,7 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.render(
       site.name,
       'sites',
-      siteShell(
+      await siteShell(
         ctx,
         site,
         'settings',
@@ -485,9 +529,9 @@ export function sitePages(router: ConsoleRouter): void {
           'General',
           'The name in the console, and whether the site is served.',
           html`<form method="post" action="${siteUrl(site.id)}">
-            <input type="hidden" name="section" value="general">
-            <label>Name<input name="name" required value="${site.name}"></label>
-            <label class="check"><input type="checkbox" name="enabled" ${site.enabled ? 'checked' : ''}>Serve this site</label>
+            <input type="hidden" name="section" value="general" />
+            <label>Name<input name="name" required value="${site.name}" /></label>
+            <label class="check"><input type="checkbox" name="enabled" ${site.enabled ? 'checked' : ''} />Serve this site</label>
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
           { id: 'site-general' },
@@ -498,7 +542,7 @@ export function sitePages(router: ConsoleRouter): void {
             ? 'Each push is installed and built here on this runtime. Server apps are then started; static sites serve the output folder.'
             : 'A static site is served as you upload it. A server app is installed, built and started here. Each deployment keeps the runtime and start command it was made with, so a rollback runs as before.',
           html`<form method="post" action="${siteUrl(site.id)}" class="stack-fields">
-            <input type="hidden" name="section" value="build">
+            <input type="hidden" name="section" value="build" />
             ${buildFields(site.provider_repository_id ? 'git' : 'upload', buildValuesOf(site))}
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
@@ -508,8 +552,12 @@ export function sitePages(router: ConsoleRouter): void {
           'Deployments',
           'Old builds are deleted automatically to free disk space. The live deployment is always kept.',
           html`<form method="post" action="${siteUrl(site.id)}">
-            <input type="hidden" name="section" value="deployments">
-            <label>Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${site.deployment_retention}"><small>Days. 0 keeps every deployment.</small></label>
+            <input type="hidden" name="section" value="deployments" />
+            <label
+              >Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${site.deployment_retention}" /><small
+                >Days. 0 keeps every deployment.</small
+              ></label
+            >
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
           { id: 'site-deployments' },
@@ -519,8 +567,8 @@ export function sitePages(router: ConsoleRouter): void {
           'API',
           html`Let pages call a function on the same origin, for example <code>hx-post="/api/todos"</code>. No CORS setup needed.`,
           html`<form method="post" action="${siteUrl(site.id)}">
-            <input type="hidden" name="section" value="api">
-            ${apiFunctionSelect(site, ctx.services.functions.list())}
+            <input type="hidden" name="section" value="api" />
+            ${apiFunctionSelect(site, await ctx.services.functions.list())}
             <div class="foot"><button class="primary">Save</button></div>
           </form>`,
           { id: 'site-api' },
@@ -531,11 +579,11 @@ export function sitePages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${SITES}/:id`, ({ ctx, path }) => {
+  router.post(`${SITES}/:id`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
     const section = value(ctx.form, 'section')
-    ctx.services.sites.update(site.id, settingsFromForm(ctx, ctx.services.sites.settingsOf(site), section))
-    if (section === 'deployments') ctx.services.sites.pruneDeployments()
+    ctx.services.sites.update(site.id, await settingsFromForm(ctx, ctx.services.sites.settingsOf(site), section))
+    if (section === 'deployments') await ctx.services.sites.pruneDeployments()
     return ctx.go(`${siteUrl(site.id)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
@@ -545,9 +593,9 @@ export function sitePages(router: ConsoleRouter): void {
     then: (_route, target) => `${siteUrl(target.id)}/settings`,
   })
 
-  router.post(`${SITES}/:id/delete`, ({ ctx, path }) => {
+  router.post(`${SITES}/:id/delete`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
-    ctx.services.sites.remove(site.id)
+    await ctx.services.sites.remove(site.id)
     ctx.hub.forget(ctx.currentProject.id, 'site', site.id)
     return ctx.go(SITES, { tone: 'success', text: `${site.name} deleted` })
   })

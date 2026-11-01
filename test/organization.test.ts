@@ -12,8 +12,7 @@ describe('organizations', () => {
   let organizations: OrganizationService
   let devCookie = ''
 
-  const get = (path: string, headers: Record<string, string> = {}) =>
-    fetch(`${base}${path}`, { headers: { cookie, ...headers }, redirect: 'manual' })
+  const get = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { cookie, ...headers }, redirect: 'manual' })
   const form = (path: string, fields: Array<[string, string]>, headers: Record<string, string> = {}) => {
     const body = new URLSearchParams()
     for (const [key, value] of fields) body.append(key, value)
@@ -52,7 +51,7 @@ describe('organizations', () => {
 
     const updated = await form('/console/organization', [['name', 'Acme']])
     expect(updated.status).toBe(303)
-    expect(organizations.get('org_test')!.name).toBe('Acme')
+    expect((await organizations.get('org_test'))!.name).toBe('Acme')
     expect(await (await get('/console')).text()).toContain('Acme')
   })
 
@@ -103,9 +102,9 @@ describe('organizations', () => {
     })
     expect(accepted.status).toBe(303)
     devCookie = accepted.headers.get('set-cookie')!.split(';')[0]!
-    expect(organizations.findByEmail('org_test', 'dev@example.com')!.status).toBe('active')
-    expect(organizations.findByEmail('org_test', 'dev@example.com')!.role).toBe('developer')
-    expect(auth.find('dev@example.com')).not.toBeNull()
+    expect((await organizations.findByEmail('org_test', 'dev@example.com'))!.status).toBe('active')
+    expect((await organizations.findByEmail('org_test', 'dev@example.com'))!.role).toBe('developer')
+    expect(await auth.find('dev@example.com')).not.toBeNull()
     expect(await (await fetch(link)).text()).toContain('Invitation unavailable')
 
     const members = await (await get('/console/organization/members', { cookie: devCookie })).text()
@@ -128,7 +127,7 @@ describe('organizations', () => {
   test('developers cannot manage the organization', async () => {
     const renamed = await form('/console/organization', [['name', 'Nope']], { cookie: devCookie })
     expect(renamed.status).toBe(303)
-    expect(organizations.get('org_test')!.name).toBe('Acme')
+    expect((await organizations.get('org_test'))!.name).toBe('Acme')
 
     const invited = await form(
       '/console/organization/members/invite',
@@ -139,7 +138,7 @@ describe('organizations', () => {
       { cookie: devCookie },
     )
     expect(invited.status).toBe(303)
-    expect(organizations.findByEmail('org_test', 'nope@example.com')).toBeNull()
+    expect(await organizations.findByEmail('org_test', 'nope@example.com')).toBeNull()
   })
 
   test('an invitation can be resent, replacing the previous link', async () => {
@@ -149,7 +148,7 @@ describe('organizations', () => {
     ])
     expect(invited.status).toBe(200)
     const first = /https?:\/\/\S+\/console\/invite\/[a-f0-9]+/.exec(server.mailer.last('resend@example.com')!.text)![0]!
-    const member = organizations.findByEmail('org_test', 'resend@example.com')!
+    const member = (await organizations.findByEmail('org_test', 'resend@example.com'))!
 
     const resent = await form(`/console/organization/members/${member.id}/resend`, [])
     expect(resent.status).toBe(200)
@@ -166,7 +165,7 @@ describe('organizations', () => {
     ])
     expect(invited.status).toBe(200)
     const first = /https?:\/\/\S+\/console\/invite\/[a-f0-9]+/.exec(server.mailer.last('copy@example.com')!.text)![0]!
-    const member = organizations.findByEmail('org_test', 'copy@example.com')!
+    const member = (await organizations.findByEmail('org_test', 'copy@example.com'))!
     const sentBefore = server.mailer.sent.length
 
     const copied = await form(`/console/organization/members/${member.id}/invite-link`, [])
@@ -194,7 +193,7 @@ describe('organizations', () => {
     const page = await (await fetch(link)).text()
     expect(page).toContain('Your account already exists')
     expect(page).toContain('Sign in and join')
-    expect(organizations.findByEmail('org_test', 'existing@example.com')!.status).toBe('invited')
+    expect((await organizations.findByEmail('org_test', 'existing@example.com'))!.status).toBe('invited')
 
     const wrong = await fetch(link, {
       method: 'POST',
@@ -204,7 +203,7 @@ describe('organizations', () => {
     })
     expect(wrong.status).toBe(200)
     expect(await wrong.text()).toContain('Incorrect email or password.')
-    expect(organizations.findByEmail('org_test', 'existing@example.com')!.status).toBe('invited')
+    expect((await organizations.findByEmail('org_test', 'existing@example.com'))!.status).toBe('invited')
 
     const accepted = await fetch(link, {
       method: 'POST',
@@ -214,23 +213,23 @@ describe('organizations', () => {
     })
     expect(accepted.status).toBe(303)
     expect(accepted.headers.get('set-cookie')).toContain('bunwrite_console=')
-    expect(organizations.findByEmail('org_test', 'existing@example.com')!.status).toBe('active')
+    expect((await organizations.findByEmail('org_test', 'existing@example.com'))!.status).toBe('active')
     expect(await (await fetch(link)).text()).toContain('Invitation unavailable')
   })
 
   test('owners can change roles, protect the last owner, and remove members', async () => {
-    const owner = organizations.findByEmail('org_test', 'owner@example.com')!
-    expect(() => organizations.updateRole('org_test', owner.id, 'developer', owner.email)).toThrow('your own role')
-    expect(() => organizations.remove('org_test', owner.id, owner.email)).toThrow('yourself')
+    const owner = (await organizations.findByEmail('org_test', 'owner@example.com'))!
+    await expect(organizations.updateRole('org_test', owner.id, 'developer', owner.email)).rejects.toThrow('your own role')
+    await expect(organizations.remove('org_test', owner.id, owner.email)).rejects.toThrow('yourself')
 
-    const dev = organizations.findByEmail('org_test', 'dev@example.com')!
+    const dev = (await organizations.findByEmail('org_test', 'dev@example.com'))!
     const promoted = await form(`/console/organization/members/${dev.id}/role`, [['role', 'owner']])
     expect(promoted.status).toBe(303)
-    expect(organizations.findByEmail('org_test', 'dev@example.com')!.role).toBe('owner')
+    expect((await organizations.findByEmail('org_test', 'dev@example.com'))!.role).toBe('owner')
 
     const removed = await form(`/console/organization/members/${dev.id}/delete`, [])
     expect(removed.status).toBe(303)
-    expect(organizations.findByEmail('org_test', 'dev@example.com')).toBeNull()
-    expect(auth.find('dev@example.com')).toBeNull()
+    expect(await organizations.findByEmail('org_test', 'dev@example.com')).toBeNull()
+    expect(await auth.find('dev@example.com')).toBeNull()
   })
 })

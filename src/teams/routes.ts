@@ -13,53 +13,53 @@ export function teamRoutes(router: Router<AppContext>): void {
     return json({ total, teams: teams.map(teamModel) })
   })
 
-  router.post('/teams', ({ ctx, params }) => {
+  router.post('/teams', async ({ ctx, params }) => {
     requireScope(ctx, 'teams.write')
-    return json(teamModel(ctx.teams.create(ctx.caller, { teamId: params.teamId, name: params.name, roles: params.roles })), 201)
+    return json(teamModel(await ctx.teams.create(ctx.caller, { teamId: params.teamId, name: params.name, roles: params.roles })), 201)
   })
 
-  router.get('/teams/:teamId', ({ ctx, path }) => {
+  router.get('/teams/:teamId', async ({ ctx, path }) => {
     requireScope(ctx, 'teams.read')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
-    return json(teamModel(ctx.teams.team(path.teamId!)))
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
+    return json(teamModel(await ctx.teams.team(path.teamId!)))
   })
 
-  router.put('/teams/:teamId', ({ ctx, path, params }) => {
+  router.put('/teams/:teamId', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.write')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
     if (typeof params.name !== 'string' || !params.name || params.name.length > 128) {
       throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
     }
-    return json(teamModel(ctx.teams.update(path.teamId!, { name: params.name })))
+    return json(teamModel(await ctx.teams.update(path.teamId!, { name: params.name })))
   })
 
-  router.delete('/teams/:teamId', ({ ctx, path }) => {
+  router.delete('/teams/:teamId', async ({ ctx, path }) => {
     requireScope(ctx, 'teams.write')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
-    ctx.teams.delete(path.teamId!)
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
+    await ctx.teams.delete(path.teamId!)
     return noContent()
   })
 
-  router.get('/teams/:teamId/prefs', ({ ctx, path }) => {
+  router.get('/teams/:teamId/prefs', async ({ ctx, path }) => {
     requireScope(ctx, 'teams.read')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
-    return json(JSON.parse(ctx.teams.team(path.teamId!).prefs))
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
+    return json(JSON.parse((await ctx.teams.team(path.teamId!)).prefs))
   })
 
-  router.put('/teams/:teamId/prefs', ({ ctx, path, params }) => {
+  router.put('/teams/:teamId/prefs', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.write')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'owner')
     const prefs = params.prefs
     if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) {
       throw err('general_argument_invalid', 'Invalid `prefs` param: Value must be a valid object.')
     }
-    ctx.teams.update(path.teamId!, { prefs: JSON.stringify(prefs) })
+    await ctx.teams.update(path.teamId!, { prefs: JSON.stringify(prefs) })
     return json(prefs)
   })
 
   router.get('/teams/:teamId/memberships', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.read')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
     const { total, memberships } = await ctx.teams.listMemberships({ teamId: path.teamId! }, list(params.queries), str(params.search), bool(params.total, true))
     return json({ total, memberships: memberships.map(membershipModel) })
   })
@@ -81,31 +81,36 @@ export function teamRoutes(router: Router<AppContext>): void {
       const link = withQuery(url, { membershipId: membership.id, userId: membership.user_id, secret, teamId: membership.team_id })
       const owner = ctx.caller.user?.name || ctx.caller.user?.email || ctx.config.projectName
       await ctx.mailer.send(
-        ctx.templates.render('invitation', membership.user_email, { user: membership.user_name || membership.user_email, owner, team: membership.team_name, redirect: link }),
+        ctx.templates.render('invitation', membership.user_email, {
+          user: membership.user_name || membership.user_email,
+          owner,
+          team: membership.team_name,
+          redirect: link,
+        }),
       )
     }
     return json(membershipModel(membership), 201)
   })
 
-  router.get('/teams/:teamId/memberships/:membershipId', ({ ctx, path }) => {
+  router.get('/teams/:teamId/memberships/:membershipId', async ({ ctx, path }) => {
     requireScope(ctx, 'teams.read')
-    ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
-    return json(membershipModel(ctx.teams.membership(path.teamId!, path.membershipId!)))
+    await ctx.teams.assertAccess(ctx.caller, path.teamId!, 'member')
+    return json(membershipModel(await ctx.teams.membership(path.teamId!, path.membershipId!)))
   })
 
-  router.patch('/teams/:teamId/memberships/:membershipId', ({ ctx, path, params }) => {
+  router.patch('/teams/:teamId/memberships/:membershipId', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.write')
-    return json(membershipModel(ctx.teams.updateMembership(ctx.caller, path.teamId!, path.membershipId!, params.roles)))
+    return json(membershipModel(await ctx.teams.updateMembership(ctx.caller, path.teamId!, path.membershipId!, params.roles)))
   })
 
-  router.delete('/teams/:teamId/memberships/:membershipId', ({ ctx, path }) => {
+  router.delete('/teams/:teamId/memberships/:membershipId', async ({ ctx, path }) => {
     requireScope(ctx, 'teams.write')
-    ctx.teams.deleteMembership(ctx.caller, path.teamId!, path.membershipId!)
+    await ctx.teams.deleteMembership(ctx.caller, path.teamId!, path.membershipId!)
     return noContent()
   })
 
-  router.patch('/teams/:teamId/memberships/:membershipId/status', ({ ctx, path, params }) => {
+  router.patch('/teams/:teamId/memberships/:membershipId/status', async ({ ctx, path, params }) => {
     requireScope(ctx, 'teams.write')
-    return json(membershipModel(ctx.teams.confirmMembership(path.teamId!, path.membershipId!, params.userId, params.secret)))
+    return json(membershipModel(await ctx.teams.confirmMembership(path.teamId!, path.membershipId!, params.userId, params.secret)))
   })
 }

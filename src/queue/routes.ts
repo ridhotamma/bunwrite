@@ -44,9 +44,9 @@ function attempt(value: unknown): number {
 const q = (value: string) => publicQueueName(value)
 
 export function queueRoutes(router: Router<AppContext>): void {
-  router.post('/queue/:queue/messages', ({ ctx, path, params }) => {
+  router.post('/queue/:queue/messages', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    const { message, created } = ctx.queue.enqueue(q(path.queue!), {
+    const { message, created } = await ctx.queue.enqueue(q(path.queue!), {
       data: params.data,
       id: params.messageId ?? params.id,
       delay: num(params.delay),
@@ -56,38 +56,38 @@ export function queueRoutes(router: Router<AppContext>): void {
     return json(queueModel(message), created ? 201 : 200)
   })
 
-  router.post('/queue/:queue/claim', ({ ctx, path, params }) => {
+  router.post('/queue/:queue/claim', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    const messages = ctx.queue.claim(q(path.queue!), { count: num(params.count), lease: num(params.lease) })
+    const messages = await ctx.queue.claim(q(path.queue!), { count: num(params.count), lease: num(params.lease) })
     return json({ messages: messages.map(queueModel) })
   })
 
-  router.get('/queue/:queue/messages', ({ ctx, path, params }) => {
+  router.get('/queue/:queue/messages', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.read')
-    return json(ctx.queue.listMessages(q(path.queue!), list(params.queries), status(params.status)))
+    return json(await ctx.queue.listMessages(q(path.queue!), list(params.queries), status(params.status)))
   })
 
-  router.get('/queue/:queue/messages/:messageId', ({ ctx, path }) => {
+  router.get('/queue/:queue/messages/:messageId', async ({ ctx, path }) => {
     requireKey(ctx, 'queue.read')
-    return json(queueModel(ctx.queue.getMessage(q(path.queue!), path.messageId!)))
+    return json(queueModel(await ctx.queue.getMessage(q(path.queue!), path.messageId!)))
   })
 
-  router.delete('/queue/:queue/messages/:messageId', ({ ctx, path }) => {
+  router.delete('/queue/:queue/messages/:messageId', async ({ ctx, path }) => {
     requireKey(ctx, 'queue.write')
-    ctx.queue.deleteMessage(q(path.queue!), path.messageId!)
+    await ctx.queue.deleteMessage(q(path.queue!), path.messageId!)
     return noContent()
   })
 
-  router.post('/queue/:queue/messages/:messageId/ack', ({ ctx, path, params }) => {
+  router.post('/queue/:queue/messages/:messageId/ack', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json(queueModel(ctx.queue.ack(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), params.result)))
+    return json(queueModel(await ctx.queue.ack(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), params.result)))
   })
 
-  router.post('/queue/:queue/messages/:messageId/fail', ({ ctx, path, params }) => {
+  router.post('/queue/:queue/messages/:messageId/fail', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
     return json(
       queueModel(
-        ctx.queue.fail(
+        await ctx.queue.fail(
           q(path.queue!),
           path.messageId!,
           attempt(params.attempt ?? params.attempts),
@@ -98,18 +98,18 @@ export function queueRoutes(router: Router<AppContext>): void {
     )
   })
 
-  router.post('/queue/:queue/messages/:messageId/heartbeat', ({ ctx, path, params }) => {
+  router.post('/queue/:queue/messages/:messageId/heartbeat', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json(queueModel(ctx.queue.heartbeat(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), num(params.lease) ?? 60)))
+    return json(queueModel(await ctx.queue.heartbeat(q(path.queue!), path.messageId!, attempt(params.attempt ?? params.attempts), num(params.lease) ?? 60)))
   })
 
-  router.get('/queue/:queue/stats', ({ ctx, path }) => {
+  router.get('/queue/:queue/stats', async ({ ctx, path }) => {
     requireKey(ctx, 'queue.read')
-    return json(ctx.queue.stats(q(path.queue!)))
+    return json(await ctx.queue.stats(q(path.queue!)))
   })
 
-  router.delete('/queue/:queue', ({ ctx, path, params }) => {
+  router.delete('/queue/:queue', async ({ ctx, path, params }) => {
     requireKey(ctx, 'queue.write')
-    return json({ deleted: ctx.queue.purge(q(path.queue!), status(params.status)) })
+    return json({ deleted: await ctx.queue.purge(q(path.queue!), status(params.status)) })
   })
 }

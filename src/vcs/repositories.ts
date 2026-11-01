@@ -4,7 +4,7 @@
  * (`_vcs_repositories`, Appwrite's console `repositories`), and the comment
  * kept up to date on each pull request (`_vcs_comments`).
  */
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
@@ -46,9 +46,11 @@ export const approvedPulls = (row: RepositoryRow): string[] => {
 }
 
 export class RepositoryLinks {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: SqlDatabase) {}
 
+  /** The VCS console has not moved to the driver port yet; it is SQLite-only. */
   private get sql() {
+    if (!this.db.sqlite) throw new Error('Repository links are not available on this database backend yet.')
     return this.db.sqlite
   }
 

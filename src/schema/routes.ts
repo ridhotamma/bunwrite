@@ -13,6 +13,7 @@
  */
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
+import type { Db } from '~/db/connection'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
@@ -170,10 +171,20 @@ function indexIn(c: Collection, key: string): Index {
   return i
 }
 
+/**
+ * Schema DDL still runs on the synchronous SQLite path (docs/DATABASE.md).
+ * A network deployment applies collections with `db:migrate --schema` instead.
+ */
+function localDb(db: AppContext['db']): Db {
+  if (db.dialect !== 'sqlite' || !db.sqlite) throw err('general_not_implemented', 'Schema changes are not available on this database backend yet.')
+  return db as Db
+}
+
 /** Run schema changes as one unit; a failure part-way leaves nothing behind. */
 function atomically(ctx: AppContext, work: () => void): void {
+  const db = localDb(ctx.db)
   try {
-    ctx.db.sqlite.transaction(work).immediate()
+    db.sqlite.transaction(work).immediate()
   } finally {
     ctx.registry.reload()
   }
@@ -187,7 +198,7 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
   const attrsName = tables ? 'columns' : 'attributes'
   const attrs = `${coll}/${attrsName}`
   const idxs = `${coll}/indexes`
-  const admin = (ctx: AppContext) => new SchemaAdmin(ctx.db, ctx.registry)
+  const admin = (ctx: AppContext) => new SchemaAdmin(localDb(ctx.db), ctx.registry)
   const collection = (ctx: AppContext, path: Record<string, string>) => ctx.registry.collection(path.databaseId!, path.collectionId!, true)
 
   // ---- Databases ----

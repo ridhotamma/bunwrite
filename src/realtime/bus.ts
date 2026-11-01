@@ -8,7 +8,9 @@
  * some process has a socket: the presence table makes the common case (no
  * realtime clients) cost one indexed SELECT instead of an INSERT.
  */
-import type { Db } from '~/db/connection'
+import type { Database } from 'bun:sqlite'
+
+import type { SqlDatabase } from '~/db/driver'
 import type { Doc } from '~/documents/codec'
 import type { DocEvent } from '~/documents/store'
 import { now } from '~/lib/datetime'
@@ -37,12 +39,18 @@ export class RealtimeBus {
   private lastPrune = 0
 
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private projectId: string,
     private pollMs: number,
     private onEvents: (events: BusEvent[]) => void,
   ) {
     this.pollMs = Math.max(10, pollMs)
+  }
+
+  /** The bus is the SQLite event table; a network backend does not construct it. */
+  private get sqlite(): Database {
+    if (!this.db.sqlite) throw new Error('The realtime event bus is only available on SQLite.')
+    return this.db.sqlite
   }
 
   /** Add or remove this process's sockets; starts and stops polling. */
@@ -79,7 +87,7 @@ export class RealtimeBus {
           document: event.document,
         })),
       )
-      this.db.sqlite
+      this.sqlite
         .query('INSERT INTO _realtime_events (origin, project_id, payload, created_at) VALUES (?, ?, ?, ?)')
         .run(this.id, this.projectId, payload, now())
     } catch (error) {
@@ -92,10 +100,10 @@ export class RealtimeBus {
     const stamp = Date.now()
     this.lastPrune = stamp
     try {
-      this.db.sqlite
+      this.sqlite
         .query('DELETE FROM _realtime_events WHERE created_at < ?')
         .run(new Date(stamp - EVENT_RETENTION_MS).toISOString())
-      this.db.sqlite
+      this.sqlite
         .query('DELETE FROM _cluster_processes WHERE heartbeat_at < ?')
         .run(new Date(stamp - PRESENCE_STALE_MS).toISOString())
     } catch {
@@ -118,14 +126,14 @@ export class RealtimeBus {
     // With a local socket, the bus is also how other processes reach it.
     if (this.sockets > 0) return true
     return Boolean(
-      this.db.sqlite
+      this.sqlite
         .query<{ one: number }, [string]>('SELECT 1 AS one FROM _cluster_processes WHERE sockets > 0 AND id != ? LIMIT 1')
         .get(this.id),
     )
   }
 
   private maxSeq(): number {
-    const row = this.db.sqlite.query<{ seq: number | null }, []>('SELECT max(seq) AS seq FROM _realtime_events').get()
+    const row = this.sqlite.query<{ seq: number | null }, []>('SELECT max(seq) AS seq FROM _realtime_events').get()
     return Number(row?.seq ?? 0)
   }
 
@@ -136,7 +144,7 @@ export class RealtimeBus {
 
     let rows: { seq: number; payload: string }[]
     try {
-      rows = this.db.sqlite
+      rows = this.sqlite
         .query<{ seq: number; payload: string }, [number, string, number]>(
           'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
         )
@@ -174,7 +182,7 @@ export class RealtimeBus {
   private presence(): void {
     this.lastHeartbeat = Date.now()
     try {
-      this.db.sqlite
+      this.sqlite
         .query(
           `INSERT INTO _cluster_processes (id, sockets, started_at, heartbeat_at) VALUES (?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET sockets = excluded.sockets, heartbeat_at = excluded.heartbeat_at`,
@@ -187,7 +195,7 @@ export class RealtimeBus {
 
   private removePresence(): void {
     try {
-      this.db.sqlite.query('DELETE FROM _cluster_processes WHERE id = ?').run(this.id)
+      this.sqlite.query('DELETE FROM _cluster_processes WHERE id = ?').run(this.id)
     } catch {
       /* the database may be closing */
     }

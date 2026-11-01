@@ -13,12 +13,26 @@
  * FUNCTIONS_BUILD_COMMANDS=false to skip them and install what the code needs
  * on the host instead.
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -203,36 +217,36 @@ export interface FilesInput {
 
 export class Deployments {
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private config: Config,
     private functions: FunctionService,
   ) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  get(functionId: string, id: string): DeploymentRow {
-    const row = this.sql.query<DeploymentRow, [string, string]>('SELECT * FROM _deployments WHERE id = ? AND function_id = ?').get(id, functionId)
+  async get(functionId: string, id: string): Promise<DeploymentRow> {
+    const row = await this.db.driver.get<DeploymentRow>('SELECT * FROM _deployments WHERE id = ? AND function_id = ?', [id, functionId])
     if (!row) throw err('deployment_not_found')
     return row
   }
 
-  list(functionId: string): DeploymentRow[] {
-    return this.sql.query<DeploymentRow, [string]>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC').all(functionId)
+  async list(functionId: string): Promise<DeploymentRow[]> {
+    return this.db.driver.all<DeploymentRow>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC', [functionId])
   }
 
   /** The newest Git build of a branch, or of a fork's pull request when `pullRequest` is set. */
-  latestForBranch(functionId: string, branch: string, pullRequest = 0): DeploymentRow | null {
+  async latestForBranch(functionId: string, branch: string, pullRequest = 0): Promise<DeploymentRow | null> {
     return pullRequest
-      ? this.sql.query<DeploymentRow, [string, number]>("SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1").get(functionId, pullRequest)
-      : this.sql
-          .query<DeploymentRow, [string, string]>("SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1")
-          .get(functionId, branch)
+      ? this.db.driver.get<DeploymentRow>(
+          "SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = ? ORDER BY seq DESC LIMIT 1",
+          [functionId, pullRequest],
+        )
+      : this.db.driver.get<DeploymentRow>(
+          "SELECT * FROM _deployments WHERE function_id = ? AND type = 'vcs' AND provider_pull_request = 0 AND provider_branch = ? ORDER BY seq DESC LIMIT 1",
+          [functionId, branch],
+        )
   }
 
-  latest(functionId: string): DeploymentRow | null {
-    return this.sql.query<DeploymentRow, [string]>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC LIMIT 1').get(functionId)
+  async latest(functionId: string): Promise<DeploymentRow | null> {
+    return this.db.driver.get<DeploymentRow>('SELECT * FROM _deployments WHERE function_id = ? ORDER BY seq DESC LIMIT 1', [functionId])
   }
 
   /** Store one upload (or one chunk of it). The build starts once every chunk is in. */
@@ -242,27 +256,27 @@ export class Deployments {
 
     let row: DeploymentRow
     if (input.uploadId && total > bytes.length && start > 0) {
-      row = this.get(f.id, input.uploadId)
+      row = await this.get(f.id, input.uploadId)
       if (row.status !== 'waiting') throw err('general_argument_invalid', 'This deployment has already been uploaded.')
     } else {
       const id = input.uploadId || uniqueId()
       const stamp = now()
-      this.sql
-        .query(
-          `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, 0, ?, ?)`,
-        )
-        .run(id, f.id, input.entrypoint, input.commands, total, f.runtime, input.activate ? 1 : 0, chunksFor(total), stamp, stamp)
-      row = this.get(f.id, id)
+      await this.db.driver.run(
+        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, 0, ?, ?)`,
+        [id, f.id, input.entrypoint, input.commands, total, f.runtime, input.activate ? 1 : 0, chunksFor(total), stamp, stamp],
+      )
+      row = await this.get(f.id, id)
       mkdirSync(deploymentDir(this.config, f.id), { recursive: true })
     }
 
     writeChunk(this.archivePath(f.id, row.id), bytes, start)
-    const counted = this.sql
-      .query<{ chunks_uploaded: number }, [string, string]>('UPDATE _deployments SET chunks_uploaded = chunks_uploaded + 1, updated_at = ? WHERE id = ? RETURNING chunks_uploaded')
-      .get(now(), row.id)!
+    const counted = (await this.db.driver.get<{ chunks_uploaded: number }>(
+      'UPDATE _deployments SET chunks_uploaded = chunks_uploaded + 1, updated_at = ? WHERE id = ? RETURNING chunks_uploaded',
+      [now(), row.id],
+    ))!
     if (counted.chunks_uploaded >= row.chunks_total) {
-      this.sql.query("UPDATE _deployments SET status = 'processing', updated_at = ? WHERE id = ?").run(now(), row.id)
+      await this.db.driver.run("UPDATE _deployments SET status = 'processing', updated_at = ? WHERE id = ?", [now(), row.id])
       this.build(f.id, row.id).catch((e) => console.error(`[functions] ${f.id}: build ${row.id} crashed`, e))
     }
     return this.get(f.id, row.id)
@@ -283,7 +297,7 @@ export class Deployments {
    * back to the built folder.
    */
   async download(functionId: string, id: string, type: 'source' | 'output' = 'source'): Promise<Blob> {
-    this.get(functionId, id)
+    await this.get(functionId, id)
     const source = this.sourcePath(functionId, id)
     if (type === 'source' && existsSync(source)) return Bun.file(source)
     const dir = deploymentDir(this.config, functionId, id)
@@ -291,7 +305,11 @@ export class Deployments {
     // An isolated function's folder is readable by its own user only, so pack it as that user.
     const sandbox = this.config.functionsSandbox
     if (!sandbox) return packFolder(dir)
-    const pack = Bun.spawn(sandbox.wrap(sandbox.uidFor(this.config.projectId, functionId), dir, ['tar', '-czf', '-', '.']), { stdout: 'pipe', stderr: 'pipe', env: TAR_ENV })
+    const pack = Bun.spawn(sandbox.wrap(sandbox.uidFor(this.config.projectId, functionId), dir, ['tar', '-czf', '-', '.']), {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: TAR_ENV,
+    })
     const [bytes, errText, code] = await Promise.all([new Response(pack.stdout).arrayBuffer(), new Response(pack.stderr).text(), pack.exited])
     if (code !== 0) throw new Error(`Could not pack deployment ${id}: ${errText.trim()}`)
     return new Blob([bytes], { type: 'application/gzip' })
@@ -308,7 +326,7 @@ export class Deployments {
    * Deploy files given as text: a starter template or code pasted in the
    * console. The build (if any) runs in the background, as for uploads.
    */
-  deployFiles(f: FunctionRow, input: FilesInput): DeploymentRow {
+  async deployFiles(f: FunctionRow, input: FilesInput): Promise<DeploymentRow> {
     if (!input.files.length) throw err('general_argument_invalid', 'Add at least one file.')
     const id = uniqueId()
     const dir = deploymentDir(this.config, f.id, id)
@@ -320,12 +338,11 @@ export class Deployments {
       if (!file.path || isAbsolute(file.path) || !target.startsWith(root + sep)) throw err('general_argument_invalid', `Invalid file path: ${file.path}`)
     }
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'processing', ?, ?, ?, 1, 1, ?, ?)`,
-      )
-      .run(id, f.id, input.entrypoint, input.commands, size, f.runtime, input.activate ? 1 : 0, stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'processing', ?, ?, ?, 1, 1, ?, ?)`,
+      [id, f.id, input.entrypoint, input.commands, size, f.runtime, input.activate ? 1 : 0, stamp, stamp],
+    )
     rmSync(dir, { recursive: true, force: true })
     for (const file of input.files) {
       const target = resolve(root, file.path)
@@ -341,15 +358,14 @@ export class Deployments {
    * deploymentDir(config, f.id, id) and then calls build(…, { unpacked: true }),
    * or fail() when the code could not be fetched.
    */
-  startGit(f: FunctionRow, source: DeploymentSource, activate: boolean): DeploymentRow {
+  async startGit(f: FunctionRow, source: DeploymentSource, activate: boolean): Promise<DeploymentRow> {
     const id = uniqueId()
     const stamp = now()
-    this.sql
-      .query(
-        `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, f.id, f.entrypoint, f.commands, f.runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _deployments (id, function_id, entrypoint, commands, status, source_size, runtime, activate, chunks_total, chunks_uploaded, ${SOURCE_COLUMNS}, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, f.id, f.entrypoint, f.commands, f.runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp],
+    )
     const dir = deploymentDir(this.config, f.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -357,15 +373,15 @@ export class Deployments {
   }
 
   /** Mark a deployment failed before its build ran (the code could not be fetched). */
-  fail(functionId: string, id: string, message: string): DeploymentRow {
-    this.sql.query("UPDATE _deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?").run(message.slice(-MAX_LOG), now(), id)
+  async fail(functionId: string, id: string, message: string): Promise<DeploymentRow> {
+    await this.db.driver.run("UPDATE _deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?", [message.slice(-MAX_LOG), now(), id])
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     return this.get(functionId, id)
   }
 
   /** Record the size of code written straight into the folder. */
-  setSourceSize(id: string, bytes: number): void {
-    this.sql.query('UPDATE _deployments SET source_size = ?, updated_at = ? WHERE id = ?').run(bytes, now(), id)
+  async setSourceSize(id: string, bytes: number): Promise<void> {
+    await this.db.driver.run('UPDATE _deployments SET source_size = ?, updated_at = ? WHERE id = ?', [bytes, now(), id])
   }
 
   /** Unpack, run the build command, and activate when asked. Sets status ready or failed. */
@@ -374,12 +390,16 @@ export class Deployments {
     const archive = this.archivePath(functionId, id)
     const dir = deploymentDir(this.config, functionId, id)
     const logs: string[] = []
-    const set = (status: string) =>
-      this.sql
-        .query('UPDATE _deployments SET status = ?, build_logs = ?, build_duration = ?, updated_at = ? WHERE id = ?')
-        .run(status, logs.join('\n').slice(-MAX_LOG), (performance.now() - started) / 1000, now(), id)
+    const set = async (status: string) =>
+      this.db.driver.run('UPDATE _deployments SET status = ?, build_logs = ?, build_duration = ?, updated_at = ? WHERE id = ?', [
+        status,
+        logs.join('\n').slice(-MAX_LOG),
+        (performance.now() - started) / 1000,
+        now(),
+        id,
+      ])
     try {
-      set('building')
+      await set('building')
       if (!options.unpacked) {
         removeTree(this.config.functionsSandbox, dir)
         mkdirSync(dir, { recursive: true })
@@ -390,7 +410,7 @@ export class Deployments {
         }
       }
 
-      const d = this.get(functionId, id)
+      const d = await this.get(functionId, id)
       const lifted = liftSingleFolder(dir, d.entrypoint)
       if (lifted) logs.push(`Using the "${lifted}" folder inside the upload as the function folder.`)
       if (!existsSync(join(dir, d.entrypoint))) {
@@ -403,18 +423,20 @@ export class Deployments {
       if (sandbox && uid !== undefined) sandbox.adopt(dir, functionHome(this.config, functionId), uid)
 
       // Install the runtime now, so the first execution does not wait for a download.
-      const runtime = isPython(d.runtime) ? null : await ensureRuntime(this.config, d.runtime, (line) => {
-        logs.push(line)
-        set('building')
-      })
+      const runtime = isPython(d.runtime)
+        ? null
+        : await ensureRuntime(this.config, d.runtime, (line) => {
+            logs.push(line)
+            void set('building')
+          })
       if (runtime?.version) logs.push(`Runtime: ${runtime.kind === 'node' ? 'Node.js' : 'Bun'} ${runtime.version}`)
 
       if (d.commands.trim() && !this.config.functionsBuildCommands) {
         logs.push(`Skipped the build command (FUNCTIONS_BUILD_COMMANDS=false): ${d.commands}`)
       } else if (d.commands.trim()) {
         logs.push(`$ ${d.commands}`)
-        set('building')
-        const f = this.functions.fn(functionId)
+        await set('building')
+        const f = await this.functions.fn(functionId)
         const result = await runShell({
           command: d.commands,
           cwd: sandbox && uid !== undefined ? undefined : dir,
@@ -431,11 +453,11 @@ export class Deployments {
       }
 
       logs.push('Build ready.')
-      set('ready')
-      if (d.activate) this.activate(functionId, id)
+      await set('ready')
+      if (d.activate) await this.activate(functionId, id)
     } catch (error) {
       logs.push(error instanceof Error ? error.message : String(error))
-      set('failed')
+      await set('failed')
       rmSync(archive, { force: true })
       removeTree(this.config.functionsSandbox, dir)
     }
@@ -461,85 +483,89 @@ export class Deployments {
   }
 
   /** Make a built deployment the code that runs (functions.updateFunctionDeployment). */
-  activate(functionId: string, id: string): FunctionRow {
-    const d = this.get(functionId, id)
+  async activate(functionId: string, id: string): Promise<FunctionRow> {
+    const d = await this.get(functionId, id)
     if (d.status !== 'ready') throw err('build_not_ready')
-    this.sql.query('UPDATE _functions SET deployment_id = ?, updated_at = ? WHERE id = ?').run(id, now(), functionId)
-    this.prune(functionId)
+    await this.db.driver.run('UPDATE _functions SET deployment_id = ?, updated_at = ? WHERE id = ?', [id, now(), functionId])
+    await this.prune(functionId)
     return this.functions.fn(functionId)
   }
 
   /** Delete a deployment that is not the active one. */
-  remove(functionId: string, id: string): void {
-    this.get(functionId, id)
-    if (this.functions.fn(functionId).deployment_id === id) throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
-    this.removeStored(functionId, id)
+  async remove(functionId: string, id: string): Promise<void> {
+    await this.get(functionId, id)
+    if ((await this.functions.fn(functionId)).deployment_id === id)
+      throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
+    await this.removeStored(functionId, id)
   }
 
   /**
    * Delete several deployments at once. The active deployment and builds that
    * have not finished are kept. Returns what was removed and what was skipped.
    */
-  removeMany(functionId: string, ids: readonly string[]): { removed: number; skipped: number } {
-    const active = this.functions.fn(functionId).deployment_id
+  async removeMany(functionId: string, ids: readonly string[]): Promise<{ removed: number; skipped: number }> {
+    const active = (await this.functions.fn(functionId)).deployment_id
     let removed = 0
     let skipped = 0
     for (const id of new Set(ids)) {
-      const deployment = this.sql.query<{ status: string }, [string, string]>('SELECT status FROM _deployments WHERE id = ? AND function_id = ?').get(id, functionId)
+      const deployment = await this.db.driver.get<{ status: string }>('SELECT status FROM _deployments WHERE id = ? AND function_id = ?', [id, functionId])
       if (!deployment || id === active || UNSETTLED.includes(deployment.status)) {
         skipped++
         continue
       }
-      this.removeStored(functionId, id)
+      await this.removeStored(functionId, id)
       removed++
     }
     return { removed, skipped }
   }
 
   /** Delete a deployment's row, code and source archive. Callers check that it may be deleted. */
-  private removeStored(functionId: string, id: string): void {
-    this.sql.query('DELETE FROM _deployments WHERE id = ? AND function_id = ?').run(id, functionId)
+  private async removeStored(functionId: string, id: string): Promise<void> {
+    await this.db.driver.run('DELETE FROM _deployments WHERE id = ? AND function_id = ?', [id, functionId])
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     rmSync(this.archivePath(functionId, id), { force: true })
     rmSync(this.sourcePath(functionId, id), { force: true })
   }
 
   /** Delete non-active deployments older than each function's retention setting. */
-  pruneDeployments(): number {
+  async pruneDeployments(): Promise<number> {
     let removed = 0
-    for (const f of this.functions.list()) removed += this.pruneFunctionRetention(f)
+    for (const f of await this.functions.list()) removed += await this.pruneFunctionRetention(f)
     return removed
   }
 
   /** Apply one function's retention setting. */
-  private pruneFunctionRetention(f: FunctionRow): number {
+  private async pruneFunctionRetention(f: FunctionRow): Promise<number> {
     if (f.deployment_retention <= 0) return 0
     const cutoff = addSeconds(-f.deployment_retention * 86400)
-    const old = this.sql
-      .query<{ id: string }, [string, string, string]>(
-        "SELECT id FROM _deployments WHERE function_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
-      )
-      .all(f.id, f.deployment_id, cutoff)
-    for (const { id } of old) this.removeStored(f.id, id)
+    const old = await this.db.driver.all<{ id: string }>(
+      "SELECT id FROM _deployments WHERE function_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
+      [f.id, f.deployment_id, cutoff],
+    )
+    for (const { id } of old) await this.removeStored(f.id, id)
     return old.length
   }
 
   /** Keep disk use flat: drop the code of all but the active and the last few ready deployments, then apply retention. */
-  prune(functionId: string): void {
-    const f = this.functions.fn(functionId)
+  async prune(functionId: string): Promise<void> {
+    const f = await this.functions.fn(functionId)
     const active = f.deployment_id
     // Git builds of other branches (never made active) are pruned on their own, so they do not push out rollbacks.
     const preview = "type = 'vcs' AND activate = 0"
-    const ready = this.sql
-      .query<{ id: string }, [string, string]>(`SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND NOT (${preview}) ORDER BY seq DESC`)
-      .all(functionId, active)
-    const previews = this.sql
-      .query<{ id: string }, [string, string]>(`SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND ${preview} ORDER BY seq DESC`)
-      .all(functionId, active)
-    for (const { id } of [...ready.slice(KEEP_PREVIOUS), ...previews.slice(KEEP_PREVIEWS)]) this.removeStored(functionId, id)
+    const ready = await this.db.driver.all<{ id: string }>(
+      `SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND NOT (${preview}) ORDER BY seq DESC`,
+      [functionId, active],
+    )
+    const previews = await this.db.driver.all<{ id: string }>(
+      `SELECT id FROM _deployments WHERE function_id = ? AND status = 'ready' AND id != ? AND ${preview} ORDER BY seq DESC`,
+      [functionId, active],
+    )
+    for (const { id } of [...ready.slice(KEEP_PREVIOUS), ...previews.slice(KEEP_PREVIEWS)]) await this.removeStored(functionId, id)
     // Failed builds keep their source so it can be pulled and fixed; only the latest few.
-    const failed = this.sql.query<{ id: string }, [string]>("SELECT id FROM _deployments WHERE function_id = ? AND status = 'failed' ORDER BY seq DESC").all(functionId)
+    const failed = await this.db.driver.all<{ id: string }>("SELECT id FROM _deployments WHERE function_id = ? AND status = 'failed' ORDER BY seq DESC", [
+      functionId,
+    ])
     for (const { id } of failed.slice(KEEP_PREVIOUS)) rmSync(this.sourcePath(functionId, id), { force: true })
-    this.pruneFunctionRetention(f)
+    await this.pruneFunctionRetention(f)
   }
 }

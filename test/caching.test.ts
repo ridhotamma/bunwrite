@@ -39,34 +39,34 @@ afterEach(() => {
 })
 
 describe('shared rate limits', () => {
-  test('two workers count into the same SQLite window', () => {
+  test('two workers count into the same window', async () => {
     const path = tempDatabase()
     const one = new RateLimiter(open(path))
     const two = new RateLimiter(open(path))
 
-    one.hit('login:127.0.0.1', 2, 60)
-    two.hit('login:127.0.0.1', 2, 60)
-    expect(() => one.hit('login:127.0.0.1', 2, 60)).toThrow()
-    expect(() => two.hit('login:127.0.0.1', 2, 60)).toThrow()
+    await one.hit('login:127.0.0.1', 2, 60)
+    await two.hit('login:127.0.0.1', 2, 60)
+    await expect(one.hit('login:127.0.0.1', 2, 60)).rejects.toThrow()
+    await expect(two.hit('login:127.0.0.1', 2, 60)).rejects.toThrow()
   })
 
-  test('failed token attempts are shared too', () => {
+  test('failed token attempts are shared too', async () => {
     const path = tempDatabase()
     const one = new FailedAttempts(open(path), 2)
     const two = new FailedAttempts(open(path), 2)
 
-    expect(one.fail('u1')).toBe(false)
-    expect(two.fail('u1')).toBe(true)
-    one.clear('u1')
-    expect(two.fail('u1')).toBe(false)
+    expect(await one.fail('u1')).toBe(false)
+    expect(await two.fail('u1')).toBe(true)
+    await one.clear('u1')
+    expect(await two.fail('u1')).toBe(false)
   })
 
-  test('expired windows are pruned', () => {
+  test('expired windows are pruned', async () => {
     const path = tempDatabase()
     const db = open(path)
-    new RateLimiter(db).hit('login', 5, 60)
+    await new RateLimiter(db).hit('login', 5, 60)
     db.sqlite.query('UPDATE _rate_limits SET reset_at = 0').run()
-    pruneRateLimits(db)
+    await pruneRateLimits(db)
     expect((db.sqlite.query('SELECT count(*) AS n FROM _rate_limits').get() as { n: number }).n).toBe(0)
   })
 })
@@ -110,26 +110,26 @@ describe('session cache', () => {
     const dbB = servicesB.db
 
     const user = await servicesA.auth.createUser({ id: 'u1', email: 'u1@example.com', name: 'U', emailVerification: true })
-    const { session, secret } = servicesA.auth.createSession(user.id, {
+    const { session, secret } = await servicesA.auth.createSession(user.id, {
       provider: 'email',
       factors: [],
       info: { ip: '127.0.0.1', userAgent: 'test' },
     })
 
     // Warm both caches.
-    expect(sessionCaller(dbA, secret)!.roles.has('user:u1')).toBe(true)
-    expect(sessionCaller(dbB, secret)!.roles.has('users/verified')).toBe(true)
+    expect((await sessionCaller(dbA, secret))!.roles.has('user:u1')).toBe(true)
+    expect((await sessionCaller(dbB, secret))!.roles.has('users/verified')).toBe(true)
 
     await servicesA.teams.create(keyCaller(), { teamId: 't1', name: 'Team', roles: [] })
     await servicesA.teams.createMembership(keyCaller(), 't1', { userId: 'u1', roles: ['manager'] })
-    const withTeam = sessionCaller(dbB, secret)!
+    const withTeam = (await sessionCaller(dbB, secret))!
     expect(withTeam.roles.has('team:t1')).toBe(true)
     expect(withTeam.roles.has('team:t1/manager')).toBe(true)
 
-    servicesA.auth.updateUser('u1', { status: 0 })
-    expect(sessionCaller(dbB, secret)!.user!.status).toBeFalsy()
+    await servicesA.auth.updateUser('u1', { status: 0 })
+    expect((await sessionCaller(dbB, secret))!.user!.status).toBeFalsy()
 
-    servicesA.auth.deleteSession('u1', session.id)
-    expect(sessionCaller(dbB, secret)).toBeNull()
+    await servicesA.auth.deleteSession('u1', session.id)
+    expect(await sessionCaller(dbB, secret)).toBeNull()
   })
 })

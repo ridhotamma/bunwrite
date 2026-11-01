@@ -16,7 +16,7 @@ import { providerOf, type ProviderSettings } from '~/vcs/source'
 
 const FN = '/console/functions'
 
-const isOwner = (ctx: ConsoleContext) => ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email) === 'owner'
+const isOwner = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email)) === 'owner'
 
 function projectOf(ctx: ConsoleContext): ProjectRuntime {
   const project = ctx.projects.get(ctx.currentProject.id)
@@ -45,16 +45,21 @@ function providerFromForm(ctx: ConsoleContext): ProviderSettings {
 export function vcsPages(router: ConsoleRouter): void {
   // ---- The server's GitHub App ----
 
-  router.post('/console/organization/github-app', ({ ctx }) => {
-    if (!isOwner(ctx)) throw err('general_argument_invalid', 'Only an organization owner can set up the GitHub App.')
+  router.post('/console/organization/github-app', async ({ ctx }) => {
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can set up the GitHub App.')
     const org = value(ctx.form, 'owner_type') === 'org' ? value(ctx.form, 'org') : ''
     if (value(ctx.form, 'owner_type') === 'org' && !org) throw err('general_argument_invalid', 'Enter the GitHub organization the app belongs to.')
     const { action, manifest } = ctx.hub.manifestForm(org, '/console/organization')
-    return ctx.render('GitHub App', 'organization', html`${header('GitHub App', { back: '/console/organization' })}<div class="card">${manifestRedirect(action, manifest)}</div>`)
+    return ctx.render(
+      'GitHub App',
+      'organization',
+      html`${header('GitHub App', { back: '/console/organization' })}
+        <div class="card">${manifestRedirect(action, manifest)}</div>`,
+    )
   })
 
-  router.post('/console/organization/github-app/delete', ({ ctx }) => {
-    if (!isOwner(ctx)) throw err('general_argument_invalid', 'Only an organization owner can remove the GitHub App.')
+  router.post('/console/organization/github-app/delete', async ({ ctx }) => {
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can remove the GitHub App.')
     ctx.hub.apps.remove()
     return ctx.go('/console/organization', { tone: 'success', text: 'GitHub App removed. Delete it on GitHub too.' })
   })
@@ -68,9 +73,9 @@ export function vcsPages(router: ConsoleRouter): void {
     return redirect(target)
   })
 
-  router.post('/console/vcs/installations/:id/delete', ({ ctx, path }) => {
+  router.post('/console/vcs/installations/:id/delete', async ({ ctx, path }) => {
     const installation = ctx.hub.installations.get(path.id!)
-    ctx.hub.removeInstallation(installation.id)
+    await ctx.hub.removeInstallation(installation.id)
     return ctx.go('/console/settings/git', { tone: 'success', text: `${installation.organization || 'Installation'} removed from this server` })
   })
 
@@ -97,7 +102,7 @@ export function vcsPages(router: ConsoleRouter): void {
     const type: ResourceType = q.get('type') === 'function' ? 'function' : 'site'
     const id = q.get('id') ?? ''
     const selected = q.get('selected') ?? ''
-    const target = ctx.hub.target(projectOf(ctx), type, id)
+    const target = await ctx.hub.target(projectOf(ctx), type, id)
     if (!target) return page(commitOptions([], selected, '', 'This resource is not connected to a repository.'))
     const branch = q.get('provider_branch') || q.get('branch') || target.provider.providerBranch
     try {
@@ -137,12 +142,16 @@ export function vcsPages(router: ConsoleRouter): void {
       const names = (await gh.contents(installation.provider_installation_id, repositoryId, root, branch)).map((e) => e.name)
       const found = await detectFramework(names, (p) => gh.fileText(installation.provider_installation_id, repositoryId, root ? `${root}/${p}` : p, branch))
       const preset = frameworkOf(found.framework)
-      return page(html`${alert('success', html`Detected <b>${preset.name}</b> on ${runtimeLabel(found.buildRuntime)}. Check the commands, then create the site.`)}
-        ${buildFields('git', { ...found, pruneMode: 'auto' }, 'git_framework')}`)
+      return page(
+        html`${alert('success', html`Detected <b>${preset.name}</b> on ${runtimeLabel(found.buildRuntime)}. Check the commands, then create the site.`)}
+        ${buildFields('git', { ...found, pruneMode: 'auto' }, 'git_framework')}`,
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return page(html`${alert('warning', html`Could not read the repository (${message}). Pick the framework yourself.`)}
-        ${buildFields('git', presetValues('other'), 'git_framework')}`)
+      return page(
+        html`${alert('warning', html`Could not read the repository (${message}). Pick the framework yourself.`)}
+        ${buildFields('git', presetValues('other'), 'git_framework')}`,
+      )
     }
   })
 
@@ -158,7 +167,7 @@ export function vcsPages(router: ConsoleRouter): void {
     } catch {
       /* show what we know */
     }
-    const target = ctx.hub.target(projectOf(ctx), link.resource_type, link.resource_id)
+    const target = await ctx.hub.target(projectOf(ctx), link.resource_type, link.resource_id)
     return ctx.render(
       'Approve pull request',
       link.resource_type === 'site' ? 'sites' : 'functions',
@@ -174,18 +183,23 @@ export function vcsPages(router: ConsoleRouter): void {
 
   // ---- A site's or function's repository ----
 
-  const resources: { type: ResourceType; prefix: string; back: (id: string) => string; current: (ctx: ConsoleContext, id: string) => ProviderSettings }[] = [
+  const resources: {
+    type: ResourceType
+    prefix: string
+    back: (id: string) => string
+    current: (ctx: ConsoleContext, id: string) => ProviderSettings | Promise<ProviderSettings>
+  }[] = [
     { type: 'site', prefix: SITES, back: (id) => `${SITES}/${id}/settings`, current: (ctx, id) => providerOf(ctx.services.sites.site(id)) },
-    { type: 'function', prefix: FN, back: (id) => `${FN}/${id}/settings`, current: (ctx, id) => providerOf(ctx.services.functions.fn(id)) },
+    { type: 'function', prefix: FN, back: (id) => `${FN}/${id}/settings`, current: async (ctx, id) => providerOf(await ctx.services.functions.fn(id)) },
   ]
   for (const resource of resources) {
     router.post(`${resource.prefix}/:id/git`, async ({ ctx, path }) => {
-      const before = resource.current(ctx, path.id!)
+      const before = await resource.current(ctx, path.id!)
       const next = providerFromForm(ctx)
       if (!next.installationId || !next.providerRepositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
       const project = projectOf(ctx)
       await ctx.hub.link(project, resource.type, path.id!, next)
-      const after = resource.current(ctx, path.id!)
+      const after = await resource.current(ctx, path.id!)
       // A new repository or production branch deploys straight away.
       if (after.providerRepositoryId !== before.providerRepositoryId || after.providerBranch !== before.providerBranch) {
         await ctx.hub.deployReference(project, resource.type, path.id!, 'branch', after.providerBranch, true)
@@ -194,13 +208,13 @@ export function vcsPages(router: ConsoleRouter): void {
       return ctx.go(resource.back(path.id!), { tone: 'success', text: 'Saved' })
     })
 
-    router.post(`${resource.prefix}/:id/git/disconnect`, ({ ctx, path }) => {
-      ctx.hub.unlink(projectOf(ctx), resource.type, path.id!)
+    router.post(`${resource.prefix}/:id/git/disconnect`, async ({ ctx, path }) => {
+      await ctx.hub.unlink(projectOf(ctx), resource.type, path.id!)
       return ctx.go(resource.back(path.id!), { tone: 'success', text: 'Disconnected from Git' })
     })
 
     router.post(`${resource.prefix}/:id/git/deploy`, async ({ ctx, path }) => {
-      const target = ctx.hub.target(projectOf(ctx), resource.type, path.id!)
+      const target = await ctx.hub.target(projectOf(ctx), resource.type, path.id!)
       if (!target) throw err('general_argument_invalid', 'Connect a Git repository first.')
       // The settings card's quick deploy posts no branch; the Deploy page sends one.
       const branch = value(ctx.form, 'provider_branch') || target.provider.providerBranch

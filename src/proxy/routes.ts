@@ -8,11 +8,8 @@ import { json, list, noContent, str } from '~/lib/http'
 import type { Router } from '~/lib/router'
 import type { ProxyRuleRow } from './service'
 
-const ruleModel = (ctx: AppContext, rule: ProxyRuleRow) => {
-  const deploymentId =
-    rule.resource_type === 'site'
-      ? ctx.sites.site(rule.resource_id).deployment_id
-      : ctx.functions.fn(rule.resource_id).deployment_id
+const ruleModel = async (ctx: AppContext, rule: ProxyRuleRow) => {
+  const deploymentId = rule.resource_type === 'site' ? ctx.sites.site(rule.resource_id).deployment_id : (await ctx.functions.fn(rule.resource_id)).deployment_id
   return {
     $id: rule.id,
     $createdAt: rule.created_at,
@@ -33,7 +30,7 @@ const ruleModel = (ctx: AppContext, rule: ProxyRuleRow) => {
 }
 
 export function proxyRoutes(router: Router<AppContext>): void {
-  router.get('/proxy/rules', ({ ctx, params }) => {
+  router.get('/proxy/rules', async ({ ctx, params }) => {
     requireKey(ctx, 'rules.read')
     let rules = ctx.proxy.list()
     let limit = 25
@@ -47,36 +44,36 @@ export function proxyRoutes(router: Router<AppContext>): void {
         else rules = rules.filter((rule) => values.includes(String((rule as unknown as Record<string, unknown>)[query.attribute!])))
       }
     }
-    return json({ total: rules.length, rules: rules.slice(0, limit).map((rule) => ruleModel(ctx, rule)) })
+    return json({ total: rules.length, rules: await Promise.all(rules.slice(0, limit).map((rule) => ruleModel(ctx, rule))) })
   })
 
-  router.get('/proxy/rules/:ruleId', ({ ctx, path }) => {
+  router.get('/proxy/rules/:ruleId', async ({ ctx, path }) => {
     requireKey(ctx, 'rules.read')
-    return json(ruleModel(ctx, ctx.proxy.get(path.ruleId!)))
+    return json(await ruleModel(ctx, ctx.proxy.get(path.ruleId!)))
   })
 
-  router.post('/proxy/rules/site', ({ ctx, params }) => {
+  router.post('/proxy/rules/site', async ({ ctx, params }) => {
     requireKey(ctx, 'rules.write')
     const site = ctx.sites.site(str(params.siteId) ?? '')
-    const rule = ctx.proxy.create('site', site.id, str(params.domain) ?? '')
-    return json(ruleModel(ctx, rule), 201)
+    const rule = await ctx.proxy.create('site', site.id, str(params.domain) ?? '')
+    return json(await ruleModel(ctx, rule), 201)
   })
 
-  router.post('/proxy/rules/function', ({ ctx, params }) => {
+  router.post('/proxy/rules/function', async ({ ctx, params }) => {
     requireKey(ctx, 'rules.write')
-    const fn = ctx.functions.fn(str(params.functionId) ?? '')
-    const rule = ctx.proxy.create('function', fn.id, str(params.domain) ?? '')
-    return json(ruleModel(ctx, rule), 201)
+    const fn = await ctx.functions.fn(str(params.functionId) ?? '')
+    const rule = await ctx.proxy.create('function', fn.id, str(params.domain) ?? '')
+    return json(await ruleModel(ctx, rule), 201)
   })
 
-  router.patch('/proxy/rules/:ruleId/status', ({ ctx, path }) => {
+  router.patch('/proxy/rules/:ruleId/status', async ({ ctx, path }) => {
     requireKey(ctx, 'rules.write')
-    return json(ruleModel(ctx, ctx.proxy.get(path.ruleId!)))
+    return json(await ruleModel(ctx, ctx.proxy.get(path.ruleId!)))
   })
 
-  router.delete('/proxy/rules/:ruleId', ({ ctx, path }) => {
+  router.delete('/proxy/rules/:ruleId', async ({ ctx, path }) => {
     requireKey(ctx, 'rules.write')
-    ctx.proxy.remove(path.ruleId!)
+    await ctx.proxy.remove(path.ruleId!)
     return noContent()
   })
 }

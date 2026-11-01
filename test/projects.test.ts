@@ -24,19 +24,20 @@ describe('multiple projects', () => {
   const client = (projectId: string, key: string) =>
     new Client().setEndpoint(endpoint).setProject(projectId).setKey(key)
 
-  beforeAll(() => {
+  beforeAll(async () => {
     db = openDb(join(dir, 'control.sqlite'))
     pushConfig(db, testSchema, { baseDir: dir })
     const config = testConfig({ databasePath: join(dir, 'control.sqlite'), logRequests: true })
     const services = createServices(config, db)
     manager = createProjectManager({ config, db, services, dataDir: dir })
-    const created = manager.create({ id: 'project-b', name: 'Project B', orgId: 'org_test' })
+    await manager.ready()
+    const created = await manager.create({ id: 'project-b', name: 'Project B', orgId: 'org_test' })
     projectKey = created.apiKey!
-    pushConfig(created.project.services.db, testSchema, { baseDir: dir })
+    pushConfig(created.project.services.db as Db, testSchema, { baseDir: dir })
     created.project.services.registry.reload()
     // An installation from before installations moved to the control database.
     const stamp = new Date().toISOString()
-    created.project.services.db.sqlite
+    created.project.services.db.sqlite!
       .query(
         `INSERT INTO _vcs_installations (id, provider, provider_installation_id, organization, account_type, created_at, updated_at)
          VALUES ('legacy-installation', 'github', '999', 'legacy-org', 'Organization', ?, ?)`,
@@ -251,7 +252,7 @@ describe('multiple projects', () => {
   test('each project keeps its own database durability setting', async () => {
     const control = manager.defaultProject().services
     const other = manager.get('project-b')!.services
-    const synchronous = (db: Db) => (db.sqlite.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous
+    const synchronous = (db: { sqlite?: Db['sqlite'] }) => (db.sqlite!.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous
 
     expect(synchronous(control.db)).toBe(1)
     expect(synchronous(other.db)).toBe(1)
@@ -265,10 +266,10 @@ describe('multiple projects', () => {
 
     // A project created while the default project is FULL still starts from
     // the environment default.
-    const created = manager.create({ id: 'project-sync', name: 'Sync', orgId: 'org_test' })
+    const created = await manager.create({ id: 'project-sync', name: 'Sync', orgId: 'org_test' })
     expect(created.project.services.config.sqliteSynchronous).toBe('NORMAL')
     expect(synchronous(created.project.services.db)).toBe(1)
-    manager.delete('project-sync')
+    await manager.delete('project-sync')
 
     await other.settings.set('database', { synchronous: 'FULL' })
     expect(other.config.sqliteSynchronous).toBe('FULL')

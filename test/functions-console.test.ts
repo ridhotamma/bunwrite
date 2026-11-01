@@ -46,7 +46,7 @@ const deployments = () => new Deployments(server.db, server.config, server.servi
 /** Wait until the function's newest deployment has finished building. */
 async function settled(functionId: string) {
   for (let i = 0; i < 200; i++) {
-    const latest = deployments().latest(functionId)
+    const latest = await deployments().latest(functionId)
     if (latest && !['waiting', 'processing', 'building'].includes(latest.status)) return latest
     await Bun.sleep(25)
   }
@@ -54,7 +54,7 @@ async function settled(functionId: string) {
 }
 
 async function run(functionId: string, path = '/') {
-  const f = server.services.functions.fn(functionId)
+  const f = await server.services.functions.fn(functionId)
   const { result } = await server.services.functions.execute(f, { trigger: 'http', method: 'GET', path }, 'sync')
   return result!
 }
@@ -118,13 +118,20 @@ describe('console function creation', () => {
   })
 
   test('creates a function from the starter template, live and runnable', async () => {
-    const res = await post('/console/functions', { name: 'Hello', id: 'hello', runtime: 'node-22', entrypoint: 'src/main.js', schedule: '', source: 'template' })
+    const res = await post('/console/functions', {
+      name: 'Hello',
+      id: 'hello',
+      runtime: 'node-22',
+      entrypoint: 'src/main.js',
+      schedule: '',
+      source: 'template',
+    })
     expect(res.status).toBe(303)
     expect(res.headers.get('location')).toStartWith('/console/functions/hello')
     expect(flash(res).get('ok')).toBe('Function created')
     const d = await settled('hello')
     expect(d.status).toBe('ready')
-    expect(server.services.functions.fn('hello').deployment_id).toBe(d.id)
+    expect((await server.services.functions.fn('hello')).deployment_id).toBe(d.id)
     const result = await run('hello')
     expect(result.statusCode).toBe(200)
     expect(JSON.parse(result.body).message).toBe('Hello from your new function')
@@ -154,7 +161,7 @@ describe('console function creation', () => {
     expect(settings).toContain('id="function-http-url"')
     expect(settings).toContain('Copy function URL')
     // Appwrite's default lets client SDKs call a new function.
-    expect(JSON.parse(server.services.functions.fn('hello').execute)).toEqual(['any'])
+    expect(JSON.parse((await server.services.functions.fn('hello')).execute)).toEqual(['any'])
     expect(settings).toContain('name="execute" value="any"')
     expect(settings).toContain('Empty means API keys only')
   })
@@ -162,7 +169,7 @@ describe('console function creation', () => {
   test('saves custom domains from the settings table and removes one', async () => {
     const saved = await post('/console/functions/hello/domains', { domains: 'api.example.org, hooks.example.org' })
     expect(flash(saved).get('ok')).toBe('Domains saved')
-    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual(['api.example.org', 'hooks.example.org'])
+    expect(server.services.functions.domains(await server.services.functions.fn('hello'))).toEqual(['api.example.org', 'hooks.example.org'])
 
     const page = await (await get('/console/functions/hello/settings')).text()
     expect(page).toContain('id="function-domains"')
@@ -179,11 +186,11 @@ describe('console function creation', () => {
 
     const removed = await post('/console/functions/hello/domains/remove', { remove: 'api.example.org' })
     expect(flash(removed).get('ok')).toBe('Domain removed')
-    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual(['hooks.example.org'])
+    expect(server.services.functions.domains(await server.services.functions.fn('hello'))).toEqual(['hooks.example.org'])
 
     // Do not leave a custom domain on the shared fixture.
     await post('/console/functions/hello/domains', {})
-    expect(server.services.functions.domains(server.services.functions.fn('hello'))).toEqual([])
+    expect(server.services.functions.domains(await server.services.functions.fn('hello'))).toEqual([])
   })
 
   test('refuses bad input before creating anything', async () => {
@@ -191,13 +198,20 @@ describe('console function creation', () => {
     expect(flash(badId).get('err')).toContain('Function ID')
     const noFile = await post('/console/functions', { name: 'No file', id: 'no-file', runtime: 'node-22', entrypoint: 'src/main.js', source: 'upload' })
     expect(flash(noFile).get('err')).toContain('Choose a .zip or .tar.gz file')
-    const noCode = await post('/console/functions', { name: 'No code', id: 'no-code', runtime: 'node-22', entrypoint: 'src/main.js', source: 'paste', code_text: '  ' })
+    const noCode = await post('/console/functions', {
+      name: 'No code',
+      id: 'no-code',
+      runtime: 'node-22',
+      entrypoint: 'src/main.js',
+      source: 'paste',
+      code_text: '  ',
+    })
     expect(flash(noCode).get('err')).toContain('Add the code')
     const runtime = await post('/console/functions', { name: 'Ruby', id: 'ruby', runtime: 'ruby-3.3', entrypoint: 'main.rb', source: 'template' })
     expect(flash(runtime).get('err')).toContain('Choose a runtime')
     const escape = await post('/console/functions', { name: 'Escape', id: 'escape', runtime: 'node-22', entrypoint: '../main.js', source: 'template' })
     expect(flash(escape).get('err')).toContain('entry file')
-    for (const id of ['no-file', 'no-code', 'ruby', 'escape']) expect(() => server.services.functions.fn(id)).toThrow()
+    for (const id of ['no-file', 'no-code', 'ruby', 'escape']) await expect(server.services.functions.fn(id)).rejects.toThrow()
   })
 
   test('creates a function from an uploaded .zip whose code sits in one folder', async () => {
@@ -237,7 +251,7 @@ describe('console function creation', () => {
   })
 
   test('deploys typed code with a build command, then activates and deletes deployments', async () => {
-    const before = server.services.functions.fn('hello').deployment_id
+    const before = (await server.services.functions.fn('hello')).deployment_id
     const res = await post('/console/functions/hello/deployments', {
       entrypoint: 'src/main.js',
       source: 'paste',
@@ -249,7 +263,7 @@ describe('console function creation', () => {
     expect(d.status).toBe('ready')
     expect(d.build_logs).toContain('$ echo built > built.txt')
     // Not ticked "make it live": the old code keeps running.
-    expect(server.services.functions.fn('hello').deployment_id).toBe(before)
+    expect((await server.services.functions.fn('hello')).deployment_id).toBe(before)
     expect(JSON.parse((await run('hello')).body).message).toBe('from a tarball')
 
     const logs = await (await get(`/console/functions/hello/deployments/${d.id}`)).text()
@@ -264,11 +278,17 @@ describe('console function creation', () => {
     expect(flash(activeDelete).get('err')).toContain('active deployment cannot be deleted')
     const removed = await post(`/console/functions/hello/deployments/${before}/delete`, {})
     expect(flash(removed).get('ok')).toBe('Deployment deleted')
-    expect(deployments().list('hello').map((row) => row.id)).not.toContain(before)
+    expect((await deployments().list('hello')).map((row) => row.id)).not.toContain(before)
   })
 
   test('a failed build shows on the function page with a link to its logs', async () => {
-    await post('/console/functions/zipped/deployments', { entrypoint: 'src/missing.js', source: 'paste', code_text: nodeFn('x'), commands: 'exit 3', activate: 'on' })
+    await post('/console/functions/zipped/deployments', {
+      entrypoint: 'src/missing.js',
+      source: 'paste',
+      code_text: nodeFn('x'),
+      commands: 'exit 3',
+      activate: 'on',
+    })
     const d = await settled('zipped')
     expect(d.status).toBe('failed')
     expect(d.build_logs).toContain('exited with code 3')
@@ -280,8 +300,8 @@ describe('console function creation', () => {
     const res = await post('/console/functions/zipped/delete', {})
     expect(res.headers.get('location')).toStartWith('/console/functions?')
     expect(flash(res).get('ok')).toBe('Zipped deleted')
-    expect(() => server.services.functions.fn('zipped')).toThrow()
-    expect(deployments().list('zipped')).toEqual([])
+    await expect(server.services.functions.fn('zipped')).rejects.toThrow()
+    expect(await deployments().list('zipped')).toEqual([])
   })
 })
 
@@ -290,12 +310,11 @@ describe('function variables in the console', () => {
     await post('/console/functions', { name: 'Vars', id: 'vars', runtime: 'node-22', entrypoint: 'src/main.js', source: 'template' })
   })
 
-  const values = () =>
-    server.services.functions.variables('vars').map(({ key, value, secret }) => ({ key, value, secret }))
+  const values = async () => (await server.services.functions.variables('vars')).map(({ key, value, secret }) => ({ key, value, secret }))
 
   test('adds, edits and removes a variable', async () => {
     await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'first', secret: 'on' })
-    expect(values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
+    expect(await values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
 
     const page = await (await get('/console/functions/vars/variables')).text()
     expect(page).toContain('TOKEN')
@@ -304,15 +323,15 @@ describe('function variables in the console', () => {
 
     // A blank edit keeps a secret's stored value; a new value replaces it.
     await post('/console/functions/vars/variables', { key: 'TOKEN', value: '', secret: 'on' })
-    expect(values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
+    expect(await values()).toEqual([{ key: 'TOKEN', value: 'first', secret: 1 }])
     await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'second', secret: 'on' })
-    expect(values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 1 }])
+    expect(await values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 1 }])
     // Unhiding shows the value.
     await post('/console/functions/vars/variables', { key: 'TOKEN', value: 'second' })
-    expect(values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 0 }])
+    expect(await values()).toEqual([{ key: 'TOKEN', value: 'second', secret: 0 }])
 
     await post('/console/functions/vars/variables/delete', { key: 'TOKEN' })
-    expect(values()).toEqual([])
+    expect(await values()).toEqual([])
   })
 
   test('deletes every variable at once', async () => {
@@ -320,7 +339,7 @@ describe('function variables in the console', () => {
     await post('/console/functions/vars/variables', { key: 'TWO', value: '2' })
     const res = await post('/console/functions/vars/variables/clear', {})
     expect(flash(res).get('ok')).toBe('Removed 2 variables')
-    expect(values()).toEqual([])
+    expect(await values()).toEqual([])
     const empty = await post('/console/functions/vars/variables/clear', {})
     expect(flash(empty).get('ok')).toBe('No variables to remove')
   })

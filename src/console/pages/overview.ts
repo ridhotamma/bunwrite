@@ -17,15 +17,15 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
   const { services } = ctx
   let documents = 0
   for (const c of services.registry.collections.values()) documents += await services.store.countDocuments(keyCaller(), c)
-  const files = services.storage.totals()
+  const files = await services.storage.totals()
   let dbBytes = 0
   try {
     dbBytes = statSync(services.config.databasePath).size
   } catch {
     /* in-memory database */
   }
-  const failed = services.functions.failedSince(addSeconds(-86400))
-  const runs = services.functions.recent(6)
+  const failed = await services.functions.failedSince(addSeconds(-86400))
+  const runs = await services.functions.recent(6)
   const uptime = Math.round((Date.now() - started) / 60000)
   const smtpOff = !services.config.smtp
   const since = addSeconds(-86400)
@@ -40,42 +40,73 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
   const traffic = html`<div class="layout" style="margin-bottom:16px">
     <div class="card">
       ${cardHead('Bandwidth over time', html`<a class="subdued" href="/console/logs">View request logs</a>`)}
-      ${totalBytes
-        ? lineChart({
-            labels: hours.map((hour) => `${hour.slice(11, 13)}:00`),
-            series: [
-              { label: 'Inbound', color: '#16a34a', values: inbound },
-              { label: 'Outbound', color: '#db2777', values: outbound },
-            ],
-          })
-        : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.')}
+      ${
+        totalBytes
+          ? lineChart({
+              labels: hours.map((hour) => `${hour.slice(11, 13)}:00`),
+              series: [
+                { label: 'Inbound', color: '#16a34a', values: inbound },
+                { label: 'Outbound', color: '#db2777', values: outbound },
+              ],
+            })
+          : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.')
+      }
     </div>
-    <div class="card">${cardHead('Top bandwidth consumers')}
-      ${consumers.length
-        ? html`<ul class="list">${consumers.map((item) => html`<li><span class="mono clip" title="${item.path}">${item.path}</span><span class="subdued">${formatBytes(item.bytes)}</span></li>`)}</ul>`
-        : emptyState('No consumers yet', 'Paths appear here after the first requests.')}
+    <div class="card">
+      ${cardHead('Top bandwidth consumers')}
+      ${
+        consumers.length
+          ? html`<ul class="list">
+              ${consumers.map((item) => html`<li><span class="mono clip" title="${item.path}">${item.path}</span><span class="subdued">${formatBytes(item.bytes)}</span></li>`)}
+            </ul>`
+          : emptyState('No consumers yet', 'Paths appear here after the first requests.')
+      }
     </div>
   </div>`
-  return html`
-    ${header('Home')}
+  return html` ${header('Home')}
     ${smtpOff ? alert('warning', html`Email is not set up, so sign-in codes, password resets and invitations cannot be sent. <a href="/console/settings/email">Set up SMTP</a>`) : ''}
     <div class="stats" style="margin-bottom:16px">
       ${stat('Documents', documents.toLocaleString('en-US'), '/console/databases')}
-      ${stat('Collections', services.registry.collections.size, '/console/databases')}
-      ${stat('Users', services.auth.countUsers(), '/console/auth/users')}
-      ${stat('Teams', services.teams.count(), '/console/auth/teams')}
-      ${stat('Files', `${files.files} · ${formatBytes(files.bytes)}`, '/console/storage')}
+      ${stat('Collections', services.registry.collections.size, '/console/databases')} ${stat('Users', await services.auth.countUsers(), '/console/auth/users')}
+      ${stat('Teams', await services.teams.count(), '/console/auth/teams')} ${stat('Files', `${files.files} · ${formatBytes(files.bytes)}`, '/console/storage')}
       ${stat('Failed runs, 24h', failed, '/console/functions')}
     </div>
     ${traffic}
     <div class="layout">
       <div class="card flush">
-        <div class="toolbar"><h2 style="margin:0">Recent function runs</h2><a class="subdued" style="margin-left:auto" href="/console/functions">View all</a></div>
-        ${runs.length
-          ? html`<div class="scroll"><table><thead><tr><th>Function</th><th>Status</th><th class="hide-sm">Trigger</th><th class="num">Time</th><th>Started</th></tr></thead><tbody>
-            ${runs.map((r) => html`<tr class="row-link" onclick="location='/console/functions/${r.function_id}/executions/${r.id}'"><td>${r.function_id}</td><td>${statusBadge(r.status)}</td><td class="hide-sm">${r.trigger}</td><td class="num">${r.duration.toFixed(2)}s</td><td>${when(r.created_at)}</td></tr>`)}
-            </tbody></table></div>`
-          : emptyState('No runs yet', 'Scheduled functions show up here after their first run.')}
+        <div class="toolbar">
+          <h2 style="margin:0">Recent function runs</h2>
+          <a class="subdued" style="margin-left:auto" href="/console/functions">View all</a>
+        </div>
+        ${
+          runs.length
+            ? html`<div class="scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Function</th>
+                      <th>Status</th>
+                      <th class="hide-sm">Trigger</th>
+                      <th class="num">Time</th>
+                      <th>Started</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${runs.map(
+                      (r) =>
+                        html`<tr class="row-link" onclick="location='/console/functions/${r.function_id}/executions/${r.id}'">
+                          <td>${r.function_id}</td>
+                          <td>${statusBadge(r.status)}</td>
+                          <td class="hide-sm">${r.trigger}</td>
+                          <td class="num">${r.duration.toFixed(2)}s</td>
+                          <td>${when(r.created_at)}</td>
+                        </tr>`,
+                    )}
+                  </tbody>
+                </table>
+              </div>`
+            : emptyState('No runs yet', 'Scheduled functions show up here after their first run.')
+        }
       </div>
       <div class="card">
         ${cardHead('Server')}

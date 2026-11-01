@@ -4,11 +4,11 @@ import { AuthService } from './auth/service'
 import { BackupService } from './backups/service'
 import { VersionMonitor } from './cluster/versions'
 import type { Config } from './config'
-import type { Db } from './db/connection'
+import type { SqlDatabase } from './db/driver'
 import { WriteBatcher } from './documents/batcher'
 import { DocumentStore, type DocumentBackend } from './documents/store'
 import { FunctionService, readEnvFile } from './functions/service'
-import { functionHost, siteHost } from './lib/hosts'
+import { siteHost } from './lib/hosts'
 import { randomSecret, sha256 } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
@@ -30,7 +30,7 @@ import { EmailTemplateService } from './mail/templates'
 
 export interface Services {
   config: Config
-  db: Db
+  db: SqlDatabase
   /** Counters that reveal settings/schema changes made by another process. */
   versions: VersionMonitor
   registry: Registry
@@ -71,13 +71,11 @@ export interface Services {
   ready(): Promise<void>
 }
 
-export function createServices(config: Config, db: Db, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
+export function createServices(config: Config, db: SqlDatabase, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
   // Every process must hand the same key to function runs: a run started by
   // one worker may call back through another. Deriving it from the shared
   // secret keeps that true without storing another secret.
-  config.internalKey ??= config.secret
-    ? `internal_${sha256(`${config.secret}:internal`)}`
-    : `internal_${randomSecret(32)}`
+  config.internalKey ??= config.secret ? `internal_${sha256(`${config.secret}:internal`)}` : `internal_${randomSecret(32)}`
   const versions = new VersionMonitor(db, config.cacheCheckMs)
   const registry = new Registry(db)
   const store = new DocumentStore(db)
@@ -96,7 +94,8 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db, {
-    bus: config.workers > 1 ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
+    // The cross-process bus is the SQLite event table (docs/DATABASE.md).
+    bus: config.workers > 1 && db.dialect === 'sqlite' ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
     collectionOf: (databaseId, collectionId) => registry.collections.get(`${databaseId}/${collectionId}`) ?? null,
   })
   const storage = new StorageService(db, config, store)
@@ -109,11 +108,40 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   const queue = new QueueService(db)
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })
-  const webhooks = new WebhookService(db, () => config.projectId, () => config.apiCompat)
+  const webhooks = new WebhookService(
+    db,
+    () => config.projectId,
+    () => config.apiCompat,
+  )
   const topics = new TopicService(db)
   const templates = new EmailTemplateService(db, config)
-  proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.list().map((fn) => functionHost(config, fn.id))]
-  const services = { config, db, versions, registry, store, writes, transactions, auth, teams, oauth, mailer: overrides.mailer ?? new DisabledMailer(), realtime, storage, functions, variables, sites, proxy, requestLogs, backups, render, webhooks, topics, templates, queue } as unknown as Services
+  proxy.reservedHosts = () => [...sites.list().map((site) => siteHost(config, site.id)), ...functions.hosts()]
+  const services = {
+    config,
+    db,
+    versions,
+    registry,
+    store,
+    writes,
+    transactions,
+    auth,
+    teams,
+    oauth,
+    mailer: overrides.mailer ?? new DisabledMailer(),
+    realtime,
+    storage,
+    functions,
+    variables,
+    sites,
+    proxy,
+    requestLogs,
+    backups,
+    render,
+    webhooks,
+    topics,
+    templates,
+    queue,
+  } as unknown as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
   services.settings = new SettingsService(
@@ -132,6 +160,9 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
   )
   if (!overrides.mailer) services.mailer = makeMailer()
   services.ready = async () => {
+    await proxy.ready()
+    await sites.ready()
+    await functions.ready()
     if (db.dialect === 'sqlite') return
     // Order matters: settings feed access, and both feed the config overlay
     // that the other caches read.
@@ -139,6 +170,7 @@ export function createServices(config: Config, db: Db, overrides: Partial<Servic
     await services.settings.load()
     await services.access.load()
     await registry.load()
+    await templates.load()
     await variables.adoptFunctionGlobals()
   }
   return Object.assign(services, overrides)

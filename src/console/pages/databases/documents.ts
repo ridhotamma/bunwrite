@@ -56,9 +56,9 @@ export function documentPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${COL}/documents/new`, ({ ctx, path }) => {
+  router.get(`${COL}/documents/new`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    return ctx.render('Create document', 'databases', documentFormView(ctx, c, null))
+    return ctx.render('Create document', 'databases', await documentFormView(ctx, c, null))
   })
 
   router.post(`${COL}/documents`, async ({ ctx, path }) => {
@@ -75,7 +75,7 @@ export function documentPages(router: ConsoleRouter): void {
   router.get(`${COL}/documents/:doc`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
     const doc = await ctx.services.store.getDocument(keyCaller(), c, path.doc!)
-    return ctx.render(String(doc.$id), 'databases', documentFormView(ctx, c, doc))
+    return ctx.render(String(doc.$id), 'databases', await documentFormView(ctx, c, doc))
   })
 
   router.post(`${COL}/documents/:doc`, async ({ ctx, path }) => {

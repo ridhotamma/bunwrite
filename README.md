@@ -38,9 +38,11 @@ If you need the complete Appwrite platform, use Appwrite. If you want the
 Appwrite API on a small VPS with a file you can back up, Bunwrite is for you.
 
 SQLite is still the default and the only backend that serves every feature
-today. A database port now sits under the data layer, with working Postgres and
-MongoDB drivers, schema bootstrap and a `db:check` CLI, so the move to a
-network database is incremental instead of a rewrite. See
+today. Postgres now serves the API request path as well: the server boots on it,
+each project gets its own schema, and the same services run on either backend.
+A database port sits under the data layer with working Postgres and MongoDB
+drivers, schema bootstrap and a `db:check` CLI, so the move to a network
+database is incremental instead of a rewrite. See
 [docs/DATABASE.md](docs/DATABASE.md) for exactly what runs on each backend.
 
 ## What you get
@@ -53,8 +55,8 @@ network database is incremental instead of a rewrite. See
 - **SQLite-native, with a database port.** Drizzle migrations create the
   schema, each project is its own database file, and you can inspect or copy the
   data with standard SQLite tools. The same data layer can target Postgres or
-  MongoDB through `DB_DRIVER`/`DATABASE_URL`; the service migration is ongoing
-  and documented per backend.
+  MongoDB through `DB_DRIVER`/`DATABASE_URL`; Postgres serves API traffic today,
+  and the remaining console/VCS screens are documented per backend.
 
 - **Environments.** Keep staging and production as separate projects, on one
   server or several. The CLI's `bunwrite env` keeps each environment's
@@ -911,18 +913,19 @@ For continuous SQLite replication and restore onto a replacement host, set
 
 ## Database backends
 
-SQLite is the default and the only backend that serves every feature today.
-Under the data layer there is now a driver port with working Postgres and
-MongoDB implementations, runtime schema bootstrap and a CLI to verify a
-connection:
+SQLite is the default. Postgres also serves the API request path: set
+`DB_DRIVER=postgres` with `DATABASE_URL` and the server boots on it, giving
+each project its own schema. Under the data layer there is a driver port with
+working Postgres and MongoDB implementations, runtime schema bootstrap and a
+CLI to verify a connection:
 
 ```bash
 bun run db:check --driver postgres --url postgres://localhost:5432/bunwrite
 ```
 
-The request path is migrated service by service; [docs/DATABASE.md](docs/DATABASE.md)
-lists exactly what runs on each backend, the dialect translation, and the
-migration order.
+MongoDB needs the remaining repository layer before it can serve a project;
+[docs/DATABASE.md](docs/DATABASE.md) lists exactly what runs on each backend,
+the dialect translation, and the migration order.
 
 ## Architecture
 

@@ -76,7 +76,10 @@ function fileResponse(request: Request, path: string, deploymentId: string, stat
   if (status === 200 && request.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers })
   // Pre-compressed copies made at build time beat compressing on every request.
   const accept = request.headers.get('accept-encoding')
-  for (const [encoding, ext] of [['br', '.br'], ['gzip', '.gz']] as const) {
+  for (const [encoding, ext] of [
+    ['br', '.br'],
+    ['gzip', '.gz'],
+  ] as const) {
     if (pickEncoding(accept, [encoding]) && isFile(path + ext)) {
       const file = Bun.file(path + ext)
       return new Response(file, { status, headers: { ...headers, 'content-encoding': encoding, 'content-length': String(file.size) } })
@@ -89,7 +92,7 @@ function fileResponse(request: Request, path: string, deploymentId: string, stat
 async function apiResponse(services: Services, site: SiteRow, request: Request, url: URL): Promise<Response> {
   let f
   try {
-    f = services.functions.fn(site.api_function_id)
+    f = await services.functions.fn(site.api_function_id)
   } catch {
     return Response.json({ message: `The site's API function "${site.api_function_id}" does not exist.`, code: 502 }, { status: 502 })
   }

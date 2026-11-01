@@ -18,8 +18,7 @@ beforeAll(() => {
 
 afterAll(() => server.stop())
 
-const expire = (id: string) =>
-  server.db.sqlite.query('UPDATE _queue_messages SET lease_until = ? WHERE id = ?').run('2000-01-01T00:00:00.000+00:00', id)
+const expire = (id: string) => server.db.sqlite.query('UPDATE _queue_messages SET lease_until = ? WHERE id = ?').run('2000-01-01T00:00:00.000+00:00', id)
 
 describe('queue', () => {
   test('a message is enqueued, claimed, then acked', async () => {
@@ -69,7 +68,9 @@ describe('queue', () => {
 
     // A failed message is never claimed again, and cannot be acked.
     expect((await queue().claimMessages({ queue: 'retry' })).messages).toEqual([])
-    const denied = await queue().ackMessage({ queue: 'retry', messageId: created.$id, attempt: secondClaim!.attempts }).catch((e) => e)
+    const denied = await queue()
+      .ackMessage({ queue: 'retry', messageId: created.$id, attempt: secondClaim!.attempts })
+      .catch((e) => e)
     expect(denied instanceof BunwriteException).toBe(true)
     expect(denied).toMatchObject({ code: 409, type: 'queue_message_conflict' })
   })
@@ -84,7 +85,7 @@ describe('queue', () => {
 
     // Expire it without an ack: the reaper returns it to waiting.
     expire(created.$id)
-    expect(server.services.queue.reap()).toEqual([created.$id])
+    expect(await server.services.queue.reap()).toEqual([created.$id])
     expect((await queue().getMessage({ queue: 'lease', messageId: created.$id })).status).toBe('waiting')
     expect((await queue().claimMessages({ queue: 'lease' })).messages[0]!.attempts).toBe(2)
   })
@@ -95,7 +96,7 @@ describe('queue', () => {
 
     // Worker A's lease expires; the reaper requeues it and worker B claims it.
     expire(created.$id)
-    expect(server.services.queue.reap()).toEqual([created.$id])
+    expect(await server.services.queue.reap()).toEqual([created.$id])
     const [b] = (await queue().claimMessages({ queue: 'stale' })).messages
     expect(b!.attempts).toBe(a!.attempts + 1)
 
@@ -123,8 +124,8 @@ describe('queue', () => {
     const created = await queue().createMessage({ queue: 'reap-once', data: 1 })
     await queue().claimMessages({ queue: 'reap-once', lease: 60 })
     expire(created.$id)
-    expect(server.services.queue.reap()).toEqual([created.$id])
-    expect(server.services.queue.reap()).toEqual([])
+    expect(await server.services.queue.reap()).toEqual([created.$id])
+    expect(await server.services.queue.reap()).toEqual([])
     expect((await queue().getMessage({ queue: 'reap-once', messageId: created.$id })).status).toBe('waiting')
   })
 
@@ -186,20 +187,46 @@ describe('queue', () => {
   })
 
   test('needs an API key, and validates arguments', async () => {
-    const denied = await guest().createMessage({ queue: 'auth', data: 1 }).catch((e) => e)
+    const denied = await guest()
+      .createMessage({ queue: 'auth', data: 1 })
+      .catch((e) => e)
     expect(denied).toMatchObject({ code: 401 })
-    expect(await queue().createMessage({ queue: 'bad name!', data: 1 }).catch((e) => e)).toMatchObject({ code: 400 })
-    expect(await queue().claimMessages({ queue: 'auth', count: 0 }).catch((e) => e)).toMatchObject({ code: 400 })
+    expect(
+      await queue()
+        .createMessage({ queue: 'bad name!', data: 1 })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
+    expect(
+      await queue()
+        .claimMessages({ queue: 'auth', count: 0 })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
     await queue().createMessage({ queue: 'auth', id: 'same-id', data: 1 })
-    expect(await queue().createMessage({ queue: 'auth', id: 'same-id', data: 2 }).catch((e) => e)).toMatchObject({ code: 400 })
+    expect(
+      await queue()
+        .createMessage({ queue: 'auth', id: 'same-id', data: 2 })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
   })
 
   test('system queues such as _render are not reachable from the API', async () => {
-    server.services.queue.enqueue('_render', { data: { secret: true } })
-    expect(await queue().claimMessages({ queue: '_render' }).catch((e) => e)).toMatchObject({ code: 400 })
-    expect(await queue().listMessages({ queue: '_render' }).catch((e) => e)).toMatchObject({ code: 400 })
-    expect(await queue().purgeQueue({ queue: '_render' }).catch((e) => e)).toMatchObject({ code: 400 })
-    server.services.queue.purge('_render')
+    await server.services.queue.enqueue('_render', { data: { secret: true } })
+    expect(
+      await queue()
+        .claimMessages({ queue: '_render' })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
+    expect(
+      await queue()
+        .listMessages({ queue: '_render' })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
+    expect(
+      await queue()
+        .purgeQueue({ queue: '_render' })
+        .catch((e) => e),
+    ).toMatchObject({ code: 400 })
+    await server.services.queue.purge('_render')
   })
 
   test('the SDK worker refills a free slot at once instead of waiting for the next poll', async () => {
@@ -245,17 +272,22 @@ describe('queue', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const worker = createQueueWorker(client(), { queue: 'stale-worker', lease: 5, pollInterval: 50, handler: async () => {
-      await gate
-      return 'late'
-    } })
+    const worker = createQueueWorker(client(), {
+      queue: 'stale-worker',
+      lease: 5,
+      pollInterval: 50,
+      handler: async () => {
+        await gate
+        return 'late'
+      },
+    })
     worker.start()
     for (let i = 0; i < 100 && (await queue().getStats({ queue: 'stale-worker' })).processing < 1; i++) await Bun.sleep(10)
 
     // Stop claiming, but leave the handler running. Expire A's lease and let B claim it.
     const stopping = worker.stop()
     expire(created.$id)
-    expect(server.services.queue.reap()).toEqual([created.$id])
+    expect(await server.services.queue.reap()).toEqual([created.$id])
     const [b] = (await queue().claimMessages({ queue: 'stale-worker' })).messages
 
     // A's handler ignores the abort signal and returns late; its ack must not win.

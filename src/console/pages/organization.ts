@@ -8,43 +8,42 @@ import type { InviteInput, OrganizationRole } from '~/organizations/service'
 import { err } from '~/lib/errors'
 
 const orgId = (ctx: ConsoleContext) => ctx.projects.control.config.orgId
-const canManage = (ctx: ConsoleContext) => ctx.organizations.roleOf(orgId(ctx), ctx.admin.email) === 'owner'
+const canManage = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(orgId(ctx), ctx.admin.email)) === 'owner'
 const consoleBaseUrl = (ctx: ConsoleContext) => ctx.projects.control.config.publicEndpoint.replace(/\/v1\/?$/, '')
-const ownerCount = (members: { status: string; role: string }[]) =>
-  members.filter((member) => member.status === 'active' && member.role === 'owner').length
+const ownerCount = (members: { status: string; role: string }[]) => members.filter((member) => member.status === 'active' && member.role === 'owner').length
 
-function orgHeader(ctx: ConsoleContext, active: 'projects' | 'members' | 'settings', actions?: Html) {
-  const org = ctx.organizations.ensure(orgId(ctx), ctx.projects.control.config.projectName)
-  const members = ctx.organizations.members(org.id)
+async function orgHeader(ctx: ConsoleContext, active: 'projects' | 'members' | 'settings', actions?: Html) {
+  const org = await ctx.organizations.ensure(orgId(ctx), ctx.projects.control.config.projectName)
+  const members = await ctx.organizations.members(org.id)
   const counts = { projects: ctx.projects.list().length, members: members.filter((member) => member.status === 'active').length }
-  return { org, members, header: organizationHeader(org, counts, active, canManage(ctx), actions) }
+  return { org, members, header: organizationHeader(org, counts, active, await canManage(ctx), actions) }
 }
 
 const inviteButton = html`<button class="primary" type="button" data-dialog-open="#invite-members">${icon('plus')}<span>Invite members</span></button>`
 
 export function organizationPages(router: ConsoleRouter): void {
-  router.get('/console/organization', ({ ctx }) => {
-    if (!canManage(ctx)) return ctx.go('/console')
-    const { org, header } = orgHeader(ctx, 'settings')
+  router.get('/console/organization', async ({ ctx }) => {
+    if (!(await canManage(ctx))) return ctx.go('/console')
+    const { org, header } = await orgHeader(ctx, 'settings')
     return ctx.render(org.name, 'organization', html`${header}${organizationGeneralView(org)}${githubAppSection(ctx)}`)
   })
 
-  router.post('/console/organization', ({ ctx }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can rename the organization.')
+  router.post('/console/organization', async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can rename the organization.')
     const name = value(ctx.form, 'name')
-    ctx.organizations.updateName(orgId(ctx), name)
+    await ctx.organizations.updateName(orgId(ctx), name)
     return ctx.go('/console/organization', { tone: 'success', text: 'Organization updated' })
   })
 
-  router.get('/console/organization/members', ({ ctx, url }) => {
-    const manager = canManage(ctx)
-    const { org, members, header } = orgHeader(ctx, 'members', manager ? inviteButton : undefined)
+  router.get('/console/organization/members', async ({ ctx, url }) => {
+    const manager = await canManage(ctx)
+    const { org, members, header } = await orgHeader(ctx, 'members', manager ? inviteButton : undefined)
     const query = url.searchParams.get('q') ?? ''
     return ctx.render(
       org.name,
       'organization',
       html`${header}${membersView({
-        members: ctx.organizations.members(org.id, query),
+        members: await ctx.organizations.members(org.id, query),
         ownerCount: ownerCount(members),
         canManage: manager,
         currentEmail: ctx.admin.email,
@@ -55,7 +54,7 @@ export function organizationPages(router: ConsoleRouter): void {
   })
 
   router.post('/console/organization/members/invite', async ({ ctx }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can invite members.')
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can invite members.')
     const emails = arrayOf(ctx.form.email)
     const roles = arrayOf(ctx.form.role)
     const inputs: InviteInput[] = emails
@@ -63,7 +62,7 @@ export function organizationPages(router: ConsoleRouter): void {
       .filter((input) => input.email)
     if (!inputs.length) throw err('general_argument_invalid', 'Add at least one email address.')
 
-    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
+    const { org, members, header } = await orgHeader(ctx, 'members', inviteButton)
     const results = await ctx.organizations.invite(org.id, inputs, {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
@@ -74,7 +73,7 @@ export function organizationPages(router: ConsoleRouter): void {
       org.name,
       'organization',
       html`${header}${membersView({
-        members: ctx.organizations.members(org.id),
+        members: await ctx.organizations.members(org.id),
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
@@ -86,10 +85,10 @@ export function organizationPages(router: ConsoleRouter): void {
   })
 
   router.post('/console/organization/members/:id/invite-link', async ({ ctx, path }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can copy invitation links.')
-    const member = ctx.organizations.findMember(orgId(ctx), path.id!)
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can copy invitation links.')
+    const member = await ctx.organizations.findMember(orgId(ctx), path.id!)
     if (member.status !== 'invited') throw err('general_argument_invalid', 'That member has already accepted the invitation.')
-    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
+    const { org, members, header } = await orgHeader(ctx, 'members', inviteButton)
     const [result] = await ctx.organizations.invite(org.id, [{ email: member.email, role: member.role }], {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
@@ -101,7 +100,7 @@ export function organizationPages(router: ConsoleRouter): void {
       org.name,
       'organization',
       html`${header}${membersView({
-        members: ctx.organizations.members(org.id),
+        members: await ctx.organizations.members(org.id),
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
@@ -113,10 +112,10 @@ export function organizationPages(router: ConsoleRouter): void {
   })
 
   router.post('/console/organization/members/:id/resend', async ({ ctx, path }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can resend invitations.')
-    const member = ctx.organizations.findMember(orgId(ctx), path.id!)
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can resend invitations.')
+    const member = await ctx.organizations.findMember(orgId(ctx), path.id!)
     if (member.status !== 'invited') throw err('general_argument_invalid', 'That member has already accepted the invitation.')
-    const { org, members, header } = orgHeader(ctx, 'members', inviteButton)
+    const { org, members, header } = await orgHeader(ctx, 'members', inviteButton)
     const results = await ctx.organizations.invite(org.id, [{ email: member.email, role: member.role }], {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
@@ -127,7 +126,7 @@ export function organizationPages(router: ConsoleRouter): void {
       org.name,
       'organization',
       html`${header}${membersView({
-        members: ctx.organizations.members(org.id),
+        members: await ctx.organizations.members(org.id),
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
@@ -138,17 +137,17 @@ export function organizationPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post('/console/organization/members/:id/role', ({ ctx, path }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can change roles.')
+  router.post('/console/organization/members/:id/role', async ({ ctx, path }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change roles.')
     const role = value(ctx.form, 'role')
-    ctx.organizations.updateRole(orgId(ctx), path.id!, role === 'owner' ? 'owner' : 'developer', ctx.admin.email)
+    await ctx.organizations.updateRole(orgId(ctx), path.id!, role === 'owner' ? 'owner' : 'developer', ctx.admin.email)
     return ctx.go('/console/organization/members', { tone: 'success', text: 'Member role updated' })
   })
 
-  router.post('/console/organization/members/:id/delete', ({ ctx, path }) => {
-    if (!canManage(ctx)) throw err('general_argument_invalid', 'Only an organization owner can remove members.')
-    const member = ctx.organizations.findMember(orgId(ctx), path.id!)
-    ctx.organizations.remove(orgId(ctx), path.id!, ctx.admin.email)
+  router.post('/console/organization/members/:id/delete', async ({ ctx, path }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can remove members.')
+    const member = await ctx.organizations.findMember(orgId(ctx), path.id!)
+    await ctx.organizations.remove(orgId(ctx), path.id!, ctx.admin.email)
     return ctx.go('/console/organization/members', { tone: 'success', text: member.status === 'invited' ? 'Invitation revoked' : 'Member removed' })
   })
 }

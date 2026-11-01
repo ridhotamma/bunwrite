@@ -8,7 +8,7 @@
  * message is delivered again. Handlers should be idempotent.
  */
 import { isLeader } from '~/cluster/role'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, formatDate, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
@@ -125,14 +125,20 @@ export function queueModel(m: QueueMessageRow) {
 /** Reject names the public API may not use: invalid ones and system queues. */
 export function publicQueueName(value: string): string {
   if (!QUEUE_NAME.test(value)) {
-    throw err('general_argument_invalid', 'Queue names must be 1 to 64 characters: letters, digits, dot, hyphen or underscore, starting with a letter or digit.')
+    throw err(
+      'general_argument_invalid',
+      'Queue names must be 1 to 64 characters: letters, digits, dot, hyphen or underscore, starting with a letter or digit.',
+    )
   }
   return value
 }
 
 function name(value: string): string {
   if (!QUEUE_NAME.test(value) && !SYSTEM_QUEUE.test(value)) {
-    throw err('general_argument_invalid', 'Queue names must be 1 to 64 characters: letters, digits, dot, hyphen or underscore, starting with a letter or digit.')
+    throw err(
+      'general_argument_invalid',
+      'Queue names must be 1 to 64 characters: letters, digits, dot, hyphen or underscore, starting with a letter or digit.',
+    )
   }
   return value
 }
@@ -148,21 +154,15 @@ function integer(value: number | undefined, fallback: number, min: number, max: 
 export class QueueService {
   private timer: ReturnType<typeof setInterval> | null = null
 
-  constructor(private db: Db) {}
+  constructor(private db: SqlDatabase) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  private get(queueName: string, id: string): QueueMessageRow {
-    const row = this.sql
-      .query<QueueMessageRow, [string, string]>('SELECT * FROM _queue_messages WHERE queue = ? AND id = ?')
-      .get(queueName, id)
+  private async get(queueName: string, id: string): Promise<QueueMessageRow> {
+    const row = await this.db.driver.get<QueueMessageRow>('SELECT * FROM _queue_messages WHERE queue = ? AND id = ?', [queueName, id])
     if (!row) throw err('queue_message_not_found')
     return row
   }
 
-  enqueue(queueName: string, input: EnqueueInput): { message: QueueMessageRow; created: boolean } {
+  async enqueue(queueName: string, input: EnqueueInput): Promise<{ message: QueueMessageRow; created: boolean }> {
     queueName = name(queueName)
     const id = resolveId(input.id, 'Message ID')
     const delay = integer(input.delay, 0, 0, MAX_DELAY, 'delay')
@@ -171,27 +171,24 @@ export class QueueService {
     const data = JSON.stringify(input.data ?? null)
     const key = input.idempotencyKey?.trim() || null
     if (key !== null && key.length > 128) throw err('general_argument_invalid', 'Param "idempotencyKey" must be at most 128 characters.')
-    if (this.sql.query('SELECT 1 FROM _queue_messages WHERE id = ?').get(id)) {
+    if (await this.db.driver.get('SELECT 1 FROM _queue_messages WHERE id = ?', [id])) {
       throw err('general_argument_invalid', `A message with ID "${id}" already exists.`)
     }
-    const result = this.sql
-      .query(
-        `INSERT INTO _queue_messages (id, queue, status, data, attempts, max_attempts, available_at, idempotency_key, created_at, updated_at)
-         VALUES (?, ?, 'waiting', ?, 0, ?, ?, ?, ?, ?)
-         ON CONFLICT DO NOTHING`,
-      )
-      .run(id, queueName, data, maxAttempts, addSeconds(delay), key, stamp, stamp)
+    const result = await this.db.driver.run(
+      `INSERT INTO _queue_messages (id, queue, status, data, attempts, max_attempts, available_at, idempotency_key, created_at, updated_at)
+       VALUES (?, ?, 'waiting', ?, 0, ?, ?, ?, ?, ?)
+       ON CONFLICT DO NOTHING`,
+      [id, queueName, data, maxAttempts, addSeconds(delay), key, stamp, stamp],
+    )
     if (Number(result.changes ?? 0) === 0) {
       // The idempotency key already exists: return the message that won.
       const existing = key
-        ? this.sql
-            .query<QueueMessageRow, [string, string]>('SELECT * FROM _queue_messages WHERE queue = ? AND idempotency_key = ?')
-            .get(queueName, key)
+        ? await this.db.driver.get<QueueMessageRow>('SELECT * FROM _queue_messages WHERE queue = ? AND idempotency_key = ?', [queueName, key])
         : null
       if (existing) return { message: existing, created: false }
       throw err('general_argument_invalid', `A message with ID "${id}" already exists in queue "${queueName}".`)
     }
-    return { message: this.get(queueName, id), created: true }
+    return { message: await this.get(queueName, id), created: true }
   }
 
   /**
@@ -200,50 +197,47 @@ export class QueueService {
    * `attempts` moves forward at claim time, so a worker crash still counts as
    * an attempt and a poison message cannot loop forever.
    */
-  claim(queueName: string, options: ClaimOptions = {}): QueueMessageRow[] {
+  async claim(queueName: string, options: ClaimOptions = {}): Promise<QueueMessageRow[]> {
     queueName = name(queueName)
     const count = integer(options.count, 1, 1, 100, 'count')
     const lease = integer(options.lease, 60, 1, MAX_LEASE, 'lease')
     const stamp = now()
-    return this.sql
-      .query<QueueMessageRow, [string, string, string, string, number]>(
-        `UPDATE _queue_messages SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
-         WHERE seq IN (
-           SELECT seq FROM _queue_messages
-           WHERE queue = ? AND status = 'waiting' AND available_at <= ?
-           ORDER BY seq
-           LIMIT ?
-         )
-         RETURNING *`,
-      )
-      .all(addSeconds(lease), stamp, queueName, stamp, count)
+    return this.db.driver.all<QueueMessageRow>(
+      `UPDATE _queue_messages SET status = 'processing', attempts = attempts + 1, lease_until = ?, updated_at = ?
+       WHERE seq IN (
+         SELECT seq FROM _queue_messages
+         WHERE queue = ? AND status = 'waiting' AND available_at <= ?
+         ORDER BY seq
+         LIMIT ?
+       )
+       RETURNING *`,
+      [addSeconds(lease), stamp, queueName, stamp, count],
+    )
   }
 
   /** Extend a running message's lease; the attempt must still be the one this worker claimed. */
-  heartbeat(queueName: string, id: string, attempt: number, lease = 60): QueueMessageRow {
+  async heartbeat(queueName: string, id: string, attempt: number, lease = 60): Promise<QueueMessageRow> {
     const seconds = integer(lease, 60, 1, MAX_LEASE, 'lease')
     const claimed = claimAttempt(attempt)
-    const row = this.sql
-      .query<QueueMessageRow, [string, string, string, string, number]>(
-        "UPDATE _queue_messages SET lease_until = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
-      )
-      .get(addSeconds(seconds), now(), name(queueName), id, claimed)
-    if (!row) this.leaseError(queueName, id, claimed)
-    return row
+    const row = await this.db.driver.get<QueueMessageRow>(
+      "UPDATE _queue_messages SET lease_until = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
+      [addSeconds(seconds), now(), name(queueName), id, claimed],
+    )
+    if (!row) await this.leaseError(queueName, id, claimed)
+    return row!
   }
 
   /** Mark a claimed message done. A late ack from an expired lease gets 409. */
-  ack(queueName: string, id: string, attempt: number, result?: unknown): QueueMessageRow {
+  async ack(queueName: string, id: string, attempt: number, result?: unknown): Promise<QueueMessageRow> {
     const stamp = now()
     const claimed = claimAttempt(attempt)
     const text = result === undefined ? '' : typeof result === 'string' ? result : JSON.stringify(result)
-    const row = this.sql
-      .query<QueueMessageRow, (string | number)[]>(
-        "UPDATE _queue_messages SET status = 'completed', result = ?, lease_until = NULL, completed_at = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
-      )
-      .get(text, stamp, stamp, name(queueName), id, claimed)
-    if (!row) this.leaseError(queueName, id, claimed)
-    return row
+    const row = await this.db.driver.get<QueueMessageRow>(
+      "UPDATE _queue_messages SET status = 'completed', result = ?, lease_until = NULL, completed_at = ?, updated_at = ? WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *",
+      [text, stamp, stamp, name(queueName), id, claimed],
+    )
+    if (!row) await this.leaseError(queueName, id, claimed)
+    return row!
   }
 
   /**
@@ -253,19 +247,17 @@ export class QueueService {
    * re-checks the status and attempt, so a stale worker cannot overwrite the
    * message after a requeue or a new claim.
    */
-  fail(queueName: string, id: string, attempt: number, message?: string, delay?: number, final = false): QueueMessageRow {
+  async fail(queueName: string, id: string, attempt: number, message?: string, delay?: number, final = false): Promise<QueueMessageRow> {
     const claimed = claimAttempt(attempt)
-    const current = this.get(name(queueName), id)
-    if (current.status !== 'processing' || current.attempts !== claimed) this.leaseError(queueName, id, claimed)
+    const current = await this.get(name(queueName), id)
+    if (current.status !== 'processing' || current.attempts !== claimed) await this.leaseError(queueName, id, claimed)
     const stamp = now()
     const retry = !final && current.attempts < current.max_attempts
     const backoff = delay ?? Math.min(300, 2 ** current.attempts)
-    const row = this.sql
-      .query<QueueMessageRow, (string | number | null)[]>(
-        `UPDATE _queue_messages SET status = ?, errors = ?, available_at = ?, lease_until = NULL, completed_at = ?, updated_at = ?
-         WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *`,
-      )
-      .get(
+    const row = await this.db.driver.get<QueueMessageRow>(
+      `UPDATE _queue_messages SET status = ?, errors = ?, available_at = ?, lease_until = NULL, completed_at = ?, updated_at = ?
+       WHERE queue = ? AND id = ? AND status = 'processing' AND attempts = ? RETURNING *`,
+      [
         retry ? 'waiting' : 'failed',
         message ?? 'The worker reported a failure.',
         retry ? addSeconds(integer(backoff, 0, 0, MAX_DELAY, 'delay')) : current.available_at,
@@ -274,9 +266,10 @@ export class QueueService {
         name(queueName),
         id,
         claimed,
-      )
-    if (!row) this.leaseError(queueName, id, claimed)
-    return row
+      ],
+    )
+    if (!row) await this.leaseError(queueName, id, claimed)
+    return row!
   }
 
   /**
@@ -285,38 +278,37 @@ export class QueueService {
    * lease, or a claim that took the message, no longer matches and is left
    * alone.
    */
-  reap(): string[] {
+  async reap(): Promise<string[]> {
     // Requeuing is a scheduler job: only one process does it, or every stale
     // message would be touched once per worker.
     if (!isLeader()) return []
     const stamp = now()
-    const rows = this.sql
-      .query<{ id: string }, [string, string, string, string]>(
-        `UPDATE _queue_messages
-         SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
-             available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
-             completed_at = CASE WHEN attempts < max_attempts THEN NULL ELSE ? END,
-             errors = CASE WHEN attempts < max_attempts THEN errors ELSE 'The worker did not finish before its lease expired.' END,
-             lease_until = NULL,
-             updated_at = ?
-         WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
-         RETURNING id`,
-      )
-      .all(stamp, stamp, stamp, stamp)
+    const rows = await this.db.driver.all<{ id: string }>(
+      `UPDATE _queue_messages
+       SET status = CASE WHEN attempts < max_attempts THEN 'waiting' ELSE 'failed' END,
+           available_at = CASE WHEN attempts < max_attempts THEN ? ELSE available_at END,
+           completed_at = CASE WHEN attempts < max_attempts THEN NULL ELSE ? END,
+           errors = CASE WHEN attempts < max_attempts THEN errors ELSE 'The worker did not finish before its lease expired.' END,
+           lease_until = NULL,
+           updated_at = ?
+       WHERE status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?
+       RETURNING id`,
+      [stamp, stamp, stamp, stamp],
+    )
     return rows.map((row) => row.id)
   }
 
   /** Replace a message's payload, for example to drop a large input once it is done. */
-  replaceData(queueName: string, id: string, data: unknown): void {
-    this.sql.query('UPDATE _queue_messages SET data = ? WHERE queue = ? AND id = ?').run(JSON.stringify(data ?? null), name(queueName), id)
+  async replaceData(queueName: string, id: string, data: unknown): Promise<void> {
+    await this.db.driver.run('UPDATE _queue_messages SET data = ? WHERE queue = ? AND id = ?', [JSON.stringify(data ?? null), name(queueName), id])
   }
 
-  getMessage(queueName: string, id: string) {
+  getMessage(queueName: string, id: string): Promise<QueueMessageRow> {
     return this.get(name(queueName), id)
   }
 
   /** One SQL page; never loads the whole queue. Supports the list queries the SDK sends. */
-  listMessages(queueName: string, rawQueries: unknown[], status?: string) {
+  async listMessages(queueName: string, rawQueries: unknown[], status?: string) {
     queueName = name(queueName)
     const filters: string[] = ['queue = ?']
     const params: (string | number | null)[] = [queueName]
@@ -389,71 +381,61 @@ export class QueueService {
     }
 
     const where = filters.join(' AND ')
-    const total = Number(
-      this.sql
-        .query<{ n: number }, (string | number | null)[]>(`SELECT count(*) AS n FROM _queue_messages WHERE ${where}`)
-        .get(...params)?.n ?? 0,
-    )
+    const total = Number((await this.db.driver.get<{ n: number }>(`SELECT count(*) AS n FROM _queue_messages WHERE ${where}`, params))?.n ?? 0)
 
     const pageFilters = [...filters]
     const pageParams = [...params]
     if (after !== undefined || before !== undefined) {
       const cursorId = (after ?? before)!
-      const cursor = this.sql
-        .query<{ seq: number }, (string | number | null)[]>(`SELECT seq FROM _queue_messages WHERE ${where} AND id = ?`)
-        .get(...params, cursorId)
+      const cursor = await this.db.driver.get<{ seq: number }>(`SELECT seq FROM _queue_messages WHERE ${where} AND id = ?`, [...params, cursorId])
       if (!cursor) throw err('general_cursor_not_found')
       pageFilters.push(`seq ${after !== undefined ? '<' : '>'} ?`)
       pageParams.push(cursor.seq)
     }
 
-    const rows = this.sql
-      .query<QueueMessageRow, (string | number | null)[]>(
-        `SELECT * FROM _queue_messages WHERE ${pageFilters.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`,
-      )
-      .all(...pageParams, limit, offset)
+    const rows = await this.db.driver.all<QueueMessageRow>(
+      `SELECT * FROM _queue_messages WHERE ${pageFilters.join(' AND ')} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      [...pageParams, limit, offset],
+    )
     return { total, messages: rows.map(queueModel) }
   }
 
-  stats(queueName: string): Record<string, number> {
+  async stats(queueName: string): Promise<Record<string, number>> {
     queueName = name(queueName)
-    const rows = this.sql
-      .query<{ status: string; n: number }, [string]>('SELECT status, count(*) AS n FROM _queue_messages WHERE queue = ? GROUP BY status')
-      .all(queueName)
+    const rows = await this.db.driver.all<{ status: string; n: number }>('SELECT status, count(*) AS n FROM _queue_messages WHERE queue = ? GROUP BY status', [
+      queueName,
+    ])
     const counts: Record<string, number> = { waiting: 0, processing: 0, completed: 0, failed: 0 }
     for (const row of rows) counts[row.status] = row.n
     counts.total = rows.reduce((sum, row) => sum + row.n, 0)
     return counts
   }
 
-  deleteMessage(queueName: string, id: string): void {
-    this.get(name(queueName), id)
-    this.sql.query('DELETE FROM _queue_messages WHERE queue = ? AND id = ?').run(queueName, id)
+  async deleteMessage(queueName: string, id: string): Promise<void> {
+    await this.get(name(queueName), id)
+    await this.db.driver.run('DELETE FROM _queue_messages WHERE queue = ? AND id = ?', [queueName, id])
   }
 
   /** Delete every message in a queue, or only those in one status. */
-  purge(queueName: string, status?: string): number {
+  async purge(queueName: string, status?: string): Promise<number> {
     queueName = name(queueName)
     const result = status
-      ? this.sql.query('DELETE FROM _queue_messages WHERE queue = ? AND status = ?').run(queueName, status)
-      : this.sql.query('DELETE FROM _queue_messages WHERE queue = ?').run(queueName)
-    return Number(result.changes ?? 0)
+      ? await this.db.driver.run('DELETE FROM _queue_messages WHERE queue = ? AND status = ?', [queueName, status])
+      : await this.db.driver.run('DELETE FROM _queue_messages WHERE queue = ?', [queueName])
+    return result.changes
   }
 
   /** Keep completed and failed messages for `days`, like executions. */
-  prune(days = 30): number {
+  async prune(days = 30): Promise<number> {
     const cutoff = formatDate(new Date(Date.now() - days * 86400_000))
-    return Number(
-      this.sql
-        .query("DELETE FROM _queue_messages WHERE completed_at IS NOT NULL AND completed_at < ?").run(cutoff).changes ?? 0,
-    )
+    return (await this.db.driver.run('DELETE FROM _queue_messages WHERE completed_at IS NOT NULL AND completed_at < ?', [cutoff])).changes
   }
 
   /** Requeue messages whose worker stopped heartbeating, every 15 seconds. */
   start(): void {
     if (this.timer) return
-    this.reap()
-    this.timer = setInterval(() => this.reap(), 15_000)
+    void this.reap()
+    this.timer = setInterval(() => void this.reap(), 15_000)
     this.timer.unref?.()
   }
 
@@ -463,19 +445,16 @@ export class QueueService {
   }
 
   /** A queue-wide lease error: not found, or claimed by someone else / already finished. */
-  private leaseError(queueName: string, id: string, attempt?: number): never {
+  private async leaseError(queueName: string, id: string, attempt?: number): Promise<never> {
     let row: QueueMessageRow | undefined
     try {
-      row = this.get(queueName, id)
+      row = await this.get(queueName, id)
     } catch {
       row = undefined
     }
     if (!row) throw err('queue_message_not_found')
     if (attempt !== undefined && row.status === 'processing' && row.attempts !== attempt) {
-      throw err(
-        'queue_message_conflict',
-        `Message "${id}" is processing under attempt ${row.attempts}, not ${attempt}. Claim it again or check its lease.`,
-      )
+      throw err('queue_message_conflict', `Message "${id}" is processing under attempt ${row.attempts}, not ${attempt}. Claim it again or check its lease.`)
     }
     throw err('queue_message_conflict', `Message "${id}" is ${row.status}, not processing. Claim it again or check its lease.`)
   }

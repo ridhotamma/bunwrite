@@ -85,8 +85,8 @@ beforeAll(() => {
   project = new Project(client)
 })
 
-afterAll(() => {
-  for (const site of server.services.sites.list()) server.services.sites.remove(site.id)
+afterAll(async () => {
+  for (const site of server.services.sites.list()) await server.services.sites.remove(site.id)
   server.services.sites.stop()
   server.stop()
   rmSync(dir, { recursive: true, force: true })
@@ -128,7 +128,7 @@ describe('project variables', () => {
 
   test('project variables reach function runs too', async () => {
     await server.services.variables.setVariable('project', 'FUNCTION_PROJECT', 'yes', false)
-    const fn = server.services.functions.create('env-fn', {
+    const fn = await server.services.functions.create('env-fn', {
       name: 'Env',
       runtime: 'bun-1.4',
       execute: ['any'],
@@ -218,7 +218,7 @@ describe('runtime environment', () => {
       secret: false,
     })
 
-    server.services.sites.create('env-site', siteSettings())
+    await server.services.sites.create('env-site', siteSettings())
     await sites.createVariable({
       siteId: 'env-site',
       variableId: 'site-shared',

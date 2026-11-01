@@ -32,15 +32,21 @@ beforeAll(() => {
       return context.res.json({ ok: true, body: context.req.body, query: context.req.query, databases: dbs.total, trigger: process.env.APPWRITE_FUNCTION_TRIGGER, secretLeaked: Boolean(process.env.SECRET) })
     }`,
   )
-  fn('env', `module.exports = async (context) => context.res.json({
+  fn(
+    'env',
+    `module.exports = async (context) => context.res.json({
     global: process.env.BUNWRITE_GLOBAL_TEST ?? null,
     local: process.env.BUNWRITE_LOCAL_TEST ?? null,
     shared: process.env.BUNWRITE_SHARED_TEST ?? null,
-  })`)
+  })`,
+  )
   fn('boom', `module.exports = async (context) => { throw new Error('kaboom') }`)
   fn('slow', `module.exports = async (context) => { await new Promise((r) => setTimeout(r, 5000)); return context.res.json({}) }`)
   fn('cron', `module.exports = async (context) => context.res.json({ ran: true })`)
-  fn('public', `module.exports = async (context) => context.res.json({ method: context.req.method, path: context.req.path, key: context.req.headers['x-render-key'] ?? null, body: context.req.bodyJson })`)
+  fn(
+    'public',
+    `module.exports = async (context) => context.res.json({ method: context.req.method, path: context.req.path, key: context.req.headers['x-render-key'] ?? null, body: context.req.bodyJson })`,
+  )
   fn(
     'py',
     `async def main(context):
@@ -76,7 +82,11 @@ afterAll(() => {
 })
 
 async function png(width: number, height: number): Promise<Uint8Array> {
-  return new Uint8Array(await sharp({ create: { width, height, channels: 3, background: '#3366ff' } }).png().toBuffer())
+  return new Uint8Array(
+    await sharp({ create: { width, height, channels: 3, background: '#3366ff' } })
+      .png()
+      .toBuffer(),
+  )
 }
 
 describe('storage', () => {
@@ -89,8 +99,22 @@ describe('storage', () => {
       permissions: [Permission.read(Role.any()), Permission.update(Role.team('shop1', 'owner'))],
     })
     expect(Object.keys(created)).toEqual([
-      '$id', 'bucketId', '$createdAt', '$updatedAt', '$permissions', 'name', 'folder', 'key', 'signature', 'mimeType',
-      'sizeOriginal', 'sizeActual', 'chunksTotal', 'chunksUploaded', 'encryption', 'compression',
+      '$id',
+      'bucketId',
+      '$createdAt',
+      '$updatedAt',
+      '$permissions',
+      'name',
+      'folder',
+      'key',
+      'signature',
+      'mimeType',
+      'sizeOriginal',
+      'sizeActual',
+      'chunksTotal',
+      'chunksUploaded',
+      'encryption',
+      'compression',
     ])
     expect([created.name, created.mimeType, created.sizeOriginal, created.chunksUploaded]).toEqual(['photo.png', 'image/png', bytes.length, 1])
     expect(created.signature).toMatch(/^[0-9a-f]{32}$/)
@@ -125,7 +149,12 @@ describe('storage', () => {
   })
 
   test('private files: team members only; others see 404', async () => {
-    const file = await admin.storage.createFile({ bucketId: MEDIA, fileId: 'private1', file: new File([await png(10, 10)], 'p.png'), permissions: [Permission.read(Role.team('shopX'))] })
+    const file = await admin.storage.createFile({
+      bucketId: MEDIA,
+      fileId: 'private1',
+      file: new File([await png(10, 10)], 'p.png'),
+      permissions: [Permission.read(Role.team('shopX'))],
+    })
     const member = makeUser(server.db, 'member-x')
     addMembership(server.db, 'shopX', 'member-x', ['staff'])
     const stranger = makeUser(server.db, 'stranger-x')
@@ -212,8 +241,14 @@ describe('database metadata', () => {
 })
 
 describe('functions', () => {
-  test('sync execution runs the code with Appwrite env vars and the server\'s key', async () => {
-    const execution = await admin.functions.createExecution({ functionId: 'echo', body: JSON.stringify({ hi: 1 }), xpath: '/run?dry=1', method: 'POST', headers: { 'content-type': 'application/json' } })
+  test("sync execution runs the code with Appwrite env vars and the server's key", async () => {
+    const execution = await admin.functions.createExecution({
+      functionId: 'echo',
+      body: JSON.stringify({ hi: 1 }),
+      xpath: '/run?dry=1',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    })
     if (execution.status !== 'completed') console.error('echo execution', execution.status, execution.errors, execution.logs)
     expect(execution.status).toBe('completed')
     expect(execution.responseStatusCode).toBe(200)
@@ -313,22 +348,22 @@ describe('functions', () => {
     }
   })
 
-  test('an uploaded import keeps relative function paths', () => {
+  test('an uploaded import keeps relative function paths', async () => {
     const { pushConfig } = require('~/schema/push') as typeof import('~/schema/push')
     pushConfig(server.db, { functions: [{ $id: 'uploaded', name: 'Uploaded', runtime: 'node-22', entrypoint: 'src/main.js', path: 'functions/cron' }] })
-    const row = server.services.functions.fn('uploaded')
+    const row = await server.services.functions.fn('uploaded')
     expect(row.path).toBe('functions/cron')
     const original = server.config.functionsDir
     server.config.functionsDir = dir
-    expect(server.services.functions.codeDir(row).dir).toBe(join(dir, 'functions', 'cron'))
+    expect((await server.services.functions.codeDir(row)).dir).toBe(join(dir, 'functions', 'cron'))
     server.config.functionsDir = original
   })
 
   test('the scheduler fires due functions once per minute', async () => {
     const at = new Date(Date.UTC(2026, 9, 27, 10, 5))
-    expect(server.services.functions.tick(at)).toEqual(['cron'])
-    expect(server.services.functions.tick(at)).toEqual([])
-    expect(server.services.functions.tick(new Date(Date.UTC(2026, 9, 27, 10, 6)))).toEqual([])
+    expect(await server.services.functions.tick(at)).toEqual(['cron'])
+    expect(await server.services.functions.tick(at)).toEqual([])
+    expect(await server.services.functions.tick(new Date(Date.UTC(2026, 9, 27, 10, 6)))).toEqual([])
     await Bun.sleep(800)
     const runs = await admin.functions.listExecutions({ functionId: 'cron' })
     expect(runs.executions.map((e: any) => [e.trigger, e.status])).toEqual([['schedule', 'completed']])
@@ -365,11 +400,11 @@ describe('functions', () => {
     expect([created.status, created.trigger, created.scheduledAt]).toEqual(['scheduled', 'schedule', at.toISOString().replace('Z', '+00:00')])
 
     // Not due yet: nothing fires and the row stays put.
-    expect(server.services.functions.tickScheduled(new Date(at.getTime() - 60_000))).toEqual([])
+    expect(await server.services.functions.tickScheduled(new Date(at.getTime() - 60_000))).toEqual([])
     expect((await admin.functions.getExecution({ functionId: 'cron', executionId: created.$id })).status).toBe('scheduled')
 
     // Due: the same row runs, keeping the id the caller was given.
-    expect(server.services.functions.tickScheduled(new Date(at.getTime() + 1_000))).toEqual([created.$id])
+    expect(await server.services.functions.tickScheduled(new Date(at.getTime() + 1_000))).toEqual([created.$id])
     await Bun.sleep(800)
     const done = await admin.functions.getExecution({ functionId: 'cron', executionId: created.$id })
     expect(done.status).toBe('completed')
@@ -377,6 +412,6 @@ describe('functions', () => {
     expect(JSON.parse(done.responseBody)).toEqual({ ran: true })
 
     // And it is never picked up a second time.
-    expect(server.services.functions.tickScheduled(new Date(at.getTime() + 5_000))).toEqual([])
+    expect(await server.services.functions.tickScheduled(new Date(at.getTime() + 5_000))).toEqual([])
   })
 })

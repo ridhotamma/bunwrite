@@ -6,7 +6,7 @@
 import type { Server } from 'bun'
 
 import { parseCookies } from '~/auth/caller'
-import { clearInstanceApiKey } from '~/instance/bootstrap'
+import { clearInstanceApiKey, clearInstanceApiKeyAsync } from '~/instance/bootstrap'
 import { clientIpOf } from '~/lib/client-ip'
 import { BunwriteError } from '~/lib/errors'
 import { RateLimiter } from '~/lib/limits'
@@ -47,23 +47,26 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
   const control = projects.control
   const auth = new ConsoleAuth(control.db)
   const organizations = new OrganizationService(control.db)
-  organizations.ensure(control.config.orgId, control.config.projectName)
+  // Start the organization row once; every request awaits it before touching members.
+  const organizationsReady = organizations.ensure(control.config.orgId, control.config.projectName)
   const limiter = new RateLimiter(control.db)
   const router = new Router<ConsoleContext>()
   registerConsolePages(router)
 
   const secure = () => control.config.publicEndpoint.startsWith('https')
-  const sendMfa = (email: string, code: string) =>
-    control.mailer.send(control.templates.render('mfaChallenge', email, { user: email, otp: code }))
+  const sendMfa = (email: string, code: string) => control.mailer.send(control.templates.render('mfaChallenge', email, { user: email, otp: code }))
 
   return {
     async handle(request: Request, server?: Server<unknown>): Promise<Response | null> {
+      await organizationsReady
       const url = new URL(request.url)
       if (url.pathname !== '/console' && !url.pathname.startsWith('/console/')) return null
       if (!control.config.consoleEnabled) return new Response('Not found', { status: 404 })
       if (url.pathname === '/console/assets/htmx.min.js') {
         const file = Bun.file(htmxPath)
-        return new Response(file, { headers: { 'content-type': 'text/javascript', 'content-length': String(file.size), 'cache-control': 'public, max-age=86400' } })
+        return new Response(file, {
+          headers: { 'content-type': 'text/javascript', 'content-length': String(file.size), 'cache-control': 'public, max-age=86400' },
+        })
       }
 
       // Forms must come from this console (SameSite=Lax withholds cookies from cross-site POSTs; this covers the rest).
@@ -76,20 +79,24 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       const inviteMatch = /^\/console\/invite\/([^/]+)$/.exec(url.pathname)
       if (inviteMatch) {
         const token = decodeURIComponent(inviteMatch[1]!)
-        const member = organizations.inviteByToken(token)
+        const member = await organizations.inviteByToken(token)
         if (!member) {
-          return page(bare('Invitation unavailable', inviteUnavailableContent('This invitation is invalid or has already been accepted.'), control.config.projectName))
+          return page(
+            bare('Invitation unavailable', inviteUnavailableContent('This invitation is invalid or has already been accepted.'), control.config.projectName),
+          )
         }
-        const org = organizations.get(member.organizationId)
+        const org = await organizations.get(member.organizationId)
         if (!org) {
-          return page(bare('Invitation unavailable', inviteUnavailableContent('The organization for this invitation no longer exists.'), control.config.projectName))
+          return page(
+            bare('Invitation unavailable', inviteUnavailableContent('The organization for this invitation no longer exists.'), control.config.projectName),
+          )
         }
-        const existing = auth.find(member.email)
+        const existing = await auth.find(member.email)
         if (request.method === 'POST') {
           const form = await readForm(request)
           const name = String(form.name ?? '')
           try {
-            limiter.hit(`console-invite:${ip}`, 10, 900)
+            await limiter.hit(`console-invite:${ip}`, 10, 900)
           } catch {
             return page(
               bare(
@@ -110,14 +117,14 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           try {
             if (!existing) {
               await auth.upsert(member.email, password)
-              organizations.accept(member.id, String(form.name ?? ''))
+              await organizations.accept(member.id, String(form.name ?? ''))
             }
             const result = await auth.authenticate(member.email, password)
             if (result.status === 'invalid') throw new Error('Incorrect email or password.')
-            if (existing) organizations.accept(member.id)
+            if (existing) await organizations.accept(member.id)
             if (result.status === 'mfa') {
               await sendMfa(result.email, result.code)
-              return signInPage(auth, {
+              return await signInPage(auth, {
                 projectName: control.config.projectName,
                 mfaChallenge: result.challenge,
                 notice: 'Enter the code we emailed you to finish signing in.',
@@ -153,7 +160,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         )
       }
 
-      const noAdmins = auth.count() === 0
+      const noAdmins = (await auth.count()) === 0
 
       if (url.pathname === '/console/setup') {
         if (!noAdmins || !loopback(request, server)) return go(request, '/console/login')
@@ -163,7 +170,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           try {
             await auth.upsert(email, String(form.password ?? ''))
           } catch (error) {
-            return signInPage(auth, {
+            return await signInPage(auth, {
               setup: true,
               email,
               error: error instanceof Error ? error.message : String(error),
@@ -171,12 +178,13 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
               instance: control.config.bootstrap,
             })
           }
-          clearInstanceApiKey(control.db)
+          if (control.db.dialect === 'sqlite') clearInstanceApiKey(control.db)
+          else await clearInstanceApiKeyAsync(control.db)
           if (control.config.bootstrap) control.config.bootstrap.apiKey = undefined
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
         }
-        return signInPage(auth, { setup: true, projectName: control.config.projectName, instance: control.config.bootstrap })
+        return await signInPage(auth, { setup: true, projectName: control.config.projectName, instance: control.config.bootstrap })
       }
 
       if (url.pathname === '/console/login') {
@@ -185,21 +193,25 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           const form = await readForm(request)
           const email = String(form.email ?? '')
           try {
-            limiter.hit(`console-login:${ip}`, 10, 900)
+            await limiter.hit(`console-login:${ip}`, 10, 900)
           } catch {
-            return signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
+            return await signInPage(auth, { email, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
           }
           const result = await auth.authenticate(email, String(form.password ?? ''))
           if (result.status === 'invalid') {
-            return signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
+            return await signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
           }
           if (result.status === 'mfa') {
             try {
               await sendMfa(result.email, result.code)
             } catch (error) {
-              return signInPage(auth, { email, error: `Could not send the sign-in code: ${error instanceof Error ? error.message : String(error)}`, projectName: control.config.projectName })
+              return await signInPage(auth, {
+                email,
+                error: `Could not send the sign-in code: ${error instanceof Error ? error.message : String(error)}`,
+                projectName: control.config.projectName,
+              })
             }
-            return signInPage(auth, {
+            return await signInPage(auth, {
               projectName: control.config.projectName,
               mfaChallenge: result.challenge,
               notice: 'Enter the code we emailed you to finish signing in.',
@@ -207,20 +219,24 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
           }
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(result.secret, secure()) } })
         }
-        return signInPage(auth, { projectName: control.config.projectName })
+        return await signInPage(auth, { projectName: control.config.projectName })
       }
 
       if (url.pathname === '/console/login/mfa' && request.method === 'POST') {
         const form = await readForm(request)
         const challenge = String(form.challenge ?? '')
         try {
-          limiter.hit(`console-mfa:${ip}`, 10, 900)
+          await limiter.hit(`console-mfa:${ip}`, 10, 900)
         } catch {
-          return signInPage(auth, { mfaChallenge: challenge, error: 'Too many attempts. Try again in 15 minutes.', projectName: control.config.projectName })
+          return await signInPage(auth, {
+            mfaChallenge: challenge,
+            error: 'Too many attempts. Try again in 15 minutes.',
+            projectName: control.config.projectName,
+          })
         }
-        const secret = auth.verifyMfa(challenge, String(form.code ?? ''))
+        const secret = await auth.verifyMfa(challenge, String(form.code ?? ''))
         if (!secret) {
-          return signInPage(auth, {
+          return await signInPage(auth, {
             mfaChallenge: challenge,
             error: 'That code is not valid or has expired. Sign in again to get a new one.',
             projectName: control.config.projectName,
@@ -229,12 +245,12 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
       }
 
-      const admin = auth.admin(request)
+      const admin = await auth.admin(request)
       if (!admin) return go(request, noAdmins && loopback(request, server) ? '/console/setup' : '/console/login')
-      organizations.ensureAdmin(control.config.orgId, admin.email)
+      await organizations.ensureAdmin(control.config.orgId, admin.email)
 
       if (url.pathname === '/console/logout' && request.method === 'POST') {
-        auth.logout(request)
+        await auth.logout(request)
         return new Response(null, { status: 303, headers: { location: '/console/login', 'set-cookie': auth.clearCookie() } })
       }
 
@@ -250,6 +266,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         !pathname.startsWith('/console/security')
       if (projectRoute && !selected) return go(request, '/console')
 
+      const organization = await organizations.get(control.config.orgId)
       const current = selected ?? projects.defaultProject()
       const services = current.services
       const schema = new SchemaAdmin(services.db, services.registry)
@@ -276,7 +293,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
                     section,
                     admin: admin.email,
                     projectName: services.config.projectName,
-                    orgName: organizations.get(control.config.orgId)?.name ?? control.config.projectName,
+                    orgName: organization?.name ?? control.config.projectName,
                     projects: projects.list().map((project) => project.info),
                     currentProject: selected?.info.id ?? current.info.id,
                   },
@@ -291,7 +308,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         return ctx.render(
           'Not found',
           '',
-          html`${header('Page not found')}<div class="card">${emptyState('Nothing here', 'The page may have moved.', html`<a class="btn" href="/console">Go home</a>`)}</div>`,
+          html`${header('Page not found')}
+            <div class="card">${emptyState('Nothing here', 'The page may have moved.', html`<a class="btn" href="/console">Go home</a>`)}</div>`,
         )
       }
       try {

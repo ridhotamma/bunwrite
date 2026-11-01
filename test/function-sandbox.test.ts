@@ -53,17 +53,7 @@ describe('turning isolation on', () => {
       const project = join(root, 'projects', 'project-b')
       const projectSites = join(project, 'sites', 'site-2')
       const projectDeployment = join(projectSites, 'deployment-2')
-      const dirs = [
-        join(root, 'sites'),
-        sites,
-        deployment,
-        home,
-        join(root, 'projects'),
-        project,
-        join(project, 'sites'),
-        projectSites,
-        projectDeployment,
-      ]
+      const dirs = [join(root, 'sites'), sites, deployment, home, join(root, 'projects'), project, join(project, 'sites'), projectSites, projectDeployment]
       for (const dir of dirs) mkdirSync(dir, { recursive: true, mode: 0o700 })
       for (const dir of [root, ...dirs]) chmodSync(dir, 0o700)
 
@@ -117,7 +107,13 @@ describe.skipIf(!enabled)('isolated functions (Linux, with the helper)', () => {
       writeFileSync(join(src, path), content)
     }
     Bun.spawnSync(['tar', '-czf', `${src}.tar.gz`, '-C', src, '.'])
-    const created = await functions.createDeployment({ functionId: id, code: new File([readFileSync(`${src}.tar.gz`)], 'code.tar.gz'), activate: true, entrypoint: 'index.js', commands })
+    const created = await functions.createDeployment({
+      functionId: id,
+      code: new File([readFileSync(`${src}.tar.gz`)], 'code.tar.gz'),
+      activate: true,
+      entrypoint: 'index.js',
+      commands,
+    })
     for (let i = 0; i < 300; i++) {
       const d = await functions.getDeployment({ functionId: id, deploymentId: created.$id })
       if (d.status === 'ready' || d.status === 'failed') return d
@@ -129,7 +125,13 @@ describe.skipIf(!enabled)('isolated functions (Linux, with the helper)', () => {
   const call = async (id: string) => JSON.parse((await functions.createExecution({ functionId: id })).responseBody)
 
   test('each function builds and runs as its own user, with its own writable home', async () => {
-    const one = await deploy('one', { 'index.js': `module.exports = async ({ res }) => res.json({ uid: process.getuid(), home: process.env.HOME, wrote: (require('fs').writeFileSync('x.txt', '1'), true) })` }, 'echo "build-uid=$(id -u)"')
+    const one = await deploy(
+      'one',
+      {
+        'index.js': `module.exports = async ({ res }) => res.json({ uid: process.getuid(), home: process.env.HOME, wrote: (require('fs').writeFileSync('x.txt', '1'), true) })`,
+      },
+      'echo "build-uid=$(id -u)"',
+    )
     const two = await deploy('two', { 'index.js': `module.exports = async ({ res }) => res.json({ uid: process.getuid() })`, 'secret.txt': 'two only' })
     expect([one.status, two.status]).toEqual(['ready', 'ready'])
     const first = await call('one')
@@ -161,8 +163,8 @@ module.exports = async ({ res }) => res.json({
   })
 
   test('the server still reads code for the console, downloads the build and deletes functions', async () => {
-    const fn = server.services.functions.fn('two')
-    expect(server.services.functions.readEntry(fn, 10_000)).toContain('process.getuid()')
+    const fn = await server.services.functions.fn('two')
+    expect(await server.services.functions.readEntry(fn, 10_000)).toContain('process.getuid()')
     const d = (await functions.listDeployments({ functionId: 'two' })).deployments[0]
     const archive = await new Deployments(server.db, server.config, server.services.functions).download('two', d.$id, 'output')
     writeFileSync(join(dir, 'out.tar.gz'), new Uint8Array(await archive.arrayBuffer()))
@@ -198,7 +200,17 @@ module.exports = async ({ res }) => res.json({
     const folder = deploymentDir(server.config, 'one', d.$id)
     const uid = sandbox.uidFor(PROJECT, 'one')
     // Give it back to the server, as an older server would have left it.
-    Bun.spawnSync([process.env.FUNCTIONS_SANDBOX_HELPER ?? DEFAULT_HELPER, '--reuid=0', '--regid=0', '--clear-groups', '--', 'chown', '-R', `${process.getuid!()}:${process.getgid!()}`, folder])
+    Bun.spawnSync([
+      process.env.FUNCTIONS_SANDBOX_HELPER ?? DEFAULT_HELPER,
+      '--reuid=0',
+      '--regid=0',
+      '--clear-groups',
+      '--',
+      'chown',
+      '-R',
+      `${process.getuid!()}:${process.getgid!()}`,
+      folder,
+    ])
     expect(statSync(folder).uid).toBe(process.getuid!())
     expect((await call('one')).uid).toBe(uid)
     expect(statSync(folder).uid).toBe(uid)

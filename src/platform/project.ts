@@ -191,11 +191,11 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(templateModel(id, ctx.templates.get(id)))
   })
 
-  router.patch('/project/templates/email', ({ ctx, params }) => {
+  router.patch('/project/templates/email', async ({ ctx, params }) => {
     requireKey(ctx, 'templates.write')
     const id = templateIdParam(params.templateId)
     localeParam(params.locale)
-    return json(templateModel(id, ctx.templates.update(id, params)))
+    return json(templateModel(id, await ctx.templates.update(id, params)))
   })
 
   router.get('/project/mock-phones', ({ ctx, params }) => {

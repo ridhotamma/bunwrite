@@ -2,7 +2,8 @@ import type { AuthService } from '~/auth/service'
 import { validEmail } from '~/auth/service'
 import type { Caller } from '~/auth/caller'
 import type { MembershipRowFull, TeamRow, UserRowFull } from '~/auth/models'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
+import { uniqueViolation } from '~/db/driver'
 import type { DocumentStore } from '~/documents/store'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -30,57 +31,52 @@ export function validRoles(roles: unknown): string[] {
 
 export class TeamService {
   constructor(
-    private db: Db,
+    private db: SqlDatabase,
     private store: DocumentStore,
     private auth: AuthService,
   ) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  team(id: string): TeamRow {
-    const team = this.sql
-      .query<TeamRow, [string]>(
-        `SELECT t.*, (SELECT count(*) FROM _memberships m WHERE m.team_id = t.id AND m.confirm = 1) AS total FROM _teams t WHERE t.id = ?`,
-      )
-      .get(id)
+  async team(id: string): Promise<TeamRow> {
+    const team = await this.db.driver.get<TeamRow>(
+      `SELECT t.*, (SELECT count(*) FROM _memberships m WHERE m.team_id = t.id AND m.confirm = 1) AS total FROM _teams t WHERE t.id = ?`,
+      [id],
+    )
     if (!team) throw err('team_not_found')
     return team
   }
 
   /** Number of teams. */
-  count(): number {
-    return (this.sql.query('SELECT count(*) AS n FROM _teams').get() as { n: number }).n
+  async count(): Promise<number> {
+    return Number((await this.db.driver.get<{ n: number }>('SELECT count(*) AS n FROM _teams'))?.n ?? 0)
   }
 
   /** A team by ID, or null when it does not exist. */
-  findTeam(id: string): TeamRow | null {
-    return this.sql.query<TeamRow, [string]>('SELECT * FROM _teams WHERE id = ?').get(id) ?? null
+  async findTeam(id: string): Promise<TeamRow | null> {
+    return this.db.driver.get<TeamRow>('SELECT * FROM _teams WHERE id = ?', [id])
   }
 
   /** Teams for role pickers, newest first, capped so a page stays small. */
-  directory(limit = 300): TeamSuggestion[] {
-    return this.sql.query<TeamSuggestion, [number]>('SELECT id, name FROM _teams ORDER BY seq DESC LIMIT ?').all(limit)
+  async directory(limit = 300): Promise<TeamSuggestion[]> {
+    return this.db.driver.all<TeamSuggestion>('SELECT id, name FROM _teams ORDER BY seq DESC LIMIT ?', [limit])
   }
 
   /** Distinct roles used by team memberships, capped. */
-  memberRoles(limit = 100): string[] {
-    return this.sql
-      .query<{ value: string }, [number]>('SELECT DISTINCT j.value AS value FROM _memberships, json_each(_memberships.roles) j LIMIT ?')
-      .all(limit)
-      .map((row) => row.value)
+  async memberRoles(limit = 100): Promise<string[]> {
+    const rows = await this.db.driver.all<{ value: string }>('SELECT DISTINCT j.value AS value FROM _memberships, json_each(_memberships.roles) j LIMIT ?', [
+      limit,
+    ])
+    return rows.map((row) => row.value)
   }
 
-  membership(teamId: string, membershipId: string): MembershipRowFull {
-    const row = this.sql.query<MembershipRowFull, [string, string]>(`${MEMBERSHIP_SELECT} WHERE m.id = ? AND m.team_id = ?`).get(membershipId, teamId)
+  async membership(teamId: string, membershipId: string): Promise<MembershipRowFull> {
+    const row = await this.db.driver.get<MembershipRowFull>(`${MEMBERSHIP_SELECT} WHERE m.id = ? AND m.team_id = ?`, [membershipId, teamId])
     if (!row) throw err('membership_not_found')
     return row
   }
 
   /** Readable by API keys and the team's members; `owner` also needs the owner role. */
-  assertAccess(caller: Caller, teamId: string, need: 'member' | 'owner'): void {
-    this.team(teamId)
+  async assertAccess(caller: Caller, teamId: string, need: 'member' | 'owner'): Promise<void> {
+    await this.team(teamId)
     if (caller.privileged) return
     if (!caller.user) throw err('general_unauthorized_scope', 'User (role: guests) missing scopes (["teams.read"])')
     const role = need === 'owner' ? `team:${teamId}/owner` : `team:${teamId}`
@@ -98,11 +94,11 @@ export class TeamService {
     }
     const options = { scope, includeTotal, search: search ? { term: search, fields: ['name', '$id'] } : undefined }
     const { total, seqs } = await listSeqs(this.store, TEAMS, queries, options)
-    const rows = this.auth.bySeq<TeamRow & { seq: number }>('_teams', seqs)
-    return { total, teams: rows.map((r) => this.team(r.id)) }
+    const rows = await this.auth.bySeq<TeamRow & { seq: number }>('_teams', seqs)
+    return { total, teams: await Promise.all(rows.map((r) => this.team(r.id))) }
   }
 
-  create(caller: Caller, input: { teamId: unknown; name: unknown; roles: unknown }): TeamRow {
+  async create(caller: Caller, input: { teamId: unknown; name: unknown; roles: unknown }): Promise<TeamRow> {
     if (!caller.privileged && !caller.user) throw err('general_unauthorized_scope', 'User (role: guests) missing scopes (["teams.write"])')
     const id = resolveId(input.teamId, 'Team ID')
     if (typeof input.name !== 'string' || !input.name || input.name.length > 128) {
@@ -110,39 +106,42 @@ export class TeamService {
     }
     const roles = input.roles === undefined ? ['owner'] : validRoles(input.roles)
     const stamp = now()
-    this.sql.transaction(() => {
+    await this.db.driver.transaction(async (tx) => {
       try {
-        this.sql.query('INSERT INTO _teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, input.name as string, stamp, stamp)
+        await tx.run('INSERT INTO _teams (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)', [id, input.name as string, stamp, stamp])
       } catch (error) {
-        if (error instanceof Error && error.message.includes('UNIQUE')) throw err('team_already_exists')
+        if (uniqueViolation(error)) throw err('team_already_exists')
         throw error
       }
       // A user creating a team joins it; an API key does not.
       if (!caller.privileged && caller.user) {
-        this.sql
-          .query(
-            `INSERT INTO _memberships (id, team_id, user_id, roles, invited, joined, confirm, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-          )
-          .run(uniqueId(), id, caller.user.id, JSON.stringify(roles), stamp, stamp, stamp, stamp)
+        await tx.run(
+          `INSERT INTO _memberships (id, team_id, user_id, roles, invited, joined, confirm, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+          [uniqueId(), id, caller.user.id, JSON.stringify(roles), stamp, stamp, stamp, stamp],
+        )
       }
-    }).immediate()
+    })
     return this.team(id)
   }
 
-  update(id: string, fields: { name?: string; prefs?: string }): TeamRow {
-    this.team(id)
+  async update(id: string, fields: { name?: string; prefs?: string }): Promise<TeamRow> {
+    await this.team(id)
     const keys = Object.keys(fields) as (keyof typeof fields)[]
-    this.sql.query(`UPDATE _teams SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`).run(...keys.map((k) => fields[k]!), now(), id)
+    await this.db.driver.run(`UPDATE _teams SET ${keys.map((k) => `${k} = ?`).join(', ')}, updated_at = ? WHERE id = ?`, [
+      ...keys.map((k) => fields[k]!),
+      now(),
+      id,
+    ])
     return this.team(id)
   }
 
-  delete(id: string): void {
-    this.team(id)
-    this.sql.transaction(() => {
-      this.sql.query('DELETE FROM _memberships WHERE team_id = ?').run(id)
-      this.sql.query('DELETE FROM _teams WHERE id = ?').run(id)
-    }).immediate()
+  async delete(id: string): Promise<void> {
+    await this.team(id)
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run('DELETE FROM _memberships WHERE team_id = ?', [id])
+      await tx.run('DELETE FROM _teams WHERE id = ?', [id])
+    })
   }
 
   async listMemberships(scope: { teamId?: string; userId?: string }, queries: unknown[], search?: string, includeTotal = true) {
@@ -155,9 +154,7 @@ export class TeamService {
       search: search ? { term: search, fields: ['userName', 'userEmail', 'teamName', '$id'] } : undefined,
     })
     if (seqs.length === 0) return { total, memberships: [] as MembershipRowFull[] }
-    const rows = this.sql
-      .query<MembershipRowFull & { seq: number }, number[]>(`${MEMBERSHIP_SELECT} WHERE m.seq IN (${seqs.map(() => '?').join(', ')})`)
-      .all(...seqs)
+    const rows = await this.db.driver.all<MembershipRowFull & { seq: number }>(`${MEMBERSHIP_SELECT} WHERE m.seq IN (${seqs.map(() => '?').join(', ')})`, seqs)
     const bySeq = new Map(rows.map((r) => [r.seq, r]))
     return { total, memberships: seqs.map((s) => bySeq.get(s)!).filter(Boolean) }
   }
@@ -172,63 +169,62 @@ export class TeamService {
     teamId: string,
     input: { email?: unknown; userId?: unknown; phone?: unknown; roles: unknown; name?: unknown },
   ): Promise<{ membership: MembershipRowFull; secret: string | null }> {
-    this.assertAccess(caller, teamId, 'owner')
+    await this.assertAccess(caller, teamId, 'owner')
     const roles = validRoles(input.roles)
     let user
     if (input.userId) {
-      user = this.auth.user(String(input.userId))
+      user = await this.auth.user(String(input.userId))
     } else if (input.email) {
       const email = validEmail(input.email)
-      user = this.auth.userByEmail(email) ?? (await this.auth.createUser({ email, name: input.name ?? '' }))
+      user = (await this.auth.userByEmail(email)) ?? (await this.auth.createUser({ email, name: input.name ?? '' }))
     } else if (input.phone) {
-      user = this.sql.query<UserRowFull, [string]>('SELECT * FROM _users WHERE phone = ?').get(String(input.phone))
+      user = await this.db.driver.get<UserRowFull>('SELECT * FROM _users WHERE phone = ?', [String(input.phone)])
       user ??= await this.auth.createUser({ phone: input.phone, name: input.name ?? '' })
     } else {
       throw err('general_argument_invalid', 'At least one of userId, email, or phone is required')
     }
 
-    const existing = this.sql.query<{ id: string }, [string, string]>('SELECT id FROM _memberships WHERE team_id = ? AND user_id = ?').get(teamId, user.id)
+    const existing = await this.db.driver.get<{ id: string }>('SELECT id FROM _memberships WHERE team_id = ? AND user_id = ?', [teamId, user.id])
     if (existing) throw err('membership_already_exists')
 
     const stamp = now()
     const confirmNow = caller.privileged
     const secret = confirmNow ? null : randomSecret(64)
     const id = uniqueId()
-    this.sql
-      .query(
-        `INSERT INTO _memberships (id, team_id, user_id, roles, invited, joined, confirm, secret_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, teamId, user.id, JSON.stringify(roles), stamp, confirmNow ? stamp : null, confirmNow ? 1 : 0, secret ? sha256(secret) : null, stamp, stamp)
-    return { membership: this.membership(teamId, id), secret }
+    await this.db.driver.run(
+      `INSERT INTO _memberships (id, team_id, user_id, roles, invited, joined, confirm, secret_hash, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, teamId, user.id, JSON.stringify(roles), stamp, confirmNow ? stamp : null, confirmNow ? 1 : 0, secret ? sha256(secret) : null, stamp, stamp],
+    )
+    return { membership: await this.membership(teamId, id), secret }
   }
 
-  updateMembership(caller: Caller, teamId: string, membershipId: string, roles: unknown): MembershipRowFull {
-    this.assertAccess(caller, teamId, 'owner')
-    this.membership(teamId, membershipId)
-    this.sql.query('UPDATE _memberships SET roles = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(validRoles(roles)), now(), membershipId)
+  async updateMembership(caller: Caller, teamId: string, membershipId: string, roles: unknown): Promise<MembershipRowFull> {
+    await this.assertAccess(caller, teamId, 'owner')
+    await this.membership(teamId, membershipId)
+    await this.db.driver.run('UPDATE _memberships SET roles = ?, updated_at = ? WHERE id = ?', [JSON.stringify(validRoles(roles)), now(), membershipId])
     return this.membership(teamId, membershipId)
   }
 
-  deleteMembership(caller: Caller, teamId: string, membershipId: string): void {
-    const membership = this.membership(teamId, membershipId)
+  async deleteMembership(caller: Caller, teamId: string, membershipId: string): Promise<void> {
+    const membership = await this.membership(teamId, membershipId)
     // Members may leave on their own; removing others needs the owner role.
-    if (!(caller.user && caller.user.id === membership.user_id)) this.assertAccess(caller, teamId, 'owner')
-    this.sql.query('DELETE FROM _memberships WHERE id = ?').run(membershipId)
+    if (!(caller.user && caller.user.id === membership.user_id)) await this.assertAccess(caller, teamId, 'owner')
+    await this.db.driver.run('DELETE FROM _memberships WHERE id = ?', [membershipId])
   }
 
   /** Accept an invitation with the emailed secret. */
-  confirmMembership(teamId: string, membershipId: string, userId: unknown, secret: unknown): MembershipRowFull {
-    const membership = this.membership(teamId, membershipId)
+  async confirmMembership(teamId: string, membershipId: string, userId: unknown, secret: unknown): Promise<MembershipRowFull> {
+    const membership = await this.membership(teamId, membershipId)
     if (membership.user_id !== userId) throw err('team_invite_mismatch')
     if (membership.confirm) throw err('membership_already_confirmed')
-    const row = this.sql.query<{ secret_hash: string | null }, [string]>('SELECT secret_hash FROM _memberships WHERE id = ?').get(membershipId)
+    const row = await this.db.driver.get<{ secret_hash: string | null }>('SELECT secret_hash FROM _memberships WHERE id = ?', [membershipId])
     if (typeof secret !== 'string' || !row?.secret_hash || row.secret_hash !== sha256(secret)) throw err('team_invalid_secret')
     const stamp = now()
-    this.sql.transaction(() => {
-      this.sql.query('UPDATE _memberships SET confirm = 1, joined = ?, secret_hash = NULL, updated_at = ? WHERE id = ?').run(stamp, stamp, membershipId)
-      this.sql.query('UPDATE _users SET email_verification = 1, updated_at = ? WHERE id = ?').run(stamp, membership.user_id)
-    }).immediate()
+    await this.db.driver.transaction(async (tx) => {
+      await tx.run('UPDATE _memberships SET confirm = 1, joined = ?, secret_hash = NULL, updated_at = ? WHERE id = ?', [stamp, stamp, membershipId])
+      await tx.run('UPDATE _users SET email_verification = 1, updated_at = ? WHERE id = ?', [stamp, membership.user_id])
+    })
     return this.membership(teamId, membershipId)
   }
 }

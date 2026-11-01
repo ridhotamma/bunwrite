@@ -304,7 +304,7 @@ export class RenderService {
    * Queue a render. Everything that can be checked now is checked now, so a
    * bad request fails here with 4xx instead of later as a failed job.
    */
-  enqueue(type: 'pdf' | 'image', html: string, options: PdfOptions | ImageOptions, target: RenderTarget): QueueMessageRow {
+  async enqueue(type: 'pdf' | 'image', html: string, options: PdfOptions | ImageOptions, target: RenderTarget): Promise<QueueMessageRow> {
     if (!this.jobs) throw err('general_service_disabled', 'Async rendering is not available on this server.')
     this.check(html)
     if (type === 'image') {
@@ -313,28 +313,28 @@ export class RenderService {
       if ((o.width ?? 1200) * (o.height ?? 800) * (o.scale ?? 1) ** 2 > maxPixels) throw tooLarge(maxPixels)
     }
     const caller = keyCaller()
-    this.jobs.storage.bucket(target.bucketId, true)
+    await this.jobs.storage.bucket(target.bucketId, true)
     // Fixed now, so the caller knows the file ID and a retry writes the same file.
     const fileId = resolveId(target.fileId, 'File ID')
     let exists = false
     try {
-      this.jobs.storage.file(caller, target.bucketId, fileId)
+      await this.jobs.storage.file(caller, target.bucketId, fileId)
       exists = true
     } catch {
       // Not there yet: good.
     }
     if (exists) throw err('storage_file_already_exists')
     const data: RenderJobData = { type, html, options, bucketId: target.bucketId, fileId, fileName: target.fileName, permissions: target.permissions ?? null }
-    const { message } = this.jobs.queue.enqueue(RENDER_QUEUE, { data, maxAttempts: JOB_ATTEMPTS })
+    const { message } = await this.jobs.queue.enqueue(RENDER_QUEUE, { data, maxAttempts: JOB_ATTEMPTS })
     queueMicrotask(() => this.drain())
     return message
   }
 
   /** One async render job. */
-  job(id: string): QueueMessageRow {
+  async job(id: string): Promise<QueueMessageRow> {
     if (!this.jobs) throw err('queue_message_not_found', 'Render job with the requested ID could not be found.')
     try {
-      return this.jobs.queue.getMessage(RENDER_QUEUE, id)
+      return await this.jobs.queue.getMessage(RENDER_QUEUE, id)
     } catch {
       throw err('queue_message_not_found', 'Render job with the requested ID could not be found.')
     }
@@ -366,7 +366,7 @@ export class RenderService {
     void (async () => {
       try {
         while (this.config.render.enabled) {
-          const [message] = this.jobs!.queue.claim(RENDER_QUEUE, { count: 1, lease: JOB_LEASE_S })
+          const [message] = await this.jobs!.queue.claim(RENDER_QUEUE, { count: 1, lease: JOB_LEASE_S })
           if (!message) break
           await this.runJob(message)
         }
@@ -381,13 +381,16 @@ export class RenderService {
   private async runJob(message: QueueMessageRow): Promise<void> {
     const { queue, storage } = this.jobs!
     // Waiting in line counts against the lease too, so keep it alive.
-    const beat = setInterval(() => {
-      try {
-        queue.heartbeat(RENDER_QUEUE, message.id, message.attempts, JOB_LEASE_S)
-      } catch {
-        // Already finished or reaped; the result write below reports it.
-      }
-    }, (JOB_LEASE_S * 1000) / 4)
+    const beat = setInterval(
+      () => {
+        try {
+          void queue.heartbeat(RENDER_QUEUE, message.id, message.attempts, JOB_LEASE_S)
+        } catch {
+          // Already finished or reaped; the result write below reports it.
+        }
+      },
+      (JOB_LEASE_S * 1000) / 4,
+    )
     beat.unref?.()
     let data: RenderJobData | null = null
     try {
@@ -410,7 +413,7 @@ export class RenderService {
         const savedBefore = error instanceof BunwriteError && error.type === 'storage_file_already_exists' && message.attempts > 1
         if (!savedBefore) throw error
       }
-      queue.ack(RENDER_QUEUE, message.id, message.attempts, { bucketId: data.bucketId, fileId: data.fileId })
+      await queue.ack(RENDER_QUEUE, message.id, message.attempts, { bucketId: data.bucketId, fileId: data.fileId })
       this.dropHtml(message.id, data)
     } catch (error) {
       // A 4xx (bad selector, too large, bucket gone) fails the same way again.
@@ -418,7 +421,7 @@ export class RenderService {
         error instanceof BunwriteError && error.code < 500 && error.type !== 'general_rate_limit_exceeded' && error.type !== 'general_service_disabled'
       const text = error instanceof Error ? error.message : String(error)
       try {
-        const row = queue.fail(RENDER_QUEUE, message.id, message.attempts, text, undefined, final)
+        const row = await queue.fail(RENDER_QUEUE, message.id, message.attempts, text, undefined, final)
         if (row.status === 'failed' && data) this.dropHtml(message.id, data)
       } catch {
         // The lease was lost; whoever holds it now reports the outcome.
@@ -532,10 +535,14 @@ export class RenderService {
       await view.cdp('Emulation.setDeviceMetricsOverride', { width: setup.width, height: setup.height, deviceScaleFactor: setup.scale, mobile: false })
       // Same result on every host: light colour scheme, white page unless transparent was asked for.
       await view.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
-      await view.cdp('Emulation.setDefaultBackgroundColorOverride', { color: setup.transparent ? { r: 0, g: 0, b: 0, a: 0 } : { r: 255, g: 255, b: 255, a: 1 } })
+      await view.cdp('Emulation.setDefaultBackgroundColorOverride', {
+        color: setup.transparent ? { r: 0, g: 0, b: 0, a: 0 } : { r: 255, g: 255, b: 255, a: 1 },
+      })
       const { frameTree } = (await view.cdp('Page.getFrameTree')) as { frameTree: { frame: { id: string } } }
       await view.cdp('Page.setDocumentContent', { frameId: frameTree.frame.id, html })
-      await view.evaluate(`new Promise((resolve) => document.readyState === 'complete' ? resolve(true) : addEventListener('load', () => resolve(true), { once: true }))`)
+      await view.evaluate(
+        `new Promise((resolve) => document.readyState === 'complete' ? resolve(true) : addEventListener('load', () => resolve(true), { once: true }))`,
+      )
       await view.evaluate('document.fonts.ready.then(() => true)')
       return await work(view)
     } finally {
@@ -545,4 +552,7 @@ export class RenderService {
 }
 
 const tooLarge = (maxPixels: number) =>
-  err('general_argument_invalid', `The image would be larger than ${maxPixels / 1_000_000} megapixels or ${MAX_CAPTURE_PX}px tall. Lower width, height or scale, or set fullPage to false.`)
+  err(
+    'general_argument_invalid',
+    `The image would be larger than ${maxPixels / 1_000_000} megapixels or ${MAX_CAPTURE_PX}px tall. Lower width, height or scale, or set fullPage to false.`,
+  )

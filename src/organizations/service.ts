@@ -2,7 +2,7 @@
 import type { Mailer } from '~/mail/mailer'
 import { organizationInviteMail } from '~/mail/mailer'
 import { validEmail } from '~/auth/service'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
@@ -91,82 +91,77 @@ export function displayName(email: string): string {
 }
 
 export class OrganizationService {
-  constructor(private db: Db) {}
+  constructor(private db: SqlDatabase) {}
 
-  private get sql() {
-    return this.db.sqlite
-  }
-
-  ensure(id: string, defaultName: string): OrganizationInfo {
+  async ensure(id: string, defaultName: string): Promise<OrganizationInfo> {
     const stamp = now()
-    this.sql
-      .query('INSERT INTO _organizations (id, name, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING')
-      .run(id, defaultName, stamp, stamp)
-    return this.get(id)!
+    await this.db.driver.run('INSERT INTO _organizations (id, name, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO NOTHING', [
+      id,
+      defaultName,
+      stamp,
+      stamp,
+    ])
+    return (await this.get(id))!
   }
 
-  get(id: string): OrganizationInfo | null {
-    const row = this.sql.query<OrgRow, [string]>('SELECT id, name, created_at, updated_at FROM _organizations WHERE id = ?').get(id)
+  async get(id: string): Promise<OrganizationInfo | null> {
+    const row = await this.db.driver.get<OrgRow>('SELECT id, name, created_at, updated_at FROM _organizations WHERE id = ?', [id])
     return row ? infoOf(row) : null
   }
 
-  updateName(id: string, name: string): OrganizationInfo {
+  async updateName(id: string, name: string): Promise<OrganizationInfo> {
     const value = name.trim()
     if (!value || value.length > 128) throw err('general_argument_invalid', 'An organization needs a name of 128 characters or less.')
-    this.get(id)
-    this.sql.query('UPDATE _organizations SET name = ?, updated_at = ? WHERE id = ?').run(value, now(), id)
-    return this.get(id)!
+    await this.get(id)
+    await this.db.driver.run('UPDATE _organizations SET name = ?, updated_at = ? WHERE id = ?', [value, now(), id])
+    return (await this.get(id))!
   }
 
-  members(orgId: string, search = ''): OrganizationMember[] {
+  async members(orgId: string, search = ''): Promise<OrganizationMember[]> {
     const term = search.trim()
     const rows = term
-      ? this.sql
-          .query<MemberRow, [string, string, string]>(
-            `SELECT * FROM _organization_members WHERE organization_id = ? AND (email LIKE ? OR name LIKE ?)
-             ORDER BY status = 'active' DESC, role = 'owner' DESC, email`,
-          )
-          .all(orgId, `%${term}%`, `%${term}%`)
-      : this.sql
-          .query<MemberRow, [string]>(
-            "SELECT * FROM _organization_members WHERE organization_id = ? ORDER BY status = 'active' DESC, role = 'owner' DESC, email",
-          )
-          .all(orgId)
+      ? await this.db.driver.all<MemberRow>(
+          `SELECT * FROM _organization_members WHERE organization_id = ? AND (email LIKE ? OR name LIKE ?)
+           ORDER BY status = 'active' DESC, role = 'owner' DESC, email`,
+          [orgId, `%${term}%`, `%${term}%`],
+        )
+      : await this.db.driver.all<MemberRow>(
+          "SELECT * FROM _organization_members WHERE organization_id = ? ORDER BY status = 'active' DESC, role = 'owner' DESC, email",
+          [orgId],
+        )
     return rows.map(memberOf)
   }
 
-  findMember(orgId: string, id: string): OrganizationMember {
-    const row = this.sql.query<MemberRow, [string, string]>('SELECT * FROM _organization_members WHERE organization_id = ? AND id = ?').get(orgId, id)
+  async findMember(orgId: string, id: string): Promise<OrganizationMember> {
+    const row = await this.db.driver.get<MemberRow>('SELECT * FROM _organization_members WHERE organization_id = ? AND id = ?', [orgId, id])
     if (!row) throw err('general_argument_invalid', 'Unknown organization member.')
     return memberOf(row)
   }
 
-  findByEmail(orgId: string, email: string): OrganizationMember | null {
-    const row = this.sql
-      .query<MemberRow, [string, string]>('SELECT * FROM _organization_members WHERE organization_id = ? AND email = ?')
-      .get(orgId, email.toLowerCase())
+  async findByEmail(orgId: string, email: string): Promise<OrganizationMember | null> {
+    const row = await this.db.driver.get<MemberRow>('SELECT * FROM _organization_members WHERE organization_id = ? AND email = ?', [orgId, email.toLowerCase()])
     return row ? memberOf(row) : null
   }
 
-  roleOf(orgId: string, email: string): OrganizationRole | null {
-    const row = this.sql
-      .query<{ role: string }, [string, string]>(
-        "SELECT role FROM _organization_members WHERE organization_id = ? AND email = ? AND status = 'active'",
-      )
-      .get(orgId, email.toLowerCase())
+  async roleOf(orgId: string, email: string): Promise<OrganizationRole | null> {
+    const row = await this.db.driver.get<{ role: string }>(
+      "SELECT role FROM _organization_members WHERE organization_id = ? AND email = ? AND status = 'active'",
+      [orgId, email.toLowerCase()],
+    )
     return row ? (row.role === 'owner' ? 'owner' : 'developer') : null
   }
 
   /** Make sure an existing console admin has an active organization row. */
-  ensureAdmin(orgId: string, email: string): OrganizationMember {
+  async ensureAdmin(orgId: string, email: string): Promise<OrganizationMember> {
     const address = email.toLowerCase()
-    const existing = this.findByEmail(orgId, address)
+    const existing = await this.findByEmail(orgId, address)
     if (existing) {
       if (existing.status === 'invited') {
         const stamp = now()
-        this.sql
-          .query("UPDATE _organization_members SET status = 'active', name = ?, joined_at = ?, invite_hash = NULL, updated_at = ? WHERE id = ?")
-          .run(existing.name || displayName(address), stamp, stamp, existing.id)
+        await this.db.driver.run(
+          "UPDATE _organization_members SET status = 'active', name = ?, joined_at = ?, invite_hash = NULL, updated_at = ? WHERE id = ?",
+          [existing.name || displayName(address), stamp, stamp, existing.id],
+        )
         return this.findMember(orgId, existing.id)
       }
       return existing
@@ -182,12 +177,11 @@ export class OrganizationService {
       invitedAt: stamp,
       joinedAt: stamp,
     }
-    this.sql
-      .query(
-        `INSERT INTO _organization_members (id, organization_id, email, name, role, status, invited_at, joined_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(member.id, orgId, member.email, member.name, member.role, member.status, stamp, stamp, stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _organization_members (id, organization_id, email, name, role, status, invited_at, joined_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [member.id, orgId, member.email, member.name, member.role, member.status, stamp, stamp, stamp, stamp],
+    )
     return member
   }
 
@@ -200,22 +194,26 @@ export class OrganizationService {
     for (const { email } of pending) {
       if (seen.has(email)) throw err('general_argument_invalid', `${email} is listed more than once.`)
       seen.add(email)
-      if (this.findByEmail(orgId, email)?.status === 'active') {
+      if ((await this.findByEmail(orgId, email))?.status === 'active') {
         throw err('general_argument_invalid', `${email} is already a member.`)
       }
     }
 
     const results: InviteResult[] = []
     for (const { email, role } of pending) {
-      const existing = this.findByEmail(orgId, email)
+      const existing = await this.findByEmail(orgId, email)
       const token = randomSecret(32)
       const stamp = now()
       let member: OrganizationMember
       if (existing) {
-        this.sql
-          .query("UPDATE _organization_members SET role = ?, invite_hash = ?, invited_at = ?, updated_at = ? WHERE id = ?")
-          .run(role, sha256(token), stamp, stamp, existing.id)
-        member = this.findMember(orgId, existing.id)
+        await this.db.driver.run('UPDATE _organization_members SET role = ?, invite_hash = ?, invited_at = ?, updated_at = ? WHERE id = ?', [
+          role,
+          sha256(token),
+          stamp,
+          stamp,
+          existing.id,
+        ])
+        member = await this.findMember(orgId, existing.id)
       } else {
         member = {
           id: uniqueId(),
@@ -227,12 +225,11 @@ export class OrganizationService {
           invitedAt: stamp,
           joinedAt: null,
         }
-        this.sql
-          .query(
-            `INSERT INTO _organization_members (id, organization_id, email, name, role, status, invite_hash, invited_at, created_at, updated_at)
-             VALUES (?, ?, ?, '', ?, 'invited', ?, ?, ?, ?)`,
-          )
-          .run(member.id, orgId, email, role, sha256(token), stamp, stamp, stamp)
+        await this.db.driver.run(
+          `INSERT INTO _organization_members (id, organization_id, email, name, role, status, invite_hash, invited_at, created_at, updated_at)
+           VALUES (?, ?, ?, '', ?, 'invited', ?, ?, ?, ?)`,
+          [member.id, orgId, email, role, sha256(token), stamp, stamp, stamp],
+        )
       }
 
       const link = `${options.baseUrl.replace(/\/$/, '')}/console/invite/${token}`
@@ -250,60 +247,59 @@ export class OrganizationService {
     return results
   }
 
-  inviteByToken(token: string): OrganizationMember | null {
-    const row = this.sql
-      .query<MemberRow, [string]>("SELECT * FROM _organization_members WHERE invite_hash = ? AND status = 'invited'")
-      .get(sha256(token))
+  async inviteByToken(token: string): Promise<OrganizationMember | null> {
+    const row = await this.db.driver.get<MemberRow>("SELECT * FROM _organization_members WHERE invite_hash = ? AND status = 'invited'", [sha256(token)])
     return row ? memberOf(row) : null
   }
 
-  accept(memberId: string, name?: string): OrganizationMember {
-    const row = this.sql.query<MemberRow, [string]>('SELECT * FROM _organization_members WHERE id = ?').get(memberId)
+  async accept(memberId: string, name?: string): Promise<OrganizationMember> {
+    const row = await this.db.driver.get<MemberRow>('SELECT * FROM _organization_members WHERE id = ?', [memberId])
     if (!row) throw err('general_argument_invalid', 'Invitation not found.')
     const stamp = now()
-    this.sql
-      .query("UPDATE _organization_members SET status = 'active', name = ?, joined_at = ?, invite_hash = NULL, updated_at = ? WHERE id = ?")
-      .run(name?.trim() || row.name || displayName(row.email), stamp, stamp, memberId)
-    return memberOf(this.sql.query<MemberRow, [string]>('SELECT * FROM _organization_members WHERE id = ?').get(memberId)!)
+    await this.db.driver.run("UPDATE _organization_members SET status = 'active', name = ?, joined_at = ?, invite_hash = NULL, updated_at = ? WHERE id = ?", [
+      name?.trim() || row.name || displayName(row.email),
+      stamp,
+      stamp,
+      memberId,
+    ])
+    return memberOf((await this.db.driver.get<MemberRow>('SELECT * FROM _organization_members WHERE id = ?', [memberId]))!)
   }
 
-  updateRole(orgId: string, memberId: string, role: OrganizationRole, actorEmail: string): OrganizationMember {
+  async updateRole(orgId: string, memberId: string, role: OrganizationRole, actorEmail: string): Promise<OrganizationMember> {
     if (role !== 'owner' && role !== 'developer') throw err('general_argument_invalid', 'Unknown organization role.')
-    const member = this.findMember(orgId, memberId)
+    const member = await this.findMember(orgId, memberId)
     if (member.email === actorEmail.toLowerCase()) throw err('general_argument_invalid', 'You cannot change your own role.')
-    if (member.role === 'owner' && role !== 'owner' && this.ownerCount(orgId) <= 1) {
+    if (member.role === 'owner' && role !== 'owner' && (await this.ownerCount(orgId)) <= 1) {
       throw err('general_argument_invalid', 'The last owner cannot be demoted.')
     }
-    this.sql.query('UPDATE _organization_members SET role = ?, updated_at = ? WHERE id = ?').run(role, now(), memberId)
+    await this.db.driver.run('UPDATE _organization_members SET role = ?, updated_at = ? WHERE id = ?', [role, now(), memberId])
     return this.findMember(orgId, memberId)
   }
 
-  remove(orgId: string, memberId: string, actorEmail: string): void {
-    const member = this.findMember(orgId, memberId)
+  async remove(orgId: string, memberId: string, actorEmail: string): Promise<void> {
+    const member = await this.findMember(orgId, memberId)
     if (member.email === actorEmail.toLowerCase()) throw err('general_argument_invalid', 'You cannot remove yourself.')
-    if (member.status === 'active' && member.role === 'owner' && this.ownerCount(orgId) <= 1) {
+    if (member.status === 'active' && member.role === 'owner' && (await this.ownerCount(orgId)) <= 1) {
       throw err('general_argument_invalid', 'The last owner cannot be removed.')
     }
 
-    this.sql.transaction(() => {
-      const admin = this.sql.query<{ seq: number }, [string]>('SELECT seq FROM _console_admins WHERE email = ?').get(member.email)
+    await this.db.driver.transaction(async (tx) => {
+      const admin = await tx.get<{ seq: number }>('SELECT seq FROM _console_admins WHERE email = ?', [member.email])
       if (admin) {
-        const count = (this.sql.query('SELECT count(*) AS n FROM _console_admins').get() as { n: number }).n
+        const count = Number((await tx.get<{ n: number }>('SELECT count(*) AS n FROM _console_admins'))?.n ?? 0)
         if (count <= 1) throw err('general_argument_invalid', 'The last console admin cannot be removed.')
-        this.sql.query('DELETE FROM _console_sessions WHERE admin_id = ?').run(admin.seq)
-        this.sql.query('DELETE FROM _console_admins WHERE seq = ?').run(admin.seq)
+        await tx.run('DELETE FROM _console_sessions WHERE admin_id = ?', [admin.seq])
+        await tx.run('DELETE FROM _console_admins WHERE seq = ?', [admin.seq])
       }
-      this.sql.query('DELETE FROM _organization_members WHERE id = ?').run(memberId)
-    }).immediate()
+      await tx.run('DELETE FROM _organization_members WHERE id = ?', [memberId])
+    })
   }
 
-  ownerCount(orgId: string): number {
-    return (
-      this.sql
-        .query<{ n: number }, [string]>(
-          "SELECT count(*) AS n FROM _organization_members WHERE organization_id = ? AND status = 'active' AND role = 'owner'",
-        )
-        .get(orgId) as { n: number }
-    ).n
+  async ownerCount(orgId: string): Promise<number> {
+    const row = await this.db.driver.get<{ n: number }>(
+      "SELECT count(*) AS n FROM _organization_members WHERE organization_id = ? AND status = 'active' AND role = 'owner'",
+      [orgId],
+    )
+    return Number(row?.n ?? 0)
   }
 }

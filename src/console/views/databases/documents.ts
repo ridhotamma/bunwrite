@@ -14,15 +14,23 @@ type Attr = Collection['attributes'][number]
 /** What the field accepts, in words: "Text · up to 255 characters". */
 function describe(a: Attr): string {
   const kind =
-    a.format === 'enum' ? 'One of the listed values'
-    : a.format === 'email' ? 'Email address'
-    : a.format === 'url' ? 'URL'
-    : a.format === 'ip' ? 'IP address'
-    : a.type === 'string' ? `Text · up to ${(a.size ?? 255).toLocaleString('en-US')} characters`
-    : a.type === 'integer' ? 'Whole number'
-    : a.type === 'double' ? 'Number'
-    : a.type === 'boolean' ? 'True or false'
-    : 'Date and time (UTC)'
+    a.format === 'enum'
+      ? 'One of the listed values'
+      : a.format === 'email'
+        ? 'Email address'
+        : a.format === 'url'
+          ? 'URL'
+          : a.format === 'ip'
+            ? 'IP address'
+            : a.type === 'string'
+              ? `Text · up to ${(a.size ?? 255).toLocaleString('en-US')} characters`
+              : a.type === 'integer'
+                ? 'Whole number'
+                : a.type === 'double'
+                  ? 'Number'
+                  : a.type === 'boolean'
+                    ? 'True or false'
+                    : 'Date and time (UTC)'
   const range = (a.type === 'integer' || a.type === 'double') && (a.min !== undefined || a.max !== undefined) ? ` · ${a.min ?? '−∞'} to ${a.max ?? '∞'}` : ''
   return `${kind}${range}${a.array ? ' · one per line' : ''}`
 }
@@ -43,28 +51,44 @@ function fieldWidget(a: Attr, v: unknown): Html {
   const name = `field:${a.key}`
   if (a.array) {
     const items = Array.isArray(v) ? v.map((x) => shown(a, x)) : []
-    return html`<textarea name="${name}" class="mono" rows="3" spellcheck="false" placeholder="${a.format === 'enum' ? (a.elements ?? []).join('\n') : ''}">${items.join('\n')}</textarea>`
+    return html`<textarea name="${name}" class="mono" rows="3" spellcheck="false" placeholder="${a.format === 'enum' ? (a.elements ?? []).join('\n') : ''}">
+${items.join('\n')}</textarea>`
   }
   if (a.format === 'enum') {
-    return html`<select name="${name}">${a.required ? '' : html`<option value="">Not set</option>`}${(a.elements ?? []).map((e) => html`<option ${e === v ? 'selected' : ''}>${e}</option>`)}</select>`
+    return html`<select name="${name}">
+      ${a.required ? '' : html`<option value="">Not set</option>`}${(a.elements ?? []).map((e) => html`<option ${e === v ? 'selected' : ''}>${e}</option>`)}
+    </select>`
   }
   if (a.type === 'boolean') {
-    return html`<select name="${name}">${a.required ? '' : html`<option value="" ${v === null || v === undefined ? 'selected' : ''}>Not set</option>`}<option value="true" ${v === true ? 'selected' : ''}>True</option><option value="false" ${v === false ? 'selected' : ''}>False</option></select>`
+    return html`<select name="${name}">
+      ${a.required ? '' : html`<option value="" ${v === null || v === undefined ? 'selected' : ''}>Not set</option>`}
+      <option value="true" ${v === true ? 'selected' : ''}>True</option>
+      <option value="false" ${v === false ? 'selected' : ''}>False</option>
+    </select>`
   }
   if (a.type === 'integer' || a.type === 'double') {
-    return html`<input name="${name}" type="number" step="${a.type === 'integer' ? '1' : 'any'}" ${a.min !== undefined ? html`min="${a.min}"` : ''} ${a.max !== undefined ? html`max="${a.max}"` : ''} value="${shown(a, v)}">`
+    return html`<input
+      name="${name}"
+      type="number"
+      step="${a.type === 'integer' ? '1' : 'any'}"
+      ${a.min !== undefined ? html`min="${a.min}"` : ''}
+      ${a.max !== undefined ? html`max="${a.max}"` : ''}
+      value="${shown(a, v)}"
+    />`
   }
   if (a.type === 'datetime') {
-    return html`<div class="doc-inline"><input name="${name}" type="datetime-local" step="1" value="${shown(a, v)}"><button type="button" class="small" data-doc-now>Now</button></div>`
+    return html`<div class="doc-inline">
+      <input name="${name}" type="datetime-local" step="1" value="${shown(a, v)}" /><button type="button" class="small" data-doc-now>Now</button>
+    </div>`
   }
   const type = a.format === 'email' ? 'email' : a.format === 'url' ? 'url' : 'text'
   if (a.type === 'string' && !a.format && (a.size ?? 255) > 255) {
     return html`<textarea name="${name}" rows="3" maxlength="${a.size}">${shown(a, v)}</textarea>`
   }
-  return html`<input name="${name}" type="${type}" ${a.type === 'string' && a.size ? html`maxlength="${a.size}"` : ''} value="${shown(a, v)}">`
+  return html`<input name="${name}" type="${type}" ${a.type === 'string' && a.size ? html`maxlength="${a.size}"` : ''} value="${shown(a, v)}" />`
 }
 
-export function documentFormView(ctx: ConsoleContext, c: Collection, doc: Record<string, unknown> | null): Html {
+export async function documentFormView(ctx: ConsoleContext, c: Collection, doc: Record<string, unknown> | null): Promise<Html> {
   const data: Record<string, unknown> = {}
   for (const a of c.attributes) data[a.key] = doc ? doc[a.key] : (a.default ?? (a.array ? [] : null))
   const action = doc ? `${collectionUrl(c)}/documents/${encodeURIComponent(String(doc.$id))}` : `${collectionUrl(c)}/documents`
@@ -72,43 +96,74 @@ export function documentFormView(ctx: ConsoleContext, c: Collection, doc: Record
   return html`${header(doc ? String(doc.$id) : 'Create document', { back: `${collectionUrl(c)}/documents` })}${tabs(c, 'documents')}
     <form method="post" action="${action}" class="layout">
       <div class="card docform" data-docform="${JSON.stringify(schema)}">
-      <div class="docform-head"><h2>Data</h2>
-        <div class="seg" role="tablist"><button type="button" class="on" data-doc-tab="form" role="tab" aria-selected="true">Form</button><button type="button" data-doc-tab="json" role="tab" aria-selected="false">JSON</button></div></div>
-      ${doc ? '' : html`<label>Document ID<input name="id" class="mono" value="unique()"><small>Keep <code>unique()</code> to generate one, or type your own.</small></label>`}
-      <div class="doc-fields">
-        ${c.attributes.length
-          ? c.attributes.map((a) => html`<label class="doc-field" data-key="${a.key}">
-              <span class="doc-label"><span class="mono">${a.key}</span>${a.required ? badge('Required', 'attention') : ''}</span>
-              ${fieldWidget(a, data[a.key])}
-              <small>${describe(a)}</small>
-            </label>`)
-          : html`<p class="subdued">This collection has no attributes yet. <a href="${collectionUrl(c)}/attributes/new">Add one</a> first.</p>`}
+        <div class="docform-head">
+          <h2>Data</h2>
+          <div class="seg" role="tablist">
+            <button type="button" class="on" data-doc-tab="form" role="tab" aria-selected="true">Form</button
+            ><button type="button" data-doc-tab="json" role="tab" aria-selected="false">JSON</button>
+          </div>
+        </div>
+        ${
+          doc
+            ? ''
+            : html`<label
+                >Document ID<input name="id" class="mono" value="unique()" /><small>Keep <code>unique()</code> to generate one, or type your own.</small></label
+              >`
+        }
+        <div class="doc-fields">
+          ${
+            c.attributes.length
+              ? c.attributes.map(
+                  (a) =>
+                    html`<label class="doc-field" data-key="${a.key}">
+                      <span class="doc-label"><span class="mono">${a.key}</span>${a.required ? badge('Required', 'attention') : ''}</span>
+                      ${fieldWidget(a, data[a.key])}
+                      <small>${describe(a)}</small>
+                    </label>`,
+                )
+              : html`<p class="subdued">This collection has no attributes yet. <a href="${collectionUrl(c)}/attributes/new">Add one</a> first.</p>`
+          }
+        </div>
+        <div class="doc-json" hidden>
+          <textarea name="data" class="mono tall" spellcheck="false" aria-label="Document JSON">${JSON.stringify(data, null, 2)}</textarea>
+          <small class="help">Fields not in the form stay as they are. Switch back to Form to see the changes.</small>
+        </div>
+        <p class="perm-error doc-error" hidden></p>
+        <div class="foot"><a class="btn" href="${collectionUrl(c)}/documents">Cancel</a><button class="primary">${doc ? 'Save' : 'Create'}</button></div>
       </div>
-      <div class="doc-json" hidden>
-        <textarea name="data" class="mono tall" spellcheck="false" aria-label="Document JSON">${JSON.stringify(data, null, 2)}</textarea>
-        <small class="help">Fields not in the form stay as they are. Switch back to Form to see the changes.</small>
+      <div>
+        <div class="card">
+          <h2>Permissions</h2>
+          ${
+            c.documentSecurity
+              ? ''
+              : alert(
+                  'warning',
+                  html`Row security is off for this collection, so these permissions are not used: only the
+                    <a href="${collectionUrl(c)}/settings">collection permissions</a> apply.`,
+                )
+          }
+          ${await permissionsField(ctx, {
+            value: (doc?.$permissions as string[]) ?? [],
+            actions: DOCUMENT_ACTIONS,
+            note: html`Who can see and change this document, on top of the collection permissions.`,
+          })}
+        </div>
+        ${
+          doc
+            ? html`<div class="card">
+                <h2>Details</h2>
+                <ul class="list">
+                  <li><span class="subdued">ID</span><span class="mono">${doc.$id}</span></li>
+                  <li><span class="subdued">Sequence</span><span>${doc.$sequence}</span></li>
+                  <li><span class="subdued">Created</span><span>${when(doc.$createdAt as string | null)}</span></li>
+                  <li><span class="subdued">Updated</span><span>${when(doc.$updatedAt as string | null)}</span></li>
+                </ul>
+              </div>`
+            : ''
+        }
       </div>
-      <p class="perm-error doc-error" hidden></p>
-      <div class="foot"><a class="btn" href="${collectionUrl(c)}/documents">Cancel</a><button class="primary">${doc ? 'Save' : 'Create'}</button></div>
-    </div>
-    <div>
-      <div class="card"><h2>Permissions</h2>
-        ${c.documentSecurity
-          ? ''
-          : alert('warning', html`Row security is off for this collection, so these permissions are not used: only the <a href="${collectionUrl(c)}/settings">collection permissions</a> apply.`)}
-        ${permissionsField(ctx, {
-          value: (doc?.$permissions as string[]) ?? [],
-          actions: DOCUMENT_ACTIONS,
-          note: html`Who can see and change this document, on top of the collection permissions.`,
-        })}
-      </div>
-      ${doc ? html`<div class="card"><h2>Details</h2><ul class="list">
-        <li><span class="subdued">ID</span><span class="mono">${doc.$id}</span></li>
-        <li><span class="subdued">Sequence</span><span>${doc.$sequence}</span></li>
-        <li><span class="subdued">Created</span><span>${when(doc.$createdAt as string | null)}</span></li>
-        <li><span class="subdued">Updated</span><span>${when(doc.$updatedAt as string | null)}</span></li></ul></div>` : ''}
-    </div>
-  </form>`
+    </form>`
 }
 
 export interface DocumentsListView {
@@ -140,28 +195,46 @@ export function documentsListView(ctx: ConsoleContext, view: DocumentsListView):
     ? html`<a class="btn primary" href="${collectionUrl(c)}/documents/new">${icon('plus')}<span>Create document</span></a>`
     : html`<a class="btn primary" href="${collectionUrl(c)}/attributes/new">${icon('plus')}<span>Add attribute</span></a>`
   const body = html`${filterError ? alert('critical', html`${filterError}`, { style: 'margin:12px' }) : ''}
-    ${documents.length
-      ? html`<div class="scroll"><table><thead><tr><th>Document</th>${shown.map((a, i) => html`<th class="${i > 1 ? 'hide-sm' : ''}">${a.key}</th>`)}<th class="hide-sm">Updated</th></tr></thead><tbody>
-        ${documents.map((d) => html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}'"><td><a class="mono" href="${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}">${d.$id}</a></td>
-          ${shown.map((a, i) => html`<td class="clip ${i > 1 ? 'hide-sm' : ''}">${cell(d[a.key])}</td>`)}<td class="hide-sm subdued">${when(d.$updatedAt as string | null)}</td></tr>`)}
-        </tbody></table></div>`
+  ${
+    documents.length
+      ? html`<div class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                ${shown.map((a, i) => html`<th class="${i > 1 ? 'hide-sm' : ''}">${a.key}</th>`)}
+                <th class="hide-sm">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${documents.map(
+                (d) =>
+                  html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}'">
+                    <td><a class="mono" href="${collectionUrl(c)}/documents/${encodeURIComponent(String(d.$id))}">${d.$id}</a></td>
+                    ${shown.map((a, i) => html`<td class="clip ${i > 1 ? 'hide-sm' : ''}">${cell(d[a.key])}</td>`)}
+                    <td class="hide-sm subdued">${when(d.$updatedAt as string | null)}</td>
+                  </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`
       : filter
         ? emptyState('No matching documents', 'Try a different filter.', html`<a class="btn" href="${collectionUrl(c)}/documents">Clear filter</a>`)
         : emptyState(
             'No documents yet',
             c.attributes.length ? 'Create one here, or let your apps write them.' : 'Add attributes first, then documents.',
             create,
-          )}`
-  const footer = total > 0
-    ? pager({
-        page,
-        pages,
-        params: { q: filter },
-        always: true,
-        label: html`Page ${page} of ${pages} · ${total.toLocaleString('en-US')}${total >= 5000 ? '+' : ''} document${total === 1 ? '' : 's'}`,
-      })
-    : html``
-  return html`${collectionHeader(c, documents.length || filter ? create : undefined)}
-    ${tabs(c, 'documents')}
-    ${listCard('docs', { toolbar, body, footer })}`
+          )
+  }`
+  const footer =
+    total > 0
+      ? pager({
+          page,
+          pages,
+          params: { q: filter },
+          always: true,
+          label: html`Page ${page} of ${pages} · ${total.toLocaleString('en-US')}${total >= 5000 ? '+' : ''} document${total === 1 ? '' : 's'}`,
+        })
+      : html``
+  return html`${collectionHeader(c, documents.length || filter ? create : undefined)} ${tabs(c, 'documents')} ${listCard('docs', { toolbar, body, footer })}`
 }

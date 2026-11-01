@@ -46,7 +46,7 @@ export async function applyProvider(ctx: AppContext, type: ResourceType, id: str
   if (!next) return
   const project = projectOf(ctx)
   await ctx.hub.link(project, type, id, next)
-  const target = ctx.hub.target(project, type, id)
+  const target = await ctx.hub.target(project, type, id)
   const changed = next.providerRepositoryId !== current.providerRepositoryId || (target && target.provider.providerBranch !== current.providerBranch)
   if (target && changed) await ctx.hub.deployReference(project, type, id, 'branch', target.provider.providerBranch, true)
 }
@@ -87,7 +87,10 @@ const join = (root: string, name: string) => (root ? `${root.replace(/\/+$/, '')
 export function vcsRoutes(router: Router<AppContext>): void {
   router.get('/vcs/installations', ({ ctx, params }) => {
     requireKey(ctx, 'vcs.read')
-    const { total, items } = page(ctx.hub.installations.list().map(installationModel), [], { search: str(params.search), searchFields: ['$id', 'organization'] })
+    const { total, items } = page(ctx.hub.installations.list().map(installationModel), [], {
+      search: str(params.search),
+      searchFields: ['$id', 'organization'],
+    })
     return json({ total, installations: items })
   })
 
@@ -145,7 +148,12 @@ export function vcsRoutes(router: Router<AppContext>): void {
     requireKey(ctx, 'vcs.read')
     const installation = ctx.hub.installations.get(path.installationId!)
     const entries = await github(() =>
-      ctx.hub.github.contents(installation.provider_installation_id, path.providerRepositoryId!, str(params.providerRootDirectory) ?? '', str(params.providerReference) ?? ''),
+      ctx.hub.github.contents(
+        installation.provider_installation_id,
+        path.providerRepositoryId!,
+        str(params.providerRootDirectory) ?? '',
+        str(params.providerReference) ?? '',
+      ),
     )
     return json({ total: entries.length, contents: entries.map((e) => ({ name: e.name, isDirectory: e.type === 'dir', size: e.size })) })
   })

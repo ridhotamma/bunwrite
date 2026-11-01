@@ -5,7 +5,7 @@
  */
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
-import type { Db } from '~/db/connection'
+import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { json, list, noContent, str } from '~/lib/http'
@@ -35,7 +35,8 @@ export function topicModel(t: TopicRow) {
 }
 
 function validName(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > 128) throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
+  if (typeof value !== 'string' || !value.trim() || value.length > 128)
+    throw err('general_argument_invalid', 'Invalid `name` param: Value must be a valid string and at least 1 chars and no longer than 128 chars')
   return value
 }
 
@@ -48,76 +49,77 @@ function validRoles(value: unknown): string[] {
 }
 
 export class TopicService {
-  constructor(private db: Db) {}
+  constructor(private db: SqlDatabase) {}
 
-  private get sql() {
-    return this.db.sqlite
+  async list(): Promise<TopicRow[]> {
+    return this.db.driver.all<TopicRow>('SELECT * FROM _topics ORDER BY seq')
   }
 
-  list(): TopicRow[] {
-    return this.sql.query<TopicRow, []>('SELECT * FROM _topics ORDER BY seq').all()
-  }
-
-  get(id: string): TopicRow {
-    const row = this.sql.query<TopicRow, [string]>('SELECT * FROM _topics WHERE id = ?').get(id)
+  async get(id: string): Promise<TopicRow> {
+    const row = await this.db.driver.get<TopicRow>('SELECT * FROM _topics WHERE id = ?', [id])
     if (!row) throw err('topic_not_found')
     return row
   }
 
-  create(id: unknown, name: unknown, subscribe: unknown): TopicRow {
+  async create(id: unknown, name: unknown, subscribe: unknown): Promise<TopicRow> {
     const topicId = resolveId(id, 'Topic ID')
-    if (this.sql.query('SELECT 1 FROM _topics WHERE id = ?').get(topicId)) throw err('topic_already_exists')
+    if (await this.db.driver.get('SELECT 1 FROM _topics WHERE id = ?', [topicId])) throw err('topic_already_exists')
     const stamp = now()
-    this.sql
-      .query('INSERT INTO _topics (id, name, subscribe, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-      .run(topicId, validName(name), JSON.stringify(subscribe === undefined || subscribe === null ? ['users'] : validRoles(subscribe)), stamp, stamp)
+    await this.db.driver.run('INSERT INTO _topics (id, name, subscribe, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
+      topicId,
+      validName(name),
+      JSON.stringify(subscribe === undefined || subscribe === null ? ['users'] : validRoles(subscribe)),
+      stamp,
+      stamp,
+    ])
     return this.get(topicId)
   }
 
-  update(id: string, name: unknown, subscribe: unknown): TopicRow {
-    const t = this.get(id)
-    this.sql
-      .query('UPDATE _topics SET name = ?, subscribe = ?, updated_at = ? WHERE id = ?')
-      .run(
-        name === undefined || name === null ? t.name : validName(name),
-        subscribe === undefined || subscribe === null ? t.subscribe : JSON.stringify(validRoles(subscribe)),
-        now(),
-        id,
-      )
+  async update(id: string, name: unknown, subscribe: unknown): Promise<TopicRow> {
+    const t = await this.get(id)
+    await this.db.driver.run('UPDATE _topics SET name = ?, subscribe = ?, updated_at = ? WHERE id = ?', [
+      name === undefined || name === null ? t.name : validName(name),
+      subscribe === undefined || subscribe === null ? t.subscribe : JSON.stringify(validRoles(subscribe)),
+      now(),
+      id,
+    ])
     return this.get(id)
   }
 
-  delete(id: string): void {
-    this.get(id)
-    this.sql.query('DELETE FROM _topics WHERE id = ?').run(id)
+  async delete(id: string): Promise<void> {
+    await this.get(id)
+    await this.db.driver.run('DELETE FROM _topics WHERE id = ?', [id])
   }
 }
 
 export function topicRoutes(router: Router<AppContext>): void {
-  router.get('/messaging/topics', ({ ctx, params }) => {
+  router.get('/messaging/topics', async ({ ctx, params }) => {
     requireKey(ctx, 'topics.read')
-    const { total, items } = page(ctx.topics.list().map(topicModel), list(params.queries), { search: str(params.search), searchFields: ['$id', 'name'] })
+    const { total, items } = page((await ctx.topics.list()).map(topicModel), list(params.queries), {
+      search: str(params.search),
+      searchFields: ['$id', 'name'],
+    })
     return json({ total, topics: items })
   })
 
-  router.post('/messaging/topics', ({ ctx, params }) => {
+  router.post('/messaging/topics', async ({ ctx, params }) => {
     requireKey(ctx, 'topics.write')
-    return json(topicModel(ctx.topics.create(params.topicId, params.name, params.subscribe)), 201)
+    return json(topicModel(await ctx.topics.create(params.topicId, params.name, params.subscribe)), 201)
   })
 
-  router.get('/messaging/topics/:topicId', ({ ctx, path }) => {
+  router.get('/messaging/topics/:topicId', async ({ ctx, path }) => {
     requireKey(ctx, 'topics.read')
-    return json(topicModel(ctx.topics.get(path.topicId!)))
+    return json(topicModel(await ctx.topics.get(path.topicId!)))
   })
 
-  router.patch('/messaging/topics/:topicId', ({ ctx, path, params }) => {
+  router.patch('/messaging/topics/:topicId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'topics.write')
-    return json(topicModel(ctx.topics.update(path.topicId!, params.name, params.subscribe)))
+    return json(topicModel(await ctx.topics.update(path.topicId!, params.name, params.subscribe)))
   })
 
-  router.delete('/messaging/topics/:topicId', ({ ctx, path }) => {
+  router.delete('/messaging/topics/:topicId', async ({ ctx, path }) => {
     requireKey(ctx, 'topics.write')
-    ctx.topics.delete(path.topicId!)
+    await ctx.topics.delete(path.topicId!)
     return noContent()
   })
 }

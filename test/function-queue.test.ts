@@ -66,45 +66,46 @@ describe('durable executions', () => {
   test('a waiting run left by a restart is picked up by the drain', async () => {
     seed('crashed', { status: 'waiting' })
     expect((await admin.functions.getExecution({ functionId: 'echo', executionId: 'crashed' })).status).toBe('waiting')
-    server.services.functions.drain()
+    await server.services.functions.drain()
     expect((await waitFor('crashed', (s) => s === 'completed')).status).toBe('completed')
   })
 
   test('a stale claim is requeued by the reaper, then runs', async () => {
     seed('stale', { status: 'processing', attempts: 1, maxAttempts: 2, lease: '2000-01-01T00:00:00.000+00:00' })
-    expect(server.services.functions.reap()).toEqual(['stale'])
+    expect(await server.services.functions.reap()).toEqual(['stale'])
     const done = await waitFor('stale', (s) => s === 'completed')
     expect(done.status).toBe('completed')
   })
 
   test('a stale claim out of attempts fails instead of looping', async () => {
     seed('poison', { status: 'processing', attempts: 1, maxAttempts: 1, lease: '2000-01-01T00:00:00.000+00:00' })
-    expect(server.services.functions.reap()).toEqual([])
+    expect(await server.services.functions.reap()).toEqual([])
     const row = server.db.sqlite.query<{ status: string; errors: string }, [string]>('SELECT status, errors FROM _executions WHERE id = ?').get('poison')
     expect(row!.status).toBe('failed')
     expect(row!.errors).toContain('stopped before it finished')
   })
 
-  test('reaping is atomic and leaves a live lease alone', () => {
+  test('reaping is atomic and leaves a live lease alone', async () => {
     seed('reap-once', { status: 'processing', attempts: 1, maxAttempts: 3, lease: '2000-01-01T00:00:00.000+00:00' })
     seed('live-lease', { status: 'processing', attempts: 1, maxAttempts: 3, lease: '2999-01-01T00:00:00.000+00:00' })
-    expect(server.services.functions.reap()).toEqual(['reap-once'])
+    expect(await server.services.functions.reap()).toEqual(['reap-once'])
     // The row is no longer processing, so a second pass does not touch it.
-    expect(server.services.functions.reap()).toEqual([])
+    expect(await server.services.functions.reap()).toEqual([])
     const live = server.db.sqlite.query<{ status: string }, [string]>('SELECT status FROM _executions WHERE id = ?').get('live-lease')
     expect(live!.status).toBe('processing')
   })
 
   test('a run that lost its lease does not overwrite the reaper result', async () => {
     const created = await admin.functions.createExecution({ functionId: 'slow', async: true })
-    const row = () => server.db.sqlite.query<{ status: string; errors: string }, [string]>('SELECT status, errors FROM _executions WHERE id = ?').get(created.$id)!
+    const row = () =>
+      server.db.sqlite.query<{ status: string; errors: string }, [string]>('SELECT status, errors FROM _executions WHERE id = ?').get(created.$id)!
     for (let i = 0; i < 100 && row().status !== 'processing'; i++) await Bun.sleep(20)
     expect(row().status).toBe('processing')
 
     // The worker stalls past its lease: the reaper fails its only attempt
     // while the child process is still running.
     server.db.sqlite.query('UPDATE _executions SET lease_until = ? WHERE id = ?').run('2000-01-01T00:00:00.000+00:00', created.$id)
-    expect(server.services.functions.reap()).toEqual([])
+    expect(await server.services.functions.reap()).toEqual([])
     expect(row().status).toBe('failed')
 
     // Let the stale run finish; its conditional write must not flip the row back.
@@ -136,7 +137,8 @@ describe('durable executions', () => {
     try {
       const run = await admin.functions.createExecution({ functionId: 'boom' })
       expect(run.status).toBe('failed')
-      const row = () => server.db.sqlite.query<{ status: string; attempts: number }, [string]>('SELECT status, attempts FROM _executions WHERE id = ?').get(run.$id)!
+      const row = () =>
+        server.db.sqlite.query<{ status: string; attempts: number }, [string]>('SELECT status, attempts FROM _executions WHERE id = ?').get(run.$id)!
       expect(row()).toMatchObject({ status: 'failed', attempts: 1 })
       // A sync row is enqueued with max_attempts = 1; the retry limit must come
       // from the row, not from FUNCTIONS_MAX_ATTEMPTS.
@@ -155,8 +157,7 @@ describe('durable executions', () => {
       await Bun.sleep(100)
       const second = await admin.functions.createExecution({ functionId: 'slow', async: true })
       await Bun.sleep(200)
-      const status = (id: string) =>
-        server.db.sqlite.query<{ status: string }, [string]>('SELECT status FROM _executions WHERE id = ?').get(id)!.status
+      const status = (id: string) => server.db.sqlite.query<{ status: string }, [string]>('SELECT status FROM _executions WHERE id = ?').get(id)!.status
       expect(status(first.$id)).toBe('processing')
       expect(status(second.$id)).toBe('waiting')
     } finally {

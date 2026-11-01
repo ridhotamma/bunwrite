@@ -46,7 +46,9 @@ const calls: { method: string; path: string; body: any }[] = []
 let commentSeq = 1000
 
 function commit(branch: string, files: Record<string, string>, message = `Update ${branch}`): string {
-  const sha = createHmac('sha1', 'x').update(`${branch}${JSON.stringify(files)}${Math.random()}`).digest('hex')
+  const sha = createHmac('sha1', 'x')
+    .update(`${branch}${JSON.stringify(files)}${Math.random()}`)
+    .digest('hex')
   commits.set(sha, { files, message })
   refs.set(branch, sha)
   return sha
@@ -101,7 +103,20 @@ async function fakeGithub(req: Request): Promise<Response> {
   }
   if (path === `/app/installations/${INSTALLATION}`) return json({ id: INSTALLATION, account: { login: 'acme', type: 'Organization' } })
   if (req.method === 'POST' && path === '/app-manifests/good-code/conversions') {
-    return json({ id: 999, slug: 'bunwrite-made', name: 'Bunwrite made', owner: { login: 'acme' }, html_url: `${gh}/apps/bunwrite-made`, client_id: 'made-id', client_secret: 'made-secret', webhook_secret: 'made-hook', pem: 'made-pem' }, 201)
+    return json(
+      {
+        id: 999,
+        slug: 'bunwrite-made',
+        name: 'Bunwrite made',
+        owner: { login: 'acme' },
+        html_url: `${gh}/apps/bunwrite-made`,
+        client_id: 'made-id',
+        client_secret: 'made-secret',
+        webhook_secret: 'made-hook',
+        pem: 'made-pem',
+      },
+      201,
+    )
   }
   if (req.method === 'POST' && path === '/login/oauth/access_token') return json({ access_token: 'gho_user' })
   if (path === '/user/installations') return json({ installations: [{ id: INSTALLATION }] })
@@ -128,7 +143,12 @@ async function fakeGithub(req: Request): Promise<Response> {
   if (path.startsWith(`${repo}/commits/`)) {
     const sha = shaOf(decodeURIComponent(path.slice(`${repo}/commits/`.length)))
     if (!sha) return json({ message: 'No commit found' }, 422)
-    return json({ sha, html_url: `${gh}/acme/web/commit/${sha}`, commit: { message: commits.get(sha)!.message, author: { name: 'Dev' } }, author: { login: 'dev', html_url: `${gh}/dev` } })
+    return json({
+      sha,
+      html_url: `${gh}/acme/web/commit/${sha}`,
+      commit: { message: commits.get(sha)!.message, author: { name: 'Dev' } },
+      author: { login: 'dev', html_url: `${gh}/dev` },
+    })
   }
   if (path.startsWith(`${repo}/tarball/`)) {
     const sha = path.slice(`${repo}/tarball/`.length)
@@ -195,7 +215,11 @@ async function webhook(event: string, payload: unknown, secret = WEBHOOK_SECRET)
   const body = JSON.stringify(payload)
   const res = await fetch(`${server.endpoint}/vcs/github/events`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-github-event': event, 'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(body).digest('hex')}` },
+    headers: {
+      'content-type': 'application/json',
+      'x-github-event': event,
+      'x-hub-signature-256': `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`,
+    },
     body,
   })
   await server.hub.settled()
@@ -213,7 +237,9 @@ const push = (branch: string, sha: string, message = commits.get(sha)?.message ?
   })
 
 /** The newest text of any PR comment, created or edited. */
-const lastComment = () => calls.filter((c) => (c.method === 'POST' && c.path.endsWith('/comments')) || (c.method === 'PATCH' && c.path.includes('/issues/comments/'))).at(-1)?.body.body ?? ''
+const lastComment = () =>
+  calls.filter((c) => (c.method === 'POST' && c.path.endsWith('/comments')) || (c.method === 'PATCH' && c.path.includes('/issues/comments/'))).at(-1)?.body
+    .body ?? ''
 
 const statuses = (context: string) => calls.filter((c) => c.method === 'POST' && c.path.includes('/statuses/') && c.body?.context === context)
 
@@ -239,8 +265,8 @@ beforeAll(async () => {
   commit('main', { 'index.html': '<h1>v1</h1>', 'api/index.js': 'module.exports = async ({ res }) => res.text("fn v1")' })
 })
 
-afterAll(() => {
-  for (const site of server.services.sites.list()) server.services.sites.remove(site.id)
+afterAll(async () => {
+  for (const site of server.services.sites.list()) await server.services.sites.remove(site.id)
   server.services.sites.stop()
   server.stop()
   github.stop(true)
@@ -249,8 +275,10 @@ afterAll(() => {
 
 describe('Git: detection and preview names', () => {
   test('frameworks and runtimes are detected from the files', async () => {
-    const pkg = (deps: Record<string, string>, scripts: Record<string, string> = { build: 'x' }) => async (p: string) =>
-      p === 'package.json' ? JSON.stringify({ dependencies: deps, scripts }) : null
+    const pkg =
+      (deps: Record<string, string>, scripts: Record<string, string> = { build: 'x' }) =>
+      async (p: string) =>
+        p === 'package.json' ? JSON.stringify({ dependencies: deps, scripts }) : null
     expect((await detectFramework(['package.json', 'package-lock.json'], pkg({ next: '15' }))).framework).toBe('nextjs')
     const nuxt = await detectFramework(['package.json', 'pnpm-lock.yaml'], pkg({ nuxt: '3' }))
     expect(nuxt).toMatchObject({ framework: 'nuxt', adapter: 'ssr', installCommand: 'pnpm install', buildCommand: 'pnpm run build' })
@@ -258,16 +286,38 @@ describe('Git: detection and preview names', () => {
     const vite = await detectFramework(['package.json', 'package-lock.json'], pkg({ vite: '6', react: '19' }))
     expect(vite).toMatchObject({ framework: 'react', adapter: 'static', outputDirectory: 'dist', installCommand: 'npm ci', buildCommand: 'npm run build' })
     expect((await detectFramework(['index.html'], async () => null)).framework).toBe('other')
-    expect(await detectRuntime(['main.py', 'requirements.txt'], async () => null)).toEqual({ runtime: 'python-3.12', entrypoint: 'main.py', commands: 'pip install -r requirements.txt' })
+    expect(await detectRuntime(['main.py', 'requirements.txt'], async () => null)).toEqual({
+      runtime: 'python-3.12',
+      entrypoint: 'main.py',
+      commands: 'pip install -r requirements.txt',
+    })
     expect((await detectRuntime(['package.json', 'bun.lock'], pkg({ hono: '4' }))).runtime).toBe(SERVER_BUN)
 
     // The frameworks added with real runtimes, and the runtime a project asks for.
-    expect(await detectFramework(['package.json'], pkg({ '@tanstack/react-start': '1', react: '19', vite: '7' }))).toMatchObject({ framework: 'tanstack-start', adapter: 'ssr', startCommand: 'node .output/server/index.mjs' })
-    expect(await detectFramework(['package.json'], pkg({ express: '5' }, { start: 'node server.js' }))).toMatchObject({ framework: 'node', adapter: 'ssr', startCommand: 'npm run start', buildCommand: '' })
+    expect(await detectFramework(['package.json'], pkg({ '@tanstack/react-start': '1', react: '19', vite: '7' }))).toMatchObject({
+      framework: 'tanstack-start',
+      adapter: 'ssr',
+      startCommand: 'node .output/server/index.mjs',
+    })
+    expect(await detectFramework(['package.json'], pkg({ express: '5' }, { start: 'node server.js' }))).toMatchObject({
+      framework: 'node',
+      adapter: 'ssr',
+      startCommand: 'npm run start',
+      buildCommand: '',
+    })
     expect((await detectFramework(['package.json'], pkg({ '@react-router/dev': '7' }))).framework).toBe('react-router')
     expect((await detectFramework(['package.json'], pkg({ '@sveltejs/kit': '2', '@sveltejs/adapter-static': '3' }))).framework).toBe('sveltekit-static')
-    const nextExport = async (p: string) => (p === 'package.json' ? JSON.stringify({ dependencies: { next: '15' }, scripts: { build: 'next build' } }) : p === 'next.config.mjs' ? "export default { output: 'export' }" : null)
-    expect(await detectFramework(['package.json', 'next.config.mjs'], nextExport)).toMatchObject({ framework: 'next-static', adapter: 'static', outputDirectory: 'out' })
+    const nextExport = async (p: string) =>
+      p === 'package.json'
+        ? JSON.stringify({ dependencies: { next: '15' }, scripts: { build: 'next build' } })
+        : p === 'next.config.mjs'
+          ? "export default { output: 'export' }"
+          : null
+    expect(await detectFramework(['package.json', 'next.config.mjs'], nextExport)).toMatchObject({
+      framework: 'next-static',
+      adapter: 'static',
+      outputDirectory: 'out',
+    })
     const engines = (node: string) => async (p: string) => (p === 'package.json' ? JSON.stringify({ dependencies: { next: '15' }, engines: { node } }) : null)
     expect((await detectFramework(['package.json'], engines('>=18'))).buildRuntime).toBe('node-22')
     expect((await detectFramework(['package.json'], engines('^24.1'))).buildRuntime).toBe('node-24')
@@ -304,16 +354,21 @@ describe('Git: GitHub App and installations', () => {
   })
 
   test('the install callback adds only installations the GitHub user can access', async () => {
-    const state = (installation?: string) => encodeURIComponent(signState(server.config.secret, { kind: 'install', returnTo: '/console/settings/git', installationId: installation }))
+    const state = (installation?: string) =>
+      encodeURIComponent(signState(server.config.secret, { kind: 'install', returnTo: '/console/settings/git', installationId: installation }))
     const denied = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=77&setup_action=install&code=c&state=${state()}`, { redirect: 'manual' })
     expect(denied.headers.get('location')).toContain('err=')
     expect(server.hub.installations.list()).toHaveLength(0)
 
     // Without a code the server asks GitHub who is signed in first.
-    const noCode = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&state=${state()}`, { redirect: 'manual' })
+    const noCode = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&state=${state()}`, {
+      redirect: 'manual',
+    })
     expect(noCode.headers.get('location')).toStartWith(`${gh}/login/oauth/authorize?client_id=cid`)
 
-    const ok = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&code=c&state=${state()}`, { redirect: 'manual' })
+    const ok = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&code=c&state=${state()}`, {
+      redirect: 'manual',
+    })
     expect(ok.headers.get('location')).toStartWith('/console/settings/git?ok=')
     const list = (await (await api('/vcs/installations')).json()) as any
     expect(list.total).toBe(1)
@@ -332,7 +387,10 @@ describe('Git: GitHub App and installations', () => {
     const contents = (await (await api(`/vcs/github/installations/${installationId}/providerRepositories/${REPO_ID}/contents`)).json()) as any
     expect(contents.contents).toContainEqual({ name: 'api', isDirectory: true, size: 1 })
     const detection = (await (
-      await api(`/vcs/github/installations/${installationId}/detections`, { method: 'POST', body: JSON.stringify({ type: 'runtime', providerRepositoryId: String(REPO_ID), providerRootDirectory: 'api' }) })
+      await api(`/vcs/github/installations/${installationId}/detections`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'runtime', providerRepositoryId: String(REPO_ID), providerRootDirectory: 'api' }),
+      })
     ).json()) as any
     expect(detection).toMatchObject({ runtime: 'node-22', entrypoint: 'index.js' })
     expect((await api(`/vcs/github/installations/${installationId}/providerRepositories/31337`)).status).toBe(404)
@@ -392,7 +450,9 @@ describe('Git: console pickers', () => {
   })
 
   test('picking a repository loads its branches into the branch field', () => {
-    const select = String(repositoryOptions([{ id: 500, full_name: 'acme/web', private: true }], '', { installationId: 'inst', branchTarget: 'branch-create-site' }))
+    const select = String(
+      repositoryOptions([{ id: 500, full_name: 'acme/web', private: true }], '', { installationId: 'inst', branchTarget: 'branch-create-site' }),
+    )
     expect(select).toContain('hx-get="/console/vcs/branches?installation_id=inst"')
     expect(select).toContain('hx-target="#branch-create-site"')
     expect(select).toContain('hx-trigger="load, change"')
@@ -415,10 +475,16 @@ describe('Git: deployments', () => {
     expect(site).toMatchObject({ installationId, providerRepositoryId: String(REPO_ID), providerBranch: 'main', providerSilentMode: false })
     await server.hub.settled()
     expect(await (await visit('web')).text()).toBe('<h1>v1</h1>')
-    const live = server.services.sites.deployment('web', server.services.sites.site('web').deployment_id)
+    const live = await server.services.sites.deployment('web', server.services.sites.site('web').deployment_id)
     expect(live).toMatchObject({ type: 'vcs', provider_branch: 'main', provider_repository: 'acme/web', provider_commit_author: 'dev' })
     const model = (await (await api(`/sites/web/deployments/${live.id}`)).json()) as any
-    expect(model).toMatchObject({ type: 'vcs', providerRepositoryOwner: 'acme', providerRepositoryName: 'web', providerBranch: 'main', providerRepositoryUrl: `${gh}/acme/web` })
+    expect(model).toMatchObject({
+      type: 'vcs',
+      providerRepositoryOwner: 'acme',
+      providerRepositoryName: 'web',
+      providerBranch: 'main',
+      providerRepositoryUrl: `${gh}/acme/web`,
+    })
     const context = `bunwrite/${PROJECT}/sites/web`
     expect(statuses(context).map((c) => c.body.state)).toEqual(['pending', 'success'])
   })
@@ -430,10 +496,14 @@ describe('Git: deployments', () => {
   })
 
   test('[skip ci] commits are not built', async () => {
-    const before = server.services.sites.deployments('web').length
-    const sha = commit('main', { 'index.html': '<h1>v2</h1>', 'api/index.js': 'module.exports = async ({ res }) => res.text("fn v2")', 'README.md': 'docs' }, 'docs only [skip ci]')
+    const before = (await server.services.sites.deployments('web')).length
+    const sha = commit(
+      'main',
+      { 'index.html': '<h1>v2</h1>', 'api/index.js': 'module.exports = async ({ res }) => res.text("fn v2")', 'README.md': 'docs' },
+      'docs only [skip ci]',
+    )
     await push('main', sha)
-    expect(server.services.sites.deployments('web').length).toBe(before)
+    expect((await server.services.sites.deployments('web')).length).toBe(before)
   })
 
   test('another branch gets a preview host and a PR comment, and the live site stays', async () => {
@@ -455,47 +525,64 @@ describe('Git: deployments', () => {
     expect(calls.filter((c) => c.method === 'POST' && c.path === '/repos/acme/web/issues/7/comments')).toHaveLength(1)
     expect(calls.some((c) => c.method === 'PATCH' && c.path.startsWith('/repos/acme/web/issues/comments/'))).toBe(true)
     // Only one preview build of the branch is kept.
-    const previews = server.services.sites.deployments('web').filter((d) => d.provider_branch === 'feature/login' && d.status === 'ready')
+    const previews = (await server.services.sites.deployments('web')).filter((d) => d.provider_branch === 'feature/login' && d.status === 'ready')
     expect(previews).toHaveLength(1)
   })
 
   test('deleting the branch drops its preview', async () => {
     await webhook('delete', { ref_type: 'branch', ref: 'feature/login', repository: { id: REPO_ID } })
-    expect(server.services.sites.resolveHost(`web--git-feature-login.sites.localhost`)).toBeNull()
-    expect(server.services.sites.deployments('web').some((d) => d.provider_branch === 'feature/login')).toBe(false)
+    expect(await server.services.sites.resolveHost(`web--git-feature-login.sites.localhost`)).toBeNull()
+    expect((await server.services.sites.deployments('web')).some((d) => d.provider_branch === 'feature/login')).toBe(false)
   })
 
   test('a fork pull request builds only after approval', async () => {
     const sha = commit('stranger-patch', { 'index.html': '<h1>fork</h1>' })
     pulls.set(9, pullJson(9, 'stranger-patch', sha, true))
-    const before = server.services.sites.deployments('web').length
+    const before = (await server.services.sites.deployments('web')).length
     await webhook('pull_request', { action: 'opened', pull_request: pulls.get(9), repository: { id: REPO_ID } })
-    expect(server.services.sites.deployments('web').length).toBe(before)
+    await server.hub.settled()
+    expect((await server.services.sites.deployments('web')).length).toBe(before)
     const comment = calls.filter((c) => c.method === 'POST' && c.path === '/repos/acme/web/issues/9/comments')
     expect(comment).toHaveLength(1)
     expect(lastComment()).toContain('Approve builds')
 
     const link = server.hub.links.forResource(PROJECT, 'site', 'web')!
-    const approved = await api(`/vcs/github/installations/${installationId}/repositories/${link.id}`, { method: 'PATCH', body: JSON.stringify({ providerPullRequestId: '9' }) })
+    const approved = await api(`/vcs/github/installations/${installationId}/repositories/${link.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ providerPullRequestId: '9' }),
+    })
     expect(approved.status).toBe(200)
     expect(((await approved.json()) as any).providerPullRequestIds).toEqual(['9'])
     await server.hub.settled()
     expect(await (await visit('web--git-pr-9')).text()).toBe('<h1>fork</h1>')
-    const again = await api(`/vcs/github/installations/${installationId}/repositories/${link.id}`, { method: 'PATCH', body: JSON.stringify({ providerPullRequestId: '9' }) })
+    const again = await api(`/vcs/github/installations/${installationId}/repositories/${link.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ providerPullRequestId: '9' }),
+    })
     expect(again.status).toBe(409)
 
     await webhook('pull_request', { action: 'closed', pull_request: pulls.get(9), repository: { id: REPO_ID } })
-    expect(server.services.sites.resolveHost('web--git-pr-9.sites.localhost')).toBeNull()
+    expect(await server.services.sites.resolveHost('web--git-pr-9.sites.localhost')).toBeNull()
   })
 
   test('a function from a root directory, deployed with createVcsDeployment, in silent mode', async () => {
     const res = await api('/functions', {
       method: 'POST',
-      body: JSON.stringify({ functionId: 'api', name: 'API', runtime: 'node-22', entrypoint: 'index.js', execute: ['any'], installationId, providerRepositoryId: String(REPO_ID), providerRootDirectory: 'api', providerSilentMode: true }),
+      body: JSON.stringify({
+        functionId: 'api',
+        name: 'API',
+        runtime: 'node-22',
+        entrypoint: 'index.js',
+        execute: ['any'],
+        installationId,
+        providerRepositoryId: String(REPO_ID),
+        providerRootDirectory: 'api',
+        providerSilentMode: true,
+      }),
     })
     expect(res.status).toBe(201)
     await server.hub.settled()
-    const fn = server.services.functions.fn('api')
+    const fn = await server.services.functions.fn('api')
     expect(fn.provider_branch).toBe('main')
     expect(fn.deployment_id).not.toBe('')
     const run = (await (await api('/functions/api/executions', { method: 'POST', body: JSON.stringify({}) })).json()) as any
@@ -516,11 +603,22 @@ describe('Git: deployments', () => {
     const sha = commit('ssr', { 'server.js': app })
     const res = await api('/sites', {
       method: 'POST',
-      body: JSON.stringify({ siteId: 'app', name: 'App', framework: 'hono', adapter: 'ssr', installCommand: '', buildCommand: 'echo ok > built.txt', startCommand: 'bun server.js', installationId, providerRepositoryId: String(REPO_ID), providerBranch: 'ssr' }),
+      body: JSON.stringify({
+        siteId: 'app',
+        name: 'App',
+        framework: 'hono',
+        adapter: 'ssr',
+        installCommand: '',
+        buildCommand: 'echo ok > built.txt',
+        startCommand: 'bun server.js',
+        installationId,
+        providerRepositoryId: String(REPO_ID),
+        providerBranch: 'ssr',
+      }),
     })
     expect(res.status).toBe(201)
     await server.hub.settled()
-    expect(server.services.sites.deployment('app', server.services.sites.site('app').deployment_id).provider_commit_hash).toBe(sha)
+    expect((await server.services.sites.deployment('app', server.services.sites.site('app').deployment_id)).provider_commit_hash).toBe(sha)
     expect(await (await visit('app')).text()).toBe('ssr built')
   })
 
@@ -533,7 +631,12 @@ describe('Git: deployments', () => {
       return { status: res.status, text: await res.text(), location: res.headers.get('location') ?? '' }
     }
     const post = (path: string, fields: Record<string, string>) =>
-      fetch(`${base()}${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields), redirect: 'manual' })
+      fetch(`${base()}${path}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(fields),
+        redirect: 'manual',
+      })
 
     const org = await get('/console/organization')
     expect(org.text).toContain('id="github-app"')
@@ -561,7 +664,9 @@ describe('Git: deployments', () => {
 
     const list = await get('/console/sites/web')
     expect(list.text).toContain('Source')
-    expect(list.text).toContain(server.services.sites.deployment('web', server.services.sites.site('web').deployment_id).provider_commit_hash.slice(0, 7))
+    expect(list.text).toContain(
+      (await server.services.sites.deployment('web', server.services.sites.site('web').deployment_id)).provider_commit_hash.slice(0, 7),
+    )
 
     const sites = await get('/console/sites/new')
     expect(sites.text).toContain('value="github"')
@@ -594,7 +699,16 @@ describe('Git: deployments', () => {
     expect(approve.text).toContain('This pull request is approved')
 
     // Create a site straight from the repository; detection picks the framework.
-    const created = await post('/console/sites', { name: 'From Git', id: 'from-git', framework: 'other', source: 'github', installation_id: installationId, provider_repository_id: String(REPO_ID), provider_branch: 'main', detect: 'on' })
+    const created = await post('/console/sites', {
+      name: 'From Git',
+      id: 'from-git',
+      framework: 'other',
+      source: 'github',
+      installation_id: installationId,
+      provider_repository_id: String(REPO_ID),
+      provider_branch: 'main',
+      detect: 'on',
+    })
     expect(created.status).toBe(303)
     await server.hub.settled()
     expect(server.services.sites.site('from-git').provider_repository_id).toBe(String(REPO_ID))
@@ -602,7 +716,12 @@ describe('Git: deployments', () => {
 
     // Change the branch from the settings card: it deploys the new branch.
     commit('release', { 'index.html': '<h1>release</h1>' })
-    const saved = await post('/console/sites/from-git/git', { installation_id: installationId, provider_repository_id: String(REPO_ID), provider_branch: 'release', provider_root_directory: '' })
+    const saved = await post('/console/sites/from-git/git', {
+      installation_id: installationId,
+      provider_repository_id: String(REPO_ID),
+      provider_branch: 'release',
+      provider_root_directory: '',
+    })
     expect(saved.status).toBe(303)
     await server.hub.settled()
     expect(await (await visit('from-git')).text()).toBe('<h1>release</h1>')
@@ -619,7 +738,12 @@ describe('Git: deployments', () => {
       return { status: res.status, text: await res.text(), location: res.headers.get('location') ?? '' }
     }
     const post = (path: string, fields: Record<string, string>) =>
-      fetch(`${base()}${path}`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields), redirect: 'manual' })
+      fetch(`${base()}${path}`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(fields),
+        redirect: 'manual',
+      })
 
     // Two commits on the production branch: the deploy page can pick either.
     const older = commit('release', { 'index.html': '<h1>release one</h1>' })
@@ -652,7 +776,7 @@ describe('Git: deployments', () => {
     expect(siteDeploy.status).toBe(303)
     expect(siteDeploy.headers.get('location')).toStartWith('/console/sites/from-git/deployments/')
     await server.hub.settled()
-    const live = server.services.sites.deployment('from-git', server.services.sites.site('from-git').deployment_id)
+    const live = await server.services.sites.deployment('from-git', server.services.sites.site('from-git').deployment_id)
     expect(live).toMatchObject({ type: 'vcs', provider_branch: 'release', provider_commit_hash: older })
     expect(await (await visit('from-git')).text()).toBe('<h1>release one</h1>')
 
@@ -660,21 +784,24 @@ describe('Git: deployments', () => {
     expect(fnDeploy.status).toBe(303)
     expect(fnDeploy.headers.get('location')).toStartWith('/console/functions/api/deployments/')
     await server.hub.settled()
-    const fnLive = server.services.functions.fn('api')
-    const fnDeployment = new Deployments(server.db, server.config, server.services.functions).get('api', fnLive.deployment_id)
+    const fnLive = await server.services.functions.fn('api')
+    const fnDeployment = await new Deployments(server.db, server.config, server.services.functions).get('api', fnLive.deployment_id)
     expect(fnDeployment).toMatchObject({ type: 'vcs', provider_branch: 'main', provider_commit_hash: fnSha })
     const run = (await (await api('/functions/api/executions', { method: 'POST', body: JSON.stringify({}) })).json()) as any
     expect(run.responseBody).toBe('function from a chosen commit')
   })
 
   test('disconnecting stops deploys, and removing the installation unlinks everything', async () => {
-    const off = await api('/sites/app', { method: 'PUT', body: JSON.stringify({ name: 'App', framework: 'hono', installationId: '', providerRepositoryId: '' }) })
+    const off = await api('/sites/app', {
+      method: 'PUT',
+      body: JSON.stringify({ name: 'App', framework: 'hono', installationId: '', providerRepositoryId: '' }),
+    })
     expect(((await off.json()) as any).providerRepositoryId).toBe('')
     expect(server.hub.links.forResource(PROJECT, 'site', 'app')).toBeNull()
 
     expect((await api(`/vcs/installations/${installationId}`, { method: 'DELETE' })).status).toBe(204)
     expect(server.services.sites.site('web').provider_repository_id).toBe('')
-    expect(server.services.functions.fn('api').installation_id).toBe('')
+    expect((await server.services.functions.fn('api')).installation_id).toBe('')
     expect(server.hub.links.byRepository(String(REPO_ID))).toHaveLength(0)
     // Disconnecting keeps what was deployed.
     expect(existsSync(sitesDir(server.config, 'web'))).toBe(true)
