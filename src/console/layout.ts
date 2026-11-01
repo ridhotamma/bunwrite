@@ -120,7 +120,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
     <div class="foot">
       ${avatar(nav.admin)}<span class="nav-admin" title="${nav.admin}">${nav.admin}</span>
       <a class="icon-btn" href="/console/security" data-tooltip="Security" aria-label="Account security">${icon('gear-six')}</a>
-      <form method="post" action="/console/logout" class="inline"><button class="icon-btn" data-tooltip="Sign out" aria-label="Sign out">${icon('sign-out')}</button></form>
+      <form method="post" action="/console/logout" class="inline" data-confirm="Sign out of the console?" data-confirm-label="Sign out"><button class="icon-btn" data-tooltip="Sign out" aria-label="Sign out">${icon('sign-out')}</button></form>
     </div>
   </nav>
   <main>
@@ -149,7 +149,7 @@ export function projectShell(title: string, nav: { admin: string }, body: Html, 
     html`<div class="menu-head">Signed in as<b>${nav.admin}</b></div>
       <hr>
       <a class="menu-item" href="/console/security">${icon('gear-six')}<span class="menu-item-text">Security</span></a>
-      <form method="post" action="/console/logout"><button type="submit" class="menu-item">${icon('sign-out')}<span class="menu-item-text">Sign out</span></button></form>`,
+      <form method="post" action="/console/logout" data-confirm="Sign out of the console?" data-confirm-label="Sign out"><button type="submit" class="menu-item">${icon('sign-out')}<span class="menu-item-text">Sign out</span></button></form>`,
     { label: 'Account', triggerClass: 'account-btn', trigger: html`${avatar(nav.admin, 'md')}` },
   )
   return html`<!doctype html>
