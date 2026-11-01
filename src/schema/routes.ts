@@ -13,7 +13,6 @@
  */
 import type { AppContext } from '~/app'
 import { requireKey } from '~/auth/routes'
-import type { Db } from '~/db/connection'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
@@ -171,23 +170,10 @@ function indexIn(c: Collection, key: string): Index {
   return i
 }
 
-/**
- * Schema DDL still runs on the synchronous SQLite path (docs/DATABASE.md).
- * A network deployment applies collections with `db:migrate --schema` instead.
- */
-function localDb(db: AppContext['db']): Db {
-  if (db.dialect !== 'sqlite' || !db.sqlite) throw err('general_not_implemented', 'Schema changes are not available on this database backend yet.')
-  return db as Db
-}
-
 /** Run schema changes as one unit; a failure part-way leaves nothing behind. */
-function atomically(ctx: AppContext, work: () => void): void {
-  const db = localDb(ctx.db)
-  try {
-    db.sqlite.transaction(work).immediate()
-  } finally {
-    ctx.registry.reload()
-  }
+async function atomically(ctx: AppContext, work: (admin: SchemaAdmin) => Promise<void>): Promise<void> {
+  const admin = new SchemaAdmin(ctx.db, ctx.registry)
+  await admin.transaction(() => work(admin))
 }
 
 function register(router: Router<AppContext>, flavor: Flavor): void {
@@ -198,7 +184,7 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
   const attrsName = tables ? 'columns' : 'attributes'
   const attrs = `${coll}/${attrsName}`
   const idxs = `${coll}/indexes`
-  const admin = (ctx: AppContext) => new SchemaAdmin(localDb(ctx.db), ctx.registry)
+  const admin = (ctx: AppContext) => new SchemaAdmin(ctx.db, ctx.registry)
   const collection = (ctx: AppContext, path: Record<string, string>) => ctx.registry.collection(path.databaseId!, path.collectionId!, true)
 
   // ---- Databases ----
@@ -209,13 +195,14 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json({ total: all.length, databases: page(all, list(params.queries)) })
   })
 
-  router.post(dbs, ({ ctx, params }) => {
+  router.post(dbs, async ({ ctx, params }) => {
     requireKey(ctx, 'databases.write')
     const id = newId(params.databaseId, 'databaseId')
     const name = str(params.name) ?? id
     if (ctx.registry.databases.has(id)) throw err('database_already_exists', undefined, [id])
-    admin(ctx).createDatabase(id, name)
-    if (!bool(params.enabled, true)) admin(ctx).updateDatabase(id, name, false)
+    const a = admin(ctx)
+    await a.createDatabase(id, name)
+    if (!bool(params.enabled, true)) await a.updateDatabase(id, name, false)
     return json(databaseModel(ctx.registry.database(id, true)), 201)
   })
 
@@ -224,16 +211,16 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(databaseModel(ctx.registry.database(path.databaseId!, true)))
   })
 
-  router.put(`${dbs}/:databaseId`, ({ ctx, path, params }) => {
+  router.put(`${dbs}/:databaseId`, async ({ ctx, path, params }) => {
     requireKey(ctx, 'databases.write')
     const d = ctx.registry.database(path.databaseId!, true)
-    admin(ctx).updateDatabase(d.id, str(params.name) ?? d.name, bool(params.enabled, d.enabled))
+    await admin(ctx).updateDatabase(d.id, str(params.name) ?? d.name, bool(params.enabled, d.enabled))
     return json(databaseModel(ctx.registry.database(d.id, true)))
   })
 
-  router.delete(`${dbs}/:databaseId`, ({ ctx, path }) => {
+  router.delete(`${dbs}/:databaseId`, async ({ ctx, path }) => {
     requireKey(ctx, 'databases.write')
-    admin(ctx).deleteDatabase(path.databaseId!)
+    await admin(ctx).deleteDatabase(path.databaseId!)
     return noContent()
   })
 
@@ -249,7 +236,7 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json({ total: all.length, [flavor]: page(all, list(params.queries)) })
   })
 
-  router.post(colls, ({ ctx, path, params }) => {
+  router.post(colls, async ({ ctx, path, params }) => {
     requireKey(ctx, 'collections.write')
     const databaseId = path.databaseId!
     ctx.registry.database(databaseId, true)
@@ -259,12 +246,11 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     // Appwrite 1.8 can create the attributes and indexes in the same call.
     const attributes = list(params.attributes ?? params.columns) as Record<string, unknown>[]
     const indexes = list(params.indexes) as Record<string, unknown>[]
-    atomically(ctx, () => {
-      const a = admin(ctx)
-      a.createCollection(databaseId, id, str(params.name) ?? id, security, permissionsOf(params.permissions) ?? [])
-      if (!bool(params.enabled, true)) a.updateCollection(databaseId, id, { enabled: false })
-      for (const raw of attributes) a.saveAttribute(databaseId, id, definitionFor(pathTypeOf(raw), raw))
-      for (const raw of indexes) a.saveIndex(databaseId, id, raw)
+    await atomically(ctx, async (a) => {
+      await a.createCollection(databaseId, id, str(params.name) ?? id, security, permissionsOf(params.permissions) ?? [])
+      if (!bool(params.enabled, true)) await a.updateCollection(databaseId, id, { enabled: false })
+      for (const raw of attributes) await a.saveAttribute(databaseId, id, definitionFor(pathTypeOf(raw), raw))
+      for (const raw of indexes) await a.saveIndex(databaseId, id, raw)
     })
     return json(collectionModel(ctx.registry.collection(databaseId, id, true), flavor), 201)
   })
@@ -274,11 +260,11 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(collectionModel(collection(ctx, path), flavor))
   })
 
-  router.put(coll, ({ ctx, path, params }) => {
+  router.put(coll, async ({ ctx, path, params }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     const security = tables ? (params.rowSecurity ?? params.documentSecurity) : (params.documentSecurity ?? params.rowSecurity)
-    admin(ctx).updateCollection(c.databaseId, c.id, {
+    await admin(ctx).updateCollection(c.databaseId, c.id, {
       name: str(params.name) ?? c.name,
       enabled: bool(params.enabled, c.enabled),
       documentSecurity: bool(security, c.documentSecurity),
@@ -287,9 +273,9 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(collectionModel(collection(ctx, path), flavor))
   })
 
-  router.delete(coll, ({ ctx, path }) => {
+  router.delete(coll, async ({ ctx, path }) => {
     requireKey(ctx, 'collections.write')
-    admin(ctx).deleteCollection(path.databaseId!, path.collectionId!)
+    await admin(ctx).deleteCollection(path.databaseId!, path.collectionId!)
     return noContent()
   })
 
@@ -308,17 +294,17 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(attributeModel(attributeIn(c, path.key!), c))
   })
 
-  router.post(`${attrs}/:type`, ({ ctx, path, params }) => {
+  router.post(`${attrs}/:type`, async ({ ctx, path, params }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     const definition = definitionFor(path.type!, params)
     if (c.attributeMap.has(String(definition.key))) throw err(tables ? 'column_already_exists' : 'attribute_already_exists', undefined, [definition.key])
-    admin(ctx).saveAttribute(c.databaseId, c.id, definition)
+    await admin(ctx).saveAttribute(c.databaseId, c.id, definition)
     const after = collection(ctx, path)
     return json(attributeModel(attributeIn(after, String(definition.key)), after), 202)
   })
 
-  router.patch(`${attrs}/:type/:key`, ({ ctx, path, params }) => {
+  router.patch(`${attrs}/:type/:key`, async ({ ctx, path, params }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     const current = attributeIn(c, path.key!)
@@ -334,16 +320,16 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     if (params.min !== undefined) next.min = num(params.min)
     if (params.max !== undefined) next.max = num(params.max)
     if (params.elements !== undefined && current.format === 'enum') next.elements = list(params.elements).map(String)
-    admin(ctx).saveAttribute(c.databaseId, c.id, next, true)
+    await admin(ctx).saveAttribute(c.databaseId, c.id, next, true)
     const after = collection(ctx, path)
     return json(attributeModel(attributeIn(after, current.key), after))
   })
 
-  router.delete(`${attrs}/:key`, ({ ctx, path }) => {
+  router.delete(`${attrs}/:key`, async ({ ctx, path }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     attributeIn(c, path.key!)
-    admin(ctx).deleteAttribute(c.databaseId, c.id, path.key!)
+    await admin(ctx).deleteAttribute(c.databaseId, c.id, path.key!)
     return noContent()
   })
 
@@ -362,12 +348,12 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(indexModel(indexIn(c, path.key!), c, flavor))
   })
 
-  router.post(idxs, ({ ctx, path, params }) => {
+  router.post(idxs, async ({ ctx, path, params }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     const key = str(params.key)
     if (!key) throw err('general_argument_invalid', 'Param "key" is not optional.')
-    admin(ctx).saveIndex(c.databaseId, c.id, {
+    await admin(ctx).saveIndex(c.databaseId, c.id, {
       key,
       type: params.type,
       columns: list(params.columns ?? params.attributes).map(String),
@@ -377,11 +363,11 @@ function register(router: Router<AppContext>, flavor: Flavor): void {
     return json(indexModel(indexIn(after, key), after, flavor), 202)
   })
 
-  router.delete(`${idxs}/:key`, ({ ctx, path }) => {
+  router.delete(`${idxs}/:key`, async ({ ctx, path }) => {
     requireKey(ctx, 'collections.write')
     const c = collection(ctx, path)
     indexIn(c, path.key!)
-    admin(ctx).deleteIndex(c.databaseId, c.id, path.key!)
+    await admin(ctx).deleteIndex(c.databaseId, c.id, path.key!)
     return noContent()
   })
 }

@@ -33,49 +33,47 @@ export function installationModel(row: InstallationRow) {
 export class VcsInstallations {
   constructor(private readonly db: SqlDatabase) {}
 
-  /** The VCS console has not moved to the driver port yet; it is SQLite-only. */
-  private get sql() {
-    if (!this.db.sqlite) throw new Error('GitHub installations are not available on this database backend yet.')
-    return this.db.sqlite
+  list(): Promise<InstallationRow[]> {
+    return this.db.driver.all<InstallationRow>('SELECT * FROM _vcs_installations ORDER BY seq')
   }
 
-  list(): InstallationRow[] {
-    return this.sql.query<InstallationRow, []>('SELECT * FROM _vcs_installations ORDER BY seq').all()
-  }
-
-  get(id: string): InstallationRow {
-    const row = this.sql.query<InstallationRow, [string]>('SELECT * FROM _vcs_installations WHERE id = ?').get(id)
+  async get(id: string): Promise<InstallationRow> {
+    const row = await this.find(id)
     if (!row) throw err('installation_not_found')
     return row
   }
 
-  find(id: string): InstallationRow | null {
-    return this.sql.query<InstallationRow, [string]>('SELECT * FROM _vcs_installations WHERE id = ?').get(id)
+  find(id: string): Promise<InstallationRow | null> {
+    return this.db.driver.get<InstallationRow>('SELECT * FROM _vcs_installations WHERE id = ?', [id])
   }
 
-  byProvider(providerInstallationId: string): InstallationRow | null {
-    return this.sql.query<InstallationRow, [string]>('SELECT * FROM _vcs_installations WHERE provider_installation_id = ?').get(providerInstallationId)
+  byProvider(providerInstallationId: string): Promise<InstallationRow | null> {
+    return this.db.driver.get<InstallationRow>('SELECT * FROM _vcs_installations WHERE provider_installation_id = ?', [providerInstallationId])
   }
 
   /** Add an installation, or refresh the account name of one already added. */
-  add(input: { providerInstallationId: string; organization: string; accountType: string }): InstallationRow {
-    const existing = this.byProvider(input.providerInstallationId)
+  async add(input: { providerInstallationId: string; organization: string; accountType: string }): Promise<InstallationRow> {
+    const existing = await this.byProvider(input.providerInstallationId)
     const stamp = now()
     if (existing) {
-      this.sql.query('UPDATE _vcs_installations SET organization = ?, account_type = ?, updated_at = ? WHERE id = ?').run(input.organization, input.accountType, stamp, existing.id)
+      await this.db.driver.run('UPDATE _vcs_installations SET organization = ?, account_type = ?, updated_at = ? WHERE id = ?', [
+        input.organization,
+        input.accountType,
+        stamp,
+        existing.id,
+      ])
       return this.get(existing.id)
     }
     const id = uniqueId()
-    this.sql
-      .query(
-        `INSERT INTO _vcs_installations (id, provider, provider_installation_id, organization, account_type, created_at, updated_at)
-         VALUES (?, 'github', ?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.providerInstallationId, input.organization, input.accountType, stamp, stamp)
+    await this.db.driver.run(
+      `INSERT INTO _vcs_installations (id, provider, provider_installation_id, organization, account_type, created_at, updated_at)
+       VALUES (?, 'github', ?, ?, ?, ?, ?)`,
+      [id, input.providerInstallationId, input.organization, input.accountType, stamp, stamp],
+    )
     return this.get(id)
   }
 
-  remove(id: string): void {
-    this.sql.query('DELETE FROM _vcs_installations WHERE id = ?').run(id)
+  async remove(id: string): Promise<void> {
+    await this.db.driver.run('DELETE FROM _vcs_installations WHERE id = ?', [id])
   }
 }

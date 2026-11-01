@@ -23,7 +23,7 @@ const destructive = (changes: string[]) => changes.some((change) => change.start
 async function exported(ctx: ConsoleContext): Promise<Record<string, unknown>> {
   const path = ctx.services.config.schemaPath
   const base = path && existsSync(path) ? ((await Bun.file(path).json()) as Record<string, unknown>) : {}
-  return { ...base, ...ctx.schema.export() }
+  return { ...base, ...(await ctx.schema.export()) }
 }
 
 async function readUpload(ctx: ConsoleContext): Promise<{ config: unknown; baseDir?: string; label: string }> {
@@ -104,7 +104,7 @@ export function schemaPages(router: ConsoleRouter): void {
     try {
       if (!raw.trim()) throw err('general_argument_invalid', 'Paste collections JSON or choose a JSON file.')
       const collections = parseCollections(raw)
-      const changes = ctx.schema.importCollections(collections, { prune, dryRun: true })
+      const changes = await ctx.schema.importCollections(collections, { prune, dryRun: true })
       const names = collections
         .map((collection) => {
           const c = collection as Record<string, unknown>
@@ -121,14 +121,14 @@ export function schemaPages(router: ConsoleRouter): void {
     }
   })
 
-  router.post(`${SCHEMA}/import/apply`, ({ ctx }) => {
+  router.post(`${SCHEMA}/import/apply`, async ({ ctx }) => {
     let collections: unknown
     try {
       collections = JSON.parse(value(ctx.form, 'collections'))
     } catch {
       throw err('general_argument_invalid', 'The import was lost. Review it again.')
     }
-    const changes = ctx.schema.importCollections(collections, { prune: checked(ctx.form.prune) })
+    const changes = await ctx.schema.importCollections(collections, { prune: checked(ctx.form.prune) })
     return ctx.go(`${SCHEMA}/import`, { tone: 'success', text: `Applied ${changes.length} change${changes.length === 1 ? '' : 's'}` })
   })
 
@@ -152,7 +152,7 @@ export function schemaPages(router: ConsoleRouter): void {
     const { config: uploaded, baseDir, label } = await readUpload(ctx)
     const config = collectionsOnly(uploaded)
     const prune = checked(ctx.form.prune)
-    const changes = ctx.schema.importConfig(config, { baseDir, prune, dryRun: true })
+    const changes = await ctx.schema.importConfig(config, { baseDir, prune, dryRun: true })
     return ctx.render(
       'Preview import',
       'schema',
@@ -160,7 +160,7 @@ export function schemaPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${SCHEMA}/apply`, ({ ctx }) => {
+  router.post(`${SCHEMA}/apply`, async ({ ctx }) => {
     let config: unknown
     try {
       config = JSON.parse(value(ctx.form, 'config'))
@@ -168,7 +168,7 @@ export function schemaPages(router: ConsoleRouter): void {
       throw err('general_argument_invalid', 'The import was lost. Preview it again.')
     }
     config = collectionsOnly(config)
-    const changes = ctx.schema.importConfig(config, { baseDir: String(ctx.form.baseDir || '') || undefined, prune: checked(ctx.form.prune) })
+    const changes = await ctx.schema.importConfig(config, { baseDir: String(ctx.form.baseDir || '') || undefined, prune: checked(ctx.form.prune) })
     return ctx.go(SCHEMA, { tone: 'success', text: `Applied ${changes.length} change${changes.length === 1 ? '' : 's'}` })
   })
 }

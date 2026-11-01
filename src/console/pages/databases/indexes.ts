@@ -67,10 +67,10 @@ export function indexPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${COL}/indexes`, ({ ctx, path }) => {
+  router.post(`${COL}/indexes`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
     const attributes = arrayOf(ctx.form.attributes)
-    ctx.schema.saveIndex(c.databaseId, c.id, {
+    await ctx.schema.saveIndex(c.databaseId, c.id, {
       key: value(ctx.form, 'key'),
       type: value(ctx.form, 'type') || 'key',
       attributes,
@@ -79,9 +79,9 @@ export function indexPages(router: ConsoleRouter): void {
     return ctx.go(`${collectionUrl(c)}/indexes`, { tone: 'success', text: 'Index added' })
   })
 
-  router.post(`${COL}/indexes/:key/delete`, ({ ctx, path }) => {
+  router.post(`${COL}/indexes/:key/delete`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.schema.deleteIndex(c.databaseId, c.id, path.key!)
+    await ctx.schema.deleteIndex(c.databaseId, c.id, path.key!)
     return ctx.go(`${collectionUrl(c)}/indexes`, { tone: 'success', text: 'Index deleted' })
   })
 }

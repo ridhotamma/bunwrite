@@ -74,7 +74,7 @@ async function createFromGit(ctx: ConsoleContext, id: string, name: string, runt
   const installationId = value(ctx.form, 'installation_id')
   const repositoryId = value(ctx.form, 'provider_repository_id')
   if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
-  const installation = ctx.hub.installations.get(installationId)
+  const installation = await ctx.hub.installations.get(installationId)
   const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
   const branch = value(ctx.form, 'provider_branch')
   let found = { runtime, entrypoint: entrypointFrom(ctx), commands: value(ctx.form, 'commands') }
@@ -113,7 +113,7 @@ async function createFromGit(ctx: ConsoleContext, id: string, name: string, runt
     await ctx.hub.deployReference(project, 'function', f.id, 'branch', linked.provider_branch, true)
     return ctx.go(functionUrl(f.id), { tone: 'success', text: `Function created; deploying ${linked.provider_branch}` })
   } catch (error) {
-    ctx.hub.forget(project.info.id, 'function', f.id)
+    await ctx.hub.forget(project.info.id, 'function', f.id)
     await ctx.services.functions.remove(f.id)
     throw error
   }
@@ -315,13 +315,13 @@ export function functionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.get(`${FN}/new`, ({ ctx, url }) =>
+  router.get(`${FN}/new`, async ({ ctx, url }) =>
     ctx.render(
       'Create function',
       'functions',
       functionCreateView(
         ctx.services.config.functionsBuildCommands,
-        ctx.hub.installations.list(),
+        await ctx.hub.installations.list(),
         Boolean(ctx.hub.apps.get()),
         url.searchParams.get('source') ?? '',
       ),
@@ -377,7 +377,7 @@ export function functionPages(router: ConsoleRouter): void {
     for (const id of ids) {
       if (!(await ctx.services.functions.has(id))) continue
       await ctx.services.functions.remove(id)
-      ctx.hub.forget(ctx.currentProject.id, 'function', id)
+      await ctx.hub.forget(ctx.currentProject.id, 'function', id)
       removed++
     }
     if (!removed) return ctx.go(FN, { tone: 'warning', text: 'No functions were deleted.' })
@@ -511,7 +511,7 @@ export function functionPages(router: ConsoleRouter): void {
               <a href="${functionUrl(f.id)}/deployments">View deployments</a>
             </p>`,
         )}
-        ${gitSection(ctx, { type: 'function', row: f, base: functionUrl(f.id) })} ${domainSettings}
+        ${await gitSection(ctx, { type: 'function', row: f, base: functionUrl(f.id) })} ${domainSettings}
         ${settingsSection(
           'Delete function',
           'Permanently removes the function, its deployments, runs and variables. This cannot be undone.',
@@ -558,7 +558,7 @@ export function functionPages(router: ConsoleRouter): void {
   router.post(`${FN}/:id/delete`, async ({ ctx, path }) => {
     const f = await ctx.services.functions.fn(path.id!)
     await ctx.services.functions.remove(f.id)
-    ctx.hub.forget(ctx.currentProject.id, 'function', f.id)
+    await ctx.hub.forget(ctx.currentProject.id, 'function', f.id)
     return ctx.go(FN, { tone: 'success', text: `${f.name} deleted` })
   })
 

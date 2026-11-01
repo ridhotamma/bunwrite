@@ -83,9 +83,9 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     ),
   )
 
-  router.post(DB, ({ ctx }) => {
+  router.post(DB, async ({ ctx }) => {
     const id = value(ctx.form, 'id')
-    ctx.schema.createDatabase(id, value(ctx.form, 'name'))
+    await ctx.schema.createDatabase(id, value(ctx.form, 'name'))
     return ctx.go(databaseUrl(id), { tone: 'success', text: 'Database created' })
   })
 
@@ -178,13 +178,13 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${DB}/:db`, ({ ctx, path }) => {
-    ctx.schema.updateDatabase(path.db!, value(ctx.form, 'name'), checked(ctx.form.enabled))
+  router.post(`${DB}/:db`, async ({ ctx, path }) => {
+    await ctx.schema.updateDatabase(path.db!, value(ctx.form, 'name'), checked(ctx.form.enabled))
     return ctx.go(`${databaseUrl(path.db!)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${DB}/:db/delete`, ({ ctx, path }) => {
-    ctx.schema.deleteDatabase(path.db!)
+  router.post(`${DB}/:db/delete`, async ({ ctx, path }) => {
+    await ctx.schema.deleteDatabase(path.db!)
     return ctx.go(DB, { tone: 'success', text: 'Database deleted' })
   })
 
@@ -219,9 +219,9 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${DB}/:db/collections`, ({ ctx, path }) => {
+  router.post(`${DB}/:db/collections`, async ({ ctx, path }) => {
     const id = value(ctx.form, 'id')
-    ctx.schema.createCollection(
+    await ctx.schema.createCollection(
       path.db!,
       id,
       value(ctx.form, 'name'),

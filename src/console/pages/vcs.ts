@@ -60,7 +60,7 @@ export function vcsPages(router: ConsoleRouter): void {
 
   router.post('/console/organization/github-app/delete', async ({ ctx }) => {
     if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can remove the GitHub App.')
-    ctx.hub.apps.remove()
+    await ctx.hub.apps.remove()
     return ctx.go('/console/organization', { tone: 'success', text: 'GitHub App removed. Delete it on GitHub too.' })
   })
 
@@ -74,14 +74,14 @@ export function vcsPages(router: ConsoleRouter): void {
   })
 
   router.post('/console/vcs/installations/:id/delete', async ({ ctx, path }) => {
-    const installation = ctx.hub.installations.get(path.id!)
+    const installation = await ctx.hub.installations.get(path.id!)
     await ctx.hub.removeInstallation(installation.id)
     return ctx.go('/console/settings/git', { tone: 'success', text: `${installation.organization || 'Installation'} removed from this server` })
   })
 
   /** htmx partial: the repository select for an installation. */
   router.get('/console/vcs/repositories', async ({ ctx, url }) => {
-    const installation = ctx.hub.installations.find(url.searchParams.get('installation_id') ?? '')
+    const installation = await ctx.hub.installations.find(url.searchParams.get('installation_id') ?? '')
     // The picker names the branch field its repositories load into.
     const wanted = url.searchParams.get('branch_target') ?? ''
     const branchTarget = /^[a-zA-Z0-9_-]+$/.test(wanted) ? wanted : ''
@@ -115,7 +115,7 @@ export function vcsPages(router: ConsoleRouter): void {
   /** htmx partial: the production branch select for a repository. */
   router.get('/console/vcs/branches', async ({ ctx, url }) => {
     const q = url.searchParams
-    const installation = ctx.hub.installations.find(q.get('installation_id') ?? '')
+    const installation = await ctx.hub.installations.find(q.get('installation_id') ?? '')
     const repositoryId = q.get('provider_repository_id') ?? ''
     const selected = q.get('selected') ?? ''
     if (!installation || !/^\d+$/.test(repositoryId)) return page(branchOptions([], selected, '', 'Pick a repository first.'))
@@ -132,7 +132,7 @@ export function vcsPages(router: ConsoleRouter): void {
   /** htmx partial: a site's build settings, detected from the picked repository, branch and folder. */
   router.get('/console/vcs/detect-site', async ({ ctx, url }) => {
     const q = url.searchParams
-    const installation = ctx.hub.installations.find(q.get('installation_id') ?? '')
+    const installation = await ctx.hub.installations.find(q.get('installation_id') ?? '')
     const repositoryId = q.get('provider_repository_id') ?? ''
     if (!installation || !/^\d+$/.test(repositoryId)) return page(buildFields('git', presetValues('other'), 'git_framework'))
     const root = (q.get('provider_root_directory') ?? '').replace(/^\.?\/+|\/+$/g, '')
@@ -158,7 +158,7 @@ export function vcsPages(router: ConsoleRouter): void {
   // ---- Approving a fork's pull request ----
 
   router.get('/console/vcs/approve', async ({ ctx, url }) => {
-    const link = ctx.hub.links.get(url.searchParams.get('repository') ?? '')
+    const link = await ctx.hub.links.get(url.searchParams.get('repository') ?? '')
     if (link.project_id !== ctx.currentProject.id) throw err('repository_not_found')
     const number = Number(url.searchParams.get('pr'))
     let pull: GithubPull | null = null

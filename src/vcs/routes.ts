@@ -85,31 +85,31 @@ async function folderNames(hub: VcsHub, installation: string, repositoryId: stri
 const join = (root: string, name: string) => (root ? `${root.replace(/\/+$/, '')}/${name}` : name)
 
 export function vcsRoutes(router: Router<AppContext>): void {
-  router.get('/vcs/installations', ({ ctx, params }) => {
+  router.get('/vcs/installations', async ({ ctx, params }) => {
     requireKey(ctx, 'vcs.read')
-    const { total, items } = page(ctx.hub.installations.list().map(installationModel), [], {
+    const { total, items } = page((await ctx.hub.installations.list()).map(installationModel), [], {
       search: str(params.search),
       searchFields: ['$id', 'organization'],
     })
     return json({ total, installations: items })
   })
 
-  router.get('/vcs/installations/:installationId', ({ ctx, path }) => {
+  router.get('/vcs/installations/:installationId', async ({ ctx, path }) => {
     requireKey(ctx, 'vcs.read')
-    return json(installationModel(ctx.hub.installations.get(path.installationId!)))
+    return json(installationModel(await ctx.hub.installations.get(path.installationId!)))
   })
 
-  router.delete('/vcs/installations/:installationId', ({ ctx, path }) => {
+  router.delete('/vcs/installations/:installationId', async ({ ctx, path }) => {
     requireKey(ctx, 'vcs.write')
     // Installations are server-wide, so this disconnects the account from
     // every project; it does not uninstall the app on GitHub.
-    ctx.hub.removeInstallation(path.installationId!)
+    await ctx.hub.removeInstallation(path.installationId!)
     return noContent()
   })
 
   router.get('/vcs/github/installations/:installationId/providerRepositories', async ({ ctx, path, params }) => {
     requireKey(ctx, 'vcs.read')
-    const installation = ctx.hub.installations.get(path.installationId!)
+    const installation = await ctx.hub.installations.get(path.installationId!)
     const repos = await github(() => ctx.hub.github.repositories(installation.provider_installation_id, str(params.search) ?? ''))
     const type = str(params.type)
     const shown = repos.slice(0, 100)
@@ -133,20 +133,20 @@ export function vcsRoutes(router: Router<AppContext>): void {
 
   router.get('/vcs/github/installations/:installationId/providerRepositories/:providerRepositoryId', async ({ ctx, path }) => {
     requireKey(ctx, 'vcs.read')
-    const installation = ctx.hub.installations.get(path.installationId!)
+    const installation = await ctx.hub.installations.get(path.installationId!)
     return json(repositoryModel(await github(() => ctx.hub.github.repository(installation.provider_installation_id, path.providerRepositoryId!))))
   })
 
   router.get('/vcs/github/installations/:installationId/providerRepositories/:providerRepositoryId/branches', async ({ ctx, path }) => {
     requireKey(ctx, 'vcs.read')
-    const installation = ctx.hub.installations.get(path.installationId!)
+    const installation = await ctx.hub.installations.get(path.installationId!)
     const names = await github(() => ctx.hub.github.branches(installation.provider_installation_id, path.providerRepositoryId!))
     return json({ total: names.length, branches: names.map((name) => ({ name })) })
   })
 
   router.get('/vcs/github/installations/:installationId/providerRepositories/:providerRepositoryId/contents', async ({ ctx, path, params }) => {
     requireKey(ctx, 'vcs.read')
-    const installation = ctx.hub.installations.get(path.installationId!)
+    const installation = await ctx.hub.installations.get(path.installationId!)
     const entries = await github(() =>
       ctx.hub.github.contents(
         installation.provider_installation_id,
@@ -160,7 +160,7 @@ export function vcsRoutes(router: Router<AppContext>): void {
 
   router.post('/vcs/github/installations/:installationId/detections', async ({ ctx, path, params }) => {
     requireKey(ctx, 'vcs.read')
-    const installation = ctx.hub.installations.get(path.installationId!)
+    const installation = await ctx.hub.installations.get(path.installationId!)
     const repositoryId = str(params.providerRepositoryId)
     if (!repositoryId) throw err('general_argument_invalid', 'Param "providerRepositoryId" is not optional.')
     const root = (str(params.providerRootDirectory) ?? '').replace(/^\/+|\/+$/g, '')
@@ -174,7 +174,7 @@ export function vcsRoutes(router: Router<AppContext>): void {
   // Appwrite's updateExternalDeployments: approve builds of a fork's pull request.
   router.patch('/vcs/github/installations/:installationId/repositories/:repositoryId', async ({ ctx, path, params }) => {
     requireKey(ctx, 'vcs.write')
-    ctx.hub.installations.get(path.installationId!)
+    await ctx.hub.installations.get(path.installationId!)
     const pr = str(params.providerPullRequestId)
     if (!pr) throw err('general_argument_invalid', 'Param "providerPullRequestId" is not optional.')
     const link = await github(() => ctx.hub.approve(projectOf(ctx), path.repositoryId!, pr))

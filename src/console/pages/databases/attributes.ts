@@ -103,9 +103,9 @@ export function attributePages(router: ConsoleRouter): void {
     return ctx.render('Add attribute', 'databases', html`${header('Add attribute', { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, null)}`)
   })
 
-  router.post(`${COL}/attributes`, ({ ctx, path }) => {
+  router.post(`${COL}/attributes`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    const changes = ctx.schema.saveAttribute(c.databaseId, c.id, attributeFromForm(ctx.form))
+    const changes = await ctx.schema.saveAttribute(c.databaseId, c.id, attributeFromForm(ctx.form))
     return ctx.go(`${collectionUrl(c)}/attributes`, { tone: 'success', text: `Attribute added${changes.length ? '' : ' (no change)'}` })
   })
 
@@ -116,15 +116,15 @@ export function attributePages(router: ConsoleRouter): void {
     return ctx.render(a.key, 'databases', html`${header(a.key, { back: `${collectionUrl(c)}/attributes` })}${attributeForm(c, a)}`)
   })
 
-  router.post(`${COL}/attributes/:key`, ({ ctx, path }) => {
+  router.post(`${COL}/attributes/:key`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.schema.saveAttribute(c.databaseId, c.id, { ...attributeFromForm(ctx.form), key: path.key }, true)
+    await ctx.schema.saveAttribute(c.databaseId, c.id, { ...attributeFromForm(ctx.form), key: path.key }, true)
     return ctx.go(`${collectionUrl(c)}/attributes`, { tone: 'success', text: 'Attribute saved' })
   })
 
-  router.post(`${COL}/attributes/:key/delete`, ({ ctx, path }) => {
+  router.post(`${COL}/attributes/:key/delete`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.schema.deleteAttribute(c.databaseId, c.id, path.key!)
+    await ctx.schema.deleteAttribute(c.databaseId, c.id, path.key!)
     return ctx.go(`${collectionUrl(c)}/attributes`, { tone: 'success', text: 'Attribute deleted' })
   })
 }

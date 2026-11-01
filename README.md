@@ -55,8 +55,9 @@ database is incremental instead of a rewrite. See
 - **SQLite-native, with a database port.** Drizzle migrations create the
   schema, each project is its own database file, and you can inspect or copy the
   data with standard SQLite tools. The same data layer can target Postgres or
-  MongoDB through `DB_DRIVER`/`DATABASE_URL`; Postgres serves API traffic today,
-  and the remaining console/VCS screens are documented per backend.
+  MongoDB through `DB_DRIVER`/`DATABASE_URL`; Postgres serves API traffic and
+  the console/VCS screens today, and MongoDB's remaining repositories are
+  documented per backend.
 
 - **Environments.** Keep staging and production as separate projects, on one
   server or several. The CLI's `bunwrite env` keeps each environment's

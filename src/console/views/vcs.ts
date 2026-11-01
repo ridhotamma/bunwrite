@@ -150,9 +150,9 @@ export function manifestRedirect(action: string, manifest: string): Html {
 
 // ---- Project settings → Git ----
 
-export function gitTabView(ctx: ConsoleContext): Html {
+export async function gitTabView(ctx: ConsoleContext): Promise<Html> {
   const app = ctx.hub.apps.get()
-  const installations = ctx.hub.installations.list()
+  const installations = await ctx.hub.installations.list()
   const title = 'GitHub installations'
   const hint = 'Accounts and organizations where the GitHub App is installed. Install an account once and every project on this server can deploy from its repositories.'
   if (!app) {
@@ -192,9 +192,9 @@ export interface GitTarget {
   base: string
 }
 
-export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
+export async function gitSection(ctx: ConsoleContext, target: GitTarget): Promise<Html> {
   const { row, base } = target
-  const link = ctx.hub.links.forResource(ctx.currentProject.id, target.type, row.id)
+  const link = await ctx.hub.links.forResource(ctx.currentProject.id, target.type, row.id)
   const silent = Boolean(row.provider_silent_mode)
   const hint = target.type === 'site'
     ? 'Pushes to the production branch build and go live. Other branches get a preview address, and pull requests a status comment.'
@@ -227,7 +227,7 @@ export function gitSection(ctx: ConsoleContext, target: GitTarget): Html {
     )
     return html`${card}${disconnect}`
   }
-  const installations = ctx.hub.installations.list()
+  const installations = await ctx.hub.installations.list()
   if (!ctx.hub.apps.get()) {
     return settingsSection(
       'Git repository',

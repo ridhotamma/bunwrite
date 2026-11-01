@@ -27,10 +27,10 @@ rate/abuse limits, storage (buckets, files, uploads, previews), functions
 (definitions, deployments, executions), sites, messaging topics, the
 proxy/domain rules and the queue now run on either backend as well. The project
 manager opens one Postgres schema per project, and `startServer` opens the
-configured backend. The remaining console screens (settings, schema admin, logs,
-queue views), the VCS console and the cluster/backup features still use
-synchronous SQLite paths; [Migration order](#migration-order) lists them.
-Nothing in the existing SQLite path changed behaviour.
+configured backend. The console schema admin, settings, logs and the VCS
+stores also run through the driver port now; only the cluster/backup features
+remain SQLite-only; [Migration order](#migration-order) lists them. Nothing in
+the existing SQLite path changed behaviour.
 
 ## Configuration
 
@@ -241,10 +241,9 @@ with the backend's own mechanism before sending them.
   cache-version triggers already work across hosts.
 - `db.sqlite` remains SQLite-only. Services must be on `db.driver` before they
   can run on Postgres.
-- Schema DDL and the schema admin console still build SQLite tables. Apply a
-  project with `bun run db:migrate --schema …` on Postgres. The VCS console
-  stores, the remaining settings/logs/queue screens and the cluster lease are
-  also still on the synchronous path.
+- The cluster lease and Litestream/whole-instance archives are SQLite-only by
+  design. Everything else, including schema DDL, the console schema admin and
+  the VCS stores, runs on Postgres.
 
 ## MongoDB
 
@@ -324,23 +323,22 @@ SQLite test suite green:
    permissions, revisions and `runBatch`; staged transaction reads, random
    order and multi-document transactions need a replica set/session support and
    are rejected explicitly rather than silently emulated.
-4. **Done for the boot path.** `auth/*`, `teams/*`, `console/auth.ts`,
+4. **Done.** `auth/*`, `teams/*`, `console/auth.ts`,
    `organizations/service.ts`, `lib/limits.ts`, `storage/service.ts`,
    `functions/service.ts`, `functions/deployments.ts`, `sites/service.ts`,
-   `proxy/service.ts`, `queue/service.ts`, `messaging/topics.ts` and
-   `mail/templates.ts` use `db.driver`; their routes, console pages, caches and
-   tests are async. Auth, teams, storage and the proxy/site/queue layers have
-   been exercised against real Postgres; functions are covered by the SQLite
-   suite and use the proxy cache for custom-domain rules. Sites and proxy keep
-   synchronous reads over a cache filled by `ready()`, with async writes and
-   reloads. The project manager now opens each project as a Postgres schema or
-   MongoDB database and loads its caches before serving it.
-   The remaining synchronous screens are the console settings/schema admin and
-   the logs/queue views, plus the VCS console stores.
-5. Console pages and the cluster/backup features, which can stay SQLite-only
-   behind `db.capabilities`. Schema DDL (`schema/admin.ts`, `schema/push.ts`) is
-   still SQLite-only; on Postgres apply a project with
-   `bun run db:migrate --schema …`.
+   `proxy/service.ts`, `queue/service.ts`, `messaging/topics.ts`,
+   `mail/templates.ts`, the console schema admin and the VCS stores use
+   `db.driver`; their routes, console pages, caches and tests are async. Auth,
+   teams, storage, the proxy/site/queue layers, schema DDL and the VCS stores
+   have been exercised against real Postgres. Sites and proxy keep synchronous
+   reads over a cache filled by `ready()`, with async writes and reloads. The
+   project manager opens each project as a Postgres schema or MongoDB database
+   and loads its caches before serving it. Schema import keeps the console's
+   dry-run preview by running the Postgres apply inside a transaction and
+   rolling it back.
+5. The cluster lease and backup/snapshot features can stay SQLite-only behind
+   `db.capabilities`. MongoDB needs its repository layer before a project can
+   run there.
 
 A converted method looks like this:
 
@@ -380,6 +378,9 @@ The Postgres test creates a random schema, bootstraps the full schema, runs
 CRUD, a rolled-back transaction, a savepoint and the cache triggers, then boots
 `createServices` + `ProjectManager` on the same connection, creates a second
 project in its own schema, writes a document there, deletes the project and
-drops both schemas. The Mongo test creates a random database, bootstraps indexes, runs
-CRUD/upsert, allocates `_seq` values, checks the unique index and drops the
-database. Without the environment variables both are skipped.
+drops both schemas. It also runs the schema admin (create, dry-run import,
+export, delete) and the VCS stores (installations, links, comments, GitHub App
+credentials) against Postgres. The Mongo test creates a random database,
+bootstraps indexes, runs CRUD/upsert, allocates `_seq` values, checks the unique
+index and drops the database. Without the environment variables both are
+skipped.

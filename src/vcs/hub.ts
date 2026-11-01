@@ -127,7 +127,19 @@ export class VcsHub {
     )
     this.links = new RepositoryLinks(control.db)
     this.installations = new VcsInstallations(control.db)
-    this.importLegacyInstallations()
+  }
+
+  private readyOnce: Promise<void> | null = null
+
+  /** Load the stored app and adopt project-local installations before serving. */
+  ready(): Promise<void> {
+    this.readyOnce ??= this.prepare()
+    return this.readyOnce
+  }
+
+  private async prepare(): Promise<void> {
+    await this.apps.load()
+    await this.importLegacyInstallations()
   }
 
   /**
@@ -135,7 +147,7 @@ export class VcsHub {
    * control database and repoint their links, so upgrading does not ask an
    * admin to install the same account again. Safe to run on every start.
    */
-  private importLegacyInstallations(): void {
+  private async importLegacyInstallations(): Promise<void> {
     for (const project of this.projects.list()) {
       if (project.services.db === this.projects.control.db) continue
       // Installations only ever lived in the project's SQLite file.
@@ -147,12 +159,12 @@ export class VcsHub {
         continue
       }
       for (const row of rows) {
-        const shared = this.installations.add({
+        const shared = await this.installations.add({
           providerInstallationId: row.provider_installation_id,
           organization: row.organization,
           accountType: row.account_type,
         })
-        this.links.reassignInstallation(project.info.id, row.id, shared.id)
+        await this.links.reassignInstallation(project.info.id, row.id, shared.id)
       }
     }
   }
@@ -238,7 +250,7 @@ export class VcsHub {
     if (!code) return redirect(withFlash(state.returnTo, 'err', 'GitHub did not create the app.'))
     try {
       const app = await this.github.convertManifest(code)
-      this.apps.save(app)
+      await this.apps.save(app)
       return redirect(this.installUrl(state.returnTo))
     } catch (error) {
       return redirect(withFlash(state.returnTo, 'err', error instanceof Error ? error.message : String(error)))
@@ -285,7 +297,7 @@ export class VcsHub {
       const mine = await this.github.userInstallationIds(token)
       if (!mine.includes(installationId)) return back('err', 'Your GitHub account cannot access that installation.')
       const installation = await this.github.installation(installationId)
-      this.installations.add({
+      await this.installations.add({
         providerInstallationId: installationId,
         organization: installation.account?.login ?? '',
         accountType: installation.account?.type ?? '',
@@ -301,12 +313,12 @@ export class VcsHub {
    * that deployed from it. GitHub keeps the app installed.
    */
   async removeInstallation(installationId: string): Promise<void> {
-    const installation = this.installations.get(installationId)
-    for (const link of this.links.removeForInstallation(installation.id)) {
+    const installation = await this.installations.get(installationId)
+    for (const link of await this.links.removeForInstallation(installation.id)) {
       const project = this.projects.get(link.project_id)
       if (project) await this.clearProvider(project, link.resource_type, link.resource_id)
     }
-    this.installations.remove(installation.id)
+    await this.installations.remove(installation.id)
     this.github.forget(installation.provider_installation_id)
   }
 
@@ -322,7 +334,7 @@ export class VcsHub {
       await this.unlink(project, type, id)
       return
     }
-    const installation = this.installations.get(provider.installationId)
+    const installation = await this.installations.get(provider.installationId)
     let repo
     try {
       repo = await this.github.repository(installation.provider_installation_id, provider.providerRepositoryId)
@@ -339,7 +351,7 @@ export class VcsHub {
     }
     if (type === 'function') await project.services.functions.setProvider(id, settings)
     else await project.services.sites.setProvider(id, settings)
-    this.links.link({
+    await this.links.link({
       projectId: project.info.id,
       resourceType: type,
       resourceId: id,
@@ -351,13 +363,13 @@ export class VcsHub {
   }
 
   async unlink(project: ProjectRuntime, type: ResourceType, id: string): Promise<void> {
-    this.links.unlink(project.info.id, type, id)
+    await this.links.unlink(project.info.id, type, id)
     await this.clearProvider(project, type, id)
   }
 
   /** The resource was deleted: forget its link. */
-  forget(projectId: string, type: ResourceType, id: string): void {
-    this.links.unlink(projectId, type, id)
+  async forget(projectId: string, type: ResourceType, id: string): Promise<void> {
+    await this.links.unlink(projectId, type, id)
   }
 
   private async clearProvider(project: ProjectRuntime, type: ResourceType, id: string): Promise<void> {
@@ -375,14 +387,14 @@ export class VcsHub {
 
   /** The linked target for one resource, or null when it has no repository. */
   async target(project: ProjectRuntime, type: ResourceType, id: string): Promise<HubTarget | null> {
-    const link = this.links.forResource(project.info.id, type, id)
+    const link = await this.links.forResource(project.info.id, type, id)
     return link ? this.toTarget(link) : null
   }
 
   /** Every resource a repository deploys. Links to deleted projects or resources are dropped. */
   async targets(providerRepositoryId: string): Promise<HubTarget[]> {
     const out: HubTarget[] = []
-    for (const link of this.links.byRepository(providerRepositoryId)) {
+    for (const link of await this.links.byRepository(providerRepositoryId)) {
       const target = await this.toTarget(link)
       if (target) out.push(target)
     }
@@ -392,14 +404,14 @@ export class VcsHub {
   private async toTarget(link: RepositoryRow): Promise<HubTarget | null> {
     const project = this.projects.get(link.project_id)
     if (!project) {
-      this.links.removeForProject(link.project_id)
+      await this.links.removeForProject(link.project_id)
       return null
     }
     let row: FunctionRow | SiteRow
     try {
       row = await this.resource(project, link.resource_type, link.resource_id)
     } catch {
-      this.links.unlink(link.project_id, link.resource_type, link.resource_id)
+      await this.links.unlink(link.project_id, link.resource_type, link.resource_id)
       return null
     }
     const provider = providerOf(row)
@@ -621,7 +633,7 @@ export class VcsHub {
       return this.onInstallationGone(String(payload.installation?.id ?? ''))
     if (event === 'installation_repositories' && payload.action === 'removed') {
       for (const repo of payload.repositories_removed ?? []) {
-        for (const link of this.links.byRepository(String(repo.id))) {
+        for (const link of await this.links.byRepository(String(repo.id))) {
           const project = this.projects.get(link.project_id)
           if (project && link.provider_installation_id === String(payload.installation?.id)) await this.unlink(project, link.resource_type, link.resource_id)
         }
@@ -714,12 +726,12 @@ export class VcsHub {
    * (Appwrite's updateExternalDeployments): remember it and build the PR now.
    */
   async approve(project: ProjectRuntime, repositoryLinkId: string, pullRequest: string): Promise<RepositoryRow> {
-    const link = this.links.get(repositoryLinkId)
+    const link = await this.links.get(repositoryLinkId)
     if (link.project_id !== project.info.id) throw err('repository_not_found')
     const number = Number(pullRequest)
     if (!Number.isInteger(number) || number < 1) throw err('general_argument_invalid', 'Param "providerPullRequestId" must be a pull request number.')
     const pr = await this.github.pull(link.provider_installation_id, link.provider_repository_id, number)
-    const updated = this.links.approve(link.id, String(number))
+    const updated = await this.links.approve(link.id, String(number))
     const target = await this.toTarget(updated)
     if (target && pr.state === 'open') await this.buildPull([target], pr)
     return updated
@@ -732,7 +744,7 @@ export class VcsHub {
   }
 
   private async onInstallationGone(providerInstallationId: string): Promise<void> {
-    const installation = this.installations.byProvider(providerInstallationId)
+    const installation = await this.installations.byProvider(providerInstallationId)
     if (installation) await this.removeInstallation(installation.id)
     this.github.forget(providerInstallationId)
   }
@@ -762,10 +774,10 @@ export class VcsHub {
     if (!targets.length) return
     const body = await this.commentBody(targets, pull)
     const installationId = targets[0]!.link.provider_installation_id
-    const existing = this.links.comment(repositoryId, pull.number)
+    const existing = await this.links.comment(repositoryId, pull.number)
     if (existing && (await this.github.updateComment(installationId, repositoryId, existing, body))) return
     const id = await this.github.createComment(installationId, repositoryId, pull.number, body)
-    this.links.setComment(repositoryId, pull.number, id)
+    await this.links.setComment(repositoryId, pull.number, id)
   }
 
   /** The comment's Markdown. */

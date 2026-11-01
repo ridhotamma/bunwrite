@@ -480,7 +480,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       body = renderCards(ctx)
       break
     case 'git':
-      body = gitTabView(ctx)
+      body = await gitTabView(ctx)
       break
   }
   return html`${header('Settings')}

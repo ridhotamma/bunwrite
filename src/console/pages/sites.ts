@@ -170,7 +170,7 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
   const installationId = value(ctx.form, 'installation_id')
   const repositoryId = value(ctx.form, 'provider_repository_id')
   if (!installationId || !repositoryId) throw err('general_argument_invalid', 'Pick an account and a repository.')
-  const installation = ctx.hub.installations.get(installationId)
+  const installation = await ctx.hub.installations.get(installationId)
   const root = rootDirectory(value(ctx.form, 'provider_root_directory'))
   const branch = value(ctx.form, 'provider_branch')
   let fields = buildFromForm(ctx, 'git_framework', true)
@@ -204,7 +204,7 @@ async function createFromGit(ctx: ConsoleContext): Promise<Response> {
     await ctx.hub.deployReference(project, 'site', site.id, 'branch', linked.provider_branch, true)
     return ctx.go(siteUrl(site.id), { tone: 'success', text: `Site created as ${preset.name}; deploying ${linked.provider_branch}` })
   } catch (error) {
-    ctx.hub.forget(project.info.id, 'site', site.id)
+    await ctx.hub.forget(project.info.id, 'site', site.id)
     await ctx.services.sites.remove(site.id)
     throw error
   }
@@ -367,18 +367,18 @@ export function sitePages(router: ConsoleRouter): void {
     for (const id of ids) {
       if (!ctx.services.sites.has(id)) continue
       await ctx.services.sites.remove(id)
-      ctx.hub.forget(ctx.currentProject.id, 'site', id)
+      await ctx.hub.forget(ctx.currentProject.id, 'site', id)
       removed++
     }
     if (!removed) return ctx.go(SITES, { tone: 'warning', text: 'No sites were deleted.' })
     return ctx.go(SITES, { tone: 'success', text: `${plural(removed, 'site')} deleted` })
   })
 
-  router.get(`${SITES}/new`, ({ ctx, url }) =>
+  router.get(`${SITES}/new`, async ({ ctx, url }) =>
     ctx.render(
       'Create site',
       'sites',
-      siteCreateView(sitesDomainOf(ctx.services.config), ctx.hub.installations.list(), Boolean(ctx.hub.apps.get()), url.searchParams.get('source') ?? ''),
+      siteCreateView(sitesDomainOf(ctx.services.config), await ctx.hub.installations.list(), Boolean(ctx.hub.apps.get()), url.searchParams.get('source') ?? ''),
     ),
   )
 
@@ -562,7 +562,7 @@ export function sitePages(router: ConsoleRouter): void {
           </form>`,
           { id: 'site-deployments' },
         )}
-        ${gitSection(ctx, { type: 'site', row: site, base: siteUrl(site.id) })}
+        ${await gitSection(ctx, { type: 'site', row: site, base: siteUrl(site.id) })}
         ${settingsSection(
           'API',
           html`Let pages call a function on the same origin, for example <code>hx-post="/api/todos"</code>. No CORS setup needed.`,
@@ -596,7 +596,7 @@ export function sitePages(router: ConsoleRouter): void {
   router.post(`${SITES}/:id/delete`, async ({ ctx, path }) => {
     const site = ctx.services.sites.site(path.id!)
     await ctx.services.sites.remove(site.id)
-    ctx.hub.forget(ctx.currentProject.id, 'site', site.id)
+    await ctx.hub.forget(ctx.currentProject.id, 'site', site.id)
     return ctx.go(SITES, { tone: 'success', text: `${site.name} deleted` })
   })
 }

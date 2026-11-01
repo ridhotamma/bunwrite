@@ -54,12 +54,12 @@ export function collectionSettingsPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(`${COL}/settings`, ({ ctx, path }) => {
+  router.post(`${COL}/settings`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
     const section = value(ctx.form, 'section')
     const name = section === 'access' ? c.name : value(ctx.form, 'name') || c.name
     const enabled = section === 'access' ? c.enabled : checked(ctx.form.enabled)
-    ctx.schema.updateCollection(c.databaseId, c.id, {
+    await ctx.schema.updateCollection(c.databaseId, c.id, {
       name,
       enabled,
       documentSecurity: section === 'general' ? c.documentSecurity : checked(ctx.form.documentSecurity),
@@ -68,9 +68,9 @@ export function collectionSettingsPages(router: ConsoleRouter): void {
     return ctx.go(`${collectionUrl(c)}/settings`, { tone: 'success', text: 'Saved' })
   })
 
-  router.post(`${COL}/delete`, ({ ctx, path }) => {
+  router.post(`${COL}/delete`, async ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    ctx.schema.deleteCollection(c.databaseId, c.id)
+    await ctx.schema.deleteCollection(c.databaseId, c.id)
     return ctx.go(`${DB}/${encodeURIComponent(c.databaseId)}`, { tone: 'success', text: 'Collection deleted' })
   })
 }

@@ -137,7 +137,7 @@ export function functionRoutes(router: Router<AppContext>): void {
       await applyProvider(ctx, 'function', created.id, params, NO_PROVIDER)
     } catch (error) {
       // A repository that cannot be connected fails the whole create, as on Appwrite.
-      ctx.hub.forget(ctx.config.projectId, 'function', created.id)
+      await ctx.hub.forget(ctx.config.projectId, 'function', created.id)
       await ctx.functions.remove(created.id)
       throw error
     }
@@ -160,7 +160,7 @@ export function functionRoutes(router: Router<AppContext>): void {
   router.delete('/functions/:functionId', async ({ ctx, path }) => {
     requireKey(ctx, 'functions.write')
     await ctx.functions.remove(path.functionId!)
-    ctx.hub.forget(ctx.config.projectId, 'function', path.functionId!)
+    await ctx.hub.forget(ctx.config.projectId, 'function', path.functionId!)
     return noContent()
   })
 

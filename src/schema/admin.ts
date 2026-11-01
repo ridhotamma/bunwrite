@@ -1,36 +1,72 @@
 /**
  * Schema changes made in the console. Every change edits a collection's
- * definition and re-applies it with `pushCollection`, so the console and
- * `schema:push` alter tables the same way. Export/import use the
- * project config shape the project keeps in its repo.
+ * definition and re-applies it with the backend's schema push, so the console,
+ * the REST routes and `schema:push` alter tables the same way. Export/import use
+ * the project config shape the project keeps in its repo.
+ *
+ * SQLite uses the synchronous DDL builder; Postgres uses the same diff rules
+ * with its own DDL. Both are wrapped in a driver transaction so a composite
+ * change (create a collection, then its attributes) is atomic.
  */
 import type { Db } from '~/db/connection'
-import type { SqlDatabase } from '~/db/driver'
+import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import type { BucketRow } from '~/storage/service'
 import { collectionVersionKey } from '~/cluster/versions'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { isValidId } from '~/lib/ids'
 import { dropCollectionTables, pushCollection, pushConfig, type ConfigCollection } from './push'
+import { applyConfigPostgres, dropCollectionTablesPostgres, pushCollectionPostgres } from './push-postgres'
 import type { Registry } from './registry'
 import { attributeDefinition, normalizeAttribute, normalizeIndex, tableName, type Attribute, type Index } from './types'
 
+/** The dry-run transaction rolls back by throwing this out of the callback. */
+class RollbackPreview extends Error {}
+
 export class SchemaAdmin {
+  /** Set while one transaction spans several admin calls. */
+  private tx: SqlExecutor | null = null
+
   constructor(
     private db: SqlDatabase,
     private registry: Registry,
   ) {}
 
-  /**
-   * Collection DDL still runs on the synchronous SQLite path. The console and
-   * the schema REST routes report that clearly on a network backend instead of
-   * failing with a missing-connection error.
-   */
+  /** Collection DDL on SQLite uses the synchronous path. */
   private get local(): Db {
     if (this.db.dialect !== 'sqlite' || !this.db.sqlite) {
-      throw err('general_not_implemented', 'Schema changes are not available on this database backend yet; apply collections with db:migrate --schema.')
+      throw err('general_not_implemented', 'SQLite schema DDL is not available on this backend.')
     }
     return this.db as Db
+  }
+
+  private executor(): SqlExecutor {
+    return this.tx ?? this.db.driver
+  }
+
+  /**
+   * Run `fn` in one database transaction. A nested call reuses the outer
+   * transaction (the REST API creates a collection and its attributes in one
+   * request); the outermost call reloads the registry afterwards.
+   */
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.tx) return fn()
+    try {
+      const value = await this.db.driver.transaction(async (tx) => {
+        this.tx = tx
+        try {
+          return await fn()
+        } finally {
+          this.tx = null
+        }
+      })
+      await this.registry.load()
+      return value
+    } catch (error) {
+      // A rolled-back transaction must not leave its preview in the registry.
+      await this.registry.load().catch(() => {})
+      throw error
+    }
   }
 
   private def(databaseId: string, collectionId: string): ConfigCollection {
@@ -47,64 +83,76 @@ export class SchemaAdmin {
     }
   }
 
-  private apply(def: ConfigCollection): string[] {
+  private async apply(def: ConfigCollection): Promise<string[]> {
     const log: string[] = []
-    this.local.sqlite.transaction(() => pushCollection(this.local, def, now(), (l) => log.push(l))).immediate()
-    this.registry.reload()
+    await this.transaction(async () => {
+      if (this.db.dialect === 'sqlite') pushCollection(this.local, def, now(), (l) => log.push(l))
+      else await pushCollectionPostgres(this.executor(), def, now(), (l) => log.push(l))
+      // A composite call (create a collection, then its attributes) needs the
+      // new definition in the registry before the next step. Read it through
+      // the transaction so Postgres sees the uncommitted row too.
+      if (this.tx) await this.registry.loadFrom(this.tx)
+    })
     return log
   }
 
-  createDatabase(id: string, name: string): void {
+  async createDatabase(id: string, name: string): Promise<void> {
     if (!isValidId(id)) throw err('general_argument_invalid', 'Database ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
     if (this.registry.databases.has(id)) throw err('database_already_exists')
     const stamp = now()
-    this.local.sqlite.query('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)').run(id, name || id, stamp, stamp)
-    this.registry.reload()
+    await this.transaction(async () => {
+      await this.executor().run('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)', [id, name || id, stamp, stamp])
+    })
   }
 
-  updateDatabase(id: string, name: string, enabled: boolean): void {
+  async updateDatabase(id: string, name: string, enabled: boolean): Promise<void> {
     this.registry.database(id, true)
-    this.local.sqlite.query('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?').run(name, enabled ? 1 : 0, now(), id)
-    this.registry.reload()
+    await this.transaction(async () => {
+      await this.executor().run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [name, enabled ? 1 : 0, now(), id])
+    })
   }
 
-  deleteDatabase(id: string): void {
+  async deleteDatabase(id: string): Promise<void> {
     const database = this.registry.database(id, true)
-    this.local.sqlite.transaction(() => {
-      for (const c of [...this.registry.collections.values()].filter((c) => c.databaseId === id)) {
-        dropCollectionTables(this.local, tableName(database.seq, c.id))
+    const tables = [...this.registry.collections.values()].filter((c) => c.databaseId === id).map((c) => tableName(database.seq, c.id))
+    await this.transaction(async () => {
+      const tx = this.executor()
+      if (this.db.dialect === 'sqlite') {
+        for (const table of tables) dropCollectionTables(this.local, table)
+      } else {
+        for (const table of tables) await dropCollectionTablesPostgres(tx, table)
       }
-      this.local.sqlite.query('DELETE FROM _collections WHERE database_id = ?').run(id)
-      this.local.sqlite.query('DELETE FROM _databases WHERE id = ?').run(id)
-      this.local.sqlite.query('DELETE FROM _meta WHERE key LIKE ?').run(`collection:${id}/%`)
-    }).immediate()
-    this.registry.reload()
+      await tx.run('DELETE FROM _collections WHERE database_id = ?', [id])
+      await tx.run('DELETE FROM _databases WHERE id = ?', [id])
+      await tx.run('DELETE FROM _meta WHERE key LIKE ?', [`collection:${id}/%`])
+    })
   }
 
-  createCollection(databaseId: string, id: string, name: string, documentSecurity: boolean, permissions: string[]): void {
+  async createCollection(databaseId: string, id: string, name: string, documentSecurity: boolean, permissions: string[]): Promise<void> {
     this.registry.database(databaseId, true)
     if (!isValidId(id)) throw err('general_argument_invalid', 'Collection ID: up to 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.')
     if (this.registry.collections.has(`${databaseId}/${id}`)) throw err('collection_already_exists')
-    this.apply({ databaseId, id, name: name || id, enabled: true, documentSecurity, permissions, attributes: [], indexes: [] })
+    await this.apply({ databaseId, id, name: name || id, enabled: true, documentSecurity, permissions, attributes: [], indexes: [] })
   }
 
-  updateCollection(databaseId: string, id: string, patch: { name?: string; enabled?: boolean; documentSecurity?: boolean; permissions?: string[] }): void {
+  async updateCollection(databaseId: string, id: string, patch: { name?: string; enabled?: boolean; documentSecurity?: boolean; permissions?: string[] }): Promise<void> {
     const def = this.def(databaseId, id)
-    this.apply({ ...def, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) })
+    await this.apply({ ...def, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) })
   }
 
-  deleteCollection(databaseId: string, id: string): void {
+  async deleteCollection(databaseId: string, id: string): Promise<void> {
     const c = this.registry.collection(databaseId, id, true)
-    this.local.sqlite.transaction(() => {
-      dropCollectionTables(this.local, c.table)
-      this.local.sqlite.query('DELETE FROM _collections WHERE database_id = ? AND id = ?').run(databaseId, id)
-      this.local.sqlite.query('DELETE FROM _meta WHERE key = ?').run(collectionVersionKey(databaseId, id))
-    }).immediate()
-    this.registry.reload()
+    await this.transaction(async () => {
+      const tx = this.executor()
+      if (this.db.dialect === 'sqlite') dropCollectionTables(this.local, c.table)
+      else await dropCollectionTablesPostgres(tx, c.table)
+      await tx.run('DELETE FROM _collections WHERE database_id = ? AND id = ?', [databaseId, id])
+      await tx.run('DELETE FROM _meta WHERE key = ?', [collectionVersionKey(databaseId, id)])
+    })
   }
 
   /** Add or replace an attribute. A type change rebuilds the table, keeping the data. */
-  saveAttribute(databaseId: string, collectionId: string, raw: Record<string, unknown>, replace = false): string[] {
+  async saveAttribute(databaseId: string, collectionId: string, raw: Record<string, unknown>, replace = false): Promise<string[]> {
     const def = this.def(databaseId, collectionId)
     const attribute = normalizeAttribute(raw)
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(attribute.key)) {
@@ -121,7 +169,7 @@ export class SchemaAdmin {
     return this.apply(def)
   }
 
-  deleteAttribute(databaseId: string, collectionId: string, key: string): string[] {
+  async deleteAttribute(databaseId: string, collectionId: string, key: string): Promise<string[]> {
     const def = this.def(databaseId, collectionId)
     if (!def.attributes.some((a) => a.key === key)) throw err('attribute_not_found', undefined, [key])
     def.attributes = def.attributes.filter((a) => a.key !== key)
@@ -130,7 +178,7 @@ export class SchemaAdmin {
     return this.apply(def)
   }
 
-  saveIndex(databaseId: string, collectionId: string, raw: Record<string, unknown>): string[] {
+  async saveIndex(databaseId: string, collectionId: string, raw: Record<string, unknown>): Promise<string[]> {
     const def = this.def(databaseId, collectionId)
     const index: Index = normalizeIndex(raw)
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,35}$/.test(index.key)) throw err('general_argument_invalid', 'Index key is not valid.')
@@ -143,7 +191,7 @@ export class SchemaAdmin {
     return this.apply(def)
   }
 
-  deleteIndex(databaseId: string, collectionId: string, key: string): string[] {
+  async deleteIndex(databaseId: string, collectionId: string, key: string): Promise<string[]> {
     const def = this.def(databaseId, collectionId)
     if (!def.indexes.some((i) => i.key === key)) throw err('index_not_found', undefined, [key])
     def.indexes = def.indexes.filter((i) => i.key !== key)
@@ -186,7 +234,7 @@ export class SchemaAdmin {
    * Import collection definitions only. With `prune` missing collections and
    * fields are deleted; otherwise existing fields are merged in.
    */
-  importCollections(collections: unknown, options: { prune?: boolean; dryRun?: boolean } = {}): string[] {
+  async importCollections(collections: unknown, options: { prune?: boolean; dryRun?: boolean } = {}): Promise<string[]> {
     if (!Array.isArray(collections) || collections.length === 0) {
       throw err('general_argument_invalid', 'No collections to import.')
     }
@@ -231,9 +279,8 @@ export class SchemaAdmin {
   }
 
   /** Current schema in project config shape (tablesDB/tables/buckets). */
-  export(): Record<string, unknown> {
-    const sql = this.local.sqlite
-    const buckets = sql.query<BucketRow, []>('SELECT * FROM _buckets ORDER BY seq').all()
+  async export(): Promise<Record<string, unknown>> {
+    const buckets = await this.db.driver.all<BucketRow>('SELECT * FROM _buckets ORDER BY seq')
     return {
       tablesDB: [...this.registry.databases.values()].map((d) => ({ $id: d.id, name: d.name, enabled: d.enabled })),
       tables: this.collectionDefinitions(),
@@ -254,22 +301,23 @@ export class SchemaAdmin {
 
   /**
    * Apply a config file. With `dryRun` the changes are made inside a
-   * savepoint and rolled back, so the console can show them before applying.
+   * transaction and rolled back, so the console can show them before applying.
    */
-  importConfig(config: unknown, options: { baseDir?: string; prune?: boolean; dryRun?: boolean }): string[] {
+  async importConfig(config: unknown, options: { baseDir?: string; prune?: boolean; dryRun?: boolean } = {}): Promise<string[]> {
     const log: string[] = []
-    const sql = this.local.sqlite
-    sql.run('SAVEPOINT schema_import')
     try {
-      pushConfig(this.local, config, { baseDir: options.baseDir, prune: options.prune, log: (l) => log.push(l) })
-      if (options.dryRun) sql.run('ROLLBACK TO schema_import')
-      sql.run('RELEASE schema_import')
+      await this.transaction(async () => {
+        if (this.db.dialect === 'sqlite') {
+          pushConfig(this.local, config, { baseDir: options.baseDir, prune: options.prune, log: (l) => log.push(l) })
+        } else {
+          await applyConfigPostgres(this.executor(), config, { baseDir: options.baseDir, prune: options.prune, log: (l) => log.push(l) })
+        }
+        if (options.dryRun) throw new RollbackPreview()
+      })
     } catch (error) {
-      sql.run('ROLLBACK TO schema_import')
-      sql.run('RELEASE schema_import')
-      throw error
+      if (!(error instanceof RollbackPreview)) throw error
     }
-    this.registry.reload()
+    await this.registry.load()
     return log
   }
 }

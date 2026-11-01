@@ -45,6 +45,7 @@ describe('multiple projects', () => {
       .run(stamp, stamp)
 
     app = createApp(manager)
+    await app.hub.ready()
     server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket })
     endpoint = `http://localhost:${server.port}/v1`
     base = `http://localhost:${server.port}`
@@ -107,7 +108,7 @@ describe('multiple projects', () => {
   test('GitHub installations are server-wide, and old per-project rows are adopted', async () => {
     // The row written into project-b's database before the hub started is now
     // in the control database, under one ID both projects can use.
-    const adopted = app.hub.installations.byProvider('999')
+    const adopted = await app.hub.installations.byProvider('999')
     expect(adopted).toMatchObject({ organization: 'legacy-org', account_type: 'Organization' })
     const count = db.sqlite
       .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _vcs_installations WHERE provider_installation_id = '999'")

@@ -358,7 +358,7 @@ describe('Git: GitHub App and installations', () => {
       encodeURIComponent(signState(server.config.secret, { kind: 'install', returnTo: '/console/settings/git', installationId: installation }))
     const denied = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=77&setup_action=install&code=c&state=${state()}`, { redirect: 'manual' })
     expect(denied.headers.get('location')).toContain('err=')
-    expect(server.hub.installations.list()).toHaveLength(0)
+    expect(await server.hub.installations.list()).toHaveLength(0)
 
     // Without a code the server asks GitHub who is signed in first.
     const noCode = await fetch(`${server.endpoint}/vcs/github/callback?installation_id=${INSTALLATION}&setup_action=install&state=${state()}`, {
@@ -399,7 +399,7 @@ describe('Git: GitHub App and installations', () => {
   test('repository and branch lists are cached, not fetched on every visit', async () => {
     const repoCalls = () => calls.filter((c) => c.path.startsWith('/installation/repositories')).length
     const branchCalls = () => calls.filter((c) => c.path.startsWith('/repos/acme/web/branches')).length
-    const installation = server.hub.installations.get(installationId)
+    const installation = await server.hub.installations.get(installationId)
 
     await server.hub.github.repositories(installation.provider_installation_id)
     const afterRepos = repoCalls()
@@ -546,7 +546,7 @@ describe('Git: deployments', () => {
     expect(comment).toHaveLength(1)
     expect(lastComment()).toContain('Approve builds')
 
-    const link = server.hub.links.forResource(PROJECT, 'site', 'web')!
+    const link = (await server.hub.links.forResource(PROJECT, 'site', 'web'))!
     const approved = await api(`/vcs/github/installations/${installationId}/repositories/${link.id}`, {
       method: 'PATCH',
       body: JSON.stringify({ providerPullRequestId: '9' }),
@@ -695,7 +695,7 @@ describe('Git: deployments', () => {
     // GitHub cannot be read: the branch stays editable instead of empty.
     expect((await get(`/console/vcs/branches?installation_id=${installationId}&provider_repository_id=31337`)).text).toContain('<input name="provider_branch"')
 
-    const approve = await get(`/console/vcs/approve?repository=${server.hub.links.forResource(PROJECT, 'site', 'web')!.id}&pr=9`)
+    const approve = await get(`/console/vcs/approve?repository=${(await server.hub.links.forResource(PROJECT, 'site', 'web'))!.id}&pr=9`)
     expect(approve.text).toContain('This pull request is approved')
 
     // Create a site straight from the repository; detection picks the framework.
@@ -797,12 +797,12 @@ describe('Git: deployments', () => {
       body: JSON.stringify({ name: 'App', framework: 'hono', installationId: '', providerRepositoryId: '' }),
     })
     expect(((await off.json()) as any).providerRepositoryId).toBe('')
-    expect(server.hub.links.forResource(PROJECT, 'site', 'app')).toBeNull()
+    expect(await server.hub.links.forResource(PROJECT, 'site', 'app')).toBeNull()
 
     expect((await api(`/vcs/installations/${installationId}`, { method: 'DELETE' })).status).toBe(204)
     expect(server.services.sites.site('web').provider_repository_id).toBe('')
     expect((await server.services.functions.fn('api')).installation_id).toBe('')
-    expect(server.hub.links.byRepository(String(REPO_ID))).toHaveLength(0)
+    expect(await server.hub.links.byRepository(String(REPO_ID))).toHaveLength(0)
     // Disconnecting keeps what was deployed.
     expect(existsSync(sitesDir(server.config, 'web'))).toBe(true)
     expect(await (await visit('web')).text()).toBe('<h1>v2</h1>')
@@ -847,6 +847,6 @@ describe('Git: deployments', () => {
       { redirect: 'manual' },
     )
     expect(done.headers.get('location')).toStartWith('/console/sites/new?source=github&ok=')
-    expect(server.hub.installations.list()).toHaveLength(1)
+    expect(await server.hub.installations.list()).toHaveLength(1)
   })
 })

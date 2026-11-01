@@ -156,7 +156,7 @@ export function siteRoutes(router: Router<AppContext>): void {
     try {
       await applyProvider(ctx, 'site', created.id, params, NO_PROVIDER)
     } catch (error) {
-      ctx.hub.forget(ctx.config.projectId, 'site', created.id)
+      await ctx.hub.forget(ctx.config.projectId, 'site', created.id)
       await ctx.sites.remove(created.id)
       throw error
     }
@@ -205,7 +205,7 @@ export function siteRoutes(router: Router<AppContext>): void {
   router.delete('/sites/:siteId', async ({ ctx, path }) => {
     requireKey(ctx, 'sites.write')
     await ctx.sites.remove(path.siteId!)
-    ctx.hub.forget(ctx.config.projectId, 'site', path.siteId!)
+    await ctx.hub.forget(ctx.config.projectId, 'site', path.siteId!)
     return noContent()
   })
 

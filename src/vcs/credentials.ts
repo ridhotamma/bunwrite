@@ -2,9 +2,12 @@
  * The server's GitHub App credentials. VCS_GITHUB_* env vars win field by
  * field; otherwise the app made by the console's one-click setup, stored in
  * the control database's `_vcs_github_app`.
+ *
+ * Reads stay synchronous because the GitHub client asks for credentials from
+ * synchronous helpers. SQLite loads the row in the constructor; a network
+ * backend loads it in `VcsHub.ready()`.
  */
 import type { Config } from '~/config'
-import type { Db } from '~/db/connection'
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import type { GithubAppCredentials, GithubManifestApp } from './github'
@@ -23,19 +26,32 @@ interface AppRow {
 }
 
 export class GithubAppStore {
+  /** `undefined` means a network backend has not loaded the row yet. */
+  private cache: AppRow | null | undefined
+
   constructor(
     private readonly db: SqlDatabase,
     private readonly config: Config,
-  ) {}
+  ) {
+    if (db.dialect === 'sqlite') this.loadSync()
+  }
 
-  /** The VCS console has not moved to the driver port yet; it is SQLite-only. */
-  private get sqlite(): Db['sqlite'] {
-    if (!this.db.sqlite) throw new Error('GitHub App setup is not available on this database backend yet.')
-    return this.db.sqlite
+  private loadSync(): void {
+    this.cache = this.db.sqlite?.query<AppRow, []>("SELECT * FROM _vcs_github_app WHERE key = 'github'").get() ?? null
+  }
+
+  /** Load the stored app before the console can read it on a network backend. */
+  async load(): Promise<void> {
+    this.cache =
+      (await this.db.driver.get<AppRow>("SELECT * FROM _vcs_github_app WHERE key = 'github'")) ?? null
   }
 
   private row(): AppRow | null {
-    return this.sqlite.query<AppRow, []>("SELECT * FROM _vcs_github_app WHERE key = 'github'").get()
+    if (this.cache === undefined) {
+      if (this.db.sqlite) this.loadSync()
+      else return null
+    }
+    return this.cache ?? null
   }
 
   /** True when the env vars alone define a complete app. */
@@ -66,22 +82,48 @@ export class GithubAppStore {
   }
 
   /** Store the app GitHub made from our manifest. */
-  save(app: GithubManifestApp): void {
+  async save(app: GithubManifestApp): Promise<void> {
     const stamp = now()
-    this.sqlite
-      .query(
-        `INSERT INTO _vcs_github_app (key, app_id, slug, name, owner, html_url, client_id, client_secret, webhook_secret, private_key, created_at, updated_at)
-         VALUES ('github', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET app_id = excluded.app_id, slug = excluded.slug, name = excluded.name, owner = excluded.owner,
-           html_url = excluded.html_url, client_id = excluded.client_id, client_secret = excluded.client_secret,
-           webhook_secret = excluded.webhook_secret, private_key = excluded.private_key, updated_at = excluded.updated_at`,
-      )
-      .run(String(app.id), app.slug, app.name, app.owner?.login ?? '', app.html_url, app.client_id, app.client_secret, app.webhook_secret ?? '', app.pem, stamp, stamp)
+    const values = [
+      String(app.id),
+      app.slug,
+      app.name,
+      app.owner?.login ?? '',
+      app.html_url,
+      app.client_id,
+      app.client_secret,
+      app.webhook_secret ?? '',
+      app.pem,
+      stamp,
+      stamp,
+    ]
+    await this.db.driver.run(
+      `INSERT INTO _vcs_github_app (key, app_id, slug, name, owner, html_url, client_id, client_secret, webhook_secret, private_key, created_at, updated_at)
+       VALUES ('github', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET app_id = excluded.app_id, slug = excluded.slug, name = excluded.name, owner = excluded.owner,
+         html_url = excluded.html_url, client_id = excluded.client_id, client_secret = excluded.client_secret,
+         webhook_secret = excluded.webhook_secret, private_key = excluded.private_key, updated_at = excluded.updated_at`,
+      values,
+    )
+    this.cache = {
+      key: 'github',
+      app_id: String(app.id),
+      slug: app.slug,
+      name: app.name,
+      owner: app.owner?.login ?? '',
+      html_url: app.html_url,
+      client_id: app.client_id,
+      client_secret: app.client_secret,
+      webhook_secret: app.webhook_secret ?? '',
+      private_key: app.pem,
+    }
   }
 
   /** Forget the console-made app. The app itself stays on GitHub until deleted there. */
-  remove(): boolean {
-    return this.sqlite.query("DELETE FROM _vcs_github_app WHERE key = 'github'").run().changes > 0
+  async remove(): Promise<boolean> {
+    const result = await this.db.driver.run("DELETE FROM _vcs_github_app WHERE key = 'github'")
+    this.cache = null
+    return result.changes > 0
   }
 
   /** True when the console stored an app (so the console may remove it). */

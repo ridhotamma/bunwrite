@@ -23,7 +23,7 @@ Related documents:
 | Area | Current state | Risk |
 | --- | --- | --- |
 | High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
-| Database backends | SQLite and Postgres serve the API path (Postgres per-project schemas); MongoDB drivers exist but the repositories are not done, and some console/VCS screens are still SQLite-only | **Medium** |
+| Database backends | SQLite and Postgres serve the API and console (Postgres per-project schemas); MongoDB drivers exist but its repositories are not done | **Medium** |
 | API key permissions | Console keys can be scoped per API group; env `API_KEYS` and old keys stay full access | **Low/Medium** |
 | Backups | Off by default; whole-instance archives plus optional Litestream PITR | **High/Medium** |
 | Function isolation | Shared CPU/memory/network, no quotas | **High** |
@@ -63,11 +63,11 @@ required.
 
 A database port now exists under the data layer (`src/db/driver.ts`) with
 working Postgres and MongoDB drivers, runtime schema bootstrap and integration
-tests against real servers. Postgres now serves the API request path, including
-one schema per project; MongoDB still needs the remaining SQL-shaped
-repositories, and the console settings/schema, logs/queue and VCS screens are
-still on the synchronous SQLite fast path. See [DATABASE.md](DATABASE.md) for
-the current state and the migration order.
+tests against real servers. Postgres now serves the API request path and the
+console, including one schema per project and Postgres schema DDL; MongoDB still
+needs the remaining SQL-shaped repositories. The cluster lease and
+backup/snapshot features stay SQLite-only by design. See
+[DATABASE.md](DATABASE.md) for the current state and the migration order.
 
 ### 2. API key scopes are available, but environment keys bypass them
 

@@ -98,6 +98,8 @@ export async function startServer(): Promise<void> {
     }
   }
   const app = createApp(projects)
+  // Load the stored GitHub App and adopt any project-local installations.
+  await app.hub.ready()
 
   // Clear out old transactions, tokens, sessions and request logs every 10 minutes.
   setInterval(

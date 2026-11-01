@@ -1,4 +1,4 @@
-import type { SqlDatabase } from '~/db/driver'
+import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { err } from '~/lib/errors'
 import {
   normalizeAttribute,
@@ -65,8 +65,17 @@ export class Registry {
 
   /** Reload through the driver port so it works on Postgres too. */
   async load(): Promise<void> {
-    const dbs = await this.db.driver.all<DatabaseRow>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
-    const rows = await this.db.driver.all<CollectionRow>('SELECT * FROM _collections')
+    await this.loadFrom(this.db.driver)
+  }
+
+  /**
+   * Reload inside an open transaction, so a composite schema change sees its
+   * own uncommitted rows (Postgres uses a different pooled connection
+   * outside the transaction).
+   */
+  async loadFrom(executor: SqlExecutor): Promise<void> {
+    const dbs = await executor.all<DatabaseRow>('SELECT seq, id, name, enabled, created_at, updated_at FROM _databases')
+    const rows = await executor.all<CollectionRow>('SELECT * FROM _collections')
     this.apply(dbs, rows)
   }
 

@@ -39,54 +39,58 @@ interface ExistingCollection {
   indexes: string
 }
 
-/** Apply databases, collections, buckets and functions from a config file. */
-export async function pushConfigPostgres(driver: PostgresDriver, config: ProjectConfig, options: PushOptions = {}): Promise<void> {
+/** Apply a config file in one transaction. */
+export async function pushConfigPostgres(driver: PostgresDriver, config: unknown, options: PushOptions = {}): Promise<void> {
+  await driver.transaction((tx) => applyConfigPostgres(tx, config, options))
+}
+
+/** The transaction body, shared with the console's dry-run preview. */
+export async function applyConfigPostgres(driver: SqlExecutor, config: unknown, options: PushOptions = {}): Promise<void> {
   const log = options.log ?? (() => {})
+  const project = config && typeof config === 'object' ? (config as ProjectConfig) : {}
   const { databases, collections } = readConfig(config)
   const stamp = now()
 
-  await driver.transaction(async (tx) => {
-    for (const database of databases) {
-      const existing = await tx.get<{ seq: number }>('SELECT seq FROM _databases WHERE id = ?', [database.id])
-      if (existing) {
-        await tx.run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [database.name, flag(database.enabled), stamp, database.id])
-      } else {
-        await tx.run('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
-          database.id,
-          database.name,
-          flag(database.enabled),
-          stamp,
-          stamp,
-        ])
-        log(`+ database ${database.id}`)
-      }
+  for (const database of databases) {
+    const existing = await driver.get<{ seq: number }>('SELECT seq FROM _databases WHERE id = ?', [database.id])
+    if (existing) {
+      await driver.run('UPDATE _databases SET name = ?, enabled = ?, updated_at = ? WHERE id = ?', [database.name, flag(database.enabled), stamp, database.id])
+    } else {
+      await driver.run('INSERT INTO _databases (id, name, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
+        database.id,
+        database.name,
+        flag(database.enabled),
+        stamp,
+        stamp,
+      ])
+      log(`+ database ${database.id}`)
     }
+  }
 
-    const wanted = new Set<string>()
-    for (const collection of collections) {
-      wanted.add(`${collection.databaseId}/${collection.id}`)
-      await pushCollectionPostgres(tx, collection, stamp, log)
+  const wanted = new Set<string>()
+  for (const collection of collections) {
+    wanted.add(`${collection.databaseId}/${collection.id}`)
+    await pushCollectionPostgres(driver, collection, stamp, log)
+  }
+
+  await pushBuckets(driver, project.buckets ?? [], stamp, log)
+  await pushFunctions(driver, project.functions ?? [], stamp, log, options.baseDir)
+
+  if (options.prune) {
+    const all = await driver.all<{ database_id: string; id: string; dseq: number }>(
+      'SELECT c.database_id, c.id, d.seq AS dseq FROM _collections c JOIN _databases d ON d.id = c.database_id',
+    )
+    for (const collection of all) {
+      if (wanted.has(`${collection.database_id}/${collection.id}`)) continue
+      await dropCollectionTablesPostgres(driver, tableName(collection.dseq, collection.id))
+      await driver.run('DELETE FROM _collections WHERE database_id = ? AND id = ?', [collection.database_id, collection.id])
+      await driver.run('DELETE FROM _meta WHERE key = ?', [collectionVersionKey(collection.database_id, collection.id)])
+      log(`- collection ${collection.database_id}/${collection.id}`)
     }
-
-    await pushBuckets(tx, config.buckets ?? [], stamp, log)
-    await pushFunctions(tx, config.functions ?? [], stamp, log, options.baseDir)
-
-    if (options.prune) {
-      const all = await tx.all<{ database_id: string; id: string; dseq: number }>(
-        'SELECT c.database_id, c.id, d.seq AS dseq FROM _collections c JOIN _databases d ON d.id = c.database_id',
-      )
-      for (const collection of all) {
-        if (wanted.has(`${collection.database_id}/${collection.id}`)) continue
-        await dropCollectionTables(tx, tableName(collection.dseq, collection.id))
-        await tx.run('DELETE FROM _collections WHERE database_id = ? AND id = ?', [collection.database_id, collection.id])
-        await tx.run('DELETE FROM _meta WHERE key = ?', [collectionVersionKey(collection.database_id, collection.id)])
-        log(`- collection ${collection.database_id}/${collection.id}`)
-      }
-    }
-  })
+  }
 }
 
-async function pushCollectionPostgres(driver: SqlExecutor, collection: ConfigCollection, stamp: string, log: (line: string) => void): Promise<void> {
+export async function pushCollectionPostgres(driver: SqlExecutor, collection: ConfigCollection, stamp: string, log: (line: string) => void): Promise<void> {
   const database = await driver.get<{ seq: number }>('SELECT seq FROM _databases WHERE id = ?', [collection.databaseId])
   if (!database) throw new Error(`Collection ${collection.id} points at unknown database ${collection.databaseId}`)
   const table = tableName(database.seq, collection.id)
@@ -180,7 +184,7 @@ async function pushCollectionPostgres(driver: SqlExecutor, collection: ConfigCol
 }
 
 /** Drop a collection's tables and its permission table. */
-async function dropCollectionTables(driver: SqlExecutor, table: string): Promise<void> {
+export async function dropCollectionTablesPostgres(driver: SqlExecutor, table: string): Promise<void> {
   await driver.exec(`DROP TABLE IF EXISTS ${q(table)} CASCADE`)
   await driver.exec(`DROP TABLE IF EXISTS ${q(permsTableName(table))} CASCADE`)
 }

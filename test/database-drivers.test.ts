@@ -34,6 +34,10 @@ import { TransactionService } from '~/transactions/service'
 import { normalizeAttribute, normalizeIndex, permsTableName, tableName, type Collection } from '~/schema/types'
 import { compileQueries } from '~/documents/query'
 import { pushConfigPostgres } from '~/schema/push-postgres'
+import { SchemaAdmin } from '~/schema/admin'
+import { GithubAppStore } from '~/vcs/credentials'
+import { VcsInstallations } from '~/vcs/installations'
+import { approvedPulls, RepositoryLinks } from '~/vcs/repositories'
 import { MongoDocumentStore } from '~/documents/mongo-store'
 import { mongoDocumentIndexes } from '~/db/mongo-schema'
 import type { Caller } from '~/auth/caller'
@@ -595,6 +599,102 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     // Prune removes collections that are no longer in the config.
     await pushConfigPostgres(driver, { ...config, tables: [] }, { prune: true })
     expect(await driver.get(`SELECT 1 FROM _collections WHERE database_id = 'shop' AND id = 'orders'`)).toBeNull()
+  })
+
+  test('the schema admin creates, previews and deletes collections on Postgres', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const registry = new Registry(handle)
+    await registry.load()
+    const admin = new SchemaAdmin(handle, registry)
+
+    await admin.createDatabase('consolepg', 'Console PG')
+    await admin.createCollection('consolepg', 'items', 'Items', true, [])
+    await admin.saveAttribute('consolepg', 'items', { key: 'name', type: 'string', required: false, size: 100 })
+    await admin.saveIndex('consolepg', 'items', { key: 'idx_name', type: 'key', columns: ['name'], orders: ['ASC'] })
+    const collection = registry.collection('consolepg', 'items', true)
+    expect(collection.attributeMap.has('name')).toBe(true)
+    expect(collection.indexes.map((index) => index.key)).toEqual(['idx_name'])
+
+    // A dry run reports the change but leaves the collection untouched.
+    const preview = await admin.importConfig(
+      {
+        tables: [
+          {
+            $id: 'items',
+            databaseId: 'consolepg',
+            name: 'Items',
+            enabled: true,
+            rowSecurity: true,
+            columns: [
+              { key: 'name', type: 'string', required: false, size: 100 },
+              { key: 'note', type: 'string', required: false, size: 100 },
+            ],
+            indexes: [],
+          },
+        ],
+      },
+      { dryRun: true },
+    )
+    expect(preview.join('\n')).toContain('note')
+    expect(registry.collection('consolepg', 'items', true).attributeMap.has('note')).toBe(false)
+
+    const exported = await admin.export()
+    expect((exported.tablesDB as Array<{ $id: string }>).map((database) => database.$id)).toContain('consolepg')
+
+    await admin.deleteCollection('consolepg', 'items')
+    await admin.deleteDatabase('consolepg')
+    expect(await driver.get(`SELECT 1 FROM _databases WHERE id = 'consolepg'`)).toBeNull()
+    expect(await driver.get(`SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?`, [namespace, collection.table])).toBeNull()
+  })
+
+  test('the VCS stores persist installations, links and the GitHub App on Postgres', async () => {
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const installations = new VcsInstallations(handle)
+    const installation = await installations.add({ providerInstallationId: 'pg-install', organization: 'acme', accountType: 'Organization' })
+    expect((await installations.list()).map((row) => row.id)).toContain(installation.id)
+    expect((await installations.byProvider('pg-install'))?.id).toBe(installation.id)
+
+    const links = new RepositoryLinks(handle)
+    const link = await links.link({
+      projectId: 'pg-control',
+      resourceType: 'site',
+      resourceId: 'web',
+      installationId: installation.id,
+      providerInstallationId: 'pg-install',
+      providerRepositoryId: '500',
+      providerRepositoryName: 'acme/web',
+    })
+    expect((await links.forResource('pg-control', 'site', 'web'))?.id).toBe(link.id)
+    expect((await links.byRepository('500')).map((row) => row.id)).toContain(link.id)
+    expect((await links.approve(link.id, '7')).provider_pull_request_ids).toBe('["7"]')
+    expect(approvedPulls(await links.get(link.id))).toEqual(['7'])
+
+    await links.setComment('500', 7, 'comment-1')
+    expect(await links.comment('500', 7)).toBe('comment-1')
+    await expect(links.approve(link.id, '7')).rejects.toBeDefined()
+
+    await links.removeForInstallation(installation.id)
+    expect(await links.forResource('pg-control', 'site', 'web')).toBeNull()
+    await installations.remove(installation.id)
+
+    const apps = new GithubAppStore(handle, testConfig())
+    await apps.load()
+    expect(apps.get()).toBeNull()
+    await apps.save({
+      id: 123,
+      slug: 'bunwrite-test',
+      name: 'Bunwrite Test',
+      owner: { login: 'acme' },
+      html_url: 'https://github.com/apps/bunwrite-test',
+      client_id: 'client',
+      client_secret: 'secret',
+      webhook_secret: 'hook',
+      pem: 'pem',
+    })
+    expect(apps.get()).toMatchObject({ appId: '123', slug: 'bunwrite-test', source: 'console' })
+    expect(apps.stored()).toBe(true)
+    expect(await apps.remove()).toBe(true)
+    expect(apps.get()).toBeNull()
   })
 
   test('drops the scratch schema', async () => {
