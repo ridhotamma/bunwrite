@@ -25,6 +25,8 @@ export interface DetectedResources {
 }
 
 export interface Tuning extends DetectedResources {
+  /** How many processes the detected budget was split across. */
+  processes: number
   sharpConcurrency: number
   sharpCacheMb: number
   previewConcurrency: number
@@ -195,24 +197,32 @@ const formatMemory = (memoryMb: number): string =>
   memoryMb >= 1024 ? `${(memoryMb / 1024).toFixed(memoryMb % 1024 === 0 ? 0 : 1)} GB` : `${memoryMb} MB`
 
 /** Work out every limit from the detected resources and any explicit env values. */
-export function tuningFor(detected: DetectedResources, env: Env = process.env): Tuning {
+export function tuningFor(detected: DetectedResources, env: Env = process.env, processes = 1): Tuning {
   const cpus = Math.max(0.1, detected.cpus)
   const memoryMb = Math.max(64, detected.memoryMb)
+  // Autotune sizes one process. A cluster runs several (public workers, writer
+  // shards and the supervisor), so each one gets a share of the machine, not
+  // the whole machine. `processes` defaults to 1 for single-process servers.
+  const share = Math.max(1, Math.round(processes))
+  const processMb = Math.max(64, Math.floor(memoryMb / share))
+  const processCpus = Math.max(0.1, cpus / share)
 
-  const sharpConcurrency = positive(env.SHARP_CONCURRENCY) ?? clamp(Math.round(cpus), 1, 4)
-  const sharpCacheMb = nonNegative(env.SHARP_CACHE_MB) ?? clamp(Math.round(memoryMb / 32), 16, 128)
-  const previewConcurrency = positive(env.PREVIEW_CONCURRENCY) ?? clamp(Math.min(Math.round(cpus * 2), Math.floor(memoryMb / 192)), 1, 8)
-  const renderMaxMegapixels = positive(env.RENDER_MAX_MEGAPIXELS) ?? clamp(Math.floor(memoryMb / 64), 4, 30)
-  const avifMaxMegapixels = positive(env.AVIF_MAX_MEGAPIXELS) ?? clamp(Math.floor(memoryMb / 128), 2, 16)
-  const sqliteCacheMb = positive(env.SQLITE_CACHE_MB) ?? clamp(Math.floor(memoryMb / 32), 8, 64)
-  const maxRequestBodyMb = positive(env.MAX_REQUEST_BODY_MB) ?? clamp(Math.floor(memoryMb / 8), 16, 256)
+  const sharpConcurrency = positive(env.SHARP_CONCURRENCY) ?? clamp(Math.round(processCpus), 1, 4)
+  const sharpCacheMb = nonNegative(env.SHARP_CACHE_MB) ?? clamp(Math.round(processMb / 32), 16, 128)
+  const previewConcurrency =
+    positive(env.PREVIEW_CONCURRENCY) ?? clamp(Math.min(Math.round(processCpus * 2), Math.floor(processMb / 192)), 1, 8)
+  const renderMaxMegapixels = positive(env.RENDER_MAX_MEGAPIXELS) ?? clamp(Math.floor(processMb / 64), 4, 30)
+  const avifMaxMegapixels = positive(env.AVIF_MAX_MEGAPIXELS) ?? clamp(Math.floor(processMb / 128), 2, 16)
+  const sqliteCacheMb = positive(env.SQLITE_CACHE_MB) ?? clamp(Math.floor(processMb / 32), 8, 64)
+  const maxRequestBodyMb = positive(env.MAX_REQUEST_BODY_MB) ?? clamp(Math.floor(processMb / 8), 16, 256)
   const jscBytes = positive(env.BUN_JSC_forceRAMSize)
-  const jscHeapMb = jscBytes !== null ? Math.floor(jscBytes / MB) : clamp(Math.floor(memoryMb / 2), 64, 2048)
+  const jscHeapMb = jscBytes !== null ? Math.floor(jscBytes / MB) : clamp(Math.floor(processMb / 2), 64, 2048)
   const mallocOverride = positive(env.MALLOC_ARENA_MAX)
   const mallocArenaMax = mallocOverride !== null ? Math.round(mallocOverride) : clamp(Math.round(cpus * 2), 2, 8)
 
   const summary =
-    `${formatCpu(cpus)} vCPU / ${formatMemory(memoryMb)} (${detected.cpuSource} CPU, ${detected.memorySource} memory) · ` +
+    `${formatCpu(cpus)} vCPU / ${formatMemory(memoryMb)} (${detected.cpuSource} CPU, ${detected.memorySource} memory)` +
+    `${share === 1 ? '' : ` across ${share} processes`} · ` +
     `sharp ${sharpConcurrency} thread${sharpConcurrency === 1 ? '' : 's'}/${sharpCacheMb} MB · ` +
     `${previewConcurrency} preview${previewConcurrency === 1 ? '' : 's'} · render ${renderMaxMegapixels} MP · ` +
     `AVIF ${avifMaxMegapixels} MP · SQLite ${sqliteCacheMb} MB · body ${maxRequestBodyMb} MB · ` +
@@ -220,6 +230,7 @@ export function tuningFor(detected: DetectedResources, env: Env = process.env): 
 
   return {
     ...detected,
+    processes: share,
     cpus,
     memoryMb,
     sharpConcurrency,
@@ -240,9 +251,9 @@ export function tuningFor(detected: DetectedResources, env: Env = process.env): 
  * Fill blank environment variables with the tuned values. Values already set by
  * the user are never touched. Returns null when AUTOTUNE is off.
  */
-export function applyAutotune(env: Env = process.env, detected?: DetectedResources): Tuning | null {
+export function applyAutotune(env: Env = process.env, detected?: DetectedResources, processes = 1): Tuning | null {
   if (disabled(env)) return null
-  const tuning = tuningFor(detected ?? detectResources(env), env)
+  const tuning = tuningFor(detected ?? detectResources(env), env, processes)
   setIfBlank(env, 'SHARP_CONCURRENCY', tuning.sharpConcurrency)
   setIfBlank(env, 'SHARP_CACHE_MB', tuning.sharpCacheMb)
   setIfBlank(env, 'PREVIEW_CONCURRENCY', tuning.previewConcurrency)
@@ -316,7 +327,7 @@ export function configuredReaderBusyTimeout(env: Env = process.env): number {
 }
 
 /** `bunwrite autotune`, `--json` or `--shell` for the startup-only values. */
-export function reportAutotune(args: string[] = [], env: Env = process.env): void {
+export function reportAutotune(args: string[] = [], env: Env = process.env, processes = 1): void {
   if (disabled(env)) {
     if (args.includes('--json')) console.log(JSON.stringify({ enabled: false }, null, 2))
     else if (!args.includes('--shell')) console.log('Autotune is disabled (AUTOTUNE=false).')
@@ -324,7 +335,7 @@ export function reportAutotune(args: string[] = [], env: Env = process.env): voi
   }
 
   const detected = detectResources(env)
-  const tuning = tuningFor(detected, env)
+  const tuning = tuningFor(detected, env, processes)
 
   if (args.includes('--json')) {
     console.log(JSON.stringify({ enabled: true, detected, tuning }, null, 2))

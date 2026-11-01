@@ -128,6 +128,37 @@ describe('tuningFor', () => {
       mallocArenaMax: 6,
     })
   })
+
+  test('splits the machine budget across cluster processes', () => {
+    // A lone process on 4 vCPU / 8 GB may use the whole machine.
+    expect(tuningFor(resources(4, 8192), {}, 1)).toMatchObject({
+      processes: 1,
+      jscHeapMb: 2048,
+      sharpConcurrency: 4,
+      maxRequestBodyMb: 256,
+      sqliteCacheMb: 64,
+    })
+    // Four processes (for example three public workers plus a writer) each get
+    // a quarter: the old formula would have reserved 2 GB of JSC heap apiece.
+    expect(tuningFor(resources(4, 8192), {}, 4)).toMatchObject({
+      processes: 4,
+      jscHeapMb: 1024,
+      sharpConcurrency: 1,
+      previewConcurrency: 2,
+      maxRequestBodyMb: 256,
+      sqliteCacheMb: 64,
+    })
+    // A seven-process cluster (six children plus the supervisor) shrinks the
+    // per-process caps further instead of multiplying them by seven.
+    expect(tuningFor(resources(4, 8192), {}, 7)).toMatchObject({
+      processes: 7,
+      jscHeapMb: 585,
+      sharpConcurrency: 1,
+      previewConcurrency: 1,
+      maxRequestBodyMb: 146,
+      sqliteCacheMb: 36,
+    })
+  })
 })
 
 describe('applyAutotune', () => {
@@ -150,6 +181,17 @@ describe('applyAutotune', () => {
     const env: Record<string, string | undefined> = { AUTOTUNE: 'false' }
     expect(applyAutotune(env, resources(1, 512))).toBeNull()
     expect(env).toEqual({ AUTOTUNE: 'false' })
+  })
+
+  test('passes the cluster process count through to the limits', () => {
+    const env: Record<string, string | undefined> = {}
+    const tuning = applyAutotune(env, resources(4, 8192), 4)
+    expect(tuning?.processes).toBe(4)
+    expect(env.BUN_JSC_forceRAMSize).toBe(String(1024 * MB))
+    expect(env.SHARP_CONCURRENCY).toBe('1')
+    expect(env.PREVIEW_CONCURRENCY).toBe('2')
+    expect(env.MAX_REQUEST_BODY_MB).toBe('256')
+    expect(env.SQLITE_CACHE_MB).toBe('64')
   })
 })
 

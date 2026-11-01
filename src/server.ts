@@ -17,10 +17,13 @@ import { pushConfigPostgres } from './schema/push-postgres'
 import { applyAutotune, bodyLimitBytes } from './system/autotune'
 
 export async function startServer(): Promise<void> {
-  const tuning = applyAutotune()
-  if (tuning) console.log(`[autotune] ${tuning.summary}`)
-
   const config = configFromEnv()
+  // `config.workers` is the child-process count; a cluster also has the
+  // supervisor that spawned it. Autotune sizes each process from its share of
+  // the machine, so pass the real total instead of treating it as a lone one.
+  const processes = config.workers > 1 ? config.workers + 1 : 1
+  const tuning = applyAutotune(process.env, undefined, processes)
+  if (tuning && config.workerIndex === 0) console.log(`[autotune] ${tuning.summary}`)
 
   // `createServices` applies the default project's stored settings over
   // `config`; keep the environment value as the default for other projects.

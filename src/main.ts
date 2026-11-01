@@ -77,8 +77,14 @@ switch (command) {
     await import('./cli/migrate')
     break
   case 'autotune': {
-    const { reportAutotune } = await import('./system/autotune')
-    reportAutotune(args)
+    const [{ reportAutotune }, { clusterConfig }] = await Promise.all([
+      import('./system/autotune'),
+      import('./cluster/config'),
+    ])
+    // `--shell` runs before the supervisor spawns anything, so it must use the
+    // process count the supervisor will use: the children plus that supervisor.
+    const cluster = clusterConfig()
+    reportAutotune(args, process.env, cluster.workers > 1 ? cluster.workers + 1 : 1)
     break
   }
   case 'help':

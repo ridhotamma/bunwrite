@@ -20,12 +20,13 @@ export function workerCommand(argv: string[] = process.argv, execPath: string = 
 }
 
 export async function runSupervisor(publicWorkers: number): Promise<void> {
-  // Set the runtime limits in this process too, so the workers inherit them
-  // before their Bun runtimes start.
-  applyAutotune()
   const withWriter = writerEnabled()
   const writerShards = resolveWriterShards(process.env.WRITER_SHARDS, publicWorkers, withWriter)
   const total = clusterProcessCount(publicWorkers, withWriter, writerShards)
+  // Set the runtime limits in this process too, so the workers inherit them
+  // before their Bun runtimes start. Autotune splits the machine across every
+  // child process and this supervisor.
+  applyAutotune(process.env, undefined, total + 1)
   const ports = workerPortsEnabled()
   const port = process.env.PORT ?? '8080'
   const publicRange = ports ? ` on :${port}-${Number(port) + publicWorkers - 1}` : ` on :${port}`
