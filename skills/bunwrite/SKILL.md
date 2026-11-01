@@ -302,6 +302,19 @@ the raw body with the webhook's secret and the
 Appwrite mode). Messaging supports topics and subscribers; sending email/SMS/push
 messages is not implemented.
 
+## Observability
+
+Bunwrite records API request logs, one request span per call, per-minute request
+metrics and document write events. **Console → Observability** shows them, and
+the same signals can be exported to OTLP, Datadog or PostHog. Feature flags are
+read from `GET /v1/flags`.
+
+Client-only activity is not automatic: page views, clicks, form steps, browser
+errors and session replay need the PostHog browser SDK or a call to your own
+function. Use the same user ID on the client that Bunwrite uses for server
+events so both sides join. See the `bunwrite-observability` skill and
+[OBSERVABILITY.md](https://github.com/ridhotamma/bunwrite/blob/main/docs/OBSERVABILITY.md).
+
 ## CLI and config
 
 ```bash

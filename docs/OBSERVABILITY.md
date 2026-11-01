@@ -47,6 +47,35 @@ This copy is local and works without a provider:
 Set `OBSERVABILITY_CONSOLE=false` to turn the local copy off. Metrics and traces
 still export to a configured provider.
 
+## Server and frontend responsibilities
+
+Bunwrite captures everything that reaches the API:
+
+- Request logs, request spans and per-minute request metrics.
+- `document.created`, `document.updated` and `document.deleted` for writes made
+  through the API, an SDK, a function or the console.
+- Feature-flag evaluation when `GET /v1/flags` is called.
+
+It does **not** see the browser. These still come from the frontend:
+
+| Need | Who sends it |
+| --- | --- |
+| Page views, clicks, search, booking/checkout steps | `posthog-js`, or a call to your own function that forwards the event. There is no generic analytics-ingest endpoint. |
+| Session replay, autocapture, heatmaps, browser errors, RUM | PostHog browser SDK or Datadog RUM. |
+| Feature flags in the UI | The app calls `GET /v1/flags`. No event is recorded; the call returns the evaluated flags. |
+| Frontend-to-backend trace correlation | The browser or gateway sends a W3C `traceparent`; Bunwrite continues the trace and returns `X-Trace-Id`. |
+
+The PostHog project key (`phc_...`) is a public ingestion key and is safe in a
+browser. Use the same user ID on both sides so `posthog-js` events join the
+server's `document.*` events:
+
+```ts
+posthog.identify(me.$id, { project: projectId })
+```
+
+Bunwrite uses the signed-in user's ID, or `project:<project-id>` for API-key
+writes, as the analytics `distinct_id`.
+
 ## Enable it
 
 Add the provider settings to `.env` and restart:

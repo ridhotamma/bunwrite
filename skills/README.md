@@ -41,6 +41,7 @@ make them available in every project. Update them with `npx skills update`.
 | Skill | Use it for |
 | --- | --- |
 | [`bunwrite`](bunwrite/SKILL.md) | Core: endpoint setup, SDK, account sessions, databases/documents, queries, permissions, storage, realtime, webhooks and Appwrite compatibility |
+| [`bunwrite-observability`](bunwrite-observability/SKILL.md) | Request logs, traces, metrics, product analytics, feature flags, OTLP/Datadog/PostHog, the console Observability pages, and what the frontend must send itself |
 | [`bunwrite-cli`](bunwrite-cli/SKILL.md) | `@bunwrite/cli`: project linking, `pull`/`push`, config files, function and site deploys, service commands |
 | [`bunwrite-functions`](bunwrite-functions/SKILL.md) | Function handlers, `context.req`/`res`, builds, environment variables, executions, cron and debugging |
 | [`bunwrite-sites`](bunwrite-sites/SKILL.md) | Static sites, output folders, fallbacks, custom domains and `/api/*` functions |
@@ -61,6 +62,12 @@ function that creates an order document, and deploy it.
 ```text
 Use the bunwrite-sites skill. Deploy the Vite dist folder as a site and route
 /api/* to the existing api function.
+```
+
+```text
+Use the bunwrite-observability skill. Send request traces and metrics to
+Datadog, document events to PostHog, and read feature flags from GET /v1/flags.
+Tell me which product events the frontend still has to send itself.
 ```
 
 ## Adding a skill

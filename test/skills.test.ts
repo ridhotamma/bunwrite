@@ -17,7 +17,7 @@ const read = (path: string) => readFileSync(join(root, path), 'utf8')
 
 describe('agent skills', () => {
   test('every skill has valid Agent Skills frontmatter', () => {
-    expect(names).toEqual(['bunwrite', 'bunwrite-cli', 'bunwrite-functions', 'bunwrite-sites'])
+    expect(names).toEqual(['bunwrite', 'bunwrite-cli', 'bunwrite-functions', 'bunwrite-observability', 'bunwrite-sites'])
     for (const name of names) {
       const text = read(join(name, 'SKILL.md'))
       expect(text.startsWith('---\n')).toBe(true)
