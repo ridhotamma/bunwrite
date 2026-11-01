@@ -283,6 +283,57 @@ Use `cloudflare` when Cloudflare is the only way in (origin firewalled or a
 tunnel). Headers from other clients are ignored, so they cannot spoof a new IP
 to dodge sign-in limits.
 
+## Observability
+
+Request logs, traces, metrics and product analytics can be exported to a third
+party without an SDK. With no provider configured this subsystem is off. See
+[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OBSERVABILITY_ENABLED` | auto | `false` disables every exporter even when a provider is configured. `true` enables it explicitly. |
+| `OBSERVABILITY_SAMPLE_RATE` | `1` | Head-based trace sampling (0–1). Logs and metrics are not sampled here. |
+| `OBSERVABILITY_FLUSH_MS` | `5000` | How often batched traces, logs, metrics and analytics are sent. |
+| `OBSERVABILITY_TIMEOUT_MS` | `5000` | Per-request timeout for a provider. |
+| `OBSERVABILITY_QUEUE_LIMIT` | `5000` | Events kept per signal while a provider is slow; the oldest are dropped first. |
+| `OBSERVABILITY_INSTANCE_ID` | `<host>:<worker>` | Distinguishes workers in traces and metrics. |
+| `OBSERVABILITY_DEBUG` | `false` | Log every exporter failure instead of once a minute. |
+| `OTEL_SERVICE_NAME` | `bunwrite` | `service.name` resource attribute. |
+| `OTEL_SERVICE_VERSION` | `1.8.0` | `service.version` resource attribute. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Base OTLP/HTTP endpoint; `/v1/traces`, `/v1/metrics` and `/v1/logs` are appended. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | derived | Full traces endpoint, overriding the base. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | derived | Full metrics endpoint, overriding the base. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | derived | Full logs endpoint, overriding the base. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | unset | Comma-separated `key=value` headers, for example `dd-api-key=...`. |
+| `OTEL_EXPORTER_OTLP_SIGNALS` | `traces,metrics,logs` | Signals to export. `OTEL_METRICS_EXPORTER=none` also turns one off. |
+| `DD_API_KEY` | unset | Datadog API key for the logs and metrics intake. |
+| `DD_SITE` | `datadoghq.com` | Datadog site, for example `datadoghq.eu` or `us3.datadoghq.com`. |
+| `DD_LOGS_ENABLED` | `true` | Ship request logs to Datadog. |
+| `DD_METRICS_ENABLED` | `true` | Ship request metrics to Datadog. |
+| `POSTHOG_API_KEY` | unset | PostHog project API key (`phc_...`). |
+| `POSTHOG_HOST` | `https://us.i.posthog.com` | PostHog ingestion host (`https://eu.i.posthog.com` for the EU cloud). |
+| `POSTHOG_ANALYTICS` | `true` | Capture document create/update/delete events. |
+| `POSTHOG_FLAGS` | `true` | Evaluate feature flags server-side. |
+| `POSTHOG_FLAGS_TTL_MS` | `30000` | How long a user's evaluated flags are cached. |
+| `FEATURE_FLAGS` | `{}` | JSON object of local flag overrides. They win over PostHog. |
+| `DEPLOYMENT_ENVIRONMENT` | `NODE_ENV` or `production` | `deployment.environment` resource attribute and Datadog `env` tag. |
+
+Every response carries `X-Request-Id`; when observability is enabled it also
+carries `X-Trace-Id`. Incoming W3C `traceparent` headers are honoured, so a
+caller's trace continues through Bunwrite.
+
+`GET /v1/flags` returns the evaluated flags for the caller:
+
+```bash
+curl -s https://your-host/v1/flags \
+  -H "X-Appwrite-Project: booking-app" \
+  -H "X-Appwrite-Key: $API_KEY"
+```
+
+```json
+{ "flags": { "new-checkout": true, "theme": "dark" } }
+```
+
 ## Functions
 
 | Variable | Default | Meaning |

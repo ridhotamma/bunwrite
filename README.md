@@ -487,6 +487,7 @@ phone.
 | Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs; deployment retention and bulk delete |
 | Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
+| Observability | Optional OTLP/HTTP traces, metrics and request-log export; Datadog logs/metrics and PostHog adapters; PostHog product analytics and server-side feature flags (`/v1/flags`) |
 | Backups | Whole-instance database archives; daily auto backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
 | Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |

@@ -17,6 +17,7 @@ import { parseTrustedProxies, rememberClientIp } from './lib/client-ip'
 import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
+import { createObservability, normalizePath } from './observability'
 import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
@@ -51,6 +52,8 @@ interface RequestMeta {
   auth?: string
   error?: string
   project?: string
+  /** Normalised route template, for metric and trace labels. */
+  route?: string
   /** Handed to the writer worker; that listener logs the real request. */
   forwarded?: boolean
 }
@@ -69,7 +72,7 @@ const API_HEADERS = corsHeaderNames(['Project', 'Key', 'Locale', 'Mode', 'JWT', 
 
 const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, If-Match, If-None-Match, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
 
-const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, ${HTMX_RESPONSE_HEADERS}`
+const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, X-Trace-Id, ${HTMX_RESPONSE_HEADERS}`
 
 export { originAllowed }
 
@@ -98,9 +101,15 @@ export function createApp(source: Services | ProjectResolver) {
   const control = projects.control
   const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
   const hub = new VcsHub(projects)
+  const observability = createObservability()
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
+  // Server-side feature flags: local FEATURE_FLAGS overrides plus PostHog.
+  router.get('/flags', async ({ ctx }) => {
+    const distinctId = ctx.caller.user?.id ?? `project:${ctx.config.projectId}`
+    return json({ flags: await observability.flags.evaluate(distinctId, { project: ctx.config.projectId }) })
+  })
   documentRoutes(router)
   transactionRoutes(router)
   schemaRoutes(router)
@@ -262,6 +271,7 @@ export function createApp(source: Services | ProjectResolver) {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
     const services = runtime.services
     meta.project = runtime.info.id
+    meta.route = normalizePath(pathname)
     if (services !== control) await syncServices(services)
 
     if (pathname === '/realtime') {
@@ -301,6 +311,7 @@ export function createApp(source: Services | ProjectResolver) {
     const published = [...events, ...services.store.drainEvents()]
     services.realtime.publish(published)
     await services.webhooks.dispatch(published, caller)
+    observability.captureEvents(published, caller, runtime.info.id)
     return response
   }
 
@@ -316,6 +327,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hosted) {
       meta.project = hosted.project.info.id
       meta.auth = `site:${hosted.site.id}`
+      meta.route = 'site'
       if (hosted.project.services !== control) await syncServices(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
@@ -323,6 +335,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (hostedFunction) {
       meta.project = hostedFunction.project.info.id
       meta.auth = `function:${hostedFunction.fn.id}`
+      meta.route = 'function'
       try {
         if (hostedFunction.project.services !== control) await syncServices(hostedFunction.project.services)
         const caller = await resolveCaller(
@@ -366,10 +379,14 @@ export function createApp(source: Services | ProjectResolver) {
       }
     }
     const consoleResponse = await consoleApp.handle(request, server)
-    if (consoleResponse) return consoleResponse
+    if (consoleResponse) {
+      meta.route = 'console'
+      return consoleResponse
+    }
     const pathname = url.pathname
     // The bare host is for people: send them to the console (or say the API is up).
     if (pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
+      meta.route = '/'
       return control.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(control.config.projectName)
     }
     let runtime = projects.defaultProject()
@@ -398,12 +415,15 @@ export function createApp(source: Services | ProjectResolver) {
 
   return {
     hub,
+    observability,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       // Another worker may have changed projects, schema or settings.
       if (projects.sync) await projects.sync()
       else await syncServices(control)
       const started = performance.now()
       const url = new URL(request.url)
+      const staticAsset = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/')
+      const observation = staticAsset ? null : observability.begin(request)
       // The console resolves its own project, so refresh every runtime it may show.
       if (url.pathname.startsWith('/console')) {
         for (const runtime of projects.list()) if (runtime.services !== control) await syncServices(runtime.services)
@@ -426,6 +446,7 @@ export function createApp(source: Services | ProjectResolver) {
         status = response.status
         responseBytes = Number(response.headers.get('content-length') ?? 0) || 0
         response.headers.set('x-request-id', id)
+        if (observation) response.headers.set('x-trace-id', observation.traceId)
         // HEAD runs the GET handler so headers and cache validation match, then drops the body.
         return request.method === 'HEAD'
           ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
@@ -455,6 +476,25 @@ export function createApp(source: Services | ProjectResolver) {
           logRequest(entry, logConfig.logFormat)
           const logs = runtime?.services.requestLogs ?? control.requestLogs
           logs.record(entry)
+        }
+        // Observability is independent of LOG_REQUESTS. Forwarded writes are
+        // recorded by the writer that actually handled them.
+        if (observation) {
+          observation.end({
+            method: request.method,
+            path: url.pathname,
+            route: meta.route,
+            status,
+            project: truncate(meta.project ?? apiHeader(request, 'project') ?? url.searchParams.get('project') ?? '', 200) || undefined,
+            auth: truncate(meta.auth ?? '', 200) || undefined,
+            ip: logConfig.logIp ? ip || undefined : undefined,
+            userAgent: truncate(request.headers.get('user-agent') ?? '', 2000) || undefined,
+            requestBytes: Number(request.headers.get('content-length') ?? 0) || 0,
+            responseBytes,
+            error: meta.error,
+            id,
+            forwarded: meta.forwarded,
+          })
         }
       }
     },

@@ -43,8 +43,8 @@
     "sdk:sync": "bun scripts/sdk-sync.ts",
     "sdk:build": "cd packages/sdk && bun run build",
     "cli:build": "cd packages/cli && bun run build",
-    "format": "prettier --write \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
-    "format:check": "prettier --check \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\"",
+    "format": "prettier --write \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\" \"src/observability/**/*.ts\"",
+    "format:check": "prettier --check \"src/db/**/*.ts\" \"src/documents/**/*.ts\" \"src/transactions/**/*.ts\" \"src/settings/**/*.ts\" \"src/logs/**/*.ts\" \"src/variables/**/*.ts\" \"src/webhooks/**/*.ts\" \"src/schema/push-postgres.ts\" \"src/cluster/**/*.ts\" \"src/observability/**/*.ts\"",
     "lint": "eslint \"src/**/*.ts\""
   },
   "dependencies": {

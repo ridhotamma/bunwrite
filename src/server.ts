@@ -172,6 +172,7 @@ export async function startServer(): Promise<void> {
         writes?.stop()
         await services.writes.drain()
         await services.requestLogs.flush()
+        await app.observability.close()
         await projects.close()
         await database.close()
         process.exit(0)
