@@ -50,9 +50,16 @@
   "dependencies": {
     "drizzle-orm": "^0.45.4",
     "htmx.org": "2.0.11",
-    "mongodb": "^7.8.0",
     "nodemailer": "10.2.1",
     "sharp": "0.35.5"
+  },
+  "peerDependencies": {
+    "mongodb": "^7.8.0"
+  },
+  "peerDependenciesMeta": {
+    "mongodb": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -63,6 +70,7 @@
     "drizzle-kit": "^0.31.0",
     "eslint": "^10.14.0",
     "globals": "^17.13.0",
+    "mongodb": "^7.8.0",
     "node-appwrite": "29.0.0",
     "prettier": "^3.9.10",
     "typescript": "^5.9.0",

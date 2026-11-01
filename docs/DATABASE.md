@@ -221,9 +221,12 @@ driver exposes document collections and the platform primitives:
 - `mongoDocumentIndexes(table, indexes, attributes)` — a collection's indexes,
   with `fulltext` mapped to a Mongo text index.
 
-`mongodb` is loaded lazily: a deployment that never selects MongoDB does not
-pay for the import. Install it with `bun add mongodb` (it is already in
-`package.json`); the error message says so if it is missing.
+`mongodb` is an **optional peer dependency**: SQLite and Postgres installs do
+not download it, so the Docker image (`bun install --production`) and the
+compiled binary stay lean. Install it with `bun add mongodb` when you select
+MongoDB; the driver loads it lazily and its error message says how to install it
+if it is missing. The repository keeps it in `devDependencies` so the Mongo
+integration tests can run locally.
 
 Transactions on MongoDB require a replica set (`mongodb://…?replicaSet=…`).
 Permission tables have no Mongo counterpart: document permissions live in the
