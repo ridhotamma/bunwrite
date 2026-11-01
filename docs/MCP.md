@@ -48,8 +48,15 @@ bun run mcp:build
 node packages/mcp/dist/mcp.js --version
 ```
 
-Once published, the package is `@bunwrite/mcp` and the binary is
-`bunwrite-mcp`, so `npx -y @bunwrite/mcp` works.
+The package is published as `@bunwrite/mcp`, and the binary is `bunwrite-mcp`.
+Run the latest release without installing:
+
+```bash
+npx -y @bunwrite/mcp --help
+npx -y @bunwrite/mcp@0.1.0 --version
+```
+
+Or install it in a project with `npm install @bunwrite/mcp`.
 
 ## Connect an agent
 

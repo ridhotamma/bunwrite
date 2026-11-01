@@ -37,7 +37,7 @@ bun run mcp:build
 node packages/mcp/dist/mcp.js --version
 ```
 
-Once published, `npx -y @bunwrite/mcp` is the command.
+Run `npx -y @bunwrite/mcp` (or pin `@bunwrite/mcp@0.1.0`).
 
 ## Client configuration
 

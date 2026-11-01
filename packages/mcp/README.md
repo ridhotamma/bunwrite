@@ -26,10 +26,11 @@ bun run mcp:build
 node packages/mcp/dist/mcp.js --version
 ```
 
-Once published:
+Published as `@bunwrite/mcp`:
 
 ```bash
 npx -y @bunwrite/mcp --help
+npm install @bunwrite/mcp
 ```
 
 ## Configure

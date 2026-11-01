@@ -480,6 +480,7 @@ searched at runtime.
 ```
 
 ```bash
+npx -y @bunwrite/mcp --help
 bun run mcp:build
 node packages/mcp/dist/mcp.js --help
 ```
