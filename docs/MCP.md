@@ -53,7 +53,7 @@ Run the latest release without installing:
 
 ```bash
 npx -y @bunwrite/mcp --help
-npx -y @bunwrite/mcp@0.1.0 --version
+npx -y @bunwrite/mcp@latest --version
 ```
 
 Or install it in a project with `npm install @bunwrite/mcp`.
