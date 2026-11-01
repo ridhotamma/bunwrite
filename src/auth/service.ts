@@ -3,7 +3,7 @@
  * stored, so a copy of the database cannot be used to sign in.
  *
  * Everything goes through the database port (`db.driver`), so the service runs
- * on SQLite and Postgres. The MongoDB repository lives beside it.
+ * on SQLite and Postgres.
  */
 import type { Config } from '~/config'
 import type { SqlDatabase } from '~/db/driver'

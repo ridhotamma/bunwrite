@@ -30,7 +30,7 @@ export function projectPaths(dataDir: string, id: string): ProjectPaths {
 
 const MAX_NAMESPACE_LENGTH = 63
 
-/** A Postgres schema or MongoDB database name is a single SQL/URL-safe label. */
+/** A Postgres schema name is a single SQL-safe label. */
 function namespacePart(value: string): string {
   const cleaned = value
     .toLowerCase()

@@ -1,5 +1,5 @@
 /**
- * Permission and date rules shared by the SQL and MongoDB document stores.
+ * Permission and date rules shared by the SQL document store.
  *
  * Keeping these here means a permission or optimistic-concurrency change is
  * made once for both backends, and the stores only deal with storage.

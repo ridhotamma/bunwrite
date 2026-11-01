@@ -3,20 +3,19 @@ import type { Database as SqliteDatabase } from 'bun:sqlite'
 /**
  * The database port.
  *
- * Bunwrite was built around `bun:sqlite`, whose API is synchronous. Network
- * databases (Postgres, MongoDB) are asynchronous, so the port below is async
- * and is meant to replace direct `db.sqlite` access module by module. The
- * existing synchronous SQLite path stays available through `Db.sqlite` while a
- * service is being migrated; see docs/DATABASE.md for the seam and the
- * migration order.
+ * Bunwrite was built around `bun:sqlite`, whose API is synchronous. Postgres is
+ * asynchronous, so the port below is async and is meant to replace direct
+ * `db.sqlite` access module by module. The existing synchronous SQLite path
+ * stays available through `Db.sqlite` while a service is being migrated; see
+ * docs/DATABASE.md for the seam and the migration order.
  *
  * Everything the port accepts is *portable SQLite-flavoured SQL*: `?`
  * placeholders, double-quoted identifiers, ISO strings for dates and JSON text
  * for objects. A driver is responsible for adapting that to its own dialect.
  */
 
-export type Dialect = 'sqlite' | 'postgres' | 'mongodb'
-export type SqlDialect = Extract<Dialect, 'sqlite' | 'postgres'>
+export type Dialect = 'sqlite' | 'postgres'
+export type SqlDialect = Dialect
 
 /** The storage engines Bunwrite can run on. */
 export type DatabaseBackend = Dialect
@@ -30,12 +29,10 @@ export function parseDatabaseBackend(value: string | undefined, url?: string): D
   if (raw) {
     if (raw === 'sqlite' || raw === 'sqlite3' || raw === 'file') return 'sqlite'
     if (raw === 'postgres' || raw === 'postgresql' || raw === 'pg') return 'postgres'
-    if (raw === 'mongodb' || raw === 'mongo') return 'mongodb'
-    throw new Error(`Unknown database driver "${value}". Use sqlite, postgres or mongodb.`)
+    throw new Error(`Unknown database driver "${value}". Use sqlite or postgres.`)
   }
   const scheme = (url ?? '').trim().toLowerCase()
   if (scheme.startsWith('postgres://') || scheme.startsWith('postgresql://')) return 'postgres'
-  if (scheme.startsWith('mongodb://') || scheme.startsWith('mongodb+srv://')) return 'mongodb'
   return 'sqlite'
 }
 
@@ -134,54 +131,6 @@ export interface SqlDriver extends SqlExecutor {
   close(): Promise<void>
 }
 
-/**
- * A MongoDB-style filter. The document driver translates Appwrite queries into
- * this shape instead of pretending Mongo understands SQL.
- */
-export type DocumentFilter = Record<string, unknown>
-
-export interface DocumentFindOptions {
-  sort?: Record<string, 1 | -1>
-  limit?: number
-  skip?: number
-  /** Attribute projection; `_id` is always kept. */
-  projection?: Record<string, 0 | 1>
-}
-
-export interface DocumentIndex {
-  name: string
-  /** `1`/`-1` for a B-tree index, `'text'` for a Mongo text index. */
-  keys: Record<string, 1 | -1 | 'text'>
-  unique?: boolean
-}
-
-/** One logical collection (an Appwrite collection, or a built-in table). */
-export interface DocumentCollection<T extends Record<string, unknown> = Record<string, unknown>> {
-  find(filter: DocumentFilter, options?: DocumentFindOptions): Promise<T[]>
-  findOne(filter: DocumentFilter): Promise<T | null>
-  insert(document: T): Promise<T>
-  insertMany(documents: T[]): Promise<number>
-  update(filter: DocumentFilter, patch: Record<string, unknown>): Promise<T | null>
-  delete(filter: DocumentFilter): Promise<number>
-  count(filter: DocumentFilter): Promise<number>
-  /** Insert when the filter matches nothing, otherwise update; returns the row and whether it was created. */
-  upsert(filter: DocumentFilter, document: T): Promise<{ value: T; created: boolean }>
-  createIndex(index: DocumentIndex): Promise<void>
-  drop(): Promise<void>
-}
-
-/** A document driver: MongoDB. */
-export interface DocumentDriver {
-  readonly kind: 'document'
-  readonly dialect: 'mongodb'
-  readonly capabilities: DriverCapabilities
-  collection<T extends Record<string, unknown> = Record<string, unknown>>(name: string): DocumentCollection<T>
-  ping(): Promise<void>
-  close(): Promise<void>
-}
-
-export type DatabaseDriver = SqlDriver | DocumentDriver
-
 /** The driver cannot express this statement or operation. */
 export class UnsupportedFeatureError extends Error {
   constructor(
@@ -209,26 +158,23 @@ export interface UniqueViolation {
 }
 
 /**
- * Recognise a unique-constraint violation across backends. The document store
- * used to match SQLite's `UNIQUE constraint failed` message; callers should use
- * this instead so a Postgres `duplicate key value violates unique constraint`
- * maps to the same Appwrite error.
+ * Recognise a unique-constraint violation on SQLite or Postgres. SQLite names
+ * the column (`_users.email`), Postgres the index (`_users_email_key`); callers
+ * only need the constraint name to map it to an Appwrite error.
  */
 export function uniqueViolation(error: unknown): UniqueViolation | null {
   if (!error || typeof error !== 'object') return null
-  // Bun's Postgres client reports the SQLSTATE in `errno`; the MongoDB driver
-  // uses `code`. Node-style clients use `code` for SQLSTATE too.
+  // Bun's Postgres client reports the SQLSTATE in `errno`; Node-style clients
+  // use `code`.
   const errno = String((error as { errno?: unknown }).errno ?? '')
   const code = String((error as { code?: unknown }).code ?? '')
-  const isUnique = errno === '23505' || code === '23505' || code === '11000'
+  const isUnique = errno === '23505' || code === '23505'
   if (!isUnique) {
     const message = error instanceof Error ? error.message : String(error)
-    if (!/UNIQUE constraint failed|duplicate key value violates unique constraint|E11000 duplicate key/i.test(message)) return null
+    if (!/UNIQUE constraint failed|duplicate key value violates unique constraint/i.test(message)) return null
   }
   const message = error instanceof Error ? error.message : String(error)
-  // SQLite names the column (`_users.email`), Postgres the index (`_users_email_key`)
-  // and MongoDB the index too. Keep the first column when SQLite lists several.
-  const constraint = /constraint "([^"]+)"/.exec(message)?.[1] ?? /index: (\S+)/.exec(message)?.[1] ?? /UNIQUE constraint failed: ([^\s,]+)/.exec(message)?.[1]
+  const constraint = /constraint "([^"]+)"/.exec(message)?.[1] ?? /UNIQUE constraint failed: ([^\s,]+)/.exec(message)?.[1]
   return { constraint }
 }
 

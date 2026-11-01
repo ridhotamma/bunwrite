@@ -252,15 +252,15 @@ export interface Config {
   databasePath: string
   /**
    * Storage backend selected by `DB_DRIVER`/`DATABASE_DRIVER`. `sqlite` (the
-   * default) keeps the zero-config SQLite path; Postgres and MongoDB are opt-in
-   * and are being wired in service by service. See docs/DATABASE.md.
+   * default) keeps the zero-config SQLite path; Postgres is opt-in. See
+   * docs/DATABASE.md.
    */
   databaseDriver?: DatabaseBackend
-  /** Postgres or MongoDB connection URL (`DATABASE_URL`). */
+  /** Postgres connection URL (`DATABASE_URL`). */
   databaseUrl?: string
-  /** Postgres schema or MongoDB database name for project data. */
+  /** Postgres schema for project data. */
   databaseNamespace?: string
-  /** Connection-pool size for the network backends (default 10). */
+  /** Connection-pool size for Postgres (default 10). */
   databasePoolMax?: number
   /** Require TLS for Postgres (`DATABASE_SSL`). */
   databaseSsl?: boolean
@@ -459,7 +459,7 @@ function databaseConfig(
   return {
     databaseDriver: parseDatabaseBackend(explicit, explicit ? url : undefined),
     databaseUrl: url,
-    databaseNamespace: (env.DATABASE_SCHEMA || env.DATABASE_NAMESPACE || env.MONGO_DATABASE || '').trim() || undefined,
+    databaseNamespace: (env.DATABASE_SCHEMA || env.DATABASE_NAMESPACE || '').trim() || undefined,
     databasePoolMax: Math.max(1, wholeNumber(env.DATABASE_POOL_MAX, 10)),
     databaseSsl: env.DATABASE_SSL === 'true' || env.DATABASE_SSL === '1',
   }

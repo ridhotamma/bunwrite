@@ -3,7 +3,7 @@
  *
  * These are cheap, deterministic checks: they fail when a refactored module
  * reaches back for the SQLite handle or imports `bun:sqlite` directly, which
- * would silently break a Postgres/Mongo deployment.
+ * would silently break a Postgres deployment.
  */
 import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync, statSync } from 'node:fs'

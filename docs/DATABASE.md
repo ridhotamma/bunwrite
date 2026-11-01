@@ -3,9 +3,8 @@
 Status: 2026-11-01.
 
 Bunwrite started as a SQLite-only backend and still defaults to it. This
-document describes the database port that lets the same code run on SQLite,
-Postgres and MongoDB, what each backend supports today, and how to move a
-service over.
+document describes the database port that lets the same code run on SQLite and
+Postgres, what each backend supports today, and how to move a service over.
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md), [CONFIGURATION.md](CONFIGURATION.md),
 [LIMITATIONS.md](LIMITATIONS.md).
@@ -16,21 +15,20 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md), [CONFIGURATION.md](CONFIGURATION.md
 | --- | --- | --- | --- |
 | SQLite | `bun:sqlite` (synchronous) | Drizzle migrations + cluster schema | **Yes**, the default |
 | Postgres | `Bun.SQL` (async pool) | Derived from the Drizzle schema + triggers + views, once per project schema | **Yes** — the server boots on it, see [Boot path](#boot-path) |
-| MongoDB | `mongodb` (async, optional) | Indexes + `_counters` | Not yet — repositories are still missing |
 
-The port, both network drivers, schema bootstrapping, dialect translation, the
+The port, both drivers, schema bootstrapping, dialect translation, the
 operational CLI and the cache/services layer (logs, variables, webhooks,
 settings, registry, versions, access, email templates) are complete and tested
-against real Postgres and MongoDB. The document layer, auth (users, sessions,
-tokens and OAuth identities), teams, console admins/sessions, organizations, the
-rate/abuse limits, storage (buckets, files, uploads, previews), functions
-(definitions, deployments, executions), sites, messaging topics, the
-proxy/domain rules and the queue now run on either backend as well. The project
-manager opens one Postgres schema per project, and `startServer` opens the
-configured backend. The console schema admin, settings, logs and the VCS
-stores also run through the driver port now; only the cluster/backup features
-remain SQLite-only; [Migration order](#migration-order) lists them. Nothing in
-the existing SQLite path changed behaviour.
+against real Postgres. The document layer, auth (users, sessions, tokens and
+OAuth identities), teams, console admins/sessions, organizations, the rate/abuse
+limits, storage (buckets, files, uploads, previews), functions (definitions,
+deployments, executions), sites, messaging topics, the proxy/domain rules and
+the queue run on either backend. The project manager opens one Postgres schema
+per project, and `startServer` opens the configured backend. The console schema
+admin, settings, logs and the VCS stores also run through the driver port; only
+the cluster/backup features remain SQLite-only; [Migration
+order](#migration-order) lists them. Nothing in the existing SQLite path changed
+behaviour.
 
 ## Configuration
 
@@ -38,32 +36,27 @@ SQLite stays the default: leave everything unset and Bunwrite opens
 `DATABASE_PATH`.
 
 ```dotenv
-DB_DRIVER=postgres            # sqlite | postgres | mongodb
+DB_DRIVER=postgres            # sqlite | postgres
 DATABASE_URL=postgres://user:password@localhost:5432/bunwrite
-# DATABASE_URL=mongodb://user:password@localhost:27017/?replicaSet=rs0
 
-# Postgres schema, or the MongoDB database name.
+# Postgres schema.
 DATABASE_SCHEMA=bunwrite
-MONGO_DATABASE=bunwrite
 
 DATABASE_POOL_MAX=10
 DATABASE_SSL=false
 ```
 
-`DB_DRIVER` accepts `sqlite`, `sqlite3`, `file`, `postgres`, `postgresql`, `pg`,
-`mongodb` and `mongo`, and is the switch: a `DATABASE_URL` left in the
-environment by another tool does not move Bunwrite off SQLite. An unknown value
-fails at startup instead of silently falling back. The `db:*` CLI can also infer
-the backend from `--url` when `--driver` is omitted.
+`DB_DRIVER` accepts `sqlite`, `sqlite3`, `file`, `postgres`, `postgresql` and
+`pg`, and is the switch: a `DATABASE_URL` left in the environment by another
+tool does not move Bunwrite off SQLite. An unknown value fails at startup instead
+of silently falling back. The `db:*` CLI can also infer the backend from
+`--url` when `--driver` is omitted.
 
 For Postgres, `DATABASE_SCHEMA` creates and uses the control schema
 (`CREATE SCHEMA IF NOT EXISTS`); every pooled connection is opened with
 `search_path=<schema>, public`, not with a one-off `SET`. Each additional
 Bunwrite project gets a sibling schema named `<DATABASE_SCHEMA>_<project-id>`
-(sanitized to 63 bytes and hashed when the ID is long). For MongoDB,
-`MONGO_DATABASE` selects the control database; the same namespace helper derives
-`<MONGO_DATABASE>_<project-id>` for when the repository layer can open a
-project there.
+(sanitized to 63 bytes and hashed when the ID is long).
 
 ## Operations CLI
 
@@ -72,8 +65,7 @@ bun run db:check        # connect, bootstrap, print capabilities and tables
 bun run db:migrate      # create/upgrade the schema only
 bun run db:ping         # connection check
 
-bun run db:check --driver postgres --url postgres://localhost/bunwrite --database bunwrite
-bun run db:check --driver mongodb --url mongodb://localhost:27017 --database bunwrite --json
+bun run db:check --driver postgres --url postgres://localhost/bunwrite --database bunwrite --json
 
 # Apply a project config (collections, buckets, functions) to the backend.
 bun run db:migrate --schema appwrite.config.json --prune
@@ -82,12 +74,10 @@ bun run db:migrate --schema appwrite.config.json --prune
 The CLI reads the same environment variables as the server. `--no-bootstrap`
 opens a read-only replica without touching the schema.
 
-`DB_DRIVER=postgres` now boots the server and serves API traffic. The boot path
-opens the control schema, runs the instance bootstrap through the driver,
-loads every service cache with `services.ready()`, and opens each project in its
-own schema. MongoDB still stops with an explicit message until the remaining
-SQL-shaped services have repositories; use the CLI to prepare and verify a
-MongoDB database in the meantime.
+`DB_DRIVER=postgres` boots the server and serves API traffic. The boot path
+opens the control schema, runs the instance bootstrap through the driver, loads
+every service cache with `services.ready()`, and opens each project in its own
+schema.
 
 ## The port
 
@@ -99,9 +89,6 @@ MongoDB database in the meantime.
   one batch operation.
 - `SqlDriver` — a `SqlExecutor` plus `transaction`, `ping`, `close`, `dialect`
   and `capabilities`.
-- `DocumentDriver` — `collection(name)` returning a `DocumentCollection` with
-  `find`, `findOne`, `insert`, `insertMany`, `update`, `delete`, `count`,
-  `upsert`, `createIndex`, `drop`.
 - `DriverCapabilities` — what a backend can do (`sql`, `transactions`,
   `savepoints`, `returning`, `ddl`, `localFile`, `drizzleMigrations`,
   `fullTextSearch`, `cacheTriggers`, `eventBus`, `snapshots`). Callers must
@@ -118,7 +105,7 @@ const database = await openDatabase({
   namespace: 'bunwrite',
 })
 
-const sql = database.sql!                       // SqlDriver | null
+const sql = database.sql                        // SqlDriver
 const rows = await sql.all('SELECT * FROM _users WHERE id = ?', ['u1'])
 await sql.transaction(async (tx) => {
   await tx.run('UPDATE _users SET name = ? WHERE id = ?', ['New', 'u1'])
@@ -154,7 +141,7 @@ path awaits `services.ready()`:
 
 ```ts
 const services = createServices(config, db)
-await services.ready()   // no-op on SQLite; loads caches on Postgres/Mongo
+await services.ready()   // no-op on SQLite; loads caches on Postgres
 ```
 
 `startServer` awaits `projects.ready()`, which does the same for the control
@@ -182,8 +169,8 @@ after the first console admin is created.
 project reuses the control handle; every other project gets a derived namespace
 and its own pool. A project's services are not returned until `services.ready()`
 has loaded its caches, so the first request cannot observe an empty registry or
-settings map. Deleting a project drops its Postgres schema or MongoDB database
-after closing the pool. SQLite still removes the project folder.
+settings map. Deleting a project drops its Postgres schema after closing the
+pool. SQLite still removes the project folder.
 
 Reads stay synchronous (`settings` mutates the config in place, `registry`
 exposes its maps), so the per-request paths did not change. Writes and reloads
@@ -245,51 +232,6 @@ with the backend's own mechanism before sending them.
   design. Everything else, including schema DDL, the console schema admin and
   the VCS stores, runs on Postgres.
 
-## MongoDB
-
-MongoDB is **not** a SQL backend, so the SQL dialect is never translated. The
-driver exposes document collections and the platform primitives:
-
-- `collection(name)` with `find`, `findOne`, `insert`, `insertMany`, `update`,
-  `delete`, `count`, `upsert`, `createIndex`, `drop`.
-- `nextSequence(name)` — an atomic `$inc` in `_counters`, used to emulate
-  SQLite's `_seq` for new documents.
-- `ensureMongoSchema()` — the uniqueness/lookup indexes the services rely on
-  (see `MONGO_INDEXES` in `src/db/mongo-schema.ts`), mirroring the SQLite
-  indexes by name.
-- `mongoDocumentIndexes(table, indexes, attributes)` — a collection's indexes,
-  with `fulltext` mapped to a Mongo text index.
-
-`mongodb` is an **optional peer dependency**: SQLite and Postgres installs do
-not download it, so the Docker image (`bun install --production`) and the
-compiled binary stay lean. Install it with `bun add mongodb` when you select
-MongoDB; the driver loads it lazily and its error message says how to install it
-if it is missing. The repository keeps it in `devDependencies` so the Mongo
-integration tests can run locally.
-
-Transactions on MongoDB require a replica set (`mongodb://…?replicaSet=…`).
-Permission tables have no Mongo counterpart: document permissions live in the
-document's `_permissions` field, which is what the permission filter expects.
-
-### MongoDB document backend
-
-`MongoDocumentStore` implements `DocumentBackend`: CRUD, bulk writes, filters,
-sorting, cursors, projections, permissions, revisions and text search. Its
-limits are explicit:
-
-- `runInTransaction` runs the callback directly and `runBatch` does not roll
-  back earlier operations. Multi-document transactions need a replica set and
-  a session-aware driver; the current driver does not open sessions.
-- Staged transaction reads (`preview`) are rejected with
-  `UnsupportedFeatureError`.
-- `orderRandom` is rejected (it needs an aggregation `$sample`).
-- The list cache and cache-version triggers are SQL features; Mongo has no
-  cross-process version counter, only `_doc_versions` for ETags.
-
-The remaining SQL-shaped services (auth, teams, storage, functions and the
-console) still need their own repository layer before those features can run on
-Mongo.
-
 ## Migration order
 
 Move services to `db.driver` from the outside in; each step must keep the
@@ -297,7 +239,7 @@ SQLite test suite green:
 
 1. **Done.** `logs/service.ts`, `variables/service.ts`, `webhooks/service.ts`
    use `db.driver` and `SqlDatabase`, so they accept either SQLite or Postgres.
-   `test/database-drivers.test.ts` exercises all three against a real Postgres
+   `test/database-drivers.test.ts` exercises both against a real Postgres
    schema. The console handlers that call them are async; `record()` stays
    synchronous because it only queues in memory.
 2. **Done.** `settings/service.ts`, `schema/registry.ts`, `cluster/versions.ts`
@@ -316,13 +258,6 @@ SQLite test suite green:
    FTS5 `MATCH` on SQLite. `bun run db:migrate --schema …` creates and updates
    collection tables, indexes and version triggers on Postgres via
    `push-postgres.ts`.
-   `MongoDocumentStore` (`documents/mongo-store.ts`) implements the same
-   `DocumentBackend` for MongoDB with its own Appwrite-query → Mongo-filter
-   compiler. It stores documents natively (booleans, arrays, `_permissions` as
-   an array) and supports CRUD, bulk operations, filters, text search,
-   permissions, revisions and `runBatch`; staged transaction reads, random
-   order and multi-document transactions need a replica set/session support and
-   are rejected explicitly rather than silently emulated.
 4. **Done.** `auth/*`, `teams/*`, `console/auth.ts`,
    `organizations/service.ts`, `lib/limits.ts`, `storage/service.ts`,
    `functions/service.ts`, `functions/deployments.ts`, `sites/service.ts`,
@@ -332,13 +267,11 @@ SQLite test suite green:
    teams, storage, the proxy/site/queue layers, schema DDL and the VCS stores
    have been exercised against real Postgres. Sites and proxy keep synchronous
    reads over a cache filled by `ready()`, with async writes and reloads. The
-   project manager opens each project as a Postgres schema or MongoDB database
-   and loads its caches before serving it. Schema import keeps the console's
-   dry-run preview by running the Postgres apply inside a transaction and
-   rolling it back.
+   project manager opens each project as a Postgres schema and loads its caches
+   before serving it. Schema import keeps the console's dry-run preview by
+   running the Postgres apply inside a transaction and rolling it back.
 5. The cluster lease and backup/snapshot features can stay SQLite-only behind
-   `db.capabilities`. MongoDB needs its repository layer before a project can
-   run there.
+   `db.capabilities`.
 
 A converted method looks like this:
 
@@ -368,9 +301,8 @@ Callers gain `await`; route handlers are already `async`. Transactions use
 ```bash
 bun test test/database-drivers.test.ts
 
-# Run the integration tests against real servers:
+# Run the integration tests against a real server:
 BUNWRITE_TEST_POSTGRES_URL=postgres://user@localhost:5432/postgres \
-BUNWRITE_TEST_MONGO_URL=mongodb://localhost:27017 \
 bun test test/database-drivers.test.ts
 ```
 
@@ -380,7 +312,5 @@ CRUD, a rolled-back transaction, a savepoint and the cache triggers, then boots
 project in its own schema, writes a document there, deletes the project and
 drops both schemas. It also runs the schema admin (create, dry-run import,
 export, delete) and the VCS stores (installations, links, comments, GitHub App
-credentials) against Postgres. The Mongo test creates a random database,
-bootstraps indexes, runs CRUD/upsert, allocates `_seq` values, checks the unique
-index and drops the database. Without the environment variables both are
-skipped.
+credentials) against Postgres. Without `BUNWRITE_TEST_POSTGRES_URL` the
+integration suite is skipped.

@@ -3,11 +3,10 @@
  *
  *   bun run db:check                 # connect, bootstrap and report capabilities
  *   bun run db:migrate               # create/upgrade the schema only
- *   bun run db:check --driver mongodb --url mongodb://localhost:27017 --database bunwrite
+ *   bun run db:check --driver postgres --url postgres://localhost/bunwrite
  *
- * Everything for the network backends can also come from the environment:
- * `DB_DRIVER`, `DATABASE_URL`, `DATABASE_SCHEMA` (Postgres) or
- * `MONGO_DATABASE`, `DATABASE_POOL_MAX`, `DATABASE_SSL`.
+ * Everything for Postgres can also come from the environment: `DB_DRIVER`,
+ * `DATABASE_URL`, `DATABASE_SCHEMA`, `DATABASE_POOL_MAX`, `DATABASE_SSL`.
  */
 import { dirname, resolve } from 'node:path'
 
@@ -39,7 +38,7 @@ function parseFlags(argv: string[]): { command: string; flags: Flags } {
       continue
     }
     const [rawKey, inline] = value.slice(2).split('=', 2) as [string, string | undefined]
-    const key = rawKey === 'mongodb' ? 'driver' : rawKey
+    const key = rawKey
     if (key === 'ssl' || key === 'no-bootstrap' || key === 'json' || key === 'prune') {
       flags[key] = true
       continue
@@ -91,7 +90,7 @@ async function main(): Promise<void> {
   const { command, flags } = parseFlags(process.argv.slice(2))
   if (!['check', 'migrate', 'ping'].includes(command)) {
     console.error(
-      `Usage: bun src/cli/db.ts [check|migrate|ping] [--driver sqlite|postgres|mongodb] [--url URL] [--database NAME] [--schema FILE] [--prune]`,
+      `Usage: bun src/cli/db.ts [check|migrate|ping] [--driver sqlite|postgres] [--url URL] [--database NAME] [--schema FILE] [--prune]`,
     )
     process.exit(2)
   }
@@ -114,10 +113,8 @@ async function main(): Promise<void> {
       }
       if (database.backend === 'postgres') {
         await pushConfigPostgres(database.sql as PostgresDriver, config, pushOptions)
-      } else if (database.backend === 'sqlite' && database.sqlite) {
+      } else if (database.sqlite) {
         pushConfig(database.sqlite, config, pushOptions)
-      } else {
-        throw new Error('Schema push is not implemented for MongoDB yet; use a SQL backend for collections.')
       }
     }
     await database.ping()
@@ -129,25 +126,18 @@ async function main(): Promise<void> {
     if (database.backend === 'sqlite') {
       report.path = options.path
     } else {
-      report.namespace = options.namespace ?? (database.backend === 'mongodb' ? 'bunwrite' : 'public')
+      report.namespace = options.namespace ?? 'public'
     }
-    if (database.sql) {
-      const tables = await database.sql.all<{ name: string }>(
-        database.backend === 'postgres'
-          ? `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name`
-          : `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      )
-      report.tables = tables.map((row) => row.name)
-    }
-    if (database.backend === 'mongodb' && database.documents) {
-      const driver = database.documents as unknown as { collections(): Promise<string[]> }
-      report.collections = await driver.collections()
-    }
+    const tables = await database.sql.all<{ name: string }>(
+      database.backend === 'postgres'
+        ? `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY table_name`
+        : `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+    )
+    report.tables = tables.map((row) => row.name)
     if (flags.json) console.log(JSON.stringify(report, null, 2))
     else {
       console.log(`[database] ${report.description}`)
       if (Array.isArray(report.tables)) console.log(`[database] ${report.tables.length} tables`)
-      if (Array.isArray(report.collections)) console.log(`[database] ${report.collections.length} collections`)
     }
   } finally {
     await database.close()

@@ -18,7 +18,6 @@ import {
   postgresDocumentTableStatements,
   postgresSystemStatements,
 } from '~/db/postgres-schema'
-import type { MongoDriver } from '~/db/mongo-driver'
 import type { PostgresDriver } from '~/db/postgres-driver'
 import type { SqlDatabase } from '~/db/driver'
 import { keyCaller } from '~/auth/caller'
@@ -38,8 +37,6 @@ import { SchemaAdmin } from '~/schema/admin'
 import { GithubAppStore } from '~/vcs/credentials'
 import { VcsInstallations } from '~/vcs/installations'
 import { approvedPulls, RepositoryLinks } from '~/vcs/repositories'
-import { MongoDocumentStore } from '~/documents/mongo-store'
-import { mongoDocumentIndexes } from '~/db/mongo-schema'
 import type { Caller } from '~/auth/caller'
 import { testConfig } from './helpers'
 
@@ -50,21 +47,18 @@ describe('backend selection', () => {
   test('infers the backend from the URL, with an explicit driver winning', () => {
     expect(parseDatabaseBackend(undefined, 'postgres://u:p@h/db')).toBe('postgres')
     expect(parseDatabaseBackend(undefined, 'postgresql://u:p@h/db')).toBe('postgres')
-    expect(parseDatabaseBackend(undefined, 'mongodb+srv://u:p@h/db')).toBe('mongodb')
     expect(parseDatabaseBackend(undefined, './data/bunwrite.sqlite')).toBe('sqlite')
-    expect(parseDatabaseBackend('pg', 'mongodb://h/db')).toBe('postgres')
-    expect(parseDatabaseBackend('mongo', undefined)).toBe('mongodb')
+    expect(parseDatabaseBackend('pg', 'mysql://h/db')).toBe('postgres')
     expect(() => parseDatabaseBackend('mysql', undefined)).toThrow()
   })
 
   test('DB_DRIVER is the switch; a stray DATABASE_URL never moves the server off SQLite', () => {
     expect(configFromEnv({ DATABASE_URL: 'postgres://h/db' }).databaseDriver).toBe('sqlite')
     expect(configFromEnv({ DB_DRIVER: 'postgres', DATABASE_URL: 'postgres://h/db' }).databaseDriver).toBe('postgres')
-    expect(configFromEnv({ DB_DRIVER: 'mongo' }).databaseDriver).toBe('mongodb')
     expect(configFromEnv({ DB_DRIVER: 'postgres', DATABASE_SCHEMA: 'app' }).databaseNamespace).toBe('app')
   })
 
-  test('describes capabilities without pretending Mongo speaks SQL', () => {
+  test('describes capabilities of the SQL backends', () => {
     expect(describeDatabase({ backend: 'postgres', capabilities: { ...sqlite.capabilities, dialect: 'postgres' } })).toContain('sql')
     expect(sqlite.capabilities.fullTextSearch).toBe('fts5')
     expect(sqlite.capabilities.localFile).toBe(true)
@@ -182,11 +176,10 @@ describe('sqlite driver port', () => {
     expect(await driver.all('SELECT id FROM _users')).toEqual([])
   })
 
-  test('recognises unique violations from every backend', () => {
+  test('recognises unique violations from both SQL backends', () => {
     expect(uniqueViolation(new Error('UNIQUE constraint failed: _users.id'))).not.toBeNull()
     const pg = Object.assign(new Error('duplicate key value violates unique constraint "x"'), { errno: '23505' })
     expect(uniqueViolation(pg)?.constraint).toBe('x')
-    expect(uniqueViolation(Object.assign(new Error('E11000 duplicate key error collection: db.users index: id_1 dup key'), { code: 11000 }))).not.toBeNull()
     expect(uniqueViolation(new Error('no such table'))).toBeNull()
   })
 })
@@ -224,7 +217,6 @@ describe('postgres schema generation', () => {
 })
 
 const postgresUrl = process.env.BUNWRITE_TEST_POSTGRES_URL
-const mongoUrl = process.env.BUNWRITE_TEST_MONGO_URL
 const suffix = Math.random().toString(36).slice(2, 8)
 
 describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
@@ -702,103 +694,5 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     const cleanup = await openDatabase({ backend: 'postgres', url: postgresUrl!, bootstrap: false })
     await (cleanup.sql as PostgresDriver).exec(`DROP SCHEMA IF EXISTS "${namespace}" CASCADE`)
     await cleanup.close()
-  })
-})
-
-describe.skipIf(!mongoUrl)('mongodb driver (integration)', () => {
-  const namespace = `bunwrite_test_${suffix}`
-  let database: Awaited<ReturnType<typeof openDatabase>>
-  let driver: MongoDriver
-
-  test('bootstraps indexes and stores documents', async () => {
-    database = await openDatabase({ backend: 'mongodb', url: mongoUrl!, namespace })
-    driver = database.documents as MongoDriver
-    const users = driver.collection('_users')
-    await users.insert({ id: 'u1', name: 'User', email: 'u1@example.com' })
-    expect(await users.findOne({ id: 'u1' })).toMatchObject({ name: 'User' })
-    await users.update({ id: 'u1' }, { name: 'Changed' })
-    expect(await users.findOne({ id: 'u1' })).toMatchObject({ name: 'Changed' })
-    expect((await users.upsert({ id: 'u2' }, { id: 'u2', name: 'Two' })).created).toBe(true)
-    expect((await users.upsert({ id: 'u2' }, { id: 'u2', name: 'Two!' })).created).toBe(false)
-    expect(await driver.nextSequence('products')).toBe(1)
-    expect(await driver.nextSequence('products')).toBe(2)
-    // The unique `id` index created by the bootstrap rejects a duplicate.
-    await expect(users.insert({ id: 'u1', name: 'Dup' })).rejects.toBeDefined()
-  })
-
-  test('the MongoDB document store runs CRUD, permissions and queries', async () => {
-    const store = new MongoDocumentStore(driver)
-    const attributes = [
-      normalizeAttribute({ key: 'name', type: 'string', required: false, size: 255 }),
-      normalizeAttribute({ key: 'price', type: 'integer', required: false, default: 0 }),
-      normalizeAttribute({ key: 'tags', type: 'string', array: true, required: false, size: 32 }),
-      normalizeAttribute({ key: 'active', type: 'boolean', required: false, default: true }),
-    ]
-    const indexes = [normalizeIndex({ key: 'fts', type: 'fulltext', attributes: ['name'] })]
-    const collection: Collection = {
-      seq: 1,
-      databaseId: 'main',
-      databaseSeq: 1,
-      id: 'products',
-      name: 'Products',
-      enabled: true,
-      documentSecurity: true,
-      permissions: [],
-      attributes,
-      indexes,
-      createdAt: '',
-      updatedAt: '',
-      table: 'main_products',
-      permsTable: '',
-      attributeMap: new Map(attributes.map((a) => [a.key, a])),
-    }
-    for (const index of mongoDocumentIndexes(collection.table, indexes, attributes)) {
-      await driver.collection(collection.table).createIndex(index)
-    }
-
-    const admin = keyCaller()
-    const created = await store.createDocument(admin, collection, {
-      id: 'm1',
-      data: { name: 'Chuck Taylor', price: 10, tags: ['shoe', 'canvas'], active: true },
-      permissions: ['read("user:u1")', 'update("user:u1")', 'delete("user:u1")'],
-    })
-    expect(created.$id).toBe('m1')
-    expect(created.tags).toEqual(['shoe', 'canvas'])
-    expect(created.active).toBe(true)
-    expect((await store.getDocument(admin, collection, 'm1')).name).toBe('Chuck Taylor')
-    expect(await store.collectionVersion(collection)).toBeGreaterThan(0)
-
-    const u1 = { kind: 'user', privileged: false, user: { id: 'u1' }, sessionId: null, roles: new Set(['any', 'users', 'user:u1']), scopes: null } as unknown as Caller
-    const u2 = { kind: 'user', privileged: false, user: { id: 'u2' }, sessionId: null, roles: new Set(['any', 'users', 'user:u2']), scopes: null } as unknown as Caller
-
-    // Filters: equal, range, array contains, boolean, startsWith, search.
-    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'equal', attribute: 'active', values: [true] })])).total).toBe(1)
-    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'greaterThan', attribute: 'price', values: [5] })])).total).toBe(1)
-    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'contains', attribute: 'tags', values: ['canvas'] })])).total).toBe(1)
-    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'startsWith', attribute: 'name', values: ['chuck'] })])).total).toBe(1)
-    expect((await store.listDocuments(admin, collection, [JSON.stringify({ method: 'search', attribute: 'name', values: ['chuck'] })])).total).toBe(1)
-    // Document permissions: only u1 can read the row when a filter is applied.
-    expect((await store.listDocuments(u1, collection, [])).total).toBe(1)
-    expect((await store.listDocuments(u2, collection, [])).total).toBe(0)
-    await store.updateDocument(admin, collection, 'm1', { price: 12 }, null, { revision: 1 })
-    expect((await store.incrementAttribute(admin, collection, 'm1', 'price', 3, null, 1)).price).toBe(15)
-    await expect(store.updateDocument(admin, collection, 'm1', { price: 1 }, null, { revision: 1 })).rejects.toBeDefined()
-
-    const outcomes = await store.runBatch([
-      () => store.createDocument(admin, collection, { id: 'm2', data: { name: 'Second' }, permissions: [] }),
-      () => store.createDocument(admin, collection, { id: 'm1', data: { name: 'Dup' }, permissions: [] }),
-    ])
-    expect(outcomes.map((outcome) => (outcome.ok ? 'ok' : 'fail'))).toEqual(['ok', 'fail'])
-    expect(await store.countDocuments(admin, collection)).toBe(2)
-
-    await store.deleteDocument(admin, collection, 'm2')
-    expect(await store.countDocuments(admin, collection)).toBe(1)
-    // Staged reads are not supported without sessions.
-    await expect(store.preview(async () => 1)).rejects.toBeDefined()
-  })
-
-  test('drops the scratch database', async () => {
-    await driver.database.command({ dropDatabase: 1 })
-    await database.close()
   })
 })

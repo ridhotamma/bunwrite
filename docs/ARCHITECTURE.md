@@ -106,7 +106,7 @@ through another.
 | Path | Holds |
 | --- | --- |
 | `src/app.ts` | Builds the services, routes `/v1`, resolves the caller (API key, console admin in admin mode, session or JWT), applies switched-off services and protocols, CORS, publishes realtime events and webhooks after a request succeeds |
-| `src/db/` | SQLite connection (WAL, foreign keys), the driver port and its SQLite/Postgres/MongoDB implementations, Postgres/Mongo schema bootstrap, and the Drizzle schema of built-in tables; migrations in `drizzle/`. See [DATABASE.md](DATABASE.md) |
+| `src/db/` | SQLite connection (WAL, foreign keys), the driver port and its SQLite/Postgres implementations, Postgres schema bootstrap, and the Drizzle schema of built-in tables; migrations in `drizzle/`. See [DATABASE.md](DATABASE.md) |
 | `src/schema/` | Registry of databases/collections, `push.ts` (config → tables, used by CLI, import and console), `admin.ts` (console edits, export) |
 | `src/documents/` | Query parser/compiler, codec (validation, encoding), `store.ts` (reads, writes, permissions), routes |
 | `src/transactions/` | Staged operations and commit with conflict detection |

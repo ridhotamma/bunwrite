@@ -5,7 +5,7 @@
  * folder, so the existing single-project services stay unchanged.
  *
  * On SQLite a project database is a file. On Postgres it is a schema in the
- * same server, and on MongoDB a database; the project ID decides the namespace.
+ * same server; the project ID decides the schema name.
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 
@@ -197,10 +197,6 @@ export class ProjectManager implements ProjectResolver {
     }
 
     const database = await this.openProjectDatabase(info.id)
-    if (!database.sql) {
-      await database.close()
-      throw new Error(`Project ${info.id} uses ${database.backend}; MongoDB needs the repository layer before it can serve a project.`)
-    }
     const db = sqlDatabaseOf(database)
 
     try {
@@ -325,7 +321,6 @@ export class ProjectManager implements ProjectResolver {
       mkdirSync(paths.backups, { recursive: true })
       mkdirSync(paths.functions, { recursive: true })
       database = await this.openProjectDatabase(id)
-      if (!database.sql) throw new Error(`Project ${id} uses ${database.backend}; MongoDB needs the repository layer before it can serve a project.`)
       const db = sqlDatabaseOf(database)
 
       const instance = await this.bootstrap(

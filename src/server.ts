@@ -72,7 +72,6 @@ export async function startServer(): Promise<void> {
     const pushOptions = { log: (line: string) => console.log(`[schema] ${line}`), baseDir: dirname(resolve(config.schemaPath)) }
     if (database.backend === 'postgres') await pushConfigPostgres(database.sql as PostgresDriver, schema, pushOptions)
     else if (database.sqlite) pushConfig(database.sqlite, schema, pushOptions)
-    else console.error('[schema] schema sync is not available on MongoDB yet; use db:migrate with a SQL backend.')
   }
 
   const services = createServices(config, db)

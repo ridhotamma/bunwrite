@@ -1,5 +1,5 @@
 /**
- * Document-layer errors shared by the SQL and MongoDB backends.
+ * Document-layer errors shared by the SQL backends.
  */
 
 /**

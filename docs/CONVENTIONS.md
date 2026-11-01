@@ -137,9 +137,8 @@ Plural nouns for collections (`Collection[]`), singular for a service
 
 - Behaviour is tested through the public API (the real Appwrite SDK) whenever
   possible; unit tests are for pure helpers and translators.
-- Database backends: the SQLite suite must stay green. Postgres/Mongo tests are
-  opt-in through `BUNWRITE_TEST_POSTGRES_URL` / `BUNWRITE_TEST_MONGO_URL` and
-  clean up their scratch schema/database.
+- Database backends: the SQLite suite must stay green. Postgres tests are
+  opt-in through `BUNWRITE_TEST_POSTGRES_URL` and clean up their scratch schema.
 - Every refactor step keeps `bun run typecheck`, `bun run lint`,
   `bun run format:check` and `bun test` green before it is committed.
 - `test/architecture.test.ts` guards the boundary: the portable modules
@@ -170,5 +169,5 @@ when it gains a network backend.
 - [ ] No new `any`, no floating promises.
 - [ ] Routes stay thin; SQL stays in the data layer.
 - [ ] Errors are Appwrite types with stable `type` values.
-- [ ] Postgres/Mongo path considered (or explicitly guarded).
+- [ ] Postgres path considered (or explicitly guarded).
 - [ ] Tests cover the behaviour, and the full suite is green.

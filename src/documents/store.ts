@@ -82,8 +82,7 @@ export interface NewDocument {
 
 /**
  * The document operations the routes, the write batcher and the transaction
- * service use. `DocumentStore` implements it for SQL; `MongoDocumentStore`
- * implements it for MongoDB.
+ * service use. `DocumentStore` implements it for SQL.
  */
 export interface DocumentBackend {
   events: DocEvent[]

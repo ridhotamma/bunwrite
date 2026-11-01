@@ -26,7 +26,7 @@ export type Orm = BunSQLiteDatabase<typeof schema>
  * The synchronous SQLite connection plus the async driver port.
  *
  * Existing services keep using `sqlite` (and `driver` is the same connection
- * behind the async port). A migration to Postgres or MongoDB moves a service
+ * behind the async port). A migration to Postgres moves a service
  * from `sqlite` to `driver`; see docs/DATABASE.md.
  */
 export interface Db extends SqlDatabase {

@@ -3,35 +3,33 @@
  *
  * `openDatabase` is the only place that knows how a backend is configured.
  * Everything below it speaks the `src/db/driver.ts` port. SQLite remains the
- * default so an existing deployment keeps its zero-config file; Postgres and
- * MongoDB are opt-in through `DB_DRIVER` + `DATABASE_URL` (see docs/DATABASE.md).
+ * default so an existing deployment keeps its zero-config file; Postgres is
+ * opt-in through `DB_DRIVER` + `DATABASE_URL` (see docs/DATABASE.md).
  *
  * SQLite is synchronous under the port, so the existing `Db.sqlite` fast path
  * keeps working while services migrate to `db.driver`.
  */
 import { openDb, type Db } from './connection'
-import type { DatabaseBackend, Dialect, DocumentDriver, DriverCapabilities, SqlDatabase, SqlDialect, SqlDriver } from './driver'
+import type { DatabaseBackend, Dialect, DriverCapabilities, SqlDatabase, SqlDriver } from './driver'
 import { parseDatabaseBackend } from './driver'
-import { MongoDriver } from './mongo-driver'
-import { ensureMongoSchema } from './mongo-schema'
 import { PostgresDriver } from './postgres-driver'
 import { ensurePostgresSchema } from './postgres-schema'
 
 export type { DatabaseBackend } from './driver'
 
-export const DATABASE_BACKENDS: readonly DatabaseBackend[] = ['sqlite', 'postgres', 'mongodb']
+export const DATABASE_BACKENDS: readonly DatabaseBackend[] = ['sqlite', 'postgres']
 
 export { parseDatabaseBackend }
 
 export interface DatabaseOptions {
   backend: DatabaseBackend
-  /** SQLite file path. Ignored by the network backends. */
+  /** SQLite file path. Ignored by Postgres. */
   path?: string
-  /** Postgres or MongoDB connection URL. */
+  /** Postgres connection URL. */
   url?: string
-  /** Postgres schema or MongoDB database. Defaults per backend. */
+  /** Postgres schema. Defaults to `public`. */
   namespace?: string
-  /** Pool size for network backends. */
+  /** Postgres connection-pool size. */
   poolMax?: number
   /** Postgres TLS. */
   ssl?: boolean
@@ -47,10 +45,8 @@ export interface Database {
   backend: DatabaseBackend
   dialect: Dialect
   capabilities: DriverCapabilities
-  /** SQL executor for sqlite/postgres; null for MongoDB. */
-  sql: SqlDriver | null
-  /** Document collections for MongoDB; null for the SQL backends. */
-  documents: DocumentDriver | null
+  /** The async SQL executor. */
+  sql: SqlDriver
   /** The SQLite handle when `backend === 'sqlite'`. */
   sqlite: Db | null
   close(): Promise<void>
@@ -83,10 +79,7 @@ export function databaseOptionsOf(config: {
  */
 export function sqlDatabaseOf(database: Database): SqlDatabase {
   if (database.sqlite) return database.sqlite
-  if (!database.sql) {
-    throw new Error('MongoDB does not expose the SQL port; the remaining SQL-shaped services need a Postgres or SQLite database.')
-  }
-  return { driver: database.sql, dialect: database.dialect as SqlDialect, capabilities: database.capabilities }
+  return { driver: database.sql, dialect: database.dialect, capabilities: database.capabilities }
 }
 
 /** Wrap the existing synchronous SQLite connection in the async port. */
@@ -96,7 +89,6 @@ export function sqliteDatabase(db: Db): Database {
     dialect: 'sqlite',
     capabilities: db.capabilities,
     sql: db.driver,
-    documents: null,
     sqlite: db,
     close: async () => {
       await db.driver.close()
@@ -122,51 +114,25 @@ export async function openDatabase(options: DatabaseOptions): Promise<Database> 
     throw new Error(`DATABASE_URL is required when DB_DRIVER=${options.backend}.`)
   }
 
-  if (options.backend === 'postgres') {
-    const driver = new PostgresDriver({
-      url,
-      max: options.poolMax,
-      tls: options.ssl,
-      schema: options.namespace,
-    })
-    try {
-      await driver.ping()
-      if (bootstrap) await ensurePostgresSchema(driver, { log })
-      log(`connected to postgres (${driver.capabilities.dialect})`)
-    } catch (error) {
-      await driver.close().catch(() => {})
-      throw error
-    }
-    return {
-      backend: 'postgres',
-      dialect: 'postgres',
-      capabilities: driver.capabilities,
-      sql: driver,
-      documents: null,
-      sqlite: null,
-      close: () => driver.close(),
-      ping: () => driver.ping(),
-    }
-  }
-
-  const driver = await MongoDriver.open({
+  const driver = new PostgresDriver({
     url,
-    database: options.namespace ?? 'bunwrite',
-    maxPoolSize: options.poolMax,
+    max: options.poolMax,
+    tls: options.ssl,
+    schema: options.namespace,
   })
   try {
-    if (bootstrap) await ensureMongoSchema(driver, { log })
-    log(`connected to mongodb (${driver.capabilities.dialect})`)
+    await driver.ping()
+    if (bootstrap) await ensurePostgresSchema(driver, { log })
+    log(`connected to postgres (${driver.capabilities.dialect})`)
   } catch (error) {
     await driver.close().catch(() => {})
     throw error
   }
   return {
-    backend: 'mongodb',
-    dialect: 'mongodb',
+    backend: 'postgres',
+    dialect: 'postgres',
     capabilities: driver.capabilities,
-    sql: null,
-    documents: driver,
+    sql: driver,
     sqlite: null,
     close: () => driver.close(),
     ping: () => driver.ping(),
@@ -181,23 +147,12 @@ export async function openDatabase(options: DatabaseOptions): Promise<Database> 
 export async function dropDatabase(options: DatabaseOptions): Promise<void> {
   if (options.backend === 'sqlite') return
   const url = options.url
-  if (!url) return
-  if (options.backend === 'postgres') {
-    const namespace = options.namespace
-    if (!namespace || namespace === 'public') return
-    const driver = new PostgresDriver({ url, max: options.poolMax, tls: options.ssl, schema: namespace })
-    try {
-      const quoted = `"${namespace.replace(/"/g, '""')}"`
-      await driver.exec(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`)
-    } finally {
-      await driver.close().catch(() => {})
-    }
-    return
-  }
-  if (!options.namespace) return
-  const driver = await MongoDriver.open({ url, database: options.namespace, maxPoolSize: options.poolMax })
+  const namespace = options.namespace
+  if (!url || !namespace || namespace === 'public') return
+  const driver = new PostgresDriver({ url, max: options.poolMax, tls: options.ssl, schema: namespace })
   try {
-    await driver.database.command({ dropDatabase: 1 })
+    const quoted = `"${namespace.replace(/"/g, '""')}"`
+    await driver.exec(`DROP SCHEMA IF EXISTS ${quoted} CASCADE`)
   } finally {
     await driver.close().catch(() => {})
   }
@@ -207,7 +162,7 @@ export async function dropDatabase(options: DatabaseOptions): Promise<void> {
 export function describeDatabase(database: Pick<Database, 'backend' | 'capabilities'>): string {
   const caps = database.capabilities
   const features = [
-    caps.sql ? 'sql' : 'documents',
+    'sql',
     caps.transactions ? 'transactions' : 'no transactions',
     caps.savepoints ? 'savepoints' : 'no savepoints',
     caps.localFile ? 'local file' : 'network',
@@ -217,21 +172,9 @@ export function describeDatabase(database: Pick<Database, 'backend' | 'capabilit
 }
 
 export type { Db } from './connection'
-export type {
-  Bindings,
-  DocumentCollection,
-  DocumentDriver,
-  DocumentFilter,
-  DriverCapabilities,
-  SqlDatabase,
-  SqlDriver,
-  SqlExecutor,
-  SqlTransaction,
-} from './driver'
+export type { Bindings, DriverCapabilities, SqlDatabase, SqlDriver, SqlExecutor, SqlTransaction } from './driver'
 export { DatabaseConnectionError, UnsupportedFeatureError, uniqueViolation } from './driver'
 export { PostgresDriver } from './postgres-driver'
-export { MongoDriver } from './mongo-driver'
 export { SqliteDriver } from './sqlite-driver'
 export { dialectAdapter, postgresDialect, sqliteDialect, toPostgres } from './dialect'
 export { ensurePostgresSchema } from './postgres-schema'
-export { ensureMongoSchema } from './mongo-schema'
