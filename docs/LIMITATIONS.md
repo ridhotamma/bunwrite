@@ -31,7 +31,7 @@ Related documents:
 | Appwrite compatibility | Partial; some settings are stored but not applied | **High/Medium** |
 | Deployments and migrations | Restart-based, startup migrations, live DDL | **Medium** |
 | Write throughput | SQLite: one writer per database and a project-sharded writer pool; Postgres uses the connection pool | **Medium** |
-| Observability | Optional OTLP/Datadog/PostHog export; no Prometheus scrape endpoint or built-in alerting | **Low/Medium** |
+| Observability | Console pages with bounded local telemetry; optional OTLP/Datadog/PostHog export; no Prometheus scrape endpoint or built-in alerting | **Low/Medium** |
 | Realtime | SQLite: cross-process event table + polling; Postgres: `LISTEN`/`NOTIFY` | **Medium** |
 | Multi-tenancy | Per-project databases/schemas; SQLite control writes share one writer | **Low/Medium** |
 | Public HTTP caching | Opt-in; default off, with a multi-project caveat | **Low/Medium** |
@@ -317,9 +317,11 @@ known tuning.
 ### 14. Observability is opt-in and export-only
 
 - `/health` is a ping, not a database/disk readiness check.
-- Traces, metrics and request logs can be exported over OTLP, Datadog or
-  PostHog ([OBSERVABILITY.md](OBSERVABILITY.md)), but there is no Prometheus
-  scrape endpoint and no database query span.
+- The console's Observability pages keep a bounded local copy (per-minute
+  metrics, sampled spans and document events); traces, metrics and request logs
+  can also be exported over OTLP, Datadog or PostHog
+  ([OBSERVABILITY.md](OBSERVABILITY.md)). There is no Prometheus scrape endpoint
+  and no database query span.
 - Request logs and the console remain the main built-in diagnostics.
 - There is no built-in alerting for disk space, WAL growth, backup failure,
   writer failure, queue depth or realtime lag.

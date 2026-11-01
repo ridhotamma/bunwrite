@@ -14,8 +14,12 @@ import { hasAnySink, observabilityConfig, type ObservabilityConfig } from './con
 import { FlagService } from './flags'
 import { MetricRegistry, collectProcessMetrics } from './metrics'
 import { logsPayload, metricsPayload, tracesPayload, type LogData, type SpanData } from './otlp'
+import { normalizePath } from './paths'
 import { BatchQueue } from './queue'
 import { sendDatadogLogs, sendDatadogMetrics, sendOtlp, sendPosthogEvents, type AnalyticsEvent } from './providers'
+import type { TelemetryStore } from './store'
+
+export { normalizePath } from './paths'
 
 export interface RequestEnd {
   method: string
@@ -32,6 +36,8 @@ export interface RequestEnd {
   id?: string
   /** The writer process handled this request; only release the in-flight slot. */
   forwarded?: boolean
+  /** Project store for the console trace explorer; omit when there is no database. */
+  telemetry?: TelemetryStore
 }
 
 export interface RequestObservation {
@@ -65,49 +71,6 @@ function randomHex(bytes: number): string {
 
 const unixNano = (milliseconds: number): string => String(BigInt(Math.max(0, Math.round(milliseconds))) * 1_000_000n)
 
-const NUMERIC = /^\d+$/
-const OPAQUE_ID = /^(?=.*[\d_-])[A-Za-z0-9_-]{10,}$/
-/** Segments that name a resource immediately followed by that resource's ID. */
-const ID_AFTER = new Set([
-  'databases',
-  'collections',
-  'documents',
-  'buckets',
-  'files',
-  'teams',
-  'users',
-  'functions',
-  'sites',
-  'deployments',
-  'executions',
-  'memberships',
-  'targets',
-  'providers',
-  'topics',
-  'subscribers',
-  'variables',
-  'webhooks',
-  'keys',
-  'projects',
-  'organizations',
-  'messages',
-  'jobs',
-  'rules',
-  'subscriptions',
-])
-
-/** Replace document, collection and database IDs so metric labels stay bounded. */
-export function normalizePath(pathname: string): string {
-  const path = pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
-  const parts = path.split('/')
-  for (let index = 1; index < parts.length; index++) {
-    const part = parts[index]!
-    const previous = parts[index - 1]!
-    if (NUMERIC.test(part) || OPAQUE_ID.test(part) || ID_AFTER.has(previous)) parts[index] = ':id'
-  }
-  return parts.join('/')
-}
-
 const severityOf = (status: number, error?: string): { number: number; text: string } => {
   if (status >= 500 || error) return { number: 17, text: 'ERROR' }
   if (status >= 400) return { number: 13, text: 'WARN' }
@@ -118,8 +81,10 @@ export class Observability {
   readonly config: ObservabilityConfig
   readonly metrics = new MetricRegistry()
   readonly flags: FlagService
-  /** True when at least one request-level sink is configured. */
+  /** True when any request observation is worth creating (external sink or console). */
   readonly enabled: boolean
+  /** Keep a local copy for the console pages. */
+  readonly console: boolean
 
   private readonly traces: BatchQueue<SpanData> | null = null
   private readonly logs: BatchQueue<LogData> | null = null
@@ -183,7 +148,9 @@ export class Observability {
     }
 
     this.metricsSink = Boolean((otlp?.metrics && otlp.signals.has('metrics')) || datadog?.metrics)
-    this.enabled = this.config.enabled && hasAnySink(this.config) && Boolean(this.traces || this.logs || this.metricsSink)
+    this.console = this.config.console
+    const external = this.config.enabled && hasAnySink(this.config) && Boolean(this.traces || this.logs || this.metricsSink)
+    this.enabled = this.console || external
 
     if (timers && this.metricsSink) {
       this.metricsTimer = setInterval(() => void this.flushMetrics(), this.config.flushMs)
@@ -198,6 +165,7 @@ export class Observability {
     if (this.metricsSink) this.metrics.gauge('bunwrite.http.in_flight', this.inflight)
     const parent = parseTraceparent(request.headers.get('traceparent'))
     const sampled = parent?.sampled === true || Math.random() < this.config.sampleRate
+    const consoleSampled = this.console && Math.random() < this.config.consoleSampleRate
     const traceId = parent?.traceId ?? randomHex(16)
     const spanId = randomHex(8)
     const startMono = performance.now()
@@ -217,6 +185,7 @@ export class Observability {
             spanId,
             parentSpanId: parent?.spanId,
             sampled,
+            consoleSampled,
             startMono,
             startWall,
             route: route || info.route || normalizePath(info.path),
@@ -234,6 +203,7 @@ export class Observability {
     spanId: string
     parentSpanId?: string
     sampled: boolean
+    consoleSampled: boolean
     startMono: number
     startWall: number
     route: string
@@ -246,6 +216,9 @@ export class Observability {
     const durationMs = Math.max(0, performance.now() - context.startMono)
     const statusClass = `${Math.floor(info.status / 100)}xx`
     const labels = { method: info.method, route, status_class: statusClass }
+
+    // The overview needs every request, not only the sampled traces.
+    if (this.console && info.telemetry) info.telemetry.recordRequest(info.project ?? '', durationMs, info.status)
 
     if (this.metricsSink) {
       this.metrics.counter('bunwrite.http.requests', 1, { ...labels, status: info.status })
@@ -298,27 +271,55 @@ export class Observability {
         spanId: context.spanId,
       })
     }
+
+    // Local copy for the console. This is sampled separately from exporters so
+    // the trace explorer works with no provider configured.
+    if (this.console && context.consoleSampled && info.telemetry) {
+      info.telemetry.recordSpan({
+        traceId: context.traceId,
+        spanId: context.spanId,
+        parentSpanId: context.parentSpanId,
+        requestId: info.id,
+        name: `${info.method} ${route}`,
+        method: info.method,
+        route,
+        status: info.status,
+        durationMs,
+        project: info.project ?? '',
+        auth: info.auth,
+        error: info.error,
+        attributes,
+      })
+    }
   }
 
   /** Product analytics from the document events a request produced. */
-  captureEvents(events: DocEvent[], caller: Caller, project: string): void {
-    if (!this.config.enabled || this.closed || !this.analytics || events.length === 0) return
+  captureEvents(events: DocEvent[], caller: Caller, project: string, telemetry?: TelemetryStore): void {
+    if (this.closed || events.length === 0 || (!this.analytics && !(this.console && telemetry))) return
     const distinctId = caller.user?.id ?? `project:${project}`
     const timestamp = new Date().toISOString()
     for (const event of events) {
-      this.analytics.add({
-        event: `document.${event.action}`,
-        distinctId,
-        timestamp,
-        properties: {
+      const name = `document.${event.action}`
+      const properties = {
+        project,
+        database: event.collection.databaseId,
+        collection: event.collection.id,
+        collection_name: event.collection.name,
+        document_id: String(event.document.$id),
+        action: event.action,
+      }
+      if (this.console && telemetry) {
+        telemetry.recordEvent({
+          event: name,
+          distinctId,
           project,
           database: event.collection.databaseId,
           collection: event.collection.id,
-          collection_name: event.collection.name,
-          document_id: String(event.document.$id),
-          action: event.action,
-        },
-      })
+          documentId: String(event.document.$id),
+          properties,
+        })
+      }
+      this.analytics?.add({ event: name, distinctId, timestamp, properties })
     }
   }
 

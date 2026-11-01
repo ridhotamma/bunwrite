@@ -12,6 +12,8 @@ import { siteHost } from './lib/hosts'
 import { randomSecret, sha256 } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
+import { observabilityConfig } from './observability/config'
+import { TelemetryStore } from './observability/store'
 import { ProxyService } from './proxy/service'
 import { QueueService } from './queue/service'
 import { RealtimeHub } from './realtime/hub'
@@ -59,6 +61,8 @@ export interface Services {
   /** Editable emails sent to project users (verification, recovery, OTP, invitations). */
   templates: EmailTemplateService
   requestLogs: RequestLogService
+  /** Bounded local telemetry for the console's Observability pages. */
+  telemetry: TelemetryStore
   backups: BackupService
   render: RenderService
   /** Durable job queue for SDK workers (docs/QUEUE.md). */
@@ -104,6 +108,13 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     projectVariables: (context) => variables.projectEnvironment(context),
   })
   const requestLogs = new RequestLogService(db, config)
+  const observability = observabilityConfig()
+  const telemetry = new TelemetryStore(db, {
+    maxSpans: observability.spanLimit,
+    maxEvents: observability.eventLimit,
+    retentionDays: observability.consoleRetentionDays,
+    flushMs: Math.min(observability.flushMs, 5_000),
+  })
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
   // Async renders are jobs in the queue, saved to storage when done.
@@ -135,6 +146,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     sites,
     proxy,
     requestLogs,
+    telemetry,
     backups,
     render,
     webhooks,

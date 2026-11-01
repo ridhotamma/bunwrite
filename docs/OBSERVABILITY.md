@@ -1,11 +1,13 @@
 # Observability
 
 Bunwrite can export request logs, traces, metrics, product analytics and feature
-flags to a third party. Everything is optional, configured from the environment,
-and implemented as plain HTTPS calls: there is no vendor SDK and no sidecar.
+flags to a third party, and keeps a local copy for the console's Observability
+pages. Everything is optional, configured from the environment, and implemented
+as plain HTTPS calls: there is no vendor SDK and no sidecar.
 
-With no provider configured the subsystem is off. The request path only checks a
-boolean, so it costs nothing on an instance that does not use it.
+The local console copy is on by default; external export is off until a provider
+is configured. The request path only pays for a minute counter and, when the
+console is disabled, a single boolean check.
 
 ## Signals
 
@@ -20,6 +22,31 @@ boolean, so it costs nothing on an instance that does not use it.
 Request logs shipped this way are independent of `LOG_REQUESTS`: turning off the
 SQLite/stdout request log does not stop the exporters, and vice versa.
 
+## Console pages
+
+The console has an **Observability** section with four tabs:
+
+| Page | What it shows |
+| --- | --- |
+| Overview | Requests, error rate, p95, traces kept, analytics and flags for this project; one-hour traffic chart; recent routes; exporter status. |
+| Traces | Sampled request spans, with route/status/search filters and a detail page (trace ID, span ID, request ID, attributes, error). |
+| Analytics | Document events per hour, top events, distinct subjects and a filterable event list. |
+| Feature flags | Flags evaluated for a user or project, with local overrides and the PostHog source. |
+
+This copy is local and works without a provider:
+
+- **Metrics** are counted for every request and upserted once per minute per
+  project (`_telemetry_minutes`), so the chart is accurate and costs one write
+  per minute instead of one per request.
+- **Traces** are sampled at `OBSERVABILITY_CONSOLE_SAMPLE_RATE` (default `0.01`)
+  into `_telemetry_spans`, capped at `OBSERVABILITY_CONSOLE_SPANS`.
+- **Analytics** stores document metadata in `_telemetry_events`, capped at
+  `OBSERVABILITY_CONSOLE_EVENTS`.
+- Everything is pruned after `OBSERVABILITY_CONSOLE_RETENTION_DAYS` (default 7).
+
+Set `OBSERVABILITY_CONSOLE=false` to turn the local copy off. Metrics and traces
+still export to a configured provider.
+
 ## Enable it
 
 Add the provider settings to `.env` and restart:
@@ -28,8 +55,8 @@ Add the provider settings to `.env` and restart:
 docker compose up -d --force-recreate
 ```
 
-`OBSERVABILITY_ENABLED=false` is the kill switch. Without it, any configured
-provider turns the subsystem on.
+`OBSERVABILITY_ENABLED=false` disables every external exporter. It does not stop
+the local console copy; use `OBSERVABILITY_CONSOLE=false` for that.
 
 ## Datadog
 

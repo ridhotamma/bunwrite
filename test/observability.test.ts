@@ -8,6 +8,7 @@ import { normalizePath, Observability, parseTraceparent } from '~/observability'
 import { MetricRegistry } from '~/observability/metrics'
 import { datadogSeries } from '~/observability/providers'
 import { logsPayload, metricsPayload, tracesPayload } from '~/observability/otlp'
+import type { SpanInput } from '~/observability/store'
 
 const servers: Array<{ stop: () => void }> = []
 
@@ -279,10 +280,30 @@ describe('Observability facade', () => {
     await observability.close()
   })
 
-  test('stays inert when no provider is configured', () => {
-    const observability = new Observability({}, { timers: false })
+  test('stays inert when the console and every provider are off', () => {
+    const observability = new Observability({ OBSERVABILITY_CONSOLE: 'false' }, { timers: false })
     expect(observability.enabled).toBe(false)
     expect(observability.begin(new Request('http://localhost/'))).toBeNull()
     expect(observability.flags.enabled).toBe(false)
+  })
+
+  test('keeps a local trace when the console is on and no provider is configured', async () => {
+    const observability = new Observability({ OBSERVABILITY_CONSOLE_SAMPLE_RATE: '1' }, { timers: false })
+    const spans: Array<{ route: string; status: number }> = []
+    const observation = observability.begin(new Request('https://api.example.com/v1/health'))!
+    expect(observation).not.toBeNull()
+    observation.end({
+      method: 'GET',
+      path: '/v1/health',
+      status: 200,
+      project: 'booking-app',
+      telemetry: {
+        recordSpan: (span: SpanInput) => spans.push({ route: span.route, status: span.status }),
+        recordEvent: () => {},
+        recordRequest: () => {},
+      } as any,
+    })
+    expect(spans).toEqual([{ route: '/health', status: 200 }])
+    await observability.close()
   })
 })

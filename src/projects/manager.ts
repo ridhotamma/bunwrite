@@ -523,6 +523,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.realtime.stop()
     }
     await Promise.all(closing.map(([, runtime]) => runtime.services.requestLogs.flush()))
+    await Promise.all(closing.map(([, runtime]) => runtime.services.telemetry.close()))
     for (const [id, runtime] of closing) {
       if (id !== this.config.projectId) await runtime.services.db.driver.close()
     }

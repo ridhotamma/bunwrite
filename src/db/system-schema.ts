@@ -721,7 +721,96 @@ export const requestLogs = sqliteTable(
     error: text('error').notNull().default(''),
     createdAt: text('created_at').notNull(),
   },
-  (t) => [index('_request_logs_created').on(t.createdAt), index('_request_logs_status').on(t.status)],
+  (t) => [
+    index('_request_logs_created').on(t.createdAt),
+    index('_request_logs_status').on(t.status),
+    // The Observability overview filters one project over a time window.
+    index('_request_logs_project_created').on(t.project, t.createdAt),
+  ],
+)
+
+/**
+ * Sampled request spans kept for the console's trace explorer. The exporters
+ * are the system of record; this is a bounded local window (see
+ * OBSERVABILITY_CONSOLE_SPANS) so the UI works without a provider.
+ */
+export const telemetrySpans = sqliteTable(
+  '_telemetry_spans',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    traceId: text('trace_id').notNull(),
+    spanId: text('span_id').notNull(),
+    parentSpanId: text('parent_span_id').notNull().default(''),
+    requestId: text('request_id').notNull().default(''),
+    name: text('name').notNull(),
+    method: text('method').notNull(),
+    route: text('route').notNull(),
+    status: integer('status').notNull(),
+    durationMs: real('duration_ms').notNull(),
+    project: text('project').notNull().default(''),
+    auth: text('auth').notNull().default(''),
+    error: text('error').notNull().default(''),
+    /** JSON object of the span attributes shown on the detail page. */
+    attributes: text('attributes').notNull().default('{}'),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [
+    index('_telemetry_spans_created').on(t.createdAt),
+    index('_telemetry_spans_project').on(t.project, t.createdAt),
+    index('_telemetry_spans_route').on(t.route),
+  ],
+)
+
+/** Document events captured for the console's product analytics page. */
+export const telemetryEvents = sqliteTable(
+  '_telemetry_events',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    event: text('event').notNull(),
+    distinctId: text('distinct_id').notNull().default(''),
+    project: text('project').notNull().default(''),
+    database: text('database').notNull().default(''),
+    collection: text('collection').notNull().default(''),
+    documentId: text('document_id').notNull().default(''),
+    /** JSON object of the event properties (never the document body). */
+    properties: text('properties').notNull().default('{}'),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [
+    index('_telemetry_events_created').on(t.createdAt),
+    index('_telemetry_events_project').on(t.project, t.createdAt),
+    index('_telemetry_events_event').on(t.event),
+  ],
+)
+
+/**
+ * One row per project per minute: the console's traffic chart and latency
+ * percentiles. Workers add their increments with an upsert, so the table stays
+ * accurate across the cluster at one write per minute instead of one per
+ * request.
+ */
+export const telemetryMinutes = sqliteTable(
+  '_telemetry_minutes',
+  {
+    project: text('project').notNull(),
+    minute: text('minute').notNull(),
+    requests: integer('requests').notNull().default(0),
+    errors: integer('errors').notNull().default(0),
+    durationSum: real('duration_sum').notNull().default(0),
+    durationCount: integer('duration_count').notNull().default(0),
+    b10: integer('b10').notNull().default(0),
+    b25: integer('b25').notNull().default(0),
+    b50: integer('b50').notNull().default(0),
+    b100: integer('b100').notNull().default(0),
+    b250: integer('b250').notNull().default(0),
+    b500: integer('b500').notNull().default(0),
+    b1000: integer('b1000').notNull().default(0),
+    b2500: integer('b2500').notNull().default(0),
+    b5000: integer('b5000').notNull().default(0),
+    b10000: integer('b10000').notNull().default(0),
+    bover: integer('bover').notNull().default(0),
+  },
+  (t) => [uniqueIndex('_telemetry_minutes_project_minute').on(t.project, t.minute)],
 )
 
 /** Outgoing webhooks (Appwrite's project webhooks), as `appwrite push webhooks` makes them. */

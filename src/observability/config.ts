@@ -47,6 +47,8 @@ export interface PosthogConfig {
 
 export interface ObservabilityConfig {
   enabled: boolean
+  /** Keep a local copy for the console even without an external provider. */
+  console: boolean
   serviceName: string
   serviceVersion: string
   environment: string
@@ -54,6 +56,12 @@ export interface ObservabilityConfig {
   instanceId: string
   /** Head-based trace sampling, 0..1. Metrics and logs are not sampled here. */
   sampleRate: number
+  /** Fraction of requests stored for the console trace explorer. */
+  consoleSampleRate: number
+  /** Rows kept per project by the local console store. */
+  spanLimit: number
+  eventLimit: number
+  consoleRetentionDays: number
   flushMs: number
   timeoutMs: number
   /** Bounded queues; oldest events are dropped first. */
@@ -176,11 +184,17 @@ export function observabilityConfig(env: Env = process.env): ObservabilityConfig
 
   return {
     enabled: truthy(env.OBSERVABILITY_ENABLED ?? env.OBSERVABILITY, configured),
+    // Local telemetry only matters when the console that renders it is on.
+    console: truthy(env.OBSERVABILITY_CONSOLE, truthy(env.CONSOLE_ENABLED, true)),
     serviceName: text(env.OTEL_SERVICE_NAME) || 'bunwrite',
     serviceVersion: text(env.OTEL_SERVICE_VERSION) || '1.8.0',
     environment: text(env.DEPLOYMENT_ENVIRONMENT) || text(env.NODE_ENV) || 'production',
     instanceId: text(env.OBSERVABILITY_INSTANCE_ID) || `${host}:${instanceSuffix}`,
     sampleRate: number(env.OBSERVABILITY_SAMPLE_RATE ?? env.OTEL_TRACES_SAMPLER_ARG, 1, 0, 1),
+    consoleSampleRate: number(env.OBSERVABILITY_CONSOLE_SAMPLE_RATE, 0.01, 0, 1),
+    spanLimit: number(env.OBSERVABILITY_CONSOLE_SPANS, 2_000, 100, 100_000),
+    eventLimit: number(env.OBSERVABILITY_CONSOLE_EVENTS, 5_000, 100, 100_000),
+    consoleRetentionDays: number(env.OBSERVABILITY_CONSOLE_RETENTION_DAYS, 7, 1, 90),
     flushMs: number(env.OBSERVABILITY_FLUSH_MS, 5_000, 250, 60_000),
     timeoutMs: number(env.OBSERVABILITY_TIMEOUT_MS, 5_000, 250, 30_000),
     queueLimit: number(env.OBSERVABILITY_QUEUE_LIMIT, 5_000, 100, 100_000),

@@ -4,6 +4,7 @@ import { backupPages } from './backups'
 import { databasePages } from './databases'
 import { functionPages } from './functions'
 import { logPages } from './logs'
+import { observabilityPages } from './observability'
 import { organizationPages } from './organization'
 import { overviewPages } from './overview'
 import { projectPages } from './projects'
@@ -31,6 +32,7 @@ export function registerConsolePages(router: ConsoleRouter): void {
   sitePages(router)
   vcsPages(router)
   logPages(router)
+  observabilityPages(router)
   settingsPages(router)
   securityPages(router)
   apiPages(router)

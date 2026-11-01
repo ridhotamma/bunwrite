@@ -175,7 +175,7 @@ export function createApp(source: Services | ProjectResolver) {
     return (host ? await projects.findFunctionByHost(host) : null) ?? (forwarded ? await projects.findFunctionByHost(forwarded) : null)
   }
 
-  const consoleApp = createConsole(projects, hub)
+  const consoleApp = createConsole(projects, hub, observability)
   const consoleApi = createConsoleApi(projects)
 
   /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
@@ -311,7 +311,7 @@ export function createApp(source: Services | ProjectResolver) {
     const published = [...events, ...services.store.drainEvents()]
     services.realtime.publish(published)
     await services.webhooks.dispatch(published, caller)
-    observability.captureEvents(published, caller, runtime.info.id)
+    observability.captureEvents(published, caller, runtime.info.id, runtime.services.telemetry)
     return response
   }
 
@@ -423,7 +423,9 @@ export function createApp(source: Services | ProjectResolver) {
       const started = performance.now()
       const url = new URL(request.url)
       const staticAsset = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/')
-      const observation = staticAsset ? null : observability.begin(request)
+      // The Observability pages should not inflate their own traffic charts.
+      const selfPage = url.pathname.startsWith('/console/observability')
+      const observation = staticAsset || selfPage ? null : observability.begin(request)
       // The console resolves its own project, so refresh every runtime it may show.
       if (url.pathname.startsWith('/console')) {
         for (const runtime of projects.list()) if (runtime.services !== control) await syncServices(runtime.services)
@@ -494,6 +496,7 @@ export function createApp(source: Services | ProjectResolver) {
             error: meta.error,
             id,
             forwarded: meta.forwarded,
+            telemetry: runtime?.services.telemetry ?? control.telemetry,
           })
         }
       }

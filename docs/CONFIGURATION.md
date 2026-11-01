@@ -285,13 +285,20 @@ to dodge sign-in limits.
 
 ## Observability
 
-Request logs, traces, metrics and product analytics can be exported to a third
-party without an SDK. With no provider configured this subsystem is off. See
+Request logs, traces, metrics and product analytics are kept locally for the
+console's **Observability** pages, and can also be exported to a third party
+without an SDK. External export is off until a provider is configured; the
+local console copy is on by default. See
 [OBSERVABILITY.md](OBSERVABILITY.md) for setup examples.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OBSERVABILITY_ENABLED` | auto | `false` disables every exporter even when a provider is configured. `true` enables it explicitly. |
+| `OBSERVABILITY_ENABLED` | auto | `false` disables every external exporter even when a provider is configured. `true` enables it explicitly. The local console copy is controlled by `OBSERVABILITY_CONSOLE`. |
+| `OBSERVABILITY_CONSOLE` | `true` (`CONSOLE_ENABLED`) | Keep sampled traces, per-minute metrics and document events for the console's Observability pages. |
+| `OBSERVABILITY_CONSOLE_SAMPLE_RATE` | `0.01` | Fraction of requests kept as detailed traces for the console (0–1). Metrics are counted for every request. |
+| `OBSERVABILITY_CONSOLE_SPANS` | `2000` | Most recent sampled spans kept in total; older spans are trimmed. |
+| `OBSERVABILITY_CONSOLE_EVENTS` | `5000` | Most recent analytics events kept in total. |
+| `OBSERVABILITY_CONSOLE_RETENTION_DAYS` | `7` | How long local console telemetry is kept. |
 | `OBSERVABILITY_SAMPLE_RATE` | `1` | Head-based trace sampling (0–1). Logs and metrics are not sampled here. |
 | `OBSERVABILITY_FLUSH_MS` | `5000` | How often batched traces, logs, metrics and analytics are sent. |
 | `OBSERVABILITY_TIMEOUT_MS` | `5000` | Per-request timeout for a provider. |

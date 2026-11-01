@@ -34,6 +34,7 @@ const MAIN: [string, string, string, IconName][] = [
   ['sites', 'Sites', '/console/sites', 'globe'],
 ]
 const MANAGE: [string, string, string, IconName][] = [
+  ['observability', 'Observability', '/console/observability', 'chart-bar'],
   ['logs', 'Request logs', '/console/logs', 'list-bullets'],
   ['schema', 'Schema', '/console/schema', 'tree-structure'],
   ['api', 'API', '/console/api', 'key'],

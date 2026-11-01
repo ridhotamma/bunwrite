@@ -5,6 +5,7 @@ import type { ProjectInfo, ProjectResolver } from '~/projects/types'
 import type { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
 import type { VcsHub } from '~/vcs/hub'
+import type { Observability } from '~/observability'
 import type { Admin, ConsoleAuth } from './auth'
 import type { Form } from './forms'
 import type { Html } from './html'
@@ -23,6 +24,8 @@ export interface ConsoleContext {
   organizations: OrganizationService
   /** Git deployments: the GitHub App, installations and repository links. */
   hub: VcsHub
+  /** Provider status and feature flags for the Observability pages. */
+  observability: Observability
   currentProject: ProjectInfo
   /** Null on the project-selection pages before a project is chosen. */
   selectedProjectId: string | null

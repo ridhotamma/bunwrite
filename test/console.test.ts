@@ -77,6 +77,17 @@ describe('console access', () => {
     expect(res.status).toBe(403)
   })
 
+  test('observability pages render with the shared console chrome', async () => {
+    for (const path of ['/console/observability', '/console/observability/traces', '/console/observability/analytics', '/console/observability/flags']) {
+      const res = await get(path)
+      expect(res.status).toBe(200)
+      const body = await res.text()
+      expect(body).toContain('Observability')
+      expect(body).toContain('class="nav"')
+      expect(body).toContain('href="/console/observability"')
+    }
+  })
+
   test('htmx requests get an HX-Location instead of a redirect', async () => {
     const res = await form('/console/databases', { id: 'hx', name: 'Hx' }, { 'hx-request': 'true' })
     expect(res.status).toBe(204)
