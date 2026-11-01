@@ -102,6 +102,7 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .settings-aside h2{margin:4px 0 4px;font-size:14px;line-height:20px;font-weight:650}.settings-aside p{margin:0;font-size:13px}
 .settings-badge{display:inline-flex;margin-top:4px}.settings-badge .badge+.badge{margin-left:4px}
 .copy-row{display:flex;align-items:center;gap:8px;margin-top:4px}.copy-row input{flex:1;min-width:0;margin:0}
+.code-block{position:relative}.code-block pre{padding-right:72px}.code-block>button{position:absolute;top:8px;right:8px}
 .page-note{margin:-4px 0 16px;font-size:12.5px}.page-note b{color:var(--text);font-weight:550}
 .section-head{display:flex;align-items:baseline;gap:8px;margin:28px 0 10px}.section-head h2{margin:0;font-size:14px;line-height:20px;font-weight:650}
 .member-cell{display:flex;align-items:center;gap:12px;min-width:0}.member-cell b{display:flex;align-items:center;gap:6px;font-weight:550}.member-cell .subdued{font-size:12px;line-height:16px}.member-cell>div{min-width:0;overflow:hidden;text-overflow:ellipsis}

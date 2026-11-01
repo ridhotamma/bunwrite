@@ -40,6 +40,7 @@ const MANAGE: [string, string, string, IconName][] = [
   ['logs', 'Request logs', '/console/logs', 'list-bullets'],
   ['schema', 'Schema', '/console/schema', 'tree-structure'],
   ['api', 'API', '/console/api', 'key'],
+  ['mcp', 'MCP', '/console/mcp', 'robot'],
   ['webhooks', 'Webhooks', '/console/webhooks', 'webhooks-logo'],
   ['settings', 'Settings', '/console/settings/general', 'gear-six'],
 ]

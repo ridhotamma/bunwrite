@@ -88,6 +88,19 @@ describe('console access', () => {
     }
   })
 
+  test('the MCP page shows the project connection and agent setup', async () => {
+    const res = await get('/console/mcp')
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('href="/console/mcp" class="on"')
+    expect(body).toContain(server.endpoint)
+    expect(body).toContain(PROJECT)
+    expect(body).toContain('mcpServers')
+    expect(body).toContain('bunwrite_get_context')
+    expect(body).toContain('data-copy-target="#mcp-command"')
+    expect(body).toContain('--read-only')
+  })
+
   test('htmx requests get an HX-Location instead of a redirect', async () => {
     const res = await form('/console/databases', { id: 'hx', name: 'Hx' }, { 'hx-request': 'true' })
     expect(res.status).toBe(204)
