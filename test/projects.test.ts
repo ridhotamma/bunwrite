@@ -7,6 +7,8 @@ import { Client, Databases, Users } from 'node-appwrite'
 import { createApp, createServices } from '~/app'
 import { ConsoleAuth } from '~/console/auth'
 import { openDb, type Db } from '~/db/connection'
+import { MemoryMailer } from '~/mail/mailer'
+import { OrganizationService } from '~/organizations/service'
 import { createProjectManager, type ProjectManager } from '~/projects/manager'
 import { pushConfig } from '~/schema/push'
 import { KEY, PROJECT, testConfig, testSchema } from './helpers'
@@ -216,6 +218,109 @@ describe('multiple projects', () => {
     expect(remove.status).toBe(303)
     expect(manager.get('project-c')).toBeNull()
     await expect(manager.delete(PROJECT)).rejects.toThrow('default project')
+  })
+
+  test('only an organization owner can create, edit or delete a project', async () => {
+    const organizations = new OrganizationService(db)
+    const org = await organizations.ensure('org_test', 'Test Project')
+    const auth = new ConsoleAuth(db)
+    await auth.upsert('developer@example.com', 'password-456')
+    await organizations.ensureAdmin(org.id, 'developer@example.com')
+    db.sqlite!.query("UPDATE _organization_members SET role = 'developer' WHERE organization_id = ? AND email = ?").run(org.id, 'developer@example.com')
+    const secret = (await auth.login('developer@example.com', 'password-456'))!
+    const cookie = `bunwrite_console=${secret}`
+
+    const page = await (await fetch(`${base}/console`, { headers: { cookie } })).text()
+    expect(page).not.toContain('/console/projects/project-b/delete')
+    expect(page).not.toContain('data-dialog-open="#rename-project')
+    expect(page).not.toContain('data-dialog-open="#create-project"')
+
+    const home = await (await fetch(`${base}/console/overview`, { headers: { cookie: `${cookie}; console_project=project-b` } })).text()
+    expect(home).not.toContain('/console?create=1')
+
+    const create = await fetch(`${base}/console`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'Developer Project', id: 'developer-project' }),
+      redirect: 'manual',
+    })
+    expect(create.status).toBe(303)
+    expect(new URL(create.headers.get('location')!, base).searchParams.get('err')).toContain('Only an organization owner')
+    expect(manager.get('developer-project')).toBeNull()
+
+    const editPage = await fetch(`${base}/console/projects/project-b/edit`, { headers: { cookie }, redirect: 'manual' })
+    expect(editPage.status).toBe(303)
+    expect(editPage.headers.get('location')).toBe('/console')
+
+    const edit = await fetch(`${base}/console/projects/project-b/edit`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'Developer Renamed' }),
+      redirect: 'manual',
+    })
+    expect(edit.status).toBe(303)
+    expect(new URL(edit.headers.get('location')!, base).searchParams.get('err')).toContain('Only an organization owner')
+    expect(manager.get('project-b')!.info.name).toBe('Project B')
+
+    const remove = await fetch(`${base}/console/projects/project-b/delete`, {
+      method: 'POST',
+      headers: { cookie },
+      redirect: 'manual',
+    })
+    expect(remove.status).toBe(303)
+    expect(new URL(remove.headers.get('location')!, base).searchParams.get('err')).toContain('Only an organization owner')
+    expect(manager.get('project-b')).not.toBeNull()
+  })
+
+  test('deleting a project asks for an emailed code when MFA is on', async () => {
+    const control = manager.defaultProject().services
+    const original = control.mailer
+    const mailer = new MemoryMailer()
+    control.mailer = mailer
+    const auth = new ConsoleAuth(db)
+    await auth.upsert('mfa-admin@example.com', 'password-789')
+    const secret = (await auth.login('mfa-admin@example.com', 'password-789'))!
+    const admin = (await auth.find('mfa-admin@example.com'))!
+    await auth.setMfa(admin.seq, true)
+    const cookie = `bunwrite_console=${secret}`
+    const post = (fields: Record<string, string>) =>
+      fetch(`${base}/console/projects/project-mfa/delete`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(fields),
+        redirect: 'manual',
+      })
+
+    try {
+      await manager.create({ id: 'project-mfa', name: 'MFA Project', orgId: 'org_test' })
+
+      // The first POST only sends a code; the project still exists.
+      const started = await post({})
+      expect(started.status).toBe(303)
+      const location = new URL(started.headers.get('location')!, base)
+      expect(location.searchParams.get('delete')).toBe('project-mfa')
+      expect(location.searchParams.get('ok')).toContain('emailed')
+      expect(manager.get('project-mfa')).not.toBeNull()
+      const mail = mailer.last('mfa-admin@example.com')!
+      const code = /(\d{6})/.exec(mail.text)?.[1]
+      expect(code).toBeTruthy()
+
+      const page = await (await fetch(`${base}${location.pathname}${location.search}`, { headers: { cookie } })).text()
+      expect(page).toContain('id="delete-project-otp"')
+
+      const wrong = await post({ otp: '000000' })
+      expect(wrong.status).toBe(303)
+      expect(new URL(wrong.headers.get('location')!, base).searchParams.get('err')).toContain('not valid')
+      expect(manager.get('project-mfa')).not.toBeNull()
+
+      const removed = await post({ otp: code! })
+      expect(removed.status).toBe(303)
+      expect(manager.get('project-mfa')).toBeNull()
+    } finally {
+      control.mailer = original
+      await auth.setMfa(admin.seq, false)
+      if (manager.get('project-mfa')) await manager.delete('project-mfa').catch(() => {})
+    }
   })
 
   test('projects inherit the server SMTP live, and their own setting wins', async () => {

@@ -22,6 +22,8 @@ export interface Nav {
   orgName: string
   projects: { id: string; name: string }[]
   currentProject: string
+  /** Owners see the project-creation link; developers only work inside projects. */
+  canManageProjects?: boolean
 }
 
 const MAIN: [string, string, string, IconName][] = [
@@ -62,7 +64,7 @@ function projectSwitcher(nav: Nav): Html {
     </div>
     <hr>
     <a class="menu-item" href="/console">${icon('squares-four')}<span class="menu-item-text">All projects</span></a>
-    <a class="menu-item" href="/console?create=1">${icon('plus')}<span class="menu-item-text">New project</span></a>
+    ${nav.canManageProjects === false ? '' : html`<a class="menu-item" href="/console?create=1">${icon('plus')}<span class="menu-item-text">New project</span></a>`}
     <a class="menu-item" href="/console/organization/members">${icon('users')}<span class="menu-item-text">Members</span></a>`
   return menu(items, {
     label: 'Switch project',

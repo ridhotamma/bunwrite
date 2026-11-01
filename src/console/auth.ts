@@ -103,6 +103,43 @@ export class ConsoleAuth {
   }
 
   /**
+   * Start an email challenge for an admin. Only the latest challenge per admin
+   * is kept; returns the random challenge secret and the six-digit code to mail.
+   */
+  async startMfaChallenge(adminSeq: number): Promise<{ challenge: string; code: string }> {
+    const challenge = randomSecret(32)
+    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0')
+    const stamp = now()
+    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE admin_id = ? OR expire < ?', [adminSeq, stamp])
+    await this.db.driver.run('INSERT INTO _console_mfa_challenges (admin_id, secret_hash, code_hash, expire, created_at) VALUES (?, ?, ?, ?, ?)', [
+      adminSeq,
+      sha256(challenge),
+      sha256(code),
+      addSeconds(MFA_TTL),
+      stamp,
+    ])
+    return { challenge, code }
+  }
+
+  /** Spend one challenge row: true (and deletes it) for the right, live code. */
+  private async consumeChallenge(row: { seq: number; code_hash: string; attempts: number; expire: string } | null, code: string): Promise<boolean> {
+    if (!row || row.expire < now()) {
+      if (row) await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
+      return false
+    }
+    if (row.attempts >= MFA_ATTEMPTS) {
+      await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
+      return false
+    }
+    if (row.code_hash !== sha256(code.trim())) {
+      await this.db.driver.run('UPDATE _console_mfa_challenges SET attempts = attempts + 1 WHERE seq = ?', [row.seq])
+      return false
+    }
+    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
+    return true
+  }
+
+  /**
    * Check a password. When the admin has email MFA on, this returns a pending
    * challenge with a one-time code to email instead of a session.
    */
@@ -116,17 +153,7 @@ export class ConsoleAuth {
       .catch(() => false)
     if (!admin || !ok) return { status: 'invalid' }
     if (!admin.mfa) return { status: 'ok', secret: await this.newSession(admin.seq) }
-    const challenge = randomSecret(32)
-    const code = String(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000).padStart(6, '0')
-    const stamp = now()
-    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE admin_id = ? OR expire < ?', [admin.seq, stamp])
-    await this.db.driver.run('INSERT INTO _console_mfa_challenges (admin_id, secret_hash, code_hash, expire, created_at) VALUES (?, ?, ?, ?, ?)', [
-      admin.seq,
-      sha256(challenge),
-      sha256(code),
-      addSeconds(MFA_TTL),
-      stamp,
-    ])
+    const { challenge, code } = await this.startMfaChallenge(admin.seq)
     return { status: 'mfa', challenge, code, email: email.trim().toLowerCase() }
   }
 
@@ -136,20 +163,20 @@ export class ConsoleAuth {
       'SELECT seq, admin_id, code_hash, attempts, expire FROM _console_mfa_challenges WHERE secret_hash = ?',
       [sha256(challenge)],
     )
-    if (!row || row.expire < now()) {
-      if (row) await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
-      return null
-    }
-    if (row.attempts >= MFA_ATTEMPTS) {
-      await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
-      return null
-    }
-    if (row.code_hash !== sha256(code.trim())) {
-      await this.db.driver.run('UPDATE _console_mfa_challenges SET attempts = attempts + 1 WHERE seq = ?', [row.seq])
-      return null
-    }
-    await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
-    return this.newSession(row.admin_id)
+    if (!(await this.consumeChallenge(row, code))) return null
+    return this.newSession(row!.admin_id)
+  }
+
+  /**
+   * Verify a code for the latest challenge an admin started, without creating a
+   * session. Used to confirm sensitive actions such as deleting a project.
+   */
+  async verifyMfaForAdmin(adminSeq: number, code: string): Promise<boolean> {
+    const row = await this.db.driver.get<{ seq: number; code_hash: string; attempts: number; expire: string }>(
+      'SELECT seq, code_hash, attempts, expire FROM _console_mfa_challenges WHERE admin_id = ? ORDER BY seq DESC LIMIT 1',
+      [adminSeq],
+    )
+    return this.consumeChallenge(row, code)
   }
 
   /** Returns the session secret, or null for wrong credentials. Throws when MFA is required. */

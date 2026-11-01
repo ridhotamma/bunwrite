@@ -24,6 +24,10 @@ export interface ProjectsViewOptions {
   created?: CreatedProject
   /** Open the create dialog on load, e.g. from the sidebar's "New project". */
   createOpen?: boolean
+  /** Organization owners may create, rename and delete projects. */
+  canManage: boolean
+  /** Set when deletion needs the emailed code; opens the confirmation dialog. */
+  deleteTarget?: ProjectInfo
 }
 
 const compact = (n: number): string => {
@@ -58,14 +62,14 @@ function badges(project: ProjectInfo, currentId: string, defaultId: string): Htm
 /** Dialog IDs must be valid CSS selectors, and project IDs may contain dots. */
 const renameId = (index: number) => `rename-project-${index}`
 
-function projectMenu(project: ProjectInfo, index: number, defaultId: string): Html {
+function projectMenu(project: ProjectInfo, index: number, options: ProjectsViewOptions): Html {
   const id = encodeURIComponent(project.id)
   return menu(
     html`<a class="menu-item" href="/console/projects/${id}/open">Open</a>
-      <button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>
-      ${project.id === defaultId
-        ? ''
-        : html`<hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`}`,
+      ${options.canManage ? html`<button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>` : ''}
+      ${options.canManage && project.id !== options.defaultId
+        ? html`<hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`
+        : ''}`,
     { label: `Actions for ${project.name}` },
   )
 }
@@ -80,7 +84,7 @@ function projectCard(project: ProjectInfo, index: number, options: ProjectsViewO
         <h3>${project.name}</h3>
         <span class="mono subdued">${project.id}</span>
       </div>
-      ${projectMenu(project, index, options.defaultId)}
+      ${projectMenu(project, index, options)}
     </div>
     <div class="project-card-badges">${badges(project, options.currentId, options.defaultId)}</div>
     <div class="project-card-stats">
@@ -98,7 +102,7 @@ function projectList(options: ProjectsViewOptions): Html {
         <td><a class="project-row" href="/console/projects/${id}/open">${tile(project.name, project.id, 'sm')}<span><b>${project.name}</b><span class="mono subdued">${project.id}</span></span></a> ${badges(project, options.currentId, options.defaultId)}</td>
         <td class="num">${compact(statsFor(options, project).requests)}</td>
         <td class="subdued hide-sm">${day(project.createdAt)}</td>
-        <td class="num">${projectMenu(project, index, options.defaultId)}</td>
+        <td class="num">${projectMenu(project, index, options)}</td>
       </tr>`
     })}
   </tbody></table></div></div>`
@@ -150,6 +154,26 @@ function projectKeyDialog(created: CreatedProject): Html {
   })
 }
 
+/** Second step of deleting a project while the admin has email MFA on. */
+function deleteProjectDialog(project: ProjectInfo): Html {
+  const id = encodeURIComponent(project.id)
+  return dialog({
+    id: 'delete-project-otp',
+    title: 'Delete project',
+    open: true,
+    body: html`<p class="dialog-message">
+        Enter the six-digit code we emailed you to delete <b>${project.name}</b>. This removes its database, files and backups, and cannot be undone.
+      </p>
+      <form id="delete-project-otp-form" method="post" action="/console/projects/${id}/delete">
+        <label>One-time code<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
+        <p class="help">The code expires in 10 minutes. Choose “Resend code” if it did not arrive.</p>
+      </form>`,
+    actions: html`<button type="button" data-dialog-close>Cancel</button>
+      <button type="submit" form="delete-project-otp-form" name="resend" value="1" formnovalidate>Resend code</button>
+      <button type="submit" form="delete-project-otp-form" class="destructive">Delete project</button>`,
+  })
+}
+
 export function projectsView(options: ProjectsViewOptions): Html {
   const { projects, query, view } = options
   const queryString = query ? `q=${encodeURIComponent(query)}&` : ''
@@ -183,12 +207,17 @@ export function projectsView(options: ProjectsViewOptions): Html {
           : html`<div class="project-grid">${projects.map((project, index) => projectCard(project, index, options))}</div>`
         : html`<div class="card">${emptyState(
             query ? 'No matching projects' : 'No projects yet',
-            query ? `Nothing matches “${query}”.` : 'Create a project to get started.',
-            query ? html`<a class="btn" href="/console">Clear search</a>` : html`<button class="primary" type="button" data-dialog-open="#create-project">Create project</button>`,
+            query ? `Nothing matches “${query}”.` : options.canManage ? 'Create a project to get started.' : 'Ask an organization owner to create a project.',
+            query
+              ? html`<a class="btn" href="/console">Clear search</a>`
+              : options.canManage
+                ? html`<button class="primary" type="button" data-dialog-open="#create-project">Create project</button>`
+                : undefined,
           )}</div>`}
-      ${renameDialogs(projects)}
+      ${options.canManage ? renameDialogs(projects) : ''}
     </div>
-    ${createProjectDialog(Boolean(options.createOpen))}
+    ${options.canManage ? createProjectDialog(Boolean(options.createOpen)) : ''}
+    ${options.deleteTarget ? deleteProjectDialog(options.deleteTarget) : ''}
     ${options.created ? (options.created.apiKey ? projectKeyDialog(options.created) : html`<div class="toast" role="status">${icon('check-circle')}<span>${options.created.project.name} created</span></div>`) : ''}`
 }
 

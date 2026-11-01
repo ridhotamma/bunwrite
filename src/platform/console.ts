@@ -225,7 +225,10 @@ function routes(): Router<ConsoleApiContext> {
   })
 
   router.post('/organization/projects', async ({ ctx }) => {
-    signedIn(ctx)
+    const session = signedIn(ctx)
+    if ((await ctx.organizations.roleOf(ctx.projects.control.config.orgId, session.admin.email)) !== 'owner') {
+      throw err('general_argument_invalid', 'Only an organization owner can create a project.')
+    }
     const orgId = orgOf(ctx)
     try {
       const created = await ctx.projects.create({ id: ctx.params.projectId, name: ctx.params.name, orgId })
@@ -242,7 +245,10 @@ function routes(): Router<ConsoleApiContext> {
   })
 
   router.patch('/organization/projects/:projectId', async ({ ctx, path }) => {
-    signedIn(ctx)
+    const session = signedIn(ctx)
+    if ((await ctx.organizations.roleOf(ctx.projects.control.config.orgId, session.admin.email)) !== 'owner') {
+      throw err('general_argument_invalid', 'Only an organization owner can edit a project.')
+    }
     const target = orgProject(ctx, path.projectId!)
     const name = str(ctx.params.name)?.trim()
     if (!name || name.length > 128)
@@ -260,9 +266,27 @@ function routes(): Router<ConsoleApiContext> {
   })
 
   router.delete('/organization/projects/:projectId', async ({ ctx, path }) => {
-    signedIn(ctx)
+    const session = signedIn(ctx)
+    if ((await ctx.organizations.roleOf(ctx.projects.control.config.orgId, session.admin.email)) !== 'owner') {
+      throw err('general_argument_invalid', 'Only an organization owner can delete a project.')
+    }
     const target = orgProject(ctx, path.projectId!)
     if (target.info.id === ctx.projects.defaultProject().info.id) throw err('general_argument_invalid', 'The default project cannot be deleted.')
+
+    // A session alone is not enough when the admin has email MFA on: require a fresh code.
+    if (session.admin.mfa) {
+      const otp = str(ctx.params.otp) ?? ctx.request.headers.get('x-bunwrite-otp') ?? ctx.request.headers.get('x-appwrite-otp') ?? ''
+      if (!otp) {
+        const control = ctx.projects.control
+        const { code } = await ctx.auth.startMfaChallenge(session.admin.seq)
+        await control.mailer.send(control.templates.render('mfaChallenge', session.admin.email, { user: session.admin.email, otp: code }))
+        throw err('user_reauthentication_required', 'Enter the six-digit code we emailed you. Send it as the `otp` parameter or the X-Bunwrite-OTP header.')
+      }
+      if (!(await ctx.auth.verifyMfaForAdmin(session.admin.seq, otp))) {
+        throw err('user_reauthentication_required', 'That code is not valid or has expired.')
+      }
+    }
+
     await ctx.projects.delete(target.info.id)
     return noContent()
   })

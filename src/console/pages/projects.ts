@@ -7,6 +7,9 @@ import { projectEditView, projectsView, type CreatedProject } from '~/console/vi
 import { addSeconds } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 
+/** Projects belong to the organization; only its owners may create, rename or delete them. */
+const isOwner = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email)) === 'owner'
+
 async function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProject) {
   const query = (url.searchParams.get('q') ?? '').trim()
   const view = url.searchParams.get('view') === 'list' ? 'list' : 'grid'
@@ -30,19 +33,24 @@ async function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProj
   const org = await ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
   const members = (await ctx.organizations.members(org.id)).filter((member) => member.status === 'active').length
   const manager = (await ctx.organizations.roleOf(org.id, ctx.admin.email)) === 'owner'
-  const create = html`<button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>`
+  const defaultId = ctx.projects.defaultProject().info.id
+  const deleteId = (url.searchParams.get('delete') ?? '').trim()
+  const deleteTarget = manager && ctx.admin.mfa ? all.find((project) => project.info.id === deleteId && project.info.id !== defaultId)?.info : undefined
+  const create = manager ? html`<button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>` : undefined
   return ctx.render(
     org.name,
     'projects',
     html`${organizationHeader(org, { projects: all.length, members }, 'projects', manager, create)}${projectsView({
       projects: filtered.map((project) => project.info),
       currentId: ctx.selectedProjectId ?? '',
-      defaultId: ctx.projects.defaultProject().info.id,
+      defaultId,
       query,
       view,
       stats,
       created,
       createOpen: url.searchParams.get('create') === '1',
+      canManage: manager,
+      deleteTarget,
     })}`,
   )
 }
@@ -58,6 +66,7 @@ export function projectPages(router: ConsoleRouter): void {
   router.get('/console/projects', ({ ctx }) => ctx.go('/console'))
 
   router.post('/console', async ({ ctx }) => {
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can create a project.')
     const created = await ctx.projects.create({
       id: value(ctx.form, 'id'),
       name: value(ctx.form, 'name'),
@@ -80,13 +89,15 @@ export function projectPages(router: ConsoleRouter): void {
     })
   })
 
-  router.get('/console/projects/:id/edit', ({ ctx, path }) => {
+  router.get('/console/projects/:id/edit', async ({ ctx, path }) => {
+    if (!(await isOwner(ctx))) return ctx.go('/console')
     const project = ctx.projects.get(path.id!)
     if (!project) throw err('general_argument_invalid', 'Unknown project.')
     return ctx.render(`Rename ${project.info.name}`, 'projects', projectEditView(project.info))
   })
 
   router.post('/console/projects/:id/edit', async ({ ctx, path }) => {
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can edit a project.')
     const project = ctx.projects.get(path.id!)
     if (!project) throw err('general_argument_invalid', 'Unknown project.')
     const name = value(ctx.form, 'name')
@@ -103,6 +114,33 @@ export function projectPages(router: ConsoleRouter): void {
 
   router.post('/console/projects/:id/delete', async ({ ctx, path }) => {
     const id = path.id!
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can delete a project.')
+    const project = ctx.projects.get(id)
+    if (!project) throw err('general_argument_invalid', 'Unknown project.')
+    if (id === ctx.projects.defaultProject().info.id) throw err('general_argument_invalid', 'The default project cannot be deleted.')
+
+    // With email MFA on, a project deletion needs a fresh code, not just the session cookie.
+    const confirmLocation = `/console?delete=${encodeURIComponent(id)}`
+    if (ctx.admin.mfa) {
+      const otp = value(ctx.form, 'otp')
+      const resend = value(ctx.form, 'resend') === '1'
+      if (resend || !otp) {
+        const control = ctx.projects.control
+        const { code } = await ctx.auth.startMfaChallenge(ctx.admin.seq)
+        await control.mailer.send(control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }))
+        return ctx.go(confirmLocation, {
+          tone: 'success',
+          text: `We emailed a six-digit code to ${ctx.admin.email}. Enter it to delete ${project.info.name}.`,
+        })
+      }
+      if (!(await ctx.auth.verifyMfaForAdmin(ctx.admin.seq, otp))) {
+        return ctx.go(confirmLocation, {
+          tone: 'critical',
+          text: 'That code is not valid or has expired. Try again, or choose “Resend code”.',
+        })
+      }
+    }
+
     const wasCurrent = ctx.currentProject.id === id
     await ctx.projects.delete(id)
     const response = ctx.go('/console', { tone: 'success', text: 'Project deleted' })

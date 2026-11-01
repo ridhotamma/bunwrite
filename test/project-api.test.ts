@@ -456,6 +456,32 @@ describe('console API for the CLI', () => {
     expect((await consoleCall('DELETE', `/organization/projects/${PROJECT}`)).status).toBe(400)
   })
 
+  test('creating or editing a project needs an organization owner', async () => {
+    const auth = new ConsoleAuth(server.db)
+    await auth.upsert('developer@example.com', 'dev-password')
+    const login = await consoleCall('POST', '/account/sessions/email', {
+      headers: { cookie: '' },
+      body: { email: 'developer@example.com', password: 'dev-password' },
+    })
+    expect(login.status).toBe(201)
+    const devCookie = login.headers.get('set-cookie')!.split(';')[0]!
+    await server.db.driver.run("UPDATE _organization_members SET role = 'developer' WHERE email = ?", ['developer@example.com'])
+
+    const create = await consoleCall('POST', '/organization/projects', {
+      headers: { cookie: devCookie },
+      body: { projectId: 'developer-project', name: 'Developer Project' },
+    })
+    expect(create.status).toBe(400)
+    expect(create.body.message).toContain('Only an organization owner')
+
+    const edit = await consoleCall('PATCH', `/organization/projects/${PROJECT}`, {
+      headers: { cookie: devCookie },
+      body: { name: 'Developer Rename' },
+    })
+    expect(edit.status).toBe(400)
+    expect(edit.body.message).toContain('Only an organization owner')
+  })
+
   test('project calls with the cookie act as the admin only in admin mode', async () => {
     const asAdmin = await call(server, 'GET', '/webhooks', { headers: { cookie, 'x-appwrite-mode': 'admin' } })
     expect(asAdmin.status).toBe(200)

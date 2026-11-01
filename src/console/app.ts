@@ -249,6 +249,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       const admin = await auth.admin(request)
       if (!admin) return go(request, noAdmins && loopback(request, server) ? '/console/setup' : '/console/login')
       await organizations.ensureAdmin(control.config.orgId, admin.email)
+      const canManageProjects = (await organizations.roleOf(control.config.orgId, admin.email)) === 'owner'
 
       if (url.pathname === '/console/logout' && request.method === 'POST') {
         await auth.logout(request)
@@ -298,6 +299,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
                     orgName: organization?.name ?? control.config.projectName,
                     projects: projects.list().map((project) => project.info),
                     currentProject: selected?.info.id ?? current.info.id,
+                    canManageProjects,
                   },
                   body,
                   flash,
