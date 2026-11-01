@@ -519,6 +519,29 @@ describe('settings through the console', () => {
     expect(server.config.smtp).toBeNull()
   })
 
+  test('organization settings manage the global email delivery', async () => {
+    const page = await (await get('/console/organization')).text()
+    expect(page).toContain('Email delivery')
+    expect(page).toContain('action="/console/organization/email"')
+
+    await form('/console/organization/email', {
+      host: 'smtp.global.test',
+      port: '587',
+      user: 'global',
+      password: 'secret',
+      senderEmail: 'hi@global.test',
+      senderName: 'Global',
+    })
+    expect(server.config.smtp).toMatchObject({ host: 'smtp.global.test', port: 587, password: 'secret' })
+
+    // A blank password keeps the stored one, like the project-level form.
+    await form('/console/organization/email', { host: 'smtp2.global.test', port: '465', user: 'global', password: '', senderEmail: 'hi@global.test', senderName: 'Global', secure: 'on' })
+    expect(server.config.smtp).toMatchObject({ host: 'smtp2.global.test', port: 465, secure: true, password: 'secret' })
+
+    await form('/console/organization/email', { disable: '1' })
+    expect(server.config.smtp).toBeNull()
+  })
+
   test('request log retention and IP logging can be changed and reset', async () => {
     await form('/console/settings/logs', { retentionDays: '2', logIp: 'on' })
     expect([server.config.logRetentionDays, server.config.logIp]).toEqual([2, true])

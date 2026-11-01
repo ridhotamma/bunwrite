@@ -11,18 +11,24 @@ export const SECURITY = '/console/security'
 async function securityHeader(ctx: ConsoleContext) {
   const org = await ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
   const members = await ctx.organizations.members(org.id)
-  return organizationHeader(
-    org,
-    { projects: ctx.projects.list().length, members: members.filter((member) => member.status === 'active').length },
-    'security',
-    (await ctx.organizations.roleOf(org.id, ctx.admin.email)) === 'owner',
-  )
+  const canManage = (await ctx.organizations.roleOf(org.id, ctx.admin.email)) === 'owner'
+  return {
+    header: organizationHeader(
+      org,
+      { projects: ctx.projects.list().length, members: members.filter((member) => member.status === 'active').length },
+      'security',
+      canManage,
+    ),
+    canManage,
+  }
 }
 
 async function securityView(ctx: ConsoleContext) {
   const admin = (await ctx.auth.find(ctx.admin.email))!
   const smtp = ctx.projects.control.mailer.enabled
-  return html`${await securityHeader(ctx)}
+  const { header, canManage } = await securityHeader(ctx)
+  const emailSettings = html`<a href="/console/organization#email">organization email settings</a>`
+  return html`${header}
   ${settingsSection(
     'Email MFA',
     'When this is on, signing in asks for a six-digit code sent to your admin email after the password. The code expires in 10 minutes and is single use.',
@@ -30,12 +36,18 @@ async function securityView(ctx: ConsoleContext) {
       ${
         smtp
           ? html`<p class="hint" style="margin:0 0 12px">
-              A working SMTP setup is required. If mail delivery stops, an operator can clear MFA with
+              A working SMTP setup is required.
+              ${canManage ? html`Manage it in the ${emailSettings}.` : 'Ask an organization owner to manage it.'}
+              If mail delivery stops, an operator can clear MFA with
               <code>bunwrite console:admin you@example.com --no-mfa</code>.
             </p>`
           : html`<p class="hint" style="margin:0 0 12px">
-              SMTP is not configured. Configure it in <a href="/console/settings/general">Settings</a> before turning MFA on, or the emailed code cannot be
-              sent.
+              SMTP is not configured.
+              ${
+                canManage
+                  ? html`Configure it in the ${emailSettings} before turning MFA on, or the emailed code cannot be sent.`
+                  : 'Ask an organization owner to configure organization email settings before turning MFA on, or the emailed code cannot be sent.'
+              }
             </p>`
       }
       <form method="post" action="${SECURITY}/mfa">

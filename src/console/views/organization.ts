@@ -1,8 +1,10 @@
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
 import { alert, avatar, badge, day, destroy, emptyState, icon, menu, settingsSection, tabs } from '~/console/ui'
+import type { SmtpConfig } from '~/config'
 import type { InviteResult, OrganizationInfo, OrganizationMember } from '~/organizations/service'
 import { displayName } from '~/organizations/service'
+import { organizationEmailView } from './email'
 
 export interface OrganizationCounts {
   projects: number
@@ -44,7 +46,12 @@ export function organizationHeader(
   )}`
 }
 
-export function organizationGeneralView(org: OrganizationInfo): Html {
+export interface OrganizationSettingsOptions {
+  smtp: SmtpConfig | null
+  email: string
+}
+
+export function organizationGeneralView(org: OrganizationInfo, options: OrganizationSettingsOptions): Html {
   return html`${settingsSection(
       'Organization name',
       'Shown to every member and in invitation emails.',
@@ -57,7 +64,8 @@ export function organizationGeneralView(org: OrganizationInfo): Html {
       'Organization ID',
       'Use this ID with the API, webhooks or SDKs. Support may ask for it.',
       html`<div class="copy-row"><input id="organization-id" class="mono" readonly value="${org.id}" aria-label="Organization ID"><button type="button" data-copy-target="#organization-id">${icon('copy')}<span data-copy-label>Copy</span></button></div>`,
-    )}`
+    )}
+    ${organizationEmailView({ smtp: options.smtp, recipient: options.email })}`
 }
 
 const roleLabel = (role: string) => (role === 'owner' ? 'Owner' : 'Developer')

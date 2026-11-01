@@ -1,9 +1,12 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { arrayOf, value } from '~/console/forms'
-import { html, type Html } from '~/console/html'
+import { arrayOf, checked, value } from '~/console/forms'
+import { html, page, type Html } from '~/console/html'
 import { icon } from '~/console/ui'
+import { ORGANIZATION_EMAIL } from '~/console/views/email'
 import { membersView, organizationGeneralView, organizationHeader } from '~/console/views/organization'
+import { inlineStatus } from '~/console/views/settings'
 import { githubAppSection } from '~/console/views/vcs'
+import { SmtpMailer } from '~/mail/mailer'
 import type { InviteInput, OrganizationRole } from '~/organizations/service'
 import { err } from '~/lib/errors'
 
@@ -25,7 +28,12 @@ export function organizationPages(router: ConsoleRouter): void {
   router.get('/console/organization', async ({ ctx }) => {
     if (!(await canManage(ctx))) return ctx.go('/console')
     const { org, header } = await orgHeader(ctx, 'settings')
-    return ctx.render(org.name, 'organization', html`${header}${organizationGeneralView(org)}${githubAppSection(ctx)}`)
+    const control = ctx.projects.control
+    return ctx.render(
+      org.name,
+      'organization',
+      html`${header}${organizationGeneralView(org, { smtp: control.config.smtp, email: ctx.admin.email })}${githubAppSection(ctx)}`,
+    )
   })
 
   router.post('/console/organization', async ({ ctx }) => {
@@ -33,6 +41,45 @@ export function organizationPages(router: ConsoleRouter): void {
     const name = value(ctx.form, 'name')
     await ctx.organizations.updateName(orgId(ctx), name)
     return ctx.go('/console/organization', { tone: 'success', text: 'Organization updated' })
+  })
+
+  router.post(ORGANIZATION_EMAIL, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change email delivery.')
+    const control = ctx.projects.control
+    if (ctx.form.disable) {
+      await control.settings.set('smtp', { disabled: true })
+      return ctx.go('/console/organization', { tone: 'success', text: 'Email turned off' })
+    }
+    const host = value(ctx.form, 'host')
+    if (!host) throw err('general_argument_invalid', 'Enter the SMTP host.')
+    await control.settings.set('smtp', {
+      host,
+      port: Number(ctx.form.port || 587),
+      user: value(ctx.form, 'user') || undefined,
+      password: String(ctx.form.password ?? '') || control.config.smtp?.password,
+      secure: checked(ctx.form.secure),
+      senderEmail: value(ctx.form, 'senderEmail') || 'no-reply@example.com',
+      senderName: value(ctx.form, 'senderName') || `${control.config.projectName} Team`,
+    })
+    return ctx.go('/console/organization', { tone: 'success', text: 'Email delivery saved' })
+  })
+
+  router.post(`${ORGANIZATION_EMAIL}/test`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can send a test email.')
+    const control = ctx.projects.control
+    const smtp = control.config.smtp
+    if (!smtp) return page(inlineStatus('Save SMTP settings first.', 'critical'))
+    try {
+      await new SmtpMailer(smtp).send({
+        to: ctx.admin.email,
+        subject: `${control.config.projectName}: test email`,
+        text: 'SMTP works. This message was sent from the organization settings.',
+        html: '<p>SMTP works. This message was sent from the organization settings.</p>',
+      })
+      return page(inlineStatus(`Sent to ${ctx.admin.email}`, 'success'))
+    } catch (error) {
+      return page(inlineStatus(error instanceof Error ? error.message : String(error), 'critical'))
+    }
   })
 
   router.get('/console/organization/members', async ({ ctx, url }) => {

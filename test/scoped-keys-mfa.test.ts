@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
 import { ConsoleAuth } from '~/console/auth'
+import { DisabledMailer } from '~/mail/mailer'
 import { resolveApiKey } from '~/settings/service'
 import { apiKeyScopes, storedApiKeyScopes } from '~/settings/scopes'
 import { startServer, KEY, PROJECT, testSchema } from './helpers'
@@ -165,6 +166,27 @@ describe('console email MFA', () => {
     const off = await post({ password: 'password123' })
     expect(off.status).toBe(303)
     expect((await auth.find('admin@example.com'))?.mfa).toBe(false)
+  })
+
+  test('the MFA hint links to organization email settings', async () => {
+    const server = startServer()
+    stops.push(server.stop)
+    const origin = server.endpoint.replace(/\/v1$/, '')
+    const auth = new ConsoleAuth(server.db)
+    await auth.upsert('admin@example.com', 'password123')
+    const secret = (await auth.login('admin@example.com', 'password123'))!
+    const cookie = `bunwrite_console=${secret}`
+    server.services.mailer = new DisabledMailer()
+
+    const page = await (await fetch(`${origin}/console/security`, { headers: { cookie } })).text()
+    expect(page).toContain('SMTP is not configured')
+    expect(page).toContain('href="/console/organization#email"')
+
+    const settings = await fetch(`${origin}/console/organization`, { headers: { cookie } })
+    expect(settings.status).toBe(200)
+    const body = await settings.text()
+    expect(body).toContain('Email delivery')
+    expect(body).toContain('action="/console/organization/email"')
   })
 
   test('MFA requires an email provider when turning it on', async () => {
