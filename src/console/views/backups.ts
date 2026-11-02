@@ -4,53 +4,16 @@ import type { BackupFile } from '~/backups/service'
 import { litestreamStatus, maskReplica } from '~/backups/litestream'
 import { litestreamSettingsFromEnv, readLitestreamSettings } from '~/backups/litestream-settings'
 import { doctorLabel, doctorTone, postgresDoctor, type PostgresDoctorReport } from '~/backups/postgres'
+import { postgresReadiness, sqliteReadiness } from '~/backups/readiness'
 import { walgStatus } from '~/backups/walg'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { alert, badge, destroy, emptyState, formatBytes, icon, settingsSection, when } from '~/console/ui'
-import { parseCron } from '~/functions/cron'
+import { BACKUPS, BACKUP_SCHEDULES, nextRun, scheduleLabel, schedulePreset } from './backup-shared'
+import { backupReadinessCard } from './backup-setup'
 import { s3Fields } from './settings'
 
-export const BACKUPS = '/console/organization/backups'
-
-/** Common schedules offered as presets. Custom expressions stay available underneath. */
-export const BACKUP_SCHEDULES = [
-  { key: 'daily', label: 'Daily at 02:00', cron: '0 2 * * *' },
-  { key: 'every-6-hours', label: 'Every 6 hours', cron: '0 */6 * * *' },
-  { key: 'every-12-hours', label: 'Every 12 hours', cron: '0 */12 * * *' },
-  { key: 'weekly', label: 'Weekly on Monday at 02:00', cron: '0 2 * * 1' },
-  { key: 'monthly', label: 'Monthly on the 1st at 02:00', cron: '0 2 1 * *' },
-  { key: 'hourly', label: 'Every hour', cron: '0 * * * *' },
-] as const
-
-type SchedulePreset = 'custom' | (typeof BACKUP_SCHEDULES)[number]['key']
-
-function schedulePreset(expression: string): SchedulePreset {
-  return BACKUP_SCHEDULES.find((preset) => preset.cron === expression.trim())?.key ?? 'custom'
-}
-
-function scheduleLabel(expression: string): string {
-  return BACKUP_SCHEDULES.find((preset) => preset.cron === expression.trim())?.label ?? expression
-}
-
-/** The next UTC minute that the expression matches, for the summary card. */
-function nextRun(expression: string): string {
-  try {
-    const cron = parseCron(expression)
-    const at = new Date()
-    at.setUTCSeconds(0, 0)
-    at.setUTCMinutes(at.getUTCMinutes() + 1)
-    for (let minute = 0; minute < 366 * 24 * 60; minute++) {
-      if (cron.matches(at)) {
-        return `${at.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false })} UTC`
-      }
-      at.setUTCMinutes(at.getUTCMinutes() + 1)
-    }
-  } catch {
-    // Invalid schedules are reported by the form when they are saved.
-  }
-  return '—'
-}
+export { BACKUPS, BACKUP_SCHEDULES } from './backup-shared'
 
 export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   const control = ctx.projects.control
@@ -73,10 +36,12 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   const nextBackup = c.backups.enabled ? nextRun(c.backups.schedule) : 'Paused'
   const offsite = storedLitestream ? storedLitestream.enabled : litestream.configured
   const totalSize = backups.reduce((sum, backup) => sum + backup.size, 0)
+  const readiness = sqliteReadiness({ config: c, backups })
   const encryption = c.backupEncryptionKey
     ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one here, or with <code>bunwrite restore &lt;file&gt;</code>.`)
     : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
   return html`
+    ${backupReadinessCard(readiness, control.settings?.overridden('backups') ? undefined : 1)}
     ${error ? alert('critical', html`${error}`) : ''}
     ${encryption}
     <div class="stats" style="margin-bottom:24px">
@@ -267,14 +232,17 @@ async function postgresBackupsView(ctx: ConsoleContext): Promise<Html> {
   const latest = report?.walg.backups[0]
   const failures = report?.checks.filter((check) => check.status === 'fail').length ?? 0
   const warnings = report?.checks.filter((check) => check.status === 'warn').length ?? 0
+  const config = ctx.projects.control.config
+  const readiness = postgresReadiness({ config, report })
   return html`
+    ${backupReadinessCard(readiness, ctx.projects.control.settings?.overridden('backups') ? undefined : 1)}
     ${statusError ? alert('warning', html`Could not read the Postgres backup status: ${statusError}`) : ''}
     ${report
       ? html`<div class="stats" style="margin-bottom:24px">
-          <div class="stat"><span>WAL-G storage</span><b style="font-size:14px">${walg.configured ? badge('On', 'success') : badge('Off')}</b></div>
+          <div class="stat"><span>WAL-G storage</span><b style="font-size:14px">${walg.configured ? badge('On', 'success') : config.backups?.s3.enabled ? badge('Host setup', 'attention') : badge('Off')}</b></div>
           <div class="stat"><span>Last archived WAL</span><b style="font-size:14px">${archiver?.lastArchivedAt ? when(archiver.lastArchivedAt) : 'Never'}</b></div>
           <div class="stat"><span>Archive failures</span><b style="font-size:14px">${archiver ? archiver.failedCount : '—'} ${archiver && archiver.failedCount > 0 ? badge('Check', 'critical') : ''}</b></div>
-          <div class="stat"><span>Latest base backup</span><b style="font-size:14px">${latest ? html`${latest.name}${latest.modified ? html`<span class="subdued" style="font-size:12px;font-weight:450"> · ${when(latest.modified)}</span>` : ''}` : 'None'}</b></div>
+          <div class="stat"><span>Latest base backup</span><b style="font-size:14px">${latest ? html`${latest.name}${latest.modified ? html`<span class="subdued" style="font-size:12px;font-weight:450"> · ${when(latest.modified)}</span>` : ''}` : readiness.steps.find((step) => step.key === 'archive')?.status === 'done' ? 'Recorded' : 'None'}</b></div>
         </div>`
       : ''}
     ${settingsSection(
@@ -282,7 +250,9 @@ async function postgresBackupsView(ctx: ConsoleContext): Promise<Html> {
       'Postgres uses WAL archiving and base backups on the database host instead of the SQLite archive files.',
       html`${walg.configured
         ? alert('success', html`WAL-G storage is configured for <code class="mono">${walg.storage}</code>${walg.compression ? html` · compression <code>${walg.compression}</code>` : ''}${walg.encrypted ? ' · encrypted' : ''}.`)
-        : alert('warning', html`WAL-G is not configured in this process. Set <code>WALG_S3_PREFIX</code> (or another <code>WALG_*_PREFIX</code>) and the storage credentials where the Postgres server and <code>wal-g</code> run, then restart Postgres so it inherits them.`)}
+        : config.backups?.s3.enabled && config.backups.s3.bucket
+          ? alert('info', html`Storage is saved in the console for <code class="mono">${config.backups?.s3.bucket}</code>. Set the same <code>WALG_*</code> values where the Postgres server and <code>wal-g</code> run, then restart Postgres. The setup wizard generates the exact commands.`)
+          : alert('warning', html`WAL-G is not configured in this process. Set <code>WALG_S3_PREFIX</code> (or another <code>WALG_*_PREFIX</code>) and the storage credentials where the Postgres server and <code>wal-g</code> run, then restart Postgres so it inherits them.`)}
       <p>WAL-G does not run inside Bunwrite: the Postgres server calls it through <code>archive_command</code> and operators take base backups with <code>wal-g backup-push</code>. Bunwrite cannot copy a remote <code>PGDATA</code>, so these settings belong on the database host.</p>
       <ul class="list">
         <li><span class="subdued">postgresql.conf</span><code>wal_level = replica</code> and <code>archive_mode = on</code></li>

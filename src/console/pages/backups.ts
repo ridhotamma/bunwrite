@@ -2,15 +2,22 @@
  * Organization-level backups. Whole-instance archives cover every project, so
  * they live in the organization shell rather than inside a project's Settings.
  */
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { rmSync } from 'node:fs'
 
 import { litestreamSettingsFromEnv, readLitestreamSettings, resetLitestreamSettings, writeLitestreamSettings, type LitestreamSettings } from '~/backups/litestream-settings'
 import { cancelPendingRestore, pendingRestoreDir, readPendingRestore, stagePendingRestore } from '~/backups/pending'
+import { postgresDoctor, type PostgresDoctorReport } from '~/backups/postgres'
+import { firstIncompleteStep, postgresReadiness, readReadinessRecord, recordDrill, recordPostgresBaseBackup, sqliteReadiness } from '~/backups/readiness'
 import { restoreInstance } from '~/backups/restore'
+import type { BackupFile } from '~/backups/service'
+import type { S3Config } from '~/config'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, s3FromForm, value } from '~/console/forms'
 import { html } from '~/console/html'
+import { BACKUP_SETUP } from '~/console/views/backup-shared'
+import { backupSetupView } from '~/console/views/backup-setup'
 import { organizationHeader } from '~/console/views/organization'
 import { BACKUP_SCHEDULES, BACKUPS, backupsView } from '~/console/views/backups'
 import { parseCron } from '~/functions/cron'
@@ -53,8 +60,7 @@ function litestreamFromForm(ctx: ConsoleContext, current: LitestreamSettings): L
   }
 }
 
-async function backupsPage(ctx: ConsoleContext) {
-  if (!(await canManage(ctx))) return ctx.go('/console')
+async function organizationShell(ctx: ConsoleContext, title: string, body: ReturnType<typeof html>) {
   const control = ctx.projects.control
   const org = await ctx.organizations.ensure(orgId(ctx), control.config.projectName)
   const header = organizationHeader(
@@ -66,11 +72,174 @@ async function backupsPage(ctx: ConsoleContext) {
     'backups',
     true,
   )
-  return backupsView(ctx).then((body) => ctx.render('Backups', 'organization', html`${header}${body}`))
+  return ctx.render(title, 'organization', html`${header}${body}`)
+}
+
+async function backupsPage(ctx: ConsoleContext) {
+  if (!(await canManage(ctx))) return ctx.go('/console')
+  const body = await backupsView(ctx)
+  return organizationShell(ctx, 'Backups', body)
+}
+
+/** Parse the wizard's S3 fields. Endpoint stays optional for AWS S3. */
+function wizardS3(ctx: ConsoleContext, existing: S3Config): S3Config {
+  const f = ctx.form
+  const bucket = value(f, 'backupS3Bucket')
+  const region = value(f, 'backupS3Region')
+  const accessKey = value(f, 'backupS3AccessKey')
+  const secret = String(f.backupS3Secret ?? '') || existing.secret
+  const forcePathStyle = checked(f.backupS3ForcePathStyle)
+  if (!bucket || !region || !accessKey || !secret) {
+    throw err('general_argument_invalid', 'Bucket, region, access key and secret are required for S3 storage.')
+  }
+  let endpoint = value(f, 'backupS3Endpoint').replace(/\/$/, '')
+  if (!endpoint) endpoint = `https://s3.${region}.amazonaws.com`
+  try {
+    const url = new URL(endpoint)
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('protocol')
+  } catch {
+    throw err('general_argument_invalid', 'The S3 endpoint must be a valid http or https URL.')
+  }
+  return { enabled: true, bucket, region, endpoint, accessKey, secret, forcePathStyle }
+}
+
+async function setupPage(ctx: ConsoleContext) {
+  if (!(await canManage(ctx))) return ctx.go('/console')
+  const control = ctx.projects.control
+  const config = control.config
+  const driver = control.db.capabilities.localFile ? 'sqlite' : 'postgres'
+  const record = readReadinessRecord(config.databasePath)
+  let backups: BackupFile[] = []
+  let report: PostgresDoctorReport | null = null
+  let statusError = ''
+  if (driver === 'sqlite') {
+    try {
+      backups = await control.backups.list()
+    } catch (error) {
+      statusError = error instanceof Error ? error.message : String(error)
+    }
+  } else {
+    try {
+      report = await postgresDoctor({
+        sql: control.db.driver,
+        env: process.env,
+        databaseUrl: config.databaseUrl,
+        pgdata: process.env.PGDATA,
+        docker: true,
+        walgAdvisory: true,
+      })
+    } catch (error) {
+      statusError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  const readiness =
+    driver === 'sqlite'
+      ? sqliteReadiness({ config, backups, record })
+      : postgresReadiness({ config, report, record })
+  const requested = Number(ctx.url.searchParams.get('step'))
+  const step =
+    Number.isInteger(requested) && requested >= 1 && requested <= 5
+      ? requested
+      : control.settings.overridden('backups')
+        ? firstIncompleteStep(readiness)
+        : 1
+  const latest = backups[0]
+  const body = backupSetupView({
+    driver,
+    step,
+    readiness,
+    backups: config.backups,
+    latestBackup: latest,
+    report,
+    verified: ctx.url.searchParams.get('verified') === '1',
+    error: statusError || undefined,
+  })
+  return organizationShell(ctx, 'Backup setup', body)
 }
 
 export function backupPages(router: ConsoleRouter): void {
   router.get(BACKUPS, ({ ctx }) => backupsPage(ctx))
+  router.get(BACKUP_SETUP, ({ ctx }) => setupPage(ctx))
+
+  router.post(`${BACKUP_SETUP}/storage`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    const control = ctx.projects.control
+    const current = control.config.backups
+    const local = control.db.capabilities.localFile
+    const mode = value(ctx.form, 'storageMode') === 's3' || !local ? 's3' : 'local'
+    const s3 = mode === 's3' ? wizardS3(ctx, current.s3) : { ...current.s3, enabled: false }
+    const prefix = value(ctx.form, 'backupPrefix').replace(/^\/+|\/+$/g, '')
+    if (prefix.includes('..')) throw err('general_argument_invalid', 'The backup prefix cannot contain "..".')
+    await control.settings.set('backups', { ...current, s3, prefix })
+    return ctx.go(`${BACKUP_SETUP}?step=2`, { tone: 'success', text: mode === 's3' ? 'Storage saved' : 'Local storage selected' })
+  })
+
+  router.post(`${BACKUP_SETUP}/schedule`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    const control = ctx.projects.control
+    const keep = Number(ctx.form.backupsKeep)
+    if (!Number.isInteger(keep) || keep < 1 || keep > 100) {
+      throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
+    }
+    const preset = BACKUP_SCHEDULES.find((entry) => entry.key === value(ctx.form, 'backupSchedulePreset'))
+    const schedule = preset?.cron || value(ctx.form, 'backupSchedule').trim() || control.config.backups.schedule || '0 2 * * *'
+    try {
+      parseCron(schedule)
+    } catch (error) {
+      throw err('general_argument_invalid', error instanceof Error ? error.message : 'Invalid backup schedule.')
+    }
+    await control.settings.set('backups', { ...control.config.backups, enabled: true, schedule, keep })
+    return ctx.go(`${BACKUP_SETUP}?step=3`, { tone: 'success', text: 'Schedule saved' })
+  })
+
+  router.post(`${BACKUP_SETUP}/first`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    const control = ctx.projects.control
+    if (!control.db.capabilities.localFile) {
+      if (!checked(ctx.form.baseBackupConfirmed)) {
+        throw err('general_argument_invalid', 'Confirm that the base backup exists before continuing.')
+      }
+      recordPostgresBaseBackup(control.config.databasePath)
+      return ctx.go(`${BACKUP_SETUP}?step=4`, { tone: 'success', text: 'Base backup recorded' })
+    }
+    requireLocalBackups(ctx)
+    const backup = await control.backups.create('manual')
+    return ctx.go(`${BACKUP_SETUP}?step=4`, { tone: 'success', text: `Created ${backup.name}` })
+  })
+
+  router.post(`${BACKUP_SETUP}/verify`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    const control = ctx.projects.control
+    const config = control.config
+    if (!control.db.capabilities.localFile) {
+      if (!checked(ctx.form.drillConfirmed)) {
+        throw err('general_argument_invalid', 'Run the restore and confirm it before recording the test.')
+      }
+      recordDrill(config.databasePath, 'postgres', 'Isolated Docker restore check')
+      return ctx.go(`${BACKUP_SETUP}?step=5&verified=1`, { tone: 'success', text: 'Restore test recorded' })
+    }
+    requireLocalBackups(ctx)
+    const [latest] = await control.backups.list()
+    if (!latest) throw err('general_argument_invalid', 'Create a backup before testing a restore.')
+    // Pull the archive to a temporary file, including from S3, then validate
+    // every database in it. The live data directory is never touched.
+    const dir = mkdtempSync(join(tmpdir(), 'bunwrite-drill-'))
+    try {
+      const archive = join(dir, latest.name)
+      await Bun.write(archive, await control.backups.serve(latest.name))
+      await restoreInstance({
+        databasePath: config.databasePath,
+        archive,
+        key: config.backupEncryptionKey,
+        dryRun: true,
+        log: () => {},
+      })
+      recordDrill(config.databasePath, 'sqlite', `Validated ${latest.name}`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+    return ctx.go(`${BACKUP_SETUP}?step=5&verified=1`, { tone: 'success', text: 'Restore test passed' })
+  })
 
   router.post(BACKUPS, async ({ ctx }) => {
     await requireOwner(ctx)

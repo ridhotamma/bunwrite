@@ -409,7 +409,10 @@ Upgrade with `git pull && docker compose up -d --build`.
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
 - With SQLite, enable scheduled database backups and optional S3 backup storage in
-  **Organization → Backups**. One archive contains the control database and every
+  **Organization → Backups**. The **Backup protection** card shows storage,
+  schedule, first backup and restore-test progress; **Finish setup** opens the
+  guided wizard. The restore test validates the newest archive without touching
+  live data. One archive contains the control database and every
   project database; it does not include uploaded files. Backups follow a cron
   schedule in UTC (default daily at 02:00). `bunwrite snapshot` is
   available for cron-driven archives. Restore by uploading the archive in
@@ -419,7 +422,9 @@ Upgrade with `git pull && docker compose up -d --build`.
   `*.before-restore-<timestamp>`.
 - With Postgres, the file-archive buttons are hidden. Configure WAL-G on the
   database host (see [Postgres continuous backup](#postgres-continuous-backup-wal-g))
-  or use your provider's managed PITR.
+  or use your provider's managed PITR. The setup wizard saves the S3 settings,
+  turns the live doctor checks into numbered steps, generates the host commands,
+  and records a restore test once the operator confirms the isolated restore.
 - Request logs are stored per project and go to stdout and the console. Set
   `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
 

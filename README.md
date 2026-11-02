@@ -577,6 +577,13 @@ backup-<timestamp>.archive.zst
 
 ### From the console
 
+The **Backup protection** card at the top of the page tracks four steps — storage,
+schedule, first backup and a tested restore. **Finish setup** opens a guided
+wizard with safe defaults: off-site storage is recommended, local storage still
+works, and the last step really opens the newest archive and checks every
+database inside it. You can leave and return; the card remembers the first
+unfinished step.
+
 **Organization → Backups** (organization owners) lets you:
 
 - create a manual archive;
@@ -600,8 +607,10 @@ not local files. Use WAL-G on the Postgres host or a managed PITR service; see
 [Postgres continuous backup (WAL-G)](docs/DEPLOY.md#postgres-continuous-backup-wal-g).
 The console page reports the WAL-G environment and the `archive_command` /
 `restore_command` to configure, plus live restore-readiness checks and a
-copy-paste runbook. Run `bunwrite postgres:doctor` (or `--runbook` / `--json`)
-on the host for the same checks outside the console.
+copy-paste runbook. The setup wizard turns those checks into numbered steps and
+copies the S3 settings into the host commands; it never edits `PGDATA` or
+restarts Postgres for you. Run `bunwrite postgres:doctor` (or `--runbook` /
+`--json`) on the host for the same checks outside the console.
 
 Archives are compressed with zstd (`.archive.zst`). They include every project's
 stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well

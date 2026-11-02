@@ -12,7 +12,7 @@
 import { configFromEnv } from '~/config'
 import { openDatabase } from '~/db'
 import { parseDatabaseBackend } from '~/db/driver'
-import { doctorLabel, maskDatabaseUrl, postgresDoctor, type DoctorCheck } from '~/backups/postgres'
+import { maskDatabaseUrl, postgresDoctor, type DoctorCheck } from '~/backups/postgres'
 
 const USAGE = `Usage: bunwrite postgres:doctor [options]
 
