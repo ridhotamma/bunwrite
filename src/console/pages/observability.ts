@@ -5,7 +5,7 @@ import { pageCount, pageParams } from '~/console/query'
 import { alert, badge, cardHead, destroy, emptyState, header, listCard, menu, pager, plural, searchForm, stat, tabs, when } from '~/console/ui'
 import { lineChart } from '~/console/chart'
 import { addSeconds } from '~/lib/datetime'
-import { err, BunwriteError } from '~/lib/errors'
+import { err } from '~/lib/errors'
 import { OBS_SETTINGS, observabilitySettingsView } from '~/console/views/observability-settings'
 import { OBS, OBS_TABS, attributesCard, duration, providerCard, recentTracesCard, routesCard, statusTone, traceFacts, trafficCard } from '~/console/views/observability'
 import type { ObservabilitySettings } from '~/observability/settings'
@@ -49,50 +49,69 @@ function flagValue(ctx: ConsoleContext): boolean | string {
   return String(ctx.form.flagString ?? '')
 }
 
-/** Merge one form over the current settings; blank secret fields keep the stored values. */
-function settingsFromForm(ctx: ConsoleContext, current: ObservabilitySettings): ObservabilitySettings {
+/** Each settings card posts only its own fields and merges over the current values. */
+function localPatch(ctx: ConsoleContext, current: ObservabilitySettings): Partial<ObservabilitySettings> {
   const f = ctx.form
-  const text = (key: string, fallback: string) => value(f, key) || fallback
-  const otlp = {
-    endpoint: value(f, 'otlpEndpoint'),
-    traces: value(f, 'otlpTraces'),
-    metrics: value(f, 'otlpMetrics'),
-    logs: value(f, 'otlpLogs'),
-    headers: checked(f.clearOtlpHeaders) ? '' : String(f.otlpHeaders ?? '').trim() || current.otlp?.headers || '',
-    signals: arrayOf(f.signals).filter((signal): signal is 'traces' | 'metrics' | 'logs' => ['traces', 'metrics', 'logs'].includes(signal)),
-  }
-  const datadog = {
-    apiKey: checked(f.clearDatadogKey) ? '' : String(f.datadogApiKey ?? '').trim() || current.datadog?.apiKey || '',
-    site: text('datadogSite', current.datadog?.site ?? 'datadoghq.com'),
-    logs: checked(f.datadogLogs),
-    metrics: checked(f.datadogMetrics),
-  }
-  const posthog = {
-    apiKey: checked(f.clearPosthogKey) ? '' : String(f.posthogApiKey ?? '').trim() || current.posthog?.apiKey || '',
-    host: text('posthogHost', current.posthog?.host ?? 'https://us.i.posthog.com'),
-    analytics: checked(f.posthogAnalytics),
-    flags: checked(f.posthogFlags),
-    flagsTtlMs: Math.round(number(f.posthogFlagsTtl, (current.posthog?.flagsTtlMs ?? 30_000) / 1000, 1, 3600) * 1000),
-  }
   return {
-    enabled: checked(f.enabled),
     console: checked(f.console),
-    serviceName: text('serviceName', current.serviceName),
-    serviceVersion: text('serviceVersion', current.serviceVersion),
-    environment: text('environment', current.environment),
-    sampleRate: rateOf(f.sampleRate, current.sampleRate),
     consoleSampleRate: rateOf(f.consoleSampleRate, current.consoleSampleRate),
     spanLimit: Math.round(number(f.spanLimit, current.spanLimit, 100, 100_000)),
     eventLimit: Math.round(number(f.eventLimit, current.eventLimit, 100, 100_000)),
     consoleRetentionDays: Math.round(number(f.consoleRetentionDays, current.consoleRetentionDays, 1, 90)),
     flushMs: Math.round(number(f.flushMs, current.flushMs, 250, 60_000)),
+  }
+}
+
+function exportersPatch(ctx: ConsoleContext, current: ObservabilitySettings): Partial<ObservabilitySettings> {
+  const f = ctx.form
+  return {
+    enabled: checked(f.enabled),
+    serviceName: value(f, 'serviceName') || current.serviceName,
+    serviceVersion: value(f, 'serviceVersion') || current.serviceVersion,
+    environment: value(f, 'environment') || current.environment,
+    sampleRate: rateOf(f.sampleRate, current.sampleRate),
     timeoutMs: Math.round(number(f.timeoutMs, current.timeoutMs, 250, 30_000)),
     queueLimit: Math.round(number(f.queueLimit, current.queueLimit, 100, 100_000)),
     debug: checked(f.debug),
-    otlp,
-    datadog,
-    posthog,
-    localFlags: { ...current.localFlags },
+  }
+}
+
+function otlpPatch(ctx: ConsoleContext, current: ObservabilitySettings): Partial<ObservabilitySettings> {
+  const f = ctx.form
+  return {
+    otlp: {
+      endpoint: value(f, 'otlpEndpoint'),
+      traces: value(f, 'otlpTraces'),
+      metrics: value(f, 'otlpMetrics'),
+      logs: value(f, 'otlpLogs'),
+      headers: checked(f.clearOtlpHeaders) ? '' : String(f.otlpHeaders ?? '').trim() || current.otlp?.headers || '',
+      signals: arrayOf(f.signals).filter((signal): signal is 'traces' | 'metrics' | 'logs' => ['traces', 'metrics', 'logs'].includes(signal)),
+    },
+  }
+}
+
+function datadogPatch(ctx: ConsoleContext, current: ObservabilitySettings): Partial<ObservabilitySettings> {
+  const f = ctx.form
+  return {
+    datadog: {
+      apiKey: checked(f.clearDatadogKey) ? '' : String(f.datadogApiKey ?? '').trim() || current.datadog?.apiKey || '',
+      site: value(f, 'datadogSite') || current.datadog?.site || 'datadoghq.com',
+      logs: checked(f.datadogLogs),
+      metrics: checked(f.datadogMetrics),
+    },
+  }
+}
+
+function posthogPatch(ctx: ConsoleContext, current: ObservabilitySettings): Partial<ObservabilitySettings> {
+  const f = ctx.form
+  return {
+    posthog: {
+      apiKey: checked(f.clearPosthogKey) ? '' : String(f.posthogApiKey ?? '').trim() || current.posthog?.apiKey || '',
+      host: value(f, 'posthogHost') || current.posthog?.host || 'https://us.i.posthog.com',
+      analytics: checked(f.posthogAnalytics),
+      flags: checked(f.posthogFlags),
+      flagsTtlMs: Math.round(number(f.posthogFlagsTtl, (current.posthog?.flagsTtlMs ?? 30_000) / 1000, 1, 3600) * 1000),
+    },
   }
 }
 
@@ -422,7 +441,7 @@ export function observabilityPages(router: ConsoleRouter): void {
       </div>
       <div class="card">
         ${cardHead('Evaluate for a subject')}
-        <form method="get" action="${FLAGS}" class="toolbar" style="margin:0">
+        <form method="get" action="${FLAGS}" class="toolbar" style="margin:0;padding:0;border:0">
           <input type="text" name="subject" value="${subject}" placeholder="user ID or project:<id>" autocomplete="off" />
           <button class="btn primary">Evaluate</button>
         </form>
@@ -449,20 +468,39 @@ export function observabilityPages(router: ConsoleRouter): void {
     )
   })
 
-  router.post(OBS_SETTINGS, async ({ ctx }) => {
+  router.post(`${OBS_SETTINGS}/local`, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
     const store = ctx.projects.control.observabilitySettings
-    try {
-      await store.save(settingsFromForm(ctx, store.settings))
-      return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings saved' })
-    } catch (error) {
-      if (!(error instanceof BunwriteError)) throw error
-      return ctx.render(
-        'Observability settings',
-        'observability',
-        observabilitySettingsView({ settings: store.settings, canManage: true, overridden: store.overridden, error: error.message }),
-      )
-    }
+    await store.save({ ...store.settings, ...localPatch(ctx, store.settings) })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Local console settings saved' })
+  })
+
+  router.post(`${OBS_SETTINGS}/exporters`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({ ...store.settings, ...exportersPatch(ctx, store.settings) })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Exporter settings saved' })
+  })
+
+  router.post(`${OBS_SETTINGS}/otlp`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({ ...store.settings, ...otlpPatch(ctx, store.settings) })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'OTLP settings saved' })
+  })
+
+  router.post(`${OBS_SETTINGS}/datadog`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({ ...store.settings, ...datadogPatch(ctx, store.settings) })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Datadog settings saved' })
+  })
+
+  router.post(`${OBS_SETTINGS}/posthog`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({ ...store.settings, ...posthogPatch(ctx, store.settings) })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'PostHog settings saved' })
   })
 
   router.post(`${OBS_SETTINGS}/flags`, async ({ ctx }) => {

@@ -1,7 +1,7 @@
 /** Markup for the console-managed observability configuration. */
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { alert, badge, destroy, header, icon, menu, pageFooter, plural, settingsSection, tabs } from '~/console/ui'
+import { alert, badge, destroy, header, icon, menu, plural, settingsSection, tabs } from '~/console/ui'
 import type { ObservabilitySettings } from '~/observability/settings'
 import { OBS, OBS_TABS } from './observability'
 
@@ -19,6 +19,11 @@ const seconds = (ms: number): string => String(Math.round(ms / 1000))
 
 function checked(on: boolean): string {
   return on ? 'checked' : ''
+}
+
+/** One settings card, one form, one Save button, like the other Settings pages. */
+function sectionForm(action: string, body: Html, canManage: boolean): Html {
+  return html`<form method="post" action="${action}">${body}${canManage ? html`<div class="foot"><button class="primary">Save</button></div>` : ''}</form>`
 }
 
 function signalField(settings: ObservabilitySettings): Html {
@@ -136,10 +141,11 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
       ? ''
       : alert('info', html`Only an organization owner can change instance-wide observability settings. You can still review the current configuration.`)}
     ${options.error ? alert('critical', html`${options.error}`) : ''}
-    <form id="observability-settings-form" method="post" action="${OBS_SETTINGS}">
-      ${settingsSection(
-        'Local console',
-        'Bunwrite keeps a bounded local copy of request traces and document events so the Observability pages work without a provider.',
+    ${settingsSection(
+      'Local console',
+      'Bunwrite keeps a bounded local copy of request traces and document events so the Observability pages work without a provider.',
+      sectionForm(
+        `${OBS_SETTINGS}/local`,
         html`<label class="check"><input type="checkbox" name="console" ${checked(s.console)}><span>Keep local telemetry in the console</span><small>Turning this off leaves external exporters running.</small></label>
           <div class="fields">
             <label>Trace sampling (%)<input name="consoleSampleRate" type="number" min="0" max="100" step="0.01" value="${percent(s.consoleSampleRate)}"><small>Fraction of requests stored as detailed traces.</small></label>
@@ -150,11 +156,16 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label>Retention (days)<input name="consoleRetentionDays" type="number" min="1" max="90" value="${s.consoleRetentionDays}"></label>
             <label>Flush interval (ms)<input name="flushMs" type="number" min="250" max="60000" value="${s.flushMs}"></label>
           </div>`,
-      )}
+        options.canManage,
+      ),
+      { id: 'local-console' },
+    )}
 
-      ${settingsSection(
-        'External exporters',
-        'These settings apply to every project on this instance. Leave providers empty to keep only the local console copy.',
+    ${settingsSection(
+      'External exporters',
+      'These settings apply to every project on this instance. Leave providers empty to keep only the local console copy.',
+      sectionForm(
+        `${OBS_SETTINGS}/exporters`,
         html`<label class="check"><input type="checkbox" name="enabled" ${checked(s.enabled)}><span>Enable external exporters</span><small>When off, no traces, logs, metrics or analytics leave the server.</small></label>
           <div class="fields">
             <label>Service name<input name="serviceName" value="${s.serviceName}"></label>
@@ -167,11 +178,16 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label>Queue limit<input name="queueLimit" type="number" min="100" max="100000" value="${s.queueLimit}"></label>
           </div>
           <label class="check"><input type="checkbox" name="debug" ${checked(s.debug)}><span>Log every exporter failure</span><small>Otherwise failures are logged at most once a minute.</small></label>`,
-      )}
+        options.canManage,
+      ),
+      { id: 'exporters' },
+    )}
 
-      ${settingsSection(
-        'OTLP/HTTP',
-        'Send traces, metrics and logs to any OTLP collector. Per-signal endpoints override the base endpoint.',
+    ${settingsSection(
+      'OTLP/HTTP',
+      'Send traces, metrics and logs to any OTLP collector. Per-signal endpoints override the base endpoint.',
+      sectionForm(
+        `${OBS_SETTINGS}/otlp`,
         html`<label>Base endpoint<input name="otlpEndpoint" type="url" class="mono" value="${s.otlp?.endpoint ?? ''}" placeholder="https://otlp.example.com"></label>
           <h3 class="field-heading">Signals</h3>
           ${signalField(s)}
@@ -182,11 +198,16 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
           </div>
           <label>Headers<textarea name="otlpHeaders" class="mono" rows="3" placeholder="${hasOtlpHeaders ? 'Configured; leave blank to keep' : 'api-key=...'}"></textarea><small>One <span class="mono">key=value</span> per line, or comma-separated.</small></label>
           <label class="check"><input type="checkbox" name="clearOtlpHeaders"><span>Remove stored OTLP headers</span></label>`,
-      )}
+        options.canManage,
+      ),
+      { id: 'otlp' },
+    )}
 
-      ${settingsSection(
-        'Datadog',
-        'Native Datadog Logs and metrics intake. Traces use the OTLP section above.',
+    ${settingsSection(
+      'Datadog',
+      'Native Datadog Logs and metrics intake. Traces use the OTLP section above.',
+      sectionForm(
+        `${OBS_SETTINGS}/datadog`,
         html`<div class="fields">
             <label>API key<input name="datadogApiKey" type="password" autocomplete="new-password" placeholder="${hasDatadogKey ? 'Configured; leave blank to keep' : ''}"></label>
             <label>Site<input name="datadogSite" value="${s.datadog?.site ?? 'datadoghq.com'}" placeholder="datadoghq.com"></label>
@@ -196,11 +217,16 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label class="check"><input type="checkbox" name="datadogMetrics" ${checked(s.datadog?.metrics ?? true)}><span>Send metrics</span></label>
           </div>
           <label class="check"><input type="checkbox" name="clearDatadogKey"><span>Remove stored Datadog key</span></label>`,
-      )}
+        options.canManage,
+      ),
+      { id: 'datadog' },
+    )}
 
-      ${settingsSection(
-        'PostHog',
-        'Product analytics from document events, and server-side feature flags. Documents and response bodies are never sent.',
+    ${settingsSection(
+      'PostHog',
+      'Product analytics from document events, and server-side feature flags. Documents and response bodies are never sent.',
+      sectionForm(
+        `${OBS_SETTINGS}/posthog`,
         html`<div class="fields">
             <label>Project API key<input name="posthogApiKey" type="password" autocomplete="new-password" placeholder="${hasPosthogKey ? 'Configured; leave blank to keep' : 'phc_...'}"></label>
             <label>Host<input name="posthogHost" type="url" class="mono" value="${s.posthog?.host ?? 'https://us.i.posthog.com'}"></label>
@@ -211,20 +237,25 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label>Flag cache (seconds)<input name="posthogFlagsTtl" type="number" min="1" max="3600" value="${seconds(s.posthog?.flagsTtlMs ?? 30_000)}"></label>
           </div>
           <label class="check"><input type="checkbox" name="clearPosthogKey"><span>Remove stored PostHog key</span></label>`,
-      )}
+        options.canManage,
+      ),
+      { id: 'posthog' },
+    )}
 
-    </form>
     ${settingsSection(
       'Feature flags',
       'Local overrides win over PostHog. Each flag is saved immediately; the same values are returned by GET /v1/flags.',
-      featureFlagsView(s.localFlags, {
-        save: `${OBS_SETTINGS}/flags`,
-        remove: `${OBS_SETTINGS}/flags/delete`,
-        clear: `${OBS_SETTINGS}/flags/clear`,
-      }, options.canManage),
+      featureFlagsView(
+        s.localFlags,
+        {
+          save: `${OBS_SETTINGS}/flags`,
+          remove: `${OBS_SETTINGS}/flags/delete`,
+          clear: `${OBS_SETTINGS}/flags/clear`,
+        },
+        options.canManage,
+      ),
       { id: 'feature-flags' },
     )}
-    ${options.canManage ? pageFooter(null, 'Save settings', { form: 'observability-settings-form' }) : ''}
     ${options.overridden && options.canManage
       ? settingsSection(
           'Environment defaults',

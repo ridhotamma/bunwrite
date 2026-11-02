@@ -232,7 +232,7 @@ async function functionCards(ctx: ConsoleContext): Promise<Html> {
       >
       <div class="subdued" style="margin:4px 0 8px">Paused schedules do not fire. Running a function by hand still works.</div>
       ${fns.length ? fns.map((f) => html`<label class="check"><input type="checkbox" name="paused" value="${f.id}" ${c.skipSchedules.includes(f.id) ? 'checked' : ''} />Pause <span class="mono">${f.id}</span>&nbsp;<span class="subdued">${f.schedule}</span></label>`) : html`<p class="subdued">No scheduled functions.</p>`}
-      <div class="foot"><button>Save</button></div>
+      <div class="foot"><button class="primary">Save</button></div>
     </form>`,
   )
 }
@@ -344,7 +344,7 @@ function logsCard(ctx: ConsoleContext): Html {
         >
       </div>
       <p class="help">Recording is ${c.logRequests ? 'on' : 'off'} (LOG_REQUESTS). <a href="/console/logs">Open request logs</a>.</p>
-      <div class="foot"><button>Save</button></div>
+      <div class="foot"><button class="primary">Save</button></div>
     </form>`,
   )
 }
@@ -390,7 +390,7 @@ function renderCards(ctx: ConsoleContext): Html {
                 ${['pdf', 'png', 'jpg', 'webp'].map((o) => html`<option value="${o}">${o.toUpperCase()}</option>`)}
               </select></label
             >
-            <div class="foot"><button>Render</button></div>
+            <div class="foot"><button class="primary">Render</button></div>
           </form>`,
         )
       : ''

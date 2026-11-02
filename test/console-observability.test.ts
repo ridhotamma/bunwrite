@@ -56,34 +56,47 @@ describe('observability settings console', () => {
     expect(body).toContain('Add flag')
     expect(body).toContain('No local overrides')
     expect(body).not.toContain('name="localFlags"')
+    // One Save button per settings card, like the rest of the Settings pages.
+    expect(body.match(/>Save<\/button>/g)).toHaveLength(5)
+    expect(body).not.toContain('observability-settings-form')
   })
 
-  test('saving updates the live facade and hides secrets on the page', async () => {
-    const saved = await form('/console/observability/settings', {
+  test('each settings card saves independently and hides secrets on the page', async () => {
+    const savedLocal = await form('/console/observability/settings/local', {
       consoleSampleRate: '50',
       spanLimit: '1234',
       eventLimit: '4321',
       consoleRetentionDays: '14',
       flushMs: '1000',
+    })
+    const savedExporters = await form('/console/observability/settings/exporters', {
       timeoutMs: '2000',
       queueLimit: '1000',
       serviceName: 'booking-api',
       serviceVersion: '2.0.0',
       environment: 'staging',
       sampleRate: '25',
+    })
+    const savedOtlp = await form('/console/observability/settings/otlp', {
       otlpEndpoint: 'https://otlp.example.com',
       signals: ['traces', 'metrics'],
       otlpHeaders: 'api-key=abc',
+    })
+    const savedDatadog = await form('/console/observability/settings/datadog', {
       datadogApiKey: 'dd-console',
       datadogSite: 'datadoghq.eu',
       datadogLogs: 'on',
       datadogMetrics: 'on',
+    })
+    const savedPosthog = await form('/console/observability/settings/posthog', {
       posthogApiKey: 'phc_console',
       posthogHost: 'https://eu.i.posthog.com',
       posthogFlagsTtl: '60',
     })
-    expect(saved.status).toBe(303)
-    expect(saved.headers.get('location')).toContain('/console/observability/settings')
+    for (const saved of [savedLocal, savedExporters, savedOtlp, savedDatadog, savedPosthog]) {
+      expect(saved.status).toBe(303)
+      expect(saved.headers.get('location')).toContain('/console/observability/settings')
+    }
 
     // Flags are separate CRUD writes and save immediately.
     expect((await form('/console/observability/settings/flags', { key: 'new-checkout', type: 'boolean', flagBoolean: 'true' })).status).toBe(303)

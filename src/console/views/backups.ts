@@ -151,7 +151,7 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
         ${s3Fields('backupS3', c.backups.s3)}
         <label>Key prefix<input name="backupPrefix" class="mono" value="${c.backups.prefix ?? ''}" placeholder="backups">
           <small>Object keys go under this prefix. If Litestream uses the same bucket, keep the prefixes separate (for example <code>backups</code> here and <code>litestream</code> in the replica URL).</small></label>
-        <div class="foot"><button>Save</button></div>
+        <div class="foot"><button class="primary">Save</button></div>
       </form>`,
       {
         id: 'backup-options',

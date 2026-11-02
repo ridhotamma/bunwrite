@@ -108,6 +108,17 @@ describe('console access', () => {
     expect(filtered).not.toContain('/console/databases/main/collections/notes')
   })
 
+  test('save and primary action buttons use the primary style', () => {
+    const dir = join(import.meta.dir, '..', 'src', 'console')
+    const files = readdirSync(dir, { recursive: true }).map(String).filter((file) => file.endsWith('.ts'))
+    const offenders: string[] = []
+    for (const file of files) {
+      const text = readFileSync(join(dir, file), 'utf8')
+      if (text.includes('<button>Save</button>') || text.includes('<button>Render</button>')) offenders.push(file)
+    }
+    expect(offenders).toEqual([])
+  })
+
   test('forms posted from another site are refused', async () => {
     const res = await form('/console/databases', { id: 'evil', name: 'Evil' }, { origin: 'https://evil.example' })
     expect(res.status).toBe(403)
