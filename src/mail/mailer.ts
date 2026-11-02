@@ -67,6 +67,34 @@ export class MemoryMailer implements Mailer {
   }
 }
 
+/** In-flight background sends, so shutdown and tests can wait for them. */
+const backgroundSends = new Set<Promise<void>>()
+
+/**
+ * Hand an email to the mailer without making the request wait for SMTP.
+ * The promise is tracked and failures are logged; nothing is re-thrown.
+ */
+export function sendMailLater(mailer: Mailer, mail: Mail, label = 'email'): void {
+  let pending: Promise<void>
+  try {
+    pending = mailer.send(mail)
+  } catch (error) {
+    logMailFailure(label, error)
+    return
+  }
+  const task = pending.catch((error) => logMailFailure(label, error)).finally(() => backgroundSends.delete(task))
+  backgroundSends.add(task)
+}
+
+function logMailFailure(label: string, error: unknown): void {
+  console.error(`[mail] ${label} failed:`, error instanceof Error ? error.message : error)
+}
+
+/** Wait for mail queued by `sendMailLater`; used by tests and orderly shutdown. */
+export async function flushBackgroundMail(): Promise<void> {
+  await Promise.allSettled([...backgroundSends])
+}
+
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 export function organizationInviteMail(org: string, inviter: string, to: string, link: string): Mail {

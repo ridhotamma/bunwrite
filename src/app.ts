@@ -18,6 +18,7 @@ import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
 import { createObservability, normalizePath } from './observability'
+import { telemetryOptionsOf } from './observability/settings'
 import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
@@ -102,7 +103,22 @@ export function createApp(source: Services | ProjectResolver) {
   const control = projects.control
   const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
   const hub = new VcsHub(projects)
-  const observability = createObservability()
+  const observability = createObservability(control.observabilitySettings.config)
+  const applyObservability = async () => {
+    const config = control.observabilitySettings.config
+    await observability.reconfigure(config)
+    for (const runtime of projects.list()) runtime.services.telemetry.configure(telemetryOptionsOf(config))
+  }
+  // Settings are instance-wide and stored in the control database. Reconfigure
+  // the live exporters when the console saves them, without a restart.
+  control.observabilitySettings.subscribe(async () => {
+    try {
+      await applyObservability()
+    } catch (error) {
+      console.error('[observability] could not apply console settings:', error)
+    }
+  })
+  for (const runtime of projects.list()) runtime.services.telemetry.configure(telemetryOptionsOf(observability.config))
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))

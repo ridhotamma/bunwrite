@@ -1,22 +1,15 @@
-import type { ConsoleRouter } from '~/console/context'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
+import { arrayOf, checked, parseJsonObject, value } from '~/console/forms'
 import { html } from '~/console/html'
 import { pageCount, pageParams } from '~/console/query'
 import { alert, badge, cardHead, destroy, emptyState, header, listCard, menu, pager, searchForm, stat, tabs, when } from '~/console/ui'
 import { lineChart } from '~/console/chart'
 import { addSeconds } from '~/lib/datetime'
+import { err, BunwriteError } from '~/lib/errors'
+import { OBS_SETTINGS, observabilitySettingsView } from '~/console/views/observability-settings'
+import { OBS, OBS_TABS, attributesCard, duration, providerCard, recentTracesCard, routesCard, statusTone, traceFacts, trafficCard } from '~/console/views/observability'
+import type { ObservabilitySettings } from '~/observability/settings'
 import type { MinutePoint } from '~/observability/store'
-import {
-  OBS,
-  OBS_TABS,
-  attributesCard,
-  duration,
-  providerCard,
-  recentTracesCard,
-  routesCard,
-  statusTone,
-  traceFacts,
-  trafficCard,
-} from '~/console/views/observability'
 
 const TRACES = `${OBS}/traces`
 const ANALYTICS = `${OBS}/analytics`
@@ -28,6 +21,75 @@ const STATUS_FILTERS: [string, string][] = [
   ['4xx', '4xx client error'],
   ['5xx', '5xx server error'],
 ]
+
+const canManage = async (ctx: ConsoleContext): Promise<boolean> =>
+  (await ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email)) === 'owner'
+
+function number(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback
+}
+
+function rateOf(value: unknown, fallback: number): number {
+  return number(value, fallback * 100, 0, 100) / 100
+}
+
+function flagOverrides(value: unknown): Record<string, boolean | string> {
+  const parsed = parseJsonObject(String(value ?? '').trim() || '{}', 'Feature flags must be a JSON object.')
+  for (const [key, flag] of Object.entries(parsed)) {
+    if (typeof flag !== 'boolean' && typeof flag !== 'string') {
+      throw err('general_argument_invalid', `Feature flag "${key}" must be a string or boolean.`)
+    }
+  }
+  return parsed as Record<string, boolean | string>
+}
+
+/** Merge one form over the current settings; blank secret fields keep the stored values. */
+function settingsFromForm(ctx: ConsoleContext, current: ObservabilitySettings): ObservabilitySettings {
+  const f = ctx.form
+  const text = (key: string, fallback: string) => value(f, key) || fallback
+  const otlp = {
+    endpoint: value(f, 'otlpEndpoint'),
+    traces: value(f, 'otlpTraces'),
+    metrics: value(f, 'otlpMetrics'),
+    logs: value(f, 'otlpLogs'),
+    headers: checked(f.clearOtlpHeaders) ? '' : String(f.otlpHeaders ?? '').trim() || current.otlp?.headers || '',
+    signals: arrayOf(f.signals).filter((signal): signal is 'traces' | 'metrics' | 'logs' => ['traces', 'metrics', 'logs'].includes(signal)),
+  }
+  const datadog = {
+    apiKey: checked(f.clearDatadogKey) ? '' : String(f.datadogApiKey ?? '').trim() || current.datadog?.apiKey || '',
+    site: text('datadogSite', current.datadog?.site ?? 'datadoghq.com'),
+    logs: checked(f.datadogLogs),
+    metrics: checked(f.datadogMetrics),
+  }
+  const posthog = {
+    apiKey: checked(f.clearPosthogKey) ? '' : String(f.posthogApiKey ?? '').trim() || current.posthog?.apiKey || '',
+    host: text('posthogHost', current.posthog?.host ?? 'https://us.i.posthog.com'),
+    analytics: checked(f.posthogAnalytics),
+    flags: checked(f.posthogFlags),
+    flagsTtlMs: Math.round(number(f.posthogFlagsTtl, (current.posthog?.flagsTtlMs ?? 30_000) / 1000, 1, 3600) * 1000),
+  }
+  return {
+    enabled: checked(f.enabled),
+    console: checked(f.console),
+    serviceName: text('serviceName', current.serviceName),
+    serviceVersion: text('serviceVersion', current.serviceVersion),
+    environment: text('environment', current.environment),
+    sampleRate: rateOf(f.sampleRate, current.sampleRate),
+    consoleSampleRate: rateOf(f.consoleSampleRate, current.consoleSampleRate),
+    spanLimit: Math.round(number(f.spanLimit, current.spanLimit, 100, 100_000)),
+    eventLimit: Math.round(number(f.eventLimit, current.eventLimit, 100, 100_000)),
+    consoleRetentionDays: Math.round(number(f.consoleRetentionDays, current.consoleRetentionDays, 1, 90)),
+    flushMs: Math.round(number(f.flushMs, current.flushMs, 250, 60_000)),
+    timeoutMs: Math.round(number(f.timeoutMs, current.timeoutMs, 250, 30_000)),
+    queueLimit: Math.round(number(f.queueLimit, current.queueLimit, 100, 100_000)),
+    debug: checked(f.debug),
+    otlp,
+    datadog,
+    posthog,
+    localFlags: flagOverrides(f.localFlags),
+  }
+}
 
 const percent = (value: number): string => `${value.toFixed(value >= 10 ? 0 : 1)}%`
 
@@ -59,7 +121,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     const errorRate = summary.requests > 0 ? (summary.errors / summary.requests) * 100 : 0
     const body = html`${header('Observability')} ${tabs(OBS_TABS, 'overview')}
       ${!ctx.services.config.logRequests ? alert('warning', html`Request logging is off, so the traffic cards stay empty. Set <code>LOG_REQUESTS=true</code> and restart, or rely on the exported metrics.`) : ''}
-      ${!ctx.observability.config.console ? alert('info', html`The local console trace store is off (<code>OBSERVABILITY_CONSOLE=false</code>). External exporters are unaffected.`) : ''}
+      ${!ctx.observability.config.console ? alert('info', html`The local console trace store is off. Turn it on in <a href="${OBS}/settings">Observability settings</a>; external exporters are unaffected.`) : ''}
       <div class="stats" style="margin:16px 0">
         ${stat('Requests, 1h', summary.requests.toLocaleString('en-US'), '/console/logs')} ${stat('Error rate', percent(errorRate), '/console/logs?status=5xx')}
         ${stat('p95 latency', duration(summary.p95), '/console/logs')} ${stat('Traces kept', counts.spans.toLocaleString('en-US'), TRACES)}
@@ -330,7 +392,7 @@ export function observabilityPages(router: ConsoleRouter): void {
             </tbody>
           </table>
         </div>`
-      : emptyState('No flags configured', 'Add FEATURE_FLAGS to the environment or configure PostHog, then evaluate a subject.')
+      : emptyState('No flags configured', 'Add local overrides or configure PostHog in Observability → Settings, then evaluate a subject.')
     const body = html`${header('Feature flags')} ${tabs(OBS_TABS, 'flags')}
       <div class="stats" style="margin:16px 0">
         ${stat('Flags returned', names.length.toLocaleString('en-US'))} ${stat('Local overrides', Object.keys(local).length.toLocaleString('en-US'))}
@@ -349,9 +411,40 @@ export function observabilityPages(router: ConsoleRouter): void {
       </div>
       <div class="card flush" style="margin-top:16px">${table}</div>
       <p class="help">
-        Edit <code>FEATURE_FLAGS</code> for local overrides, or set <code>POSTHOG_API_KEY</code>. Clients read the same evaluation from
+        Manage local overrides and PostHog in <a href="${OBS}/settings">Observability settings</a>. Clients read the same evaluation from
         <code>GET /v1/flags</code>.
       </p>`
     return ctx.render('Feature flags', 'observability', body)
+  })
+
+  router.get(OBS_SETTINGS, async ({ ctx }) => {
+    const store = ctx.projects.control.observabilitySettings
+    return ctx.render(
+      'Observability settings',
+      'observability',
+      observabilitySettingsView({ settings: store.settings, canManage: await canManage(ctx), overridden: store.overridden }),
+    )
+  })
+
+  router.post(OBS_SETTINGS, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
+    const store = ctx.projects.control.observabilitySettings
+    try {
+      await store.save(settingsFromForm(ctx, store.settings))
+      return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings saved' })
+    } catch (error) {
+      if (!(error instanceof BunwriteError)) throw error
+      return ctx.render(
+        'Observability settings',
+        'observability',
+        observabilitySettingsView({ settings: store.settings, canManage: true, overridden: store.overridden, error: error.message }),
+      )
+    }
+  })
+
+  router.post(`${OBS_SETTINGS}/reset`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can reset observability settings.')
+    await ctx.projects.control.observabilitySettings.reset()
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings reset to environment defaults' })
   })
 }

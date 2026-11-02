@@ -289,7 +289,10 @@ Request logs, traces, metrics and product analytics are kept locally for the
 console's **Observability** pages, and can also be exported to a third party
 without an SDK. External export is off until a provider is configured; the
 local console copy is on by default. See
-[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples.
+[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples. Providers, sampling,
+limits and local feature flags can also be edited in **Console → Observability
+→ Settings**; a saved console value overrides the environment, and the settings
+apply without a restart.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

@@ -12,6 +12,7 @@ export const OBS_TABS = [
   { key: 'traces', label: 'Traces', href: `${OBS}/traces` },
   { key: 'analytics', label: 'Analytics', href: `${OBS}/analytics` },
   { key: 'flags', label: 'Feature flags', href: `${OBS}/flags` },
+  { key: 'settings', label: 'Settings', href: `${OBS}/settings` },
 ] as const
 
 export const duration = (ms: number): string => (ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(1)} ms`)
@@ -27,19 +28,21 @@ export function providerCard(observability: Observability): Html {
       <span>${label}</span><span>${badge(on ? 'On' : 'Off', on ? 'success' : 'info')}${detail ? html` <span class="subdued">${detail}</span>` : ''}</span>
     </li>`
   const signals = c.otlp ? [...c.otlp.signals].join(', ') : ''
-  const datadogOn = Boolean(c.datadog && (c.datadog.logs || c.datadog.metrics))
-  const posthogOn = Boolean(c.posthog && (c.posthog.analytics || c.posthog.flags))
+  const otlpOn = c.enabled && Boolean(c.otlp && c.otlp.signals.size)
+  const datadogOn = c.enabled && Boolean(c.datadog && (c.datadog.logs || c.datadog.metrics))
+  const posthogOn = c.enabled && Boolean(c.posthog && (c.posthog.analytics || c.posthog.flags))
   return html`<div class="card">
-    ${cardHead('Exporters')}
+    ${cardHead('Exporters', html`<a class="subdued" href="${OBS}/settings">Settings</a>`)}
     <ul class="list">
       ${row('Console traces', c.console, `${(c.consoleSampleRate * 100).toFixed(1)}% sampled`)}
-      ${row('OTLP/HTTP', Boolean(c.otlp && c.otlp.signals.size), signals)}
+      ${row('OTLP/HTTP', otlpOn, c.enabled ? signals : 'external export is off')}
       ${row('Datadog', datadogOn, c.datadog ? [c.datadog.logs ? 'logs' : '', c.datadog.metrics ? 'metrics' : ''].filter(Boolean).join(' + ') : undefined)}
       ${row('PostHog', posthogOn, c.posthog ? [c.posthog.analytics ? 'analytics' : '', c.posthog.flags ? 'flags' : ''].filter(Boolean).join(' + ') : undefined)}
     </ul>
     <p class="help">
       Local traces keep the last ${c.spanLimit.toLocaleString('en-US')} spans in total for ${c.consoleRetentionDays}
-      day${c.consoleRetentionDays === 1 ? '' : 's'}. Exporters are the system of record.
+      day${c.consoleRetentionDays === 1 ? '' : 's'}. Exporters are the system of record. Providers are managed on the
+      <a href="${OBS}/settings">Settings</a> tab.
     </p>
   </div>`
 }

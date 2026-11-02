@@ -1,6 +1,6 @@
 /** Organizations, their console members and email invitations. */
 import type { Mailer } from '~/mail/mailer'
-import { organizationInviteMail } from '~/mail/mailer'
+import { organizationInviteMail, sendMailLater } from '~/mail/mailer'
 import { validEmail } from '~/auth/service'
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
@@ -233,15 +233,10 @@ export class OrganizationService {
       }
 
       const link = `${options.baseUrl.replace(/\/$/, '')}/console/invite/${token}`
-      let sent = false
-      if (options.notify !== false && options.mailer.enabled) {
-        try {
-          await options.mailer.send(organizationInviteMail(options.orgName, options.inviter, email, link))
-          sent = true
-        } catch {
-          sent = false
-        }
-      }
+      // Skip SMTP from the request path: the invitation is persisted and the
+      // link is returned immediately, while delivery continues in the background.
+      const sent = options.notify !== false && options.mailer.enabled
+      if (sent) sendMailLater(options.mailer, organizationInviteMail(options.orgName, options.inviter, email, link), 'organization invitation')
       results.push({ member, token, link, sent })
     }
     return results

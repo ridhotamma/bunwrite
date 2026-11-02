@@ -12,7 +12,7 @@ import { siteHost } from './lib/hosts'
 import { randomSecret, sha256 } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
-import { observabilityConfig } from './observability/config'
+import { ObservabilitySettingsStore, telemetryOptionsOf } from './observability/settings'
 import { TelemetryStore } from './observability/store'
 import { ProxyService } from './proxy/service'
 import { QueueService } from './queue/service'
@@ -64,6 +64,8 @@ export interface Services {
   requestLogs: RequestLogService
   /** Bounded local telemetry for the console's Observability pages. */
   telemetry: TelemetryStore
+  /** Instance-wide provider configuration edited in the console. */
+  observabilitySettings: ObservabilitySettingsStore
   backups: BackupService
   render: RenderService
   /** Durable job queue for SDK workers (docs/QUEUE.md). */
@@ -111,13 +113,9 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     projectVariables: (context) => variables.projectEnvironment(context),
   })
   const requestLogs = new RequestLogService(db, config)
-  const observability = observabilityConfig()
-  const telemetry = new TelemetryStore(db, {
-    maxSpans: observability.spanLimit,
-    maxEvents: observability.eventLimit,
-    retentionDays: observability.consoleRetentionDays,
-    flushMs: Math.min(observability.flushMs, 5_000),
-  })
+  const observabilitySettings = new ObservabilitySettingsStore(db)
+  const observability = observabilitySettings.config
+  const telemetry = new TelemetryStore(db, telemetryOptionsOf(observability))
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
   const vectors = new VectorService(db, config.vectors)
@@ -151,6 +149,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     proxy,
     requestLogs,
     telemetry,
+    observabilitySettings,
     backups,
     render,
     webhooks,
@@ -180,6 +179,8 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     await proxy.ready()
     await sites.ready()
     await functions.ready()
+    await observabilitySettings.load()
+    telemetry.configure(telemetryOptionsOf(observabilitySettings.config))
     if (db.dialect === 'sqlite') return
     // Order matters: settings feed access, and both feed the config overlay
     // that the other caches read.

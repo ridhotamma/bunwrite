@@ -21,6 +21,8 @@ import { randomSecret, resolveId } from '~/lib/ids'
 import { removeTree } from '~/functions/sandbox'
 import type { FunctionRow } from '~/functions/service'
 import { pruneRateLimits } from '~/lib/limits'
+import { flushBackgroundMail } from '~/mail/mailer'
+import { telemetryOptionsOf } from '~/observability/settings'
 import { createServices, type Services } from '~/services'
 import type { SiteRow } from '~/sites/service'
 import type { SqliteSynchronous } from '~/system/autotune'
@@ -292,6 +294,9 @@ export class ProjectManager implements ProjectResolver {
 
   /** Site IDs and custom domains are hosts, so they must be unique across projects. */
   private linkServices(services: Services): void {
+    // Observability is instance-wide; every project's local telemetry store
+    // follows the control database's limits.
+    services.telemetry.configure(telemetryOptionsOf(this.control.observabilitySettings.config))
     services.sites.peers = () => [...this.runtimes.values()].map((r) => r.services.sites)
     services.functions.peers = () => [...this.runtimes.values()].map((r) => r.services.functions)
     services.proxy.peers = () => [...this.runtimes.values()].map((r) => r.services.proxy)
@@ -486,6 +491,7 @@ export class ProjectManager implements ProjectResolver {
     if (changed.schema) await this.control.registry.load()
     if (changed.settings) {
       await this.control.settings.load()
+      await this.control.observabilitySettings.load()
       await this.control.access.load()
     }
     if (changed.catalog) {
@@ -523,6 +529,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.realtime.stop()
     }
     await Promise.all(closing.map(([, runtime]) => runtime.services.requestLogs.flush()))
+    await flushBackgroundMail()
     await Promise.all(closing.map(([, runtime]) => runtime.services.telemetry.close()))
     for (const [id, runtime] of closing) {
       if (id !== this.config.projectId) await runtime.services.db.driver.close()

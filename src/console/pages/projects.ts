@@ -6,6 +6,7 @@ import { organizationHeader } from '~/console/views/organization'
 import { projectEditView, projectsView, type CreatedProject } from '~/console/views/projects'
 import { addSeconds } from '~/lib/datetime'
 import { err } from '~/lib/errors'
+import { sendMailLater } from '~/mail/mailer'
 
 /** Projects belong to the organization; only its owners may create, rename or delete them. */
 const isOwner = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(ctx.projects.control.config.orgId, ctx.admin.email)) === 'owner'
@@ -126,8 +127,11 @@ export function projectPages(router: ConsoleRouter): void {
       const resend = value(ctx.form, 'resend') === '1'
       if (resend || !otp) {
         const control = ctx.projects.control
+        if (!control.mailer.enabled) {
+          return ctx.go(confirmLocation, { tone: 'critical', text: 'Email is not configured, so the deletion code could not be sent.' })
+        }
         const { code } = await ctx.auth.startMfaChallenge(ctx.admin.seq)
-        await control.mailer.send(control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }))
+        sendMailLater(control.mailer, control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }), 'project-delete code')
         return ctx.go(confirmLocation, {
           tone: 'success',
           text: `We emailed a six-digit code to ${ctx.admin.email}. Enter it to delete ${project.info.name}.`,

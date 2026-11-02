@@ -181,6 +181,11 @@ export class TelemetryStore {
     this.options = { ...DEFAULTS, ...options }
   }
 
+  /** Apply console-managed retention and sampling limits without a restart. */
+  configure(options: Partial<TelemetryOptions>): void {
+    Object.assign(this.options, options)
+  }
+
   recordSpan(input: SpanInput): void {
     if (this.closed) return
     this.spans.push({

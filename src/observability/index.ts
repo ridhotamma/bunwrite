@@ -71,6 +71,12 @@ function randomHex(bytes: number): string {
 
 const unixNano = (milliseconds: number): string => String(BigInt(Math.max(0, Math.round(milliseconds))) * 1_000_000n)
 
+/** A parsed config has numbers and a localFlags object; an environment map has strings. */
+const isObservabilityConfig = (value: Record<string, string | undefined> | ObservabilityConfig): value is ObservabilityConfig => {
+  const candidate = value as ObservabilityConfig
+  return typeof candidate.serviceName === 'string' && typeof candidate.sampleRate === 'number' && typeof candidate.localFlags === 'object'
+}
+
 const severityOf = (status: number, error?: string): { number: number; text: string } => {
   if (status >= 500 || error) return { number: 17, text: 'ERROR' }
   if (status >= 400) return { number: 13, text: 'WARN' }
@@ -78,18 +84,18 @@ const severityOf = (status: number, error?: string): { number: number; text: str
 }
 
 export class Observability {
-  readonly config: ObservabilityConfig
+  config: ObservabilityConfig
   readonly metrics = new MetricRegistry()
-  readonly flags: FlagService
+  flags: FlagService
   /** True when any request observation is worth creating (external sink or console). */
-  readonly enabled: boolean
+  enabled: boolean
   /** Keep a local copy for the console pages. */
-  readonly console: boolean
+  console: boolean
 
-  private readonly traces: BatchQueue<SpanData> | null = null
-  private readonly logs: BatchQueue<LogData> | null = null
-  private readonly analytics: BatchQueue<AnalyticsEvent> | null = null
-  private readonly metricsSink: boolean
+  private traces: BatchQueue<SpanData> | null = null
+  private logs: BatchQueue<LogData> | null = null
+  private analytics: BatchQueue<AnalyticsEvent> | null = null
+  private metricsSink = false
   private metricsTimer: ReturnType<typeof setInterval> | null = null
   private metricsWindowStart = Date.now()
   private metricsFlushing = false
@@ -97,13 +103,19 @@ export class Observability {
   private closed = false
   private lastWarning = 0
 
-  constructor(env: Record<string, string | undefined> = process.env, options: ObservabilityOptions = {}) {
-    this.config = observabilityConfig(env)
+  constructor(source: Record<string, string | undefined> | ObservabilityConfig = process.env, options: ObservabilityOptions = {}) {
+    this.config = isObservabilityConfig(source) ? source : observabilityConfig(source)
     this.flags = new FlagService(this.config)
+    this.enabled = false
+    this.console = false
+    this.applyConfig(options.timers !== false)
+  }
+
+  /** Build queues and timers from the current config. Call after replacing `config`. */
+  private applyConfig(timers: boolean): void {
     const otlp = this.config.otlp
     const datadog = this.config.datadog
     const posthog = this.config.posthog
-    const timers = options.timers !== false
 
     if (otlp?.traces && otlp.signals.has('traces')) {
       this.traces = new BatchQueue<SpanData>({
@@ -156,6 +168,28 @@ export class Observability {
       this.metricsTimer = setInterval(() => void this.flushMetrics(), this.config.flushMs)
       this.metricsTimer.unref?.()
     }
+  }
+
+  /**
+   * Apply console-managed settings without a restart. Queued data is flushed
+   * before the old queues and timers are replaced.
+   */
+  async reconfigure(config: ObservabilityConfig, options: ObservabilityOptions = {}): Promise<void> {
+    if (this.closed) return
+    if (this.metricsTimer) {
+      clearInterval(this.metricsTimer)
+      this.metricsTimer = null
+    }
+    const old = [this.traces, this.logs, this.analytics]
+    this.traces = this.logs = this.analytics = null
+    this.metricsSink = false
+    await Promise.allSettled(old.map((queue) => queue?.close()))
+    this.config = config
+    this.flags = new FlagService(config)
+    this.metrics.reset()
+    this.metricsWindowStart = Date.now()
+    this.lastWarning = 0
+    this.applyConfig(options.timers !== false)
   }
 
   /** Start a request observation, or null when nothing is configured. */
@@ -382,7 +416,10 @@ export class Observability {
   }
 }
 
-/** Create the facade from the environment; disabled providers are a no-op. */
-export function createObservability(env: Record<string, string | undefined> = process.env, options: ObservabilityOptions = {}): Observability {
-  return new Observability(env, options)
+/** Create the facade from the environment or an already-parsed config. */
+export function createObservability(
+  source: Record<string, string | undefined> | ObservabilityConfig = process.env,
+  options: ObservabilityOptions = {},
+): Observability {
+  return new Observability(source, options)
 }

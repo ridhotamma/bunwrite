@@ -75,6 +75,8 @@ export interface TestServer {
   config: Config
   /** The app's Git deployment hub (GitHub App, webhooks, builds). */
   hub: VcsHub
+  /** Instance-wide observability facade, rebuilt when console settings change. */
+  observability: ReturnType<typeof createApp>['observability']
   stop(): void
 }
 
@@ -180,6 +182,7 @@ export function startServer(
     mailer,
     config,
     hub: app.hub,
+    observability: app.observability,
     stop: () => server.stop(true),
   }
 }

@@ -2,8 +2,13 @@
 
 Bunwrite can export request logs, traces, metrics, product analytics and feature
 flags to a third party, and keeps a local copy for the console's Observability
-pages. Everything is optional, configured from the environment, and implemented
-as plain HTTPS calls: there is no vendor SDK and no sidecar.
+pages. Everything is optional and implemented as plain HTTPS calls: there is no
+vendor SDK and no sidecar.
+
+Providers and sampling can be configured in **Console → Observability →
+Settings** without editing `.env` or restarting. Environment variables remain
+the defaults; a saved console value overrides them. The settings are stored in
+the control database and apply to every project on the instance.
 
 The local console copy is on by default; external export is off until a provider
 is configured. The request path only pays for a minute counter and, when the
@@ -32,6 +37,7 @@ The console has an **Observability** section with four tabs:
 | Traces | Sampled request spans, with route/status/search filters and a detail page (trace ID, span ID, request ID, attributes, error). |
 | Analytics | Document events per hour, top events, distinct subjects and a filterable event list. |
 | Feature flags | Flags evaluated for a user or project, with local overrides and the PostHog source. |
+| Settings | Instance-wide providers, sampling, limits and local flags, stored in the control database. |
 
 This copy is local and works without a provider:
 
@@ -76,9 +82,31 @@ posthog.identify(me.$id, { project: projectId })
 Bunwrite uses the signed-in user's ID, or `project:<project-id>` for API-key
 writes, as the analytics `distinct_id`.
 
-## Enable it
+## Console settings
 
-Add the provider settings to `.env` and restart:
+Open **Observability → Settings**. Organization owners can edit:
+
+- **Local console** — keep local traces/events, sampling, limits and retention.
+- **External exporters** — the global switch, service metadata, trace sampling,
+  timeout and queue size.
+- **OTLP/HTTP** — base and per-signal endpoints, headers and signals.
+- **Datadog** — API key, site, logs and metrics.
+- **PostHog** — project API key, host, analytics, flags and cache TTL.
+- **Feature flags** — local overrides that win over PostHog.
+
+Saving applies the new configuration immediately: exporters are rebuilt and
+every project's local telemetry limits are updated. Stored API keys and headers
+are never rendered back into the page; leave a secret blank to keep it, or use
+its **remove** checkbox. **Reset to environment defaults** deletes the override
+and restores the values captured from `.env` at boot.
+
+The page is visible to every console admin, but only an organization owner can
+save or reset it.
+
+## Enable it with environment variables
+
+Environment variables are still supported and are the defaults when no console
+override exists. Add the provider settings to `.env` and restart:
 
 ```bash
 docker compose up -d --force-recreate

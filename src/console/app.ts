@@ -9,6 +9,7 @@ import { parseCookies } from '~/auth/caller'
 import { clearInstanceApiKey, clearInstanceApiKeyAsync } from '~/instance/bootstrap'
 import { clientIpOf } from '~/lib/client-ip'
 import { BunwriteError } from '~/lib/errors'
+import { sendMailLater } from '~/mail/mailer'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
 import { OrganizationService } from '~/organizations/service'
@@ -55,7 +56,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
   registerConsolePages(router)
 
   const secure = () => control.config.publicEndpoint.startsWith('https')
-  const sendMfa = (email: string, code: string) => control.mailer.send(control.templates.render('mfaChallenge', email, { user: email, otp: code }))
+  const sendMfa = (email: string, code: string) =>
+    sendMailLater(control.mailer, control.templates.render('mfaChallenge', email, { user: email, otp: code }), 'console sign-in code')
 
   return {
     async handle(request: Request, server?: Server<unknown>): Promise<Response | null> {
@@ -124,7 +126,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
             if (result.status === 'invalid') throw new Error('Incorrect email or password.')
             if (existing) await organizations.accept(member.id)
             if (result.status === 'mfa') {
-              await sendMfa(result.email, result.code)
+              if (!control.mailer.enabled) throw new Error('Email is not configured, so the sign-in code could not be sent.')
+              sendMfa(result.email, result.code)
               return await signInPage(auth, {
                 projectName: control.config.projectName,
                 mfaChallenge: result.challenge,
@@ -203,15 +206,14 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
             return await signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
           }
           if (result.status === 'mfa') {
-            try {
-              await sendMfa(result.email, result.code)
-            } catch (error) {
+            if (!control.mailer.enabled) {
               return await signInPage(auth, {
                 email,
-                error: `Could not send the sign-in code: ${error instanceof Error ? error.message : String(error)}`,
+                error: 'Email is not configured, so the sign-in code could not be sent.',
                 projectName: control.config.projectName,
               })
             }
+            sendMfa(result.email, result.code)
             return await signInPage(auth, {
               projectName: control.config.projectName,
               mfaChallenge: result.challenge,
