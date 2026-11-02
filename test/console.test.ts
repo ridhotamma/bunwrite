@@ -579,14 +579,14 @@ describe('settings through the console', () => {
       senderEmail: 'hi@global.test',
       senderName: 'Global',
     })
-    expect(server.config.smtp).toMatchObject({ host: 'smtp.global.test', port: 587, password: 'secret' })
+    expect(server.config.consoleSmtp).toMatchObject({ host: 'smtp.global.test', port: 587, password: 'secret' })
 
     // A blank password keeps the stored one, like the project-level form.
     await form('/console/organization/email', { host: 'smtp2.global.test', port: '465', user: 'global', password: '', senderEmail: 'hi@global.test', senderName: 'Global', secure: 'on' })
-    expect(server.config.smtp).toMatchObject({ host: 'smtp2.global.test', port: 465, secure: true, password: 'secret' })
+    expect(server.config.consoleSmtp).toMatchObject({ host: 'smtp2.global.test', port: 465, secure: true, password: 'secret' })
 
     await form('/console/organization/email', { disable: '1' })
-    expect(server.config.smtp).toBeNull()
+    expect(server.config.consoleSmtp).toBeNull()
   })
 
   test('request log retention and IP logging can be changed and reset', async () => {
@@ -753,11 +753,12 @@ describe('settings through the console', () => {
 
       const options = await post('/console/organization/backups', {
         backupsEnabled: 'on',
+        backupSchedule: '0 3 * * 1',
         backupsKeep: '3',
         backupPrefix: 'backups',
       })
       expect(new URL(options.headers.get('location')!, fileBase).searchParams.get('ok')).toContain('Backup settings saved')
-      expect(fileServer.config.backups).toMatchObject({ enabled: true, keep: 3, prefix: 'backups' })
+      expect(fileServer.config.backups).toMatchObject({ enabled: true, schedule: '0 3 * * 1', keep: 3, prefix: 'backups' })
 
       await post(`/console/organization/backups/${encodeURIComponent(backups[0]!.name)}/delete`, {})
       expect(await fileServer.services.backups.list()).toHaveLength(0)
@@ -773,11 +774,14 @@ describe('settings through the console', () => {
     expect(res.headers.get('location')).toBe('/console/organization/backups')
   })
 
-  test('automatic backups run once a day', async () => {
+  test('automatic backups follow the configured schedule', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bunwrite-auto-backups-'))
     const fileServer = startServer(
       undefined,
-      { backupsPath: join(dir, 'backups'), backups: { enabled: true, keep: 1, s3: testConfig().backups.s3 } },
+      {
+        backupsPath: join(dir, 'backups'),
+        backups: { enabled: true, schedule: '0 2 * * *', keep: 1, s3: testConfig().backups.s3 },
+      },
       undefined,
       {},
       join(dir, 'bunwrite.sqlite'),
@@ -786,6 +790,10 @@ describe('settings through the console', () => {
       const at = new Date(Date.UTC(2026, 9, 27, 2, 0))
       await fileServer.services.backups.tick(at)
       await fileServer.services.backups.tick(at)
+      expect((await fileServer.services.backups.list()).filter((b) => b.name.startsWith('auto-'))).toHaveLength(1)
+
+      // A time the schedule does not match does nothing.
+      await fileServer.services.backups.tick(new Date(Date.UTC(2026, 9, 27, 3, 0)))
       expect((await fileServer.services.backups.list()).filter((b) => b.name.startsWith('auto-'))).toHaveLength(1)
     } finally {
       fileServer.stop()

@@ -177,6 +177,7 @@ describe('console email MFA', () => {
     const secret = (await auth.login('admin@example.com', 'password123'))!
     const cookie = `bunwrite_console=${secret}`
     server.services.mailer = new DisabledMailer()
+    server.services.consoleMailer = server.services.mailer
 
     const page = await (await fetch(`${origin}/console/security`, { headers: { cookie } })).text()
     expect(page).toContain('SMTP is not configured')

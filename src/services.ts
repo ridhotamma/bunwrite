@@ -18,7 +18,7 @@ import { ProxyService } from './proxy/service'
 import { QueueService } from './queue/service'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
-import { SettingsService, type SettingsOptions } from './settings/service'
+import { SettingsService } from './settings/service'
 import { SiteService } from './sites/service'
 import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
@@ -44,7 +44,10 @@ export interface Services {
   auth: AuthService
   teams: TeamService
   oauth: OAuthService
+  /** Project mail: verification, recovery, OTP sessions and team invitations. */
   mailer: Mailer
+  /** Console mail: sign-in codes, MFA codes and organization invitations. */
+  consoleMailer: Mailer
   realtime: RealtimeHub
   storage: StorageService
   functions: FunctionService
@@ -80,7 +83,7 @@ export interface Services {
   ready(): Promise<void>
 }
 
-export function createServices(config: Config, db: SqlDatabase, overrides: Partial<Services> = {}, settingsOptions: SettingsOptions = {}): Services {
+export function createServices(config: Config, db: SqlDatabase, overrides: Partial<Services> = {}): Services {
   // Every process must hand the same key to function runs: a run started by
   // one worker may call back through another. Deriving it from the shared
   // secret keeps that true without storing another secret.
@@ -102,6 +105,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const sites = new SiteService(db, config, proxy, variables)
   const oauth = new OAuthService(db, config, auth, () => sites.allowedOrigins())
   const makeMailer = () => (config.smtp ? new SmtpMailer(config.smtp) : new DisabledMailer())
+  const makeConsoleMailer = () => (config.consoleSmtp ? new SmtpMailer(config.consoleSmtp) : new DisabledMailer())
   const realtime = new RealtimeHub(db, {
     // SQLite uses `_realtime_events`; Postgres uses LISTEN/NOTIFY.
     bus: config.workers > 1 && db.capabilities.eventBus ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
@@ -141,6 +145,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     teams,
     oauth,
     mailer: overrides.mailer ?? new DisabledMailer(),
+    consoleMailer: overrides.consoleMailer ?? new DisabledMailer(),
     realtime,
     storage,
     functions,
@@ -159,22 +164,19 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     vectors,
   } as unknown as Services
   services.access = new AccessService(db, config, () => services.settings)
-  // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.
-  services.settings = new SettingsService(
-    db,
-    config,
-    (key) => {
-      if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
-      // Turning HTML rendering off frees Chromium's memory right away; turning
-      // it on runs the jobs that waited meanwhile.
-      if (key === 'render') {
-        if (config.render.enabled) services.render.drain()
-        else services.render.shutdown()
-      }
-    },
-    settingsOptions,
-  )
+  // Settings saved in the console apply over env; SMTP settings rebuild their mailer.
+  services.settings = new SettingsService(db, config, (key) => {
+    if (key === 'smtp' && !overrides.mailer) services.mailer = makeMailer()
+    if (key === 'consoleSmtp' && !overrides.consoleMailer) services.consoleMailer = makeConsoleMailer()
+    // Turning HTML rendering off frees Chromium's memory right away; turning
+    // it on runs the jobs that waited meanwhile.
+    if (key === 'render') {
+      if (config.render.enabled) services.render.drain()
+      else services.render.shutdown()
+    }
+  })
   if (!overrides.mailer) services.mailer = makeMailer()
+  if (!overrides.consoleMailer) services.consoleMailer = makeConsoleMailer()
   services.ready = async () => {
     await proxy.ready()
     await sites.ready()

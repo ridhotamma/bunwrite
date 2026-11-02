@@ -120,7 +120,6 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
     ${MANAGE.map(link)}
     <div class="foot">
       ${avatar(nav.admin)}<span class="nav-admin" title="${nav.admin}">${nav.admin}</span>
-      <a class="icon-btn" href="/console/security" data-tooltip="Security" aria-label="Account security">${icon('gear-six')}</a>
       <form method="post" action="/console/logout" class="inline" data-confirm="Sign out of the console?" data-confirm-label="Sign out"><button class="icon-btn" data-tooltip="Sign out" aria-label="Sign out">${icon('sign-out')}</button></form>
     </div>
   </nav>

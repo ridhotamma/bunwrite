@@ -25,7 +25,7 @@ async function securityHeader(ctx: ConsoleContext) {
 
 async function securityView(ctx: ConsoleContext) {
   const admin = (await ctx.auth.find(ctx.admin.email))!
-  const smtp = ctx.projects.control.mailer.enabled
+  const smtp = ctx.projects.control.consoleMailer.enabled
   const { header, canManage } = await securityHeader(ctx)
   const emailSettings = html`<a href="/console/organization#email">organization email settings</a>`
   return html`${header}
@@ -72,7 +72,7 @@ export function securityPages(router: ConsoleRouter): void {
       return ctx.go(SECURITY, { tone: 'critical', text: 'That password is not correct.' })
     }
     const enabled = checked(ctx.form.enabled)
-    if (enabled && !ctx.projects.control.mailer.enabled) {
+    if (enabled && !ctx.projects.control.consoleMailer.enabled) {
       return ctx.go(SECURITY, { tone: 'critical', text: 'Configure SMTP before turning on email MFA; otherwise you would be locked out.' })
     }
     await ctx.auth.setMfa(admin.seq, enabled)

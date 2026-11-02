@@ -408,9 +408,10 @@ Upgrade with `git pull && docker compose up -d --build`.
   [RENDER.md](RENDER.md).
 - The standalone binary extracts its bundled image-processing runtime to
   `data/.runtimes/sharp` on the first preview. Keep the data folder writable.
-- With SQLite, enable daily database backups and optional S3 backup storage in
+- With SQLite, enable scheduled database backups and optional S3 backup storage in
   **Organization → Backups**. One archive contains the control database and every
-  project database; it does not include uploaded files. `bunwrite snapshot` is
+  project database; it does not include uploaded files. Backups follow a cron
+  schedule in UTC (default daily at 02:00). `bunwrite snapshot` is
   available for cron-driven archives. Restore by uploading the archive in
   **Organization → Backups** and restarting Bunwrite, or run
   `bunwrite restore <archive>` with the server stopped; either way every

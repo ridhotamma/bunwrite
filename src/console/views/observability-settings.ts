@@ -134,6 +134,7 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
   const hasOtlpHeaders = Boolean(s.otlp?.headers)
   const hasDatadogKey = Boolean(s.datadog?.apiKey)
   const hasPosthogKey = Boolean(s.posthog?.apiKey)
+  const posthogFlags = s.posthog?.flags ?? true
   const scope = options.overridden ? 'Console override' : 'Environment defaults'
   return html`${header('Observability settings', { back: OBS, actions: badge(scope, options.overridden ? 'success' : 'info') })}
     ${tabs(OBS_TABS, 'settings')}
@@ -231,31 +232,19 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label>Project API key<input name="posthogApiKey" type="password" autocomplete="new-password" placeholder="${hasPosthogKey ? 'Configured; leave blank to keep' : 'phc_...'}"></label>
             <label>Host<input name="posthogHost" type="url" class="mono" value="${s.posthog?.host ?? 'https://us.i.posthog.com'}"></label>
           </div>
-          <div class="fields center">
+          <div class="fields">
             <label class="check"><input type="checkbox" name="posthogAnalytics" ${checked(s.posthog?.analytics ?? true)}><span>Send document analytics</span></label>
-            <label class="check"><input type="checkbox" name="posthogFlags" ${checked(s.posthog?.flags ?? true)}><span>Evaluate feature flags</span></label>
-            <label>Flag cache (seconds)<input name="posthogFlagsTtl" type="number" min="1" max="3600" value="${seconds(s.posthog?.flagsTtlMs ?? 30_000)}"></label>
+            <label class="check"><input type="checkbox" name="posthogFlags" data-show-by ${checked(posthogFlags)}><span>Evaluate feature flags</span></label>
           </div>
-          <label class="check"><input type="checkbox" name="clearPosthogKey"><span>Remove stored PostHog key</span></label>`,
+          <div data-show-for="on" data-for-select="posthogFlags" ${posthogFlags ? '' : 'hidden'}>
+            <label style="max-width:220px">Flag cache (seconds)<input name="posthogFlagsTtl" type="number" min="1" max="3600" value="${seconds(s.posthog?.flagsTtlMs ?? 30_000)}"><small>How long evaluated flags are reused before PostHog is asked again.</small></label>
+          </div>
+          ${hasPosthogKey ? html`<label class="check"><input type="checkbox" name="clearPosthogKey"><span>Remove stored PostHog key</span></label>` : ''}`,
         options.canManage,
       ),
       { id: 'posthog' },
     )}
 
-    ${settingsSection(
-      'Feature flags',
-      'Local overrides win over PostHog. Each flag is saved immediately; the same values are returned by GET /v1/flags.',
-      featureFlagsView(
-        s.localFlags,
-        {
-          save: `${OBS_SETTINGS}/flags`,
-          remove: `${OBS_SETTINGS}/flags/delete`,
-          clear: `${OBS_SETTINGS}/flags/clear`,
-        },
-        options.canManage,
-      ),
-      { id: 'feature-flags' },
-    )}
     ${options.overridden && options.canManage
       ? settingsSection(
           'Environment defaults',

@@ -613,7 +613,7 @@ Keep a copy of the key somewhere other than the server. Without it an encrypted
 archive cannot be opened, and anyone who has it can open every backup.
 
 The backup bucket can be the same bucket as the Litestream replica, provided the
-two use different prefixes. Set a **Key prefix** in Backup options (for example
+two use different prefixes. Set a **Key prefix** in Automatic backups (for example
 `backups`) and point `LITESTREAM_REPLICA_URL` at another prefix (for example
 `s3://my-bucket/litestream`). Scope each credential to its own prefix; the backup
 key should not be able to delete the replica.

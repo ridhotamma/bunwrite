@@ -52,9 +52,8 @@ describe('observability settings console', () => {
     expect(body).toContain('Feature flags')
     expect(body).toContain('name="console"')
     expect(body).toContain('name="otlpEndpoint"')
-    // Flags are a CRUD list now, not a raw JSON textarea.
-    expect(body).toContain('Add flag')
-    expect(body).toContain('No local overrides')
+    // Feature flags are managed on their own tab instead of this settings page.
+    expect(body).not.toContain('Add flag')
     expect(body).not.toContain('name="localFlags"')
     // One Save button per settings card, like the rest of the Settings pages.
     expect(body.match(/>Save<\/button>/g)).toHaveLength(5)
@@ -98,9 +97,9 @@ describe('observability settings console', () => {
       expect(saved.headers.get('location')).toContain('/console/observability/settings')
     }
 
-    // Flags are separate CRUD writes and save immediately.
-    expect((await form('/console/observability/settings/flags', { key: 'new-checkout', type: 'boolean', flagBoolean: 'true' })).status).toBe(303)
-    expect((await form('/console/observability/settings/flags', { key: 'theme', type: 'string', flagString: 'dark' })).status).toBe(303)
+    // Flags are separate CRUD writes on the Feature flags page and save immediately.
+    expect((await form('/console/observability/flags', { key: 'new-checkout', type: 'boolean', flagBoolean: 'true' })).status).toBe(303)
+    expect((await form('/console/observability/flags', { key: 'theme', type: 'string', flagString: 'dark' })).status).toBe(303)
 
     const live = server.observability.config
     expect(live).toMatchObject({
@@ -135,19 +134,23 @@ describe('observability settings console', () => {
     expect(page).toContain('value="1234"')
     expect(page).toContain('value="https://otlp.example.com"')
     expect(page).toContain('Configured; leave blank to keep')
-    expect(page).toContain('new-checkout')
-    expect(page).toContain('theme')
-    expect(page).toContain('Boolean')
-    expect(page).toContain('Text')
     // Secrets never come back in the page.
     expect(page).not.toContain('dd-console')
     expect(page).not.toContain('phc_console')
     expect(page).not.toContain('api-key=abc')
 
+    const flagsPage = await (await get('/console/observability/flags')).text()
+    expect(flagsPage).toContain('new-checkout')
+    expect(flagsPage).toContain('theme')
+    expect(flagsPage).toContain('Boolean')
+    expect(flagsPage).toContain('Text')
+    expect(flagsPage).toContain('Add flag')
+    expect(flagsPage).toContain('Edit')
+
     // Editing a flag overwrites it; Remove deletes just that flag.
-    await form('/console/observability/settings/flags', { key: 'new-checkout', type: 'boolean', flagBoolean: 'false' })
+    await form('/console/observability/flags', { key: 'new-checkout', type: 'boolean', flagBoolean: 'false' })
     expect(server.observability.config.localFlags['new-checkout']).toBe(false)
-    await form('/console/observability/settings/flags/delete', { key: 'theme' })
+    await form('/console/observability/flags/delete', { key: 'theme' })
     expect(server.observability.config.localFlags).toEqual({ 'new-checkout': false })
 
     // Local flags are evaluated without contacting PostHog.
@@ -155,19 +158,21 @@ describe('observability settings console', () => {
     expect(flags).toContain('new-checkout')
     expect(flags).toContain('Local override')
     expect(flags).toContain('Local only')
+    // Local overrides are the same for every subject, so the evaluator is hidden.
+    expect(flags).not.toContain('Evaluate for a subject')
   })
 
   test('an invalid flag name comes back as a form error', async () => {
-    const bad = await form('/console/observability/settings/flags', { key: 'bad key', type: 'boolean', flagBoolean: 'true' })
+    const bad = await form('/console/observability/flags', { key: 'bad key', type: 'boolean', flagBoolean: 'true' })
     expect(bad.status).toBe(303)
     expect(new URL(bad.headers.get('location')!, base).searchParams.get('err')).toContain('Feature flag names')
   })
 
   test('delete all clears every local override', async () => {
-    const cleared = await form('/console/observability/settings/flags/clear', {})
+    const cleared = await form('/console/observability/flags/clear', {})
     expect(cleared.status).toBe(303)
     expect(server.observability.config.localFlags).toEqual({})
-    const page = await (await get('/console/observability/settings')).text()
+    const page = await (await get('/console/observability/flags')).text()
     expect(page).toContain('No local overrides')
   })
 

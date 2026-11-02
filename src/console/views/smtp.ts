@@ -26,17 +26,10 @@ export function smtpForm({ action, testAction, smtp, recipient }: SmtpFormOption
     </div>
     <label class="check"><input type="checkbox" name="secure" ${smtp?.secure ? 'checked' : ''} />Implicit TLS (port 465)</label>
     <div class="foot">
-      <span id="smtp-test" class="subdued" style="margin-right:auto">Sends to ${recipient}</span>
-      <button
-        type="button"
-        hx-post="${testAction}"
-        hx-target="#smtp-test"
-        hx-swap="innerHTML"
-        title="Send a test email to ${recipient}"
-        ${smtp ? '' : 'disabled'}
-      >
-        Send test email
-      </button>
+      ${smtp
+        ? html`<span id="smtp-test" class="subdued" style="margin-right:auto">Sends to ${recipient}</span>
+          <button type="button" hx-post="${testAction}" hx-target="#smtp-test" hx-swap="innerHTML" title="Send a test email to ${recipient}">Send test email</button>`
+        : ''}
       ${smtp ? html`<button type="submit" name="disable" value="1" class="critical">Turn off</button>` : ''}<button class="primary">Save</button>
     </div>
   </form>`

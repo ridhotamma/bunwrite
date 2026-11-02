@@ -129,7 +129,7 @@ function emailCards(ctx: ConsoleContext): Html {
     'email',
     'Email (SMTP)',
     'smtp',
-    'Sends sign-in codes, password resets and team invitations. Overrides organization email delivery for this project.',
+    'Sends this project\'s sign-in codes, password resets and team invitations. It is separate from the console email settings used for MFA.',
     smtpForm({ action: `${SETTINGS}/smtp`, testAction: `${SETTINGS}/smtp/test`, smtp, recipient: ctx.admin.email }),
   )}
   ${OAUTH_PROVIDER_IDS.map((id) => oauthCard(ctx, id))}`

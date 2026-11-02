@@ -124,6 +124,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,
+    consoleSmtp: null,
     oauth: {},
     storagePath: '',
     skipSchedules: [],
@@ -143,6 +144,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     backupsPrefix: '',
     backups: {
       enabled: false,
+      schedule: '0 2 * * *',
       keep: 7,
       s3: { enabled: false, bucket: '', region: '', endpoint: '', accessKey: '', secret: '', forcePathStyle: false },
     },
@@ -170,7 +172,7 @@ export function startServer(
   // Every test server gets its own deployment folder, even though they all use
   // an in-memory database and the same project ID.
   const config = testConfig({ databasePath, instanceKey: uniqueId(), ...over })
-  const services = createServices(config, db, { mailer })
+  const services = createServices(config, db, { mailer, consoleMailer: mailer })
   const app = createApp(services)
   const server = Bun.serve({ port: 0, fetch: app.fetch, websocket: app.websocket, ...serve })
   config.publicEndpoint = `http://localhost:${server.port}/v1`

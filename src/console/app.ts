@@ -57,7 +57,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
 
   const secure = () => control.config.publicEndpoint.startsWith('https')
   const sendMfa = (email: string, code: string) =>
-    sendMailLater(control.mailer, control.templates.render('mfaChallenge', email, { user: email, otp: code }), 'console sign-in code')
+    sendMailLater(control.consoleMailer, control.templates.render('mfaChallenge', email, { user: email, otp: code }), 'console sign-in code')
 
   return {
     async handle(request: Request, server?: Server<unknown>): Promise<Response | null> {
@@ -126,7 +126,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
             if (result.status === 'invalid') throw new Error('Incorrect email or password.')
             if (existing) await organizations.accept(member.id)
             if (result.status === 'mfa') {
-              if (!control.mailer.enabled) throw new Error('Email is not configured, so the sign-in code could not be sent.')
+              if (!control.consoleMailer.enabled) throw new Error('Email is not configured, so the sign-in code could not be sent.')
               sendMfa(result.email, result.code)
               return await signInPage(auth, {
                 projectName: control.config.projectName,
@@ -206,7 +206,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
             return await signInPage(auth, { email, error: 'That email and password do not match an admin.', projectName: control.config.projectName })
           }
           if (result.status === 'mfa') {
-            if (!control.mailer.enabled) {
+            if (!control.consoleMailer.enabled) {
               return await signInPage(auth, {
                 email,
                 error: 'Email is not configured, so the sign-in code could not be sent.',

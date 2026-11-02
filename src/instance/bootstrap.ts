@@ -55,6 +55,8 @@ export interface BootstrapResult {
 export interface BootstrapOptions {
   /** Set false when re-opening an existing project DB: never mint another key. */
   generateApiKey?: boolean
+  /** Set false for project databases: the console SMTP belongs to the control instance. */
+  seedConsoleSmtp?: boolean
 }
 
 interface SeedInfo {
@@ -243,6 +245,7 @@ function planBootstrap(
 
     const smtp = smtpFromEnv(env)
     if (smtp && !readSetting<Config['smtp']>('smtp')) writeSetting('smtp', smtp)
+    if (smtp && options.seedConsoleSmtp !== false && !readSetting<Config['consoleSmtp']>('consoleSmtp')) writeSetting('consoleSmtp', smtp)
 
     const providers = oauthFromEnv(env)
     for (const id of OAUTH_PROVIDER_IDS) {
@@ -297,6 +300,13 @@ function planBootstrap(
 
   const seeded = readSetting<SeedInfo>(SEED_KEY) !== null
   if (!seeded) seedProjectSettings(info.projectName)
+  // Before the console SMTP was split from project SMTP, both used the `smtp`
+  // setting. Copy the old value once so existing MFA and sign-in codes keep
+  // working while the default project can now change its own SMTP.
+  if (options.seedConsoleSmtp !== false && !readSetting<Config['consoleSmtp']>('consoleSmtp')) {
+    const legacy = readSetting<Config['smtp'] | { disabled: true }>('smtp')
+    if (legacy) writeSetting('consoleSmtp', legacy)
+  }
   const configuredName =
     readSetting<ProjectSettingsSeed>('project')?.projectName || storedProjectName(info.projectId) || info.projectName
   if (configuredName && info.projectName !== configuredName) {

@@ -12,7 +12,8 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, s3FromForm, value } from '~/console/forms'
 import { html } from '~/console/html'
 import { organizationHeader } from '~/console/views/organization'
-import { BACKUPS, backupsView } from '~/console/views/backups'
+import { BACKUP_SCHEDULES, BACKUPS, backupsView } from '~/console/views/backups'
+import { parseCron } from '~/functions/cron'
 import { err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 
@@ -32,6 +33,9 @@ function requireLocalBackups(ctx: ConsoleContext): void {
 
 function litestreamFromForm(ctx: ConsoleContext, current: LitestreamSettings): LitestreamSettings {
   const f = ctx.form
+  // The console hides the connection fields while replication is off. Keep the
+  // saved replica and credentials so turning it back on does not lose them.
+  if (!checked(f.litestreamEnabled)) return { ...current, enabled: false }
   const clear = checked(f.clearLitestreamCredentials)
   return {
     enabled: checked(f.litestreamEnabled),
@@ -76,10 +80,23 @@ export function backupPages(router: ConsoleRouter): void {
       throw err('general_argument_invalid', 'Keep between 1 and 100 automatic backups.')
     }
     const control = ctx.projects.control
-    const s3 = s3FromForm(ctx.form, 'backupS3', control.config.backups.s3)
+    // A known preset wins over the cron input. The input is hidden (and not
+    // submitted) while a preset is selected, but without JavaScript it can
+    // still carry the previous expression.
+    const preset = BACKUP_SCHEDULES.find((entry) => entry.key === value(ctx.form, 'backupSchedulePreset'))
+    const schedule = preset?.cron || value(ctx.form, 'backupSchedule').trim() || control.config.backups.schedule || '0 2 * * *'
+    try {
+      parseCron(schedule)
+    } catch (error) {
+      throw err('general_argument_invalid', error instanceof Error ? error.message : 'Invalid backup schedule.')
+    }
+    // Turning S3 off keeps the connection details for when it is turned back on.
+    const s3 = checked(ctx.form.backupS3Enabled)
+      ? s3FromForm(ctx.form, 'backupS3', control.config.backups.s3)
+      : { ...control.config.backups.s3, enabled: false }
     const prefix = value(ctx.form, 'backupPrefix').replace(/^\/+|\/+$/g, '')
     if (prefix.includes('..')) throw err('general_argument_invalid', 'The backup prefix cannot contain "..".')
-    await control.settings.set('backups', { enabled: checked(ctx.form.backupsEnabled), keep, s3, prefix })
+    await control.settings.set('backups', { enabled: checked(ctx.form.backupsEnabled), schedule, keep, s3, prefix })
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings saved' })
   })
 

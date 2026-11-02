@@ -29,6 +29,7 @@ export const SETTING_GROUPS: { label: string; tabs: SettingsTab[] }[] = [
 export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   project: 'general',
   smtp: 'email',
+  consoleSmtp: 'email',
   google: 'email',
   facebook: 'email',
   github: 'email',

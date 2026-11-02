@@ -9,7 +9,7 @@
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 
-import type { Config, SmtpConfig } from '~/config'
+import type { Config } from '~/config'
 import { databaseOptionsOf, dropDatabase, openDatabase, sqlDatabaseOf, sqliteDatabase, type Database, type DatabaseOptions } from '~/db'
 import { openDb } from '~/db/connection'
 import type { SqlDatabase } from '~/db/driver'
@@ -72,8 +72,6 @@ export class ProjectManager implements ProjectResolver {
   private readonly sqliteSynchronous: SqliteSynchronous
   private readonly runtimes = new Map<string, ProjectRuntime>()
   private readyOnce: Promise<void> | null = null
-  /** The default project's current SMTP; other projects use it unless they store their own. */
-  private readonly serverSmtp = (): SmtpConfig | null => (this.control.config.smtp ? { ...this.control.config.smtp } : null)
 
   constructor(options: ProjectManagerOptions) {
     this.control = options.services
@@ -103,12 +101,6 @@ export class ProjectManager implements ProjectResolver {
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
     // The rows this process just wrote are already reflected in memory.
     await this.control.versions.resetAsync()
-    this.control.settings.subscribe((key) => {
-      if (key !== 'smtp') return
-      for (const runtime of this.runtimes.values()) {
-        if (runtime.services !== this.control) runtime.services.settings.refresh('smtp')
-      }
-    })
   }
 
   private async ensureDefault(): Promise<void> {
@@ -184,6 +176,7 @@ export class ProjectManager implements ProjectResolver {
       render: { ...base.render },
       cache: { ...base.cache },
       smtp: null,
+      consoleSmtp: null,
       oauth: Object.fromEntries(Object.entries(base.oauth).map(([id, config]) => [id, config ? { ...config } : config])),
       allowedOrigins: [...base.allowedOrigins],
     }
@@ -202,12 +195,16 @@ export class ProjectManager implements ProjectResolver {
     const db = sqlDatabaseOf(database)
 
     try {
-      const instance = await this.bootstrap(db, {
-        ORG_ID: info.orgId,
-        PROJECT_ID: info.id,
-        PROJECT_NAME: info.name,
-        SECRET: randomSecret(32),
-      }, { generateApiKey: false })
+      const instance = await this.bootstrap(
+        db,
+        {
+          ORG_ID: info.orgId,
+          PROJECT_ID: info.id,
+          PROJECT_NAME: info.name,
+          SECRET: randomSecret(32),
+        },
+        { generateApiKey: false, seedConsoleSmtp: false },
+      )
 
       if (info.orgId !== instance.orgId) {
         info.orgId = instance.orgId
@@ -215,7 +212,7 @@ export class ProjectManager implements ProjectResolver {
         await this.db.driver.run('UPDATE _projects SET org_id = ?, updated_at = ? WHERE id = ?', [info.orgId, info.updatedAt, info.id])
       }
       const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, info.id, this.databaseOptions.backend))
-      const services = createServices(config, db, {}, { smtpDefault: this.serverSmtp })
+      const services = createServices(config, db)
       // A network backend starts empty; load settings, registry and the other
       // caches before the runtime can receive traffic.
       await services.ready()
@@ -331,11 +328,11 @@ export class ProjectManager implements ProjectResolver {
       const instance = await this.bootstrap(
         db,
         { ORG_ID: input.orgId, PROJECT_ID: id, PROJECT_NAME: name, SECRET: randomSecret(32) },
-        { generateApiKey: true },
+        { generateApiKey: true, seedConsoleSmtp: false },
       )
       const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now() }
       const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, id, this.databaseOptions.backend))
-      services = createServices(config, db, {}, { smtpDefault: this.serverSmtp })
+      services = createServices(config, db)
       await services.ready()
       await this.db.driver.run('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
         info.id,

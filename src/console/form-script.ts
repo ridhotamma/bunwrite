@@ -80,9 +80,10 @@ export const FORM_SCRIPT = `
     const blocks = new Set()
     for (const select of scope.querySelectorAll("[data-show-by]")) {
       if (select.type === "radio" && !select.checked) continue
+      const value = select.type === "checkbox" ? (select.checked ? select.value || "on" : "") : select.value
       const form = select.form || document
       for (const el of form.querySelectorAll('[data-show-for][data-for-select="' + select.name + '"]')) {
-        el.hidden = !el.dataset.showFor.split(" ").includes(select.value)
+        el.hidden = !el.dataset.showFor.split(" ").includes(value)
         blocks.add(el)
       }
     }

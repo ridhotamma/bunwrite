@@ -279,7 +279,7 @@ function routes(): Router<ConsoleApiContext> {
       if (!otp) {
         const control = ctx.projects.control
         const { code } = await ctx.auth.startMfaChallenge(session.admin.seq)
-        await control.mailer.send(control.templates.render('mfaChallenge', session.admin.email, { user: session.admin.email, otp: code }))
+        await control.consoleMailer.send(control.templates.render('mfaChallenge', session.admin.email, { user: session.admin.email, otp: code }))
         throw err('user_reauthentication_required', 'Enter the six-digit code we emailed you. Send it as the `otp` parameter or the X-Bunwrite-OTP header.')
       }
       if (!(await ctx.auth.verifyMfaForAdmin(session.admin.seq, otp))) {

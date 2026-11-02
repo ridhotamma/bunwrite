@@ -32,7 +32,7 @@ export function organizationPages(router: ConsoleRouter): void {
     return ctx.render(
       org.name,
       'organization',
-      html`${header}${organizationGeneralView(org, { smtp: control.config.smtp, email: ctx.admin.email })}${githubAppSection(ctx)}`,
+      html`${header}${organizationGeneralView(org, { smtp: control.config.consoleSmtp, email: ctx.admin.email })}${githubAppSection(ctx)}`,
     )
   })
 
@@ -47,16 +47,16 @@ export function organizationPages(router: ConsoleRouter): void {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change email delivery.')
     const control = ctx.projects.control
     if (ctx.form.disable) {
-      await control.settings.set('smtp', { disabled: true })
+      await control.settings.set('consoleSmtp', { disabled: true })
       return ctx.go('/console/organization', { tone: 'success', text: 'Email turned off' })
     }
     const host = value(ctx.form, 'host')
     if (!host) throw err('general_argument_invalid', 'Enter the SMTP host.')
-    await control.settings.set('smtp', {
+    await control.settings.set('consoleSmtp', {
       host,
       port: Number(ctx.form.port || 587),
       user: value(ctx.form, 'user') || undefined,
-      password: String(ctx.form.password ?? '') || control.config.smtp?.password,
+      password: String(ctx.form.password ?? '') || control.config.consoleSmtp?.password,
       secure: checked(ctx.form.secure),
       senderEmail: value(ctx.form, 'senderEmail') || 'no-reply@example.com',
       senderName: value(ctx.form, 'senderName') || `${control.config.projectName} Team`,
@@ -67,7 +67,7 @@ export function organizationPages(router: ConsoleRouter): void {
   router.post(`${ORGANIZATION_EMAIL}/test`, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can send a test email.')
     const control = ctx.projects.control
-    const smtp = control.config.smtp
+    const smtp = control.config.consoleSmtp
     if (!smtp) return page(inlineStatus('Save SMTP settings first.', 'critical'))
     try {
       await new SmtpMailer(smtp).send({
@@ -114,7 +114,7 @@ export function organizationPages(router: ConsoleRouter): void {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
       inviter: ctx.admin.email,
-      mailer: ctx.projects.control.mailer,
+      mailer: ctx.projects.control.consoleMailer,
     })
     return ctx.render(
       org.name,
@@ -140,7 +140,7 @@ export function organizationPages(router: ConsoleRouter): void {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
       inviter: ctx.admin.email,
-      mailer: ctx.projects.control.mailer,
+      mailer: ctx.projects.control.consoleMailer,
       notify: false,
     })
     return ctx.render(
@@ -167,7 +167,7 @@ export function organizationPages(router: ConsoleRouter): void {
       baseUrl: consoleBaseUrl(ctx),
       orgName: org.name,
       inviter: ctx.admin.email,
-      mailer: ctx.projects.control.mailer,
+      mailer: ctx.projects.control.consoleMailer,
     })
     return ctx.render(
       org.name,

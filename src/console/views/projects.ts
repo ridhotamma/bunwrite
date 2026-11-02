@@ -62,12 +62,14 @@ function badges(project: ProjectInfo, currentId: string, defaultId: string): Htm
 /** Dialog IDs must be valid CSS selectors, and project IDs may contain dots. */
 const renameId = (index: number) => `rename-project-${index}`
 
-function projectMenu(project: ProjectInfo, index: number, options: ProjectsViewOptions): Html {
+function projectActions(project: ProjectInfo, index: number, options: ProjectsViewOptions): Html {
   const id = encodeURIComponent(project.id)
+  // Developers cannot rename or delete projects, so a one-item menu is just noise.
+  if (!options.canManage) return html`<a class="btn small project-open" href="/console/projects/${id}/open">Open</a>`
   return menu(
     html`<a class="menu-item" href="/console/projects/${id}/open">Open</a>
-      ${options.canManage ? html`<button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>` : ''}
-      ${options.canManage && project.id !== options.defaultId
+      <button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>
+      ${project.id !== options.defaultId
         ? html`<hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`
         : ''}`,
     { label: `Actions for ${project.name}` },
@@ -84,7 +86,7 @@ function projectCard(project: ProjectInfo, index: number, options: ProjectsViewO
         <h3>${project.name}</h3>
         <span class="mono subdued">${project.id}</span>
       </div>
-      ${projectMenu(project, index, options)}
+      ${projectActions(project, index, options)}
     </div>
     <div class="project-card-badges">${badges(project, options.currentId, options.defaultId)}</div>
     <div class="project-card-stats">
@@ -102,7 +104,7 @@ function projectList(options: ProjectsViewOptions): Html {
         <td><a class="project-row" href="/console/projects/${id}/open">${tile(project.name, project.id, 'sm')}<span><b>${project.name}</b><span class="mono subdued">${project.id}</span></span></a> ${badges(project, options.currentId, options.defaultId)}</td>
         <td class="num">${compact(statsFor(options, project).requests)}</td>
         <td class="subdued hide-sm">${day(project.createdAt)}</td>
-        <td class="num">${projectMenu(project, index, options)}</td>
+        <td class="num">${projectActions(project, index, options)}</td>
       </tr>`
     })}
   </tbody></table></div></div>`
@@ -191,7 +193,6 @@ export function projectsView(options: ProjectsViewOptions): Html {
         <span class="search-field-icon">${icon('magnifying-glass')}</span>
         <input type="search" name="q" value="${query}" placeholder="Search projects..." autocomplete="off" aria-label="Search projects">
         <input type="hidden" name="view" value="${view}">
-        <button class="small">Search</button>
       </form>
       <div class="page-toolbar-actions">
         <div class="seg-links" role="group" aria-label="Project layout">

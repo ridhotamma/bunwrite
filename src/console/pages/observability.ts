@@ -6,7 +6,7 @@ import { alert, badge, cardHead, destroy, emptyState, header, listCard, menu, pa
 import { lineChart } from '~/console/chart'
 import { addSeconds } from '~/lib/datetime'
 import { err } from '~/lib/errors'
-import { OBS_SETTINGS, observabilitySettingsView } from '~/console/views/observability-settings'
+import { featureFlagsView, OBS_SETTINGS, observabilitySettingsView } from '~/console/views/observability-settings'
 import { OBS, OBS_TABS, attributesCard, duration, providerCard, recentTracesCard, routesCard, statusTone, traceFacts, trafficCard } from '~/console/views/observability'
 import type { ObservabilitySettings } from '~/observability/settings'
 import type { MinutePoint } from '~/observability/store'
@@ -391,6 +391,9 @@ export function observabilityPages(router: ConsoleRouter): void {
     const flags = await ctx.observability.flags.evaluate(subject, { project })
     const local = ctx.observability.config.localFlags
     const configured = ctx.observability.flags.enabled
+    // Subject evaluation only matters when PostHog supplies per-subject flags.
+    // With local overrides every subject gets the same values.
+    const external = Boolean(ctx.observability.config.posthog?.flags)
     const names = Object.keys(flags).sort()
     const source = (name: string) => (Object.hasOwn(local, name) ? 'Local override' : ctx.observability.config.posthog?.flags ? 'PostHog' : 'Local')
     const value = (name: string) => {
@@ -422,10 +425,10 @@ export function observabilityPages(router: ConsoleRouter): void {
       : submitted
         ? emptyState(
             'No flags for this subject',
-            `"${subject}" evaluated to no flags. Local overrides win over PostHog; add one in Observability settings, or check the subject and PostHog configuration.`,
+            `"${subject}" evaluated to no flags. Local overrides win over PostHog; add one below, or check the subject and PostHog configuration.`,
           )
-        : emptyState('No flags configured', 'Add local overrides or configure PostHog in Observability → Settings, then evaluate a subject.')
-    const feedback = submitted
+        : emptyState('No flags configured', 'Add a local override below, or configure PostHog in Observability settings.')
+    const feedback = submitted && external
       ? html`<p class="help">Evaluated <code>${subject}</code>: ${names.length ? plural(names.length, 'flag') : 'no flags'} returned.</p>`
       : ''
     const body = html`${header('Feature flags')} ${tabs(OBS_TABS, 'flags')}
@@ -433,28 +436,32 @@ export function observabilityPages(router: ConsoleRouter): void {
         ? ''
         : alert(
             'info',
-            html`No flag source is configured yet, so every subject returns an empty result. Add a local override or enable PostHog in <a href="${OBS_SETTINGS}">Observability settings</a>.`,
+            html`No flag source is configured yet, so every subject returns an empty result. Add a local override below, or enable PostHog in <a href="${OBS_SETTINGS}">Observability settings</a>.`,
           )}
       <div class="stats" style="margin:16px 0">
-        ${stat('Flags returned', names.length.toLocaleString('en-US'))} ${stat('Local overrides', Object.keys(local).length.toLocaleString('en-US'))}
-        ${stat('Provider', ctx.observability.config.posthog?.flags ? 'PostHog' : 'Local only')}
+        ${external ? stat('Flags returned', names.length.toLocaleString('en-US')) : ''}
+        ${stat('Local overrides', Object.keys(local).length.toLocaleString('en-US'))}
+        ${stat('Provider', external ? 'PostHog' : 'Local only')}
       </div>
-      <div class="card">
-        ${cardHead('Evaluate for a subject')}
-        <form method="get" action="${FLAGS}" class="toolbar" style="margin:0;padding:0;border:0">
-          <input type="text" name="subject" value="${subject}" placeholder="user ID or project:<id>" autocomplete="off" />
-          <button class="btn primary">Evaluate</button>
-        </form>
-        ${feedback}
-        <p class="help">
-          User sessions use the user ID; API-key calls use <code>project:${project}</code>. The value is cached for
-          ${Math.round((ctx.observability.config.posthog?.flagsTtlMs ?? 30_000) / 1000)}s.
-        </p>
-      </div>
-      <div class="card flush" style="margin-top:16px">${table}</div>
+      <div class="card">${featureFlagsView(local, { save: FLAGS, remove: `${FLAGS}/delete`, clear: `${FLAGS}/clear` }, await canManage(ctx))}</div>
+      ${external
+        ? html`<div class="card">
+            ${cardHead('Evaluate for a subject')}
+            <form method="get" action="${FLAGS}" class="toolbar" style="margin:0;padding:0;border:0">
+              <input type="text" name="subject" value="${subject}" placeholder="user ID or project:<id>" autocomplete="off" />
+              <button class="btn primary">Evaluate</button>
+            </form>
+            ${feedback}
+            <p class="help">
+              User sessions use the user ID; API-key calls use <code>project:${project}</code>. The value is cached for
+              ${Math.round((ctx.observability.config.posthog?.flagsTtlMs ?? 30_000) / 1000)}s.
+            </p>
+          </div>
+          <div class="card flush" style="margin-top:16px">${table}</div>`
+        : ''}
       <p class="help">
-        Manage local overrides and PostHog in <a href="${OBS}/settings">Observability settings</a>. Clients read the same evaluation from
-        <code>GET /v1/flags</code>.
+        Local overrides win over PostHog. Clients read the same flags from <code>GET /v1/flags</code>.
+        <a href="${OBS_SETTINGS}">Configure PostHog and exporters</a>.
       </p>`
     return ctx.render('Feature flags', 'observability', body)
   })
@@ -503,7 +510,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'PostHog settings saved' })
   })
 
-  router.post(`${OBS_SETTINGS}/flags`, async ({ ctx }) => {
+  router.post(FLAGS, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
     const key = flagKey(ctx.form.key)
     const store = ctx.projects.control.observabilitySettings
@@ -511,24 +518,24 @@ export function observabilityPages(router: ConsoleRouter): void {
       ...store.settings,
       localFlags: { ...store.settings.localFlags, [key]: flagValue(ctx) },
     })
-    return ctx.go(OBS_SETTINGS, { tone: 'success', text: `Feature flag ${key} saved` })
+    return ctx.go(FLAGS, { tone: 'success', text: `Feature flag ${key} saved` })
   })
 
-  router.post(`${OBS_SETTINGS}/flags/delete`, async ({ ctx }) => {
+  router.post(`${FLAGS}/delete`, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
     const key = flagKey(ctx.form.key)
     const store = ctx.projects.control.observabilitySettings
     const localFlags = { ...store.settings.localFlags }
     delete localFlags[key]
     await store.save({ ...store.settings, localFlags })
-    return ctx.go(OBS_SETTINGS, { tone: 'success', text: `Feature flag ${key} removed` })
+    return ctx.go(FLAGS, { tone: 'success', text: `Feature flag ${key} removed` })
   })
 
-  router.post(`${OBS_SETTINGS}/flags/clear`, async ({ ctx }) => {
+  router.post(`${FLAGS}/clear`, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
     const store = ctx.projects.control.observabilitySettings
     await store.save({ ...store.settings, localFlags: {} })
-    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Feature flag overrides cleared' })
+    return ctx.go(FLAGS, { tone: 'success', text: 'Feature flag overrides cleared' })
   })
 
   router.post(`${OBS_SETTINGS}/reset`, async ({ ctx }) => {

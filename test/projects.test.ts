@@ -274,9 +274,9 @@ describe('multiple projects', () => {
 
   test('deleting a project asks for an emailed code when MFA is on', async () => {
     const control = manager.defaultProject().services
-    const original = control.mailer
+    const original = control.consoleMailer
     const mailer = new MemoryMailer()
-    control.mailer = mailer
+    control.consoleMailer = mailer
     const auth = new ConsoleAuth(db)
     await auth.upsert('mfa-admin@example.com', 'password-789')
     const secret = (await auth.login('mfa-admin@example.com', 'password-789'))!
@@ -317,13 +317,13 @@ describe('multiple projects', () => {
       expect(removed.status).toBe(303)
       expect(manager.get('project-mfa')).toBeNull()
     } finally {
-      control.mailer = original
+      control.consoleMailer = original
       await auth.setMfa(admin.seq, false)
       if (manager.get('project-mfa')) await manager.delete('project-mfa').catch(() => {})
     }
   })
 
-  test('projects inherit the server SMTP live, and their own setting wins', async () => {
+  test('projects do not inherit the console SMTP, and keep their own', async () => {
     const server = manager.defaultProject().services
     const other = manager.get('project-b')!.services
     const smtp = (host: string) => ({
@@ -340,17 +340,15 @@ describe('multiple projects', () => {
     expect(other.mailer.enabled).toBe(false)
 
     await server.settings.set('smtp', smtp('smtp.server.test'))
-    expect(other.config.smtp).toMatchObject({ host: 'smtp.server.test' })
-    expect(other.mailer.enabled).toBe(true)
+    expect(server.config.smtp).toMatchObject({ host: 'smtp.server.test' })
+    expect(other.config.smtp).toBeNull()
+    expect(other.mailer.enabled).toBe(false)
 
     await other.settings.set('smtp', smtp('smtp.project.test'))
     await server.settings.set('smtp', smtp('smtp.server2.test'))
     expect(other.config.smtp).toMatchObject({ host: 'smtp.project.test' })
 
     await other.settings.reset('smtp')
-    expect(other.config.smtp).toMatchObject({ host: 'smtp.server2.test' })
-
-    await server.settings.reset('smtp')
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
   })

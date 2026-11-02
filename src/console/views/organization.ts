@@ -258,7 +258,6 @@ export function membersView(options: MembersViewOptions): Html {
       hx-trigger="submit">
       <span class="search-field-icon">${icon('magnifying-glass')}</span>
       <input type="search" name="q" value="${query}" placeholder="Search by name or email..." autocomplete="off" aria-label="Search members">
-      <button class="small">Search</button>
     </form>
   </div>`
   const body = members.length

@@ -346,8 +346,9 @@ created with, so the execution returned to the caller is the one that runs.
   for each project. Databases are copied with `VACUUM INTO`, compressed with
   zstd, and encrypted when `BACKUP_ENCRYPTION_KEY` is set. Manual archives can
   be created, downloaded and deleted in **Organization → Backups** (organization
-  owners only); automatic archives run daily at 02:00 UTC and keep the
-  configured number. Stored in `BACKUPS_PATH` or a separate S3 bucket.
+  owners only); automatic archives follow a cron schedule (default daily at
+  02:00 UTC) and keep the configured number. Stored in `BACKUPS_PATH` or a
+  separate S3 bucket.
 - Restore is offline. The console validates an uploaded archive and stages it in
   `<data>/.restore-pending`; the next start applies it before opening SQLite.
   `bunwrite restore <archive>` does the same with the server stopped. Both

@@ -23,11 +23,25 @@ export interface ProjectSettings {
 }
 
 export type SettingKey =
-  'project' | 'smtp' | 'google' | 'facebook' | 'github' | 'apple' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache' | 'database'
+  | 'project'
+  | 'smtp'
+  | 'consoleSmtp'
+  | 'google'
+  | 'facebook'
+  | 'github'
+  | 'apple'
+  | 'functions'
+  | 'logs'
+  | 's3'
+  | 'backups'
+  | 'render'
+  | 'cache'
+  | 'database'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',
   'smtp',
+  'consoleSmtp',
   'google',
   'facebook',
   'github',
@@ -55,11 +69,6 @@ export interface ApiKeyRow {
   created_at: string
 }
 
-export interface SettingsOptions {
-  /** A value inherited when this project has no stored setting: the default project's live SMTP. */
-  smtpDefault?: () => SmtpConfig | null
-}
-
 export class SettingsService {
   /** Env values, kept so a console setting can be cleared back to them. */
   private readonly defaults: Pick<
@@ -69,6 +78,7 @@ export class SettingsService {
     | 'sessionDuration'
     | 'sessionsLimit'
     | 'smtp'
+    | 'consoleSmtp'
     | 'oauth'
     | 'skipSchedules'
     | 'functionsDir'
@@ -88,7 +98,6 @@ export class SettingsService {
     private db: SqlDatabase,
     private config: Config,
     private onChange: (key: SettingKey) => void = () => {},
-    private readonly options: SettingsOptions = {},
   ) {
     this.defaults = {
       projectName: config.projectName,
@@ -96,6 +105,7 @@ export class SettingsService {
       sessionDuration: config.sessionDuration,
       sessionsLimit: config.sessionsLimit,
       smtp: config.smtp ? { ...config.smtp } : null,
+      consoleSmtp: config.consoleSmtp ? { ...config.consoleSmtp } : null,
       oauth: cloneOAuth(config.oauth),
       skipSchedules: [...config.skipSchedules],
       functionsDir: config.functionsDir,
@@ -157,7 +167,12 @@ export class SettingsService {
       }
       case 'smtp': {
         const v = this.read<SmtpConfig | { disabled: true }>('smtp')
-        c.smtp = v === null ? this.defaultSmtp() : 'disabled' in v ? null : v
+        c.smtp = v === null ? this.defaults.smtp : 'disabled' in v ? null : v
+        break
+      }
+      case 'consoleSmtp': {
+        const v = this.read<SmtpConfig | { disabled: true }>('consoleSmtp')
+        c.consoleSmtp = v === null ? this.defaults.consoleSmtp : 'disabled' in v ? null : v
         break
       }
       case 'google':
@@ -185,7 +200,9 @@ export class SettingsService {
       }
       case 'backups': {
         const v = this.read<BackupsConfig>('backups')
-        c.backups = v ? { ...v, s3: { ...v.s3 } } : { ...this.defaults.backups, s3: { ...this.defaults.backups.s3 } }
+        c.backups = v
+          ? { ...v, schedule: v.schedule || this.defaults.backups.schedule, s3: { ...v.s3 } }
+          : { ...this.defaults.backups, s3: { ...this.defaults.backups.s3 } }
         break
       }
       case 'render': {
@@ -209,10 +226,6 @@ export class SettingsService {
         break
       }
     }
-  }
-
-  private defaultSmtp(): SmtpConfig | null {
-    return this.options.smtpDefault ? this.options.smtpDefault() : this.defaults.smtp
   }
 
   /**

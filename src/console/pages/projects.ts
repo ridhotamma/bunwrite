@@ -127,11 +127,11 @@ export function projectPages(router: ConsoleRouter): void {
       const resend = value(ctx.form, 'resend') === '1'
       if (resend || !otp) {
         const control = ctx.projects.control
-        if (!control.mailer.enabled) {
+        if (!control.consoleMailer.enabled) {
           return ctx.go(confirmLocation, { tone: 'critical', text: 'Email is not configured, so the deletion code could not be sent.' })
         }
         const { code } = await ctx.auth.startMfaChallenge(ctx.admin.seq)
-        sendMailLater(control.mailer, control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }), 'project-delete code')
+        sendMailLater(control.consoleMailer, control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }), 'project-delete code')
         return ctx.go(confirmLocation, {
           tone: 'success',
           text: `We emailed a six-digit code to ${ctx.admin.email}. Enter it to delete ${project.info.name}.`,

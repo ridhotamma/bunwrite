@@ -16,6 +16,7 @@ import { join } from 'node:path'
 
 import type { Config } from '~/config'
 import { isLeader } from '~/cluster/role'
+import { parseCron, type Cron } from '~/functions/cron'
 import { err } from '~/lib/errors'
 import { s3Call, s3Client } from '~/storage/s3'
 import { contentType, MIN_KEY_LENGTH } from './format'
@@ -33,7 +34,9 @@ const AUTO_PREFIX = 'auto-'
 export class BackupService {
   private active = false
   private timer: ReturnType<typeof setInterval> | null = null
-  private lastAutoDay = ''
+  private lastAutoMinute = ''
+  private cachedSchedule: { expression: string; cron: Cron } | null = null
+  private badSchedule = ''
 
   constructor(
     private config: Config,
@@ -185,19 +188,37 @@ export class BackupService {
     this.timer = null
   }
 
-  /** Daily at 02:00 UTC; exposed for tests through the optional date argument. */
+  /** Matches the console cron schedule (UTC); exposed for tests through the optional date argument. */
   async tick(now = new Date()): Promise<void> {
-    // One backup a day across the cluster, not one per worker.
+    // One backup per matching minute across the cluster, not one per worker.
     if (!this.enabled) return
     if (!isLeader()) return
     if (!this.config.backups.enabled) return
-    const day = now.toISOString().slice(0, 10)
-    if (now.getUTCHours() !== 2 || this.lastAutoDay === day) return
-    this.lastAutoDay = day
+    const expression = this.config.backups.schedule || '0 2 * * *'
+    let cron: Cron
+    try {
+      cron = this.schedule(expression)
+    } catch (error) {
+      if (this.badSchedule !== expression) {
+        this.badSchedule = expression
+        console.error(`[backups] invalid schedule "${expression}":`, error instanceof Error ? error.message : error)
+      }
+      return
+    }
+    const minute = now.toISOString().slice(0, 16)
+    if (!cron.matches(now) || this.lastAutoMinute === minute) return
+    this.lastAutoMinute = minute
     try {
       await this.create('auto')
     } catch (error) {
       console.error('[backups] automatic backup failed:', error)
     }
+  }
+
+  private schedule(expression: string): Cron {
+    if (this.cachedSchedule?.expression !== expression) {
+      this.cachedSchedule = { expression, cron: parseCron(expression) }
+    }
+    return this.cachedSchedule.cron
   }
 }

@@ -99,8 +99,10 @@ export interface S3Config {
 }
 
 export interface BackupsConfig {
-  /** Run one database backup a day at 02:00 UTC. */
+  /** Run automatic backups when the cron schedule matches. */
   enabled: boolean
+  /** Five-field cron in UTC; defaults to daily at 02:00 (`0 2 * * *`). */
+  schedule: string
   /** Keep this many automatic backups; manual backups are never pruned. */
   keep: number
   s3: S3Config
@@ -287,7 +289,10 @@ export interface Config {
   sessionDuration: number
   /** Most sessions a user keeps; the oldest is removed beyond this. */
   sessionsLimit: number
+  /** SMTP used by the default project and its project-level email settings. */
   smtp: SmtpConfig | null
+  /** Console sign-in, MFA and organization invitations; projects never inherit it. */
+  consoleSmtp: SmtpConfig | null
   /** Enabled OAuth providers; a missing entry is a provider that is turned off. */
   oauth: Partial<Record<OAuthProviderId, OAuthConfig | null>>
   /** Directory for uploaded files. */
@@ -530,6 +535,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sessionDuration: 31536000,
     sessionsLimit: 10,
     smtp: null,
+    consoleSmtp: null,
     oauth: {},
     storagePath: env.STORAGE_PATH ?? './data/storage',
     functionsEnvFile: env.FUNCTIONS_ENV_FILE || undefined,
@@ -562,7 +568,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     logIp: env.LOG_IP !== 'false',
     s3: emptyS3(),
     storagePrefix: '',
-    backups: { enabled: false, keep: 7, s3: emptyS3(), prefix: '' },
+    backups: { enabled: false, schedule: '0 2 * * *', keep: 7, s3: emptyS3(), prefix: '' },
     backupsPrefix: '',
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
     instanceBackups: true,

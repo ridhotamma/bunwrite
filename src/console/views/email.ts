@@ -1,4 +1,4 @@
-/** Organization-level email delivery, used by the console and inherited by projects. */
+/** Console email delivery for sign-in codes, MFA and organization invitations. */
 import type { SmtpConfig } from '~/config'
 import type { Html } from '~/console/html'
 import { settingsSection } from '~/console/ui'
@@ -14,8 +14,8 @@ export interface OrganizationEmailOptions {
 
 export function organizationEmailView({ smtp, recipient }: OrganizationEmailOptions): Html {
   return settingsSection(
-    'Email delivery',
-    'Sends console sign-in codes and invitations, and is the default SMTP for every project without its own email settings.',
+    'Console email delivery',
+    'Sends console sign-in codes, MFA codes and organization invitations. Each project has its own SMTP settings.',
     smtpForm({ action: ORGANIZATION_EMAIL, testAction: `${ORGANIZATION_EMAIL}/test`, smtp, recipient }),
     { id: 'email' },
   )

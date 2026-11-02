@@ -195,6 +195,9 @@ Litestream; back up `STORAGE_PATH` or the uploads bucket separately. See
 S3 for uploads and backups is configured in **Console → Settings → File storage**
 and **Organization → Backups**, not in `.env`. An archive contains every database
 but no uploaded files; back up `STORAGE_PATH` or the uploads bucket separately.
+Automatic backups follow a five-field UTC cron schedule (default `0 2 * * *`,
+daily at 02:00); choose a preset or a custom cron in **Organization → Backups →
+Automatic backups**.
 
 Backups and Litestream may share one bucket if they use different key prefixes.
 Set the backup **Key prefix** in Organization → Backups (for example `backups`)
@@ -295,10 +298,11 @@ Request logs, traces, metrics and product analytics are kept locally for the
 console's **Observability** pages, and can also be exported to a third party
 without an SDK. External export is off until a provider is configured; the
 local console copy is on by default. See
-[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples. Providers, sampling,
-limits and local feature flags can also be edited in **Console → Observability
-→ Settings**; a saved console value overrides the environment, and the settings
-apply without a restart.
+[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples. Providers, sampling
+and limits can also be edited in **Console → Observability → Settings**, and
+local feature flags in **Console → Observability → Feature flags**. A saved
+console value overrides the environment, and the settings apply without a
+restart.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
