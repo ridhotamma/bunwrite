@@ -187,7 +187,6 @@ export function documentsListView(ctx: ConsoleContext, view: DocumentsListView):
     value: filter,
     placeholder: 'Filter by document ID or query JSON',
     title: 'e.g. {"method":"equal","attribute":"status","values":["active"]}',
-    delay: 400,
     submit: 'Filter',
     mono: true,
   })

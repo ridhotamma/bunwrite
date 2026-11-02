@@ -244,7 +244,7 @@ export function pointsView(env: VectorEnv, options: PointsOptions): Html {
     hx-select="#points"
     hx-swap="outerHTML"
     hx-push-url="true"
-    hx-trigger="submit, input changed delay:400ms from:find input[name='q'], change from:find select"
+    hx-trigger="submit"
   >
     <input type="search" name="q" value="${options.query}" placeholder="Search points by text" autocomplete="off" />
     <input type="text" name="filter" value="${options.filter}" class="mono" placeholder='Filter JSON, e.g. {"source":"guide"}' title='Metadata equality filter, for example {"lang":"en"}' />

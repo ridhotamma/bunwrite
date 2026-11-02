@@ -255,10 +255,10 @@ export function membersView(options: MembersViewOptions): Html {
       hx-select="#members-list"
       hx-swap="outerHTML"
       hx-push-url="true"
-      hx-trigger="submit, input changed delay:300ms from:find input">
+      hx-trigger="submit">
       <span class="search-field-icon">${icon('magnifying-glass')}</span>
       <input type="search" name="q" value="${query}" placeholder="Search by name or email..." autocomplete="off" aria-label="Search members">
-      <noscript><button class="small">Search</button></noscript>
+      <button class="small">Search</button>
     </form>
   </div>`
   const body = members.length

@@ -163,8 +163,6 @@ export interface SearchOptions {
   placeholder: string
   name?: string
   value?: string
-  /** Debounce in milliseconds. */
-  delay?: number
   submit?: string
   mono?: boolean
   title?: string
@@ -173,15 +171,18 @@ export interface SearchOptions {
 }
 
 /**
- * A filter form that works without JavaScript and turns into a live,
- * URL-pushing htmx search when JavaScript is available.
+ * A filter form that works without JavaScript and uses htmx on submit. It
+ * deliberately does not submit while typing: replacing the form on each
+ * keystroke loses focus and the value the user is entering.
  */
 export function searchForm(options: SearchOptions): Html {
-  const { action, target, placeholder, name = 'search', value = '', delay = 300, submit, mono, title, extra } = options
-  return html`<form class="toolbar" method="get" action="${action}" hx-get="${action}" hx-target="#${target}" hx-select="#${target}" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit, input changed delay:${delay}ms from:find input, change from:find select">
+  const { action, target, placeholder, name = 'search', value = '', submit, mono, title, extra } = options
+  // Search submits only on Enter (or the explicit button), never while typing:
+  // replacing the form on each keystroke steals focus and makes the value jump.
+  return html`<form class="toolbar" method="get" action="${action}" hx-get="${action}" hx-target="#${target}" hx-select="#${target}" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit">
     <input type="search" name="${name}" value="${value}" placeholder="${placeholder}" autocomplete="off" ${mono ? html`class="mono"` : ''} ${title ? html`title="${title}"` : ''}>
     ${extra ?? ''}
-    ${submit ? html`<button>${submit}</button>` : ''}
+    <button>${submit ?? 'Search'}</button>
   </form>`
 }
 

@@ -93,6 +93,8 @@ describe('vectors console', () => {
 
     const found = await (await get('/console/vectors/knowledge?q=Postgres&topK=5')).text()
     expect(found).toContain('Search points by text')
+    expect(found).toContain('value="Postgres"')
+    expect(found).toContain('hx-trigger="submit"')
     expect(found).toContain('p1')
     expect(found).toContain('Score')
     expect(found).toContain('matching point')

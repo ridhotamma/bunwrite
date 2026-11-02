@@ -187,11 +187,11 @@ export function projectsView(options: ProjectsViewOptions): Html {
         hx-select="#projects-page"
         hx-swap="outerHTML"
         hx-push-url="true"
-        hx-trigger="submit, input changed delay:300ms from:find input">
+        hx-trigger="submit">
         <span class="search-field-icon">${icon('magnifying-glass')}</span>
         <input type="search" name="q" value="${query}" placeholder="Search projects..." autocomplete="off" aria-label="Search projects">
         <input type="hidden" name="view" value="${view}">
-        <noscript><button class="small">Search</button></noscript>
+        <button class="small">Search</button>
       </form>
       <div class="page-toolbar-actions">
         <div class="seg-links" role="group" aria-label="Project layout">

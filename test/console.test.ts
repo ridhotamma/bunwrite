@@ -3,7 +3,7 @@
  * change through a console form and checks it through the Appwrite SDK.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Query } from 'node-appwrite'
@@ -72,6 +72,34 @@ describe('console access', () => {
     expect(homeBody).toContain('data-confirm="Sign out of the console?"')
     expect(homeBody).toContain('data-dismiss-alert')
     expect(homeBody).toContain('class="icon')
+  })
+
+  test('search forms submit only on Enter, never on every keystroke', async () => {
+    // Every server-side search uses a form submit; a live "input changed"
+    // trigger replaces the form while typing and loses the caret/value.
+    const dir = join(import.meta.dir, '..', 'src', 'console')
+    const files = readdirSync(dir, { recursive: true }).map(String).filter((file) => file.endsWith('.ts'))
+    for (const file of files) {
+      expect({ file, live: readFileSync(join(dir, file), 'utf8').includes('input changed') }).toEqual({ file, live: false })
+    }
+
+    for (const path of [
+      '/console?q=kept',
+      '/console/auth/users?search=kept',
+      '/console/auth/teams?search=kept',
+      '/console/databases/main?q=kept',
+      '/console/databases/main/collections/products/documents?q=kept',
+      '/console/logs?q=kept',
+      '/console/observability/traces?q=kept',
+      '/console/observability/analytics?q=kept',
+      '/console/organization/members?q=kept',
+    ]) {
+      const response = await get(path)
+      expect(response.status).toBe(200)
+      const body = await response.text()
+      expect(body).toContain('value="kept"')
+      expect(body).toContain('hx-trigger="submit"')
+    }
   })
 
   test('forms posted from another site are refused', async () => {

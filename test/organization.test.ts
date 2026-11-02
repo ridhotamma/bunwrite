@@ -60,6 +60,8 @@ describe('organizations', () => {
     expect(page).toContain('owner@example.com')
     expect(page).toContain('Owner')
     expect(page).toContain('Invite')
+    expect(page).toContain('hx-trigger="submit"')
+    expect(page).not.toContain('input changed')
 
     const invite = await (await get('/console/organization/members?invite=1')).text()
     expect(invite).toContain('id="invite-members"')
