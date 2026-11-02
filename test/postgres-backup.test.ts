@@ -150,6 +150,8 @@ describe('Postgres backups page', () => {
     } as unknown as Parameters<typeof backupsView>[0]
 
     const body = String(await backupsView(ctx))
+    expect(body).toContain('Backup status')
+    expect(body).toContain('id="backup-status"')
     expect(body).toContain('Automatic backups')
     expect(body).toContain('Store dumps in S3 storage')
     expect(body).toContain('pg_dump')
