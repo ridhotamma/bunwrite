@@ -130,12 +130,23 @@ export function projectPages(router: ConsoleRouter): void {
         if (!control.consoleMailer.enabled) {
           return ctx.go(confirmLocation, { tone: 'critical', text: 'Email is not configured, so the deletion code could not be sent.' })
         }
+        // Bound both resends and the lifetime of one admin's challenge cycle.
+        try {
+          await ctx.limiter.hit(`console-delete-code:${ctx.admin.seq}:${ctx.ip}`, 10, 900)
+        } catch {
+          return ctx.go(confirmLocation, { tone: 'critical', text: 'Too many codes requested. Try again in 15 minutes.' })
+        }
         const { code } = await ctx.auth.startMfaChallenge(ctx.admin.seq)
         sendMailLater(control.consoleMailer, control.templates.render('mfaChallenge', ctx.admin.email, { user: ctx.admin.email, otp: code }), 'project-delete code')
         return ctx.go(confirmLocation, {
           tone: 'success',
           text: `We emailed a six-digit code to ${ctx.admin.email}. Enter it to delete ${project.info.name}.`,
         })
+      }
+      try {
+        await ctx.limiter.hit(`console-delete-verify:${ctx.admin.seq}:${ctx.ip}`, 10, 900)
+      } catch {
+        return ctx.go(confirmLocation, { tone: 'critical', text: 'Too many attempts. Try again in 15 minutes.' })
       }
       if (!(await ctx.auth.verifyMfaForAdmin(ctx.admin.seq, otp))) {
         return ctx.go(confirmLocation, {

@@ -73,8 +73,19 @@ const SYSTEM: Record<string, { column: string; type: 'string' | 'integer' | 'dat
 }
 
 export const DEFAULT_LIMIT = 25
+/** Appwrite's effective maximum; anything larger would materialise the whole collection. */
+export const MAX_QUERY_LIMIT = 5_000
+/** Deep offsets scan every skipped row; use a cursor for deeper pages. */
+export const MAX_QUERY_OFFSET = 1_000_000
+/** One request may not compile an unbounded tree of queries. */
+export const MAX_QUERIES = 100
+/** Values per query (for example an `equal` list or `select`). */
+export const MAX_QUERY_VALUES = 100
 
 export function parseQueries(raw: unknown[]): Query[] {
+  if (!Array.isArray(raw) || raw.length > MAX_QUERIES) {
+    throw invalidQuery(`A request may contain at most ${MAX_QUERIES} queries.`)
+  }
   return raw.map((item) => {
     let value: unknown = item
     if (typeof item === 'string') {
@@ -91,6 +102,12 @@ export function parseQueries(raw: unknown[]): Query[] {
     if (!FILTERS.has(query.method) && !OTHERS.has(query.method)) {
       throw invalidQuery(`Invalid query method: ${query.method}`)
     }
+    if (query.values !== undefined && !Array.isArray(query.values)) {
+      throw invalidQuery(`Query values for ${query.method} must be an array.`)
+    }
+    if (Array.isArray(query.values) && query.values.length > MAX_QUERY_VALUES) {
+      throw invalidQuery(`A query may contain at most ${MAX_QUERY_VALUES} values.`)
+    }
     return query
   })
 }
@@ -104,7 +121,7 @@ interface Target {
 
 function target(collection: Collection, key: string | undefined): Target {
   if (!key) throw invalidQuery('Attribute not found in schema: ')
-  const system = SYSTEM[key]
+  const system = Object.hasOwn(SYSTEM, key) ? SYSTEM[key] : undefined
   if (system) return { column: system.column, type: system.type, array: false, key }
   const a = collection.attributeMap.get(key)
   if (!a) throw invalidQuery(`Attribute not found in schema: ${key}`)
@@ -138,6 +155,15 @@ function castValue(t: Target, value: unknown): SqlValue {
 const like = (s: string) => s.replace(/[\\%_]/g, (c) => '\\' + c)
 const placeholders = (n: number) => Array.from({ length: n }, () => '?').join(', ')
 
+/** Physical column for an attribute in a fulltext index. */
+const FTS_COLUMNS: Record<string, string> = {
+  $id: '_id',
+  $sequence: '_seq',
+  $createdAt: '_createdAt',
+  $updatedAt: '_updatedAt',
+}
+const ftsColumn = (key: string): string => (Object.hasOwn(FTS_COLUMNS, key) ? FTS_COLUMNS[key]! : key)
+
 /** FTS5 match expression: every word quoted, OR between words. */
 function ftsExpression(text: string): string | null {
   const words = text.match(/[\p{L}\p{N}]+/gu)
@@ -151,7 +177,7 @@ function ftsExpression(text: string): string | null {
  * the planner cannot use the index.
  */
 function postgresTsExpression(attributes: string[]): string {
-  const parts = attributes.map((key) => `coalesce(${q(key)}, '')`)
+  const parts = attributes.map((key) => `coalesce(${q(ftsColumn(key))}, '')`)
   return `to_tsvector('english', ${parts.join(` || ' ' || `)})`
 }
 
@@ -260,7 +286,7 @@ function compileFilter(collection: Collection, query: Query, params: SqlValue[],
       const expr = ftsExpression(raw)
       if (!expr) return m === 'search' ? '0' : '1'
       const fts = q(ftsTableName(collection.table, index.key))
-      params.push(index.attributes.length > 1 ? `{${t.key}} : (${expr})` : expr)
+      params.push(index.attributes.length > 1 ? `{${ftsColumn(t.key)}} : (${expr})` : expr)
       return `t._seq ${m === 'search' ? 'IN' : 'NOT IN'} (SELECT rowid FROM ${fts} WHERE ${fts} MATCH ?)`
     }
   }
@@ -280,7 +306,7 @@ export function compileQueries(collection: Collection, queries: Query[], dialect
     select: null,
   }
   for (const query of queries) {
-    const values = query.values ?? []
+    const values = Array.isArray(query.values) ? query.values : []
     switch (query.method) {
       case 'select': {
         if (values.length === 0) throw invalidQuery('Select queries require at least one attribute.')
@@ -291,7 +317,13 @@ export function compileQueries(collection: Collection, queries: Query[], dialect
             out.select = null
             break
           }
-          if (!SYSTEM[v] && v !== '$permissions' && v !== '$collectionId' && v !== '$databaseId' && !collection.attributeMap.has(v)) {
+          if (
+            !Object.hasOwn(SYSTEM, v) &&
+            v !== '$permissions' &&
+            v !== '$collectionId' &&
+            v !== '$databaseId' &&
+            !collection.attributeMap.has(v)
+          ) {
             throw invalidQuery(`Attribute not found in schema: ${v}`)
           }
           keys.add(v)
@@ -301,16 +333,16 @@ export function compileQueries(collection: Collection, queries: Query[], dialect
       }
       case 'limit': {
         const n = values[0]
-        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
-          throw invalidQuery('Invalid limit: Value must be a valid range between 1 and 9,223,372,036,854,775,807')
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > MAX_QUERY_LIMIT) {
+          throw invalidQuery(`Invalid limit: Value must be a valid range between 1 and ${MAX_QUERY_LIMIT.toLocaleString('en-US')}`)
         }
         out.limit = n
         break
       }
       case 'offset': {
         const n = values[0]
-        if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
-          throw invalidQuery('Invalid offset: Value must be a valid range between 0 and 9,223,372,036,854,775,807')
+        if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > MAX_QUERY_OFFSET) {
+          throw invalidQuery(`Invalid offset: Value must be a valid range between 0 and ${MAX_QUERY_OFFSET.toLocaleString('en-US')}`)
         }
         out.offset = n
         break
@@ -351,6 +383,9 @@ const MAX_COMPILED_QUERIES = 256
 
 export function compileCached(collection: Collection, rawQueries: unknown[], dialect: SqlDialect = 'sqlite'): Compiled {
   const key = `${dialect}\u0000${JSON.stringify(rawQueries)}`
+  // A key this large is not worth caching, and keeping it would let one
+  // request pin a lot of memory per collection.
+  if (key.length > 64 * 1024) return compileQueries(collection, parseQueries(rawQueries), dialect)
   let cache = compiledQueries.get(collection)
   if (!cache) {
     cache = new Map()

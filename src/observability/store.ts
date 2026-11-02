@@ -148,6 +148,8 @@ const bucketOf = (milliseconds: number): number => {
 }
 
 const DEFAULTS: TelemetryOptions = { maxSpans: 2_000, maxEvents: 5_000, retentionDays: 7, flushMs: 5_000 }
+/** In-memory backlog while a flush is slow; drops the oldest rather than growing. */
+const MAX_PENDING = 20_000
 
 const STATUS_RANGES: Record<string, [number, number]> = {
   '2xx': [200, 300],
@@ -188,6 +190,7 @@ export class TelemetryStore {
 
   recordSpan(input: SpanInput): void {
     if (this.closed) return
+    if (this.spans.length >= MAX_PENDING) this.spans.splice(0, Math.max(1, Math.floor(MAX_PENDING / 10)))
     this.spans.push({
       pending: true,
       seq: pending(),
@@ -212,6 +215,7 @@ export class TelemetryStore {
 
   recordEvent(input: EventInput): void {
     if (this.closed) return
+    if (this.events.length >= MAX_PENDING) this.events.splice(0, Math.max(1, Math.floor(MAX_PENDING / 10)))
     this.events.push({
       pending: true,
       seq: pending(),

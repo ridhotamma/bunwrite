@@ -250,11 +250,12 @@ export class ProjectManager implements ProjectResolver {
   }
 
   private async clearBootstrapKey(db: SqlDatabase): Promise<void> {
+    // Keep the row: create() returns this key to the caller and it must work.
     if (db.dialect === 'sqlite') {
-      clearInstanceApiKey(db)
+      clearInstanceApiKey(db, false)
       return
     }
-    await clearInstanceApiKeyAsync(db)
+    await clearInstanceApiKeyAsync(db, false)
   }
 
   defaultProject(): ProjectRuntime {

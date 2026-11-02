@@ -4,28 +4,43 @@ import { sha256 } from './ids'
 export type Params = Record<string, unknown>
 
 /**
+ * Keys that reach a prototype instead of a normal property. A query such as
+ * `?__proto__[polluted]=1` would otherwise write to `Object.prototype` and
+ * corrupt every later request in the process.
+ */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const MAX_DEPTH = 32
+
+export const isUnsafeKey = (key: string): boolean => UNSAFE_KEYS.has(key)
+
+/** A container that has no prototype chain for a `__proto__` write to corrupt. */
+const bareObject = (): Params => Object.create(null) as Params
+
+/**
  * Parse PHP-style bracket query strings the SDKs send for GET requests:
  * `queries[0]=..&queries[1]=..` becomes `{ queries: [.., ..] }`.
  */
 export function parseSearchParams(search: URLSearchParams): Params {
-  const out: Params = {}
+  const out = bareObject()
   for (const [rawKey, value] of search) {
     const isPush = rawKey.endsWith('[]')
     const parts = (isPush ? rawKey.slice(0, -2) : rawKey).split(/\]?\[/).map((p) => p.replace(/\]$/, ''))
+    // Refuse dangerous keys and pathologically deep input before building a tree.
+    if (parts.length === 0 || parts.length > MAX_DEPTH || parts.some((part) => !part || isUnsafeKey(part))) continue
     let target: Record<string, unknown> = out
     parts.forEach((key, i) => {
       if (i === parts.length - 1) {
         if (isPush) {
-          const list = target[key]
+          const list = Object.hasOwn(target, key) ? target[key] : undefined
           if (Array.isArray(list)) list.push(value)
           else target[key] = [value]
         } else target[key] = value
         return
       }
-      const next = target[key]
+      const next = Object.hasOwn(target, key) ? target[key] : undefined
       if (next && typeof next === 'object') target = next as Record<string, unknown>
       else {
-        target[key] = /^\d+$/.test(parts[i + 1]!) ? [] : {}
+        target[key] = /^\d+$/.test(parts[i + 1]!) ? [] : bareObject()
         target = target[key] as Record<string, unknown>
       }
     })
@@ -36,7 +51,13 @@ export function parseSearchParams(search: URLSearchParams): Params {
 function compactArrays(value: unknown): unknown {
   if (Array.isArray(value)) return value.filter((v) => v !== undefined).map(compactArrays)
   if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) (value as Record<string, unknown>)[k] = compactArrays(v)
+    for (const k of Object.keys(value)) {
+      if (isUnsafeKey(k)) {
+        delete (value as Record<string, unknown>)[k]
+        continue
+      }
+      ;(value as Record<string, unknown>)[k] = compactArrays((value as Record<string, unknown>)[k])
+    }
   }
   return value
 }
@@ -50,20 +71,25 @@ export async function readParams(request: Request, url: URL): Promise<Params> {
     const text = await request.text()
     if (!text) return query
     try {
-      const body = JSON.parse(text)
-      return { ...query, ...(body && typeof body === 'object' ? body : {}) }
+      const body = JSON.parse(text) as unknown
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return query
+      // Keep `__proto__`/`constructor` from becoming request parameters.
+      const safe = bareObject()
+      for (const [key, value] of Object.entries(body)) if (!isUnsafeKey(key)) safe[key] = value
+      return { ...query, ...safe }
     } catch {
       throw err('general_argument_invalid', 'Invalid JSON body.')
     }
   }
   if (type.includes('multipart/form-data') || type.includes('application/x-www-form-urlencoded')) {
     const form = await request.formData()
-    const body: Params = {}
+    const body = bareObject()
     for (const [key, value] of form) {
+      const k = key.endsWith('[]') ? key.slice(0, -2) : key
+      if (!k || isUnsafeKey(k)) continue
       if (key.endsWith('[]')) {
-        const k = key.slice(0, -2)
         ;((body[k] as unknown[]) ??= []).push(value)
-      } else body[key] = value
+      } else body[k] = value
     }
     return { ...query, ...body }
   }

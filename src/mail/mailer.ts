@@ -32,6 +32,10 @@ export class SmtpMailer implements Mailer {
       host: config.host,
       port: config.port,
       secure: config.secure,
+      // Port 587 without implicit TLS must still upgrade: opportunistic
+      // STARTTLS lets an attacker strip encryption and read the password.
+      requireTLS: !config.secure,
+      tls: { minVersion: 'TLSv1.2' },
       auth: config.user ? { user: config.user, pass: config.password } : undefined,
     })
   }
@@ -69,12 +73,18 @@ export class MemoryMailer implements Mailer {
 
 /** In-flight background sends, so shutdown and tests can wait for them. */
 const backgroundSends = new Set<Promise<void>>()
+/** A public signup flow must not queue SMTP work without limit. */
+const MAX_BACKGROUND_SENDS = 500
 
 /**
  * Hand an email to the mailer without making the request wait for SMTP.
  * The promise is tracked and failures are logged; nothing is re-thrown.
  */
 export function sendMailLater(mailer: Mailer, mail: Mail, label = 'email'): void {
+  if (backgroundSends.size >= MAX_BACKGROUND_SENDS) {
+    console.error(`[mail] dropping ${label}: ${MAX_BACKGROUND_SENDS} sends are already queued`)
+    return
+  }
   let pending: Promise<void>
   try {
     pending = mailer.send(mail)

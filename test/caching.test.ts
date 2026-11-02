@@ -127,7 +127,8 @@ describe('session cache', () => {
     expect(withTeam.roles.has('team:t1/manager')).toBe(true)
 
     await servicesA.auth.updateUser('u1', { status: 0 })
-    expect((await sessionCaller(dbB, secret))!.user!.status).toBeFalsy()
+    // A blocked user's live session must no longer authenticate at all.
+    expect(await sessionCaller(dbB, secret)).toBeNull()
 
     await servicesA.auth.deleteSession('u1', session.id)
     expect(await sessionCaller(dbB, secret)).toBeNull()

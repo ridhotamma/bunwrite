@@ -35,8 +35,10 @@ export function readFilter(caller: Caller, collection: Collection, params: SqlVa
   return `t._seq IN (SELECT doc FROM ${q(collection.permsTable)} WHERE type = 'read' AND role IN (${roles.map(() => '?').join(', ')}))`
 }
 
-export function rowById(exec: SqlExecutor, collection: Collection, id: string): Promise<Row | null> {
-  return exec.get<Row>(`SELECT * FROM ${q(collection.table)} WHERE _id = ?`, [id])
+export function rowById(exec: SqlExecutor, collection: Collection, id: string, forUpdate = false): Promise<Row | null> {
+  // Postgres only: lock the row so a permission check and the following write
+  // cannot be split by a concurrent update/revoke. SQLite serialises writers.
+  return exec.get<Row>(`SELECT * FROM ${q(collection.table)} WHERE _id = ?${forUpdate ? ' FOR UPDATE' : ''}`, [id])
 }
 
 export async function rowBySeq(exec: SqlExecutor, collection: Collection, seq: number): Promise<Row> {
@@ -67,6 +69,17 @@ export async function selectRows(
     const row = await cursorRow(collection, compiled.cursor.id)
     if (!row) {
       throw err('general_cursor_not_found', `Document '${compiled.cursor.id}' for the 'cursor' value not found.`)
+    }
+    // The cursor is only an anchor, but its existence and position are still
+    // data the caller may not be allowed to read.
+    const checkParams: SqlValue[] = []
+    const cursorFilter = readFilter(caller, collection, checkParams)
+    if (cursorFilter) {
+      const allowed = await exec.get(
+        `SELECT 1 FROM ${q(collection.table)} t WHERE t._id = ? AND ${cursorFilter}`,
+        [compiled.cursor.id, ...checkParams],
+      )
+      if (!allowed) throw err('general_cursor_not_found', `Document '${compiled.cursor.id}' for the 'cursor' value not found.`)
     }
     where.push(cursorCondition(effective, row, params))
   }

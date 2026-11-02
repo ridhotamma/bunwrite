@@ -7,10 +7,12 @@
  * callers the same async shape as Postgres.
  *
  * Transactions are the exception: an async callback may await work outside the
- * database, so a lock serialises transactions on this driver. Statements
- * outside a transaction still run immediately.
+ * database, so a lock serialises transactions on this driver. Statements from
+ * another async call chain wait while one is open instead of silently joining
+ * it; statements inside the transaction use its context.
  */
 import type { Database, SQLQueryBindings } from 'bun:sqlite'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { busyBackoff, isBusyError } from './errors'
 import { sqliteDialect } from './dialect'
@@ -74,6 +76,9 @@ export class SqliteDriver implements SqlDriver {
 
   private readonly mutex = new Mutex()
   private readonly busyAttempts: number
+  /** The transaction belonging to the current async call chain, if any. */
+  private readonly context = new AsyncLocalStorage<SqlTransaction>()
+  /** Set while the single connection is inside BEGIN, before the context exists. */
   private depth = 0
   private savepointSeq = 0
 
@@ -112,7 +117,7 @@ export class SqliteDriver implements SqlDriver {
       this.raw.exec(sql)
     }
     const savepoint = async <T>(name: string, fn: (tx: SqlTransaction) => Promise<T>): Promise<T> => {
-      if (this.depth === 0) return this.transaction(fn)
+      if (!this.context.getStore()) return this.transaction(fn)
       const safe = SAVEPOINT_NAME.test(name) ? name : `bunwrite_sp_${++this.savepointSeq}`
       this.raw.run(`SAVEPOINT "${safe}"`)
       try {
@@ -133,22 +138,39 @@ export class SqliteDriver implements SqlDriver {
     return tx
   }
 
+  /**
+   * Run a statement outside a transaction. The single SQLite connection must
+   * not serve another request's open BEGIN, so statements that cannot join a
+   * transaction wait for the mutex while one is active. Normally depth is 0
+   * and this is a plain statement.
+   */
+  private async outside<T>(fn: () => T): Promise<T> {
+    if (this.depth === 0) return this.retry(fn)
+    return this.mutex.run(() => this.retry(fn))
+  }
+
   all<T = Record<string, unknown>>(sql: string, params?: Bindings): Promise<T[]> {
-    return this.retry(() => {
+    const active = this.context.getStore()
+    if (active) return active.all<T>(sql, params)
+    return this.outside(() => {
       const statement = sqliteDialect.prepare(sql, params)
       return this.raw.query(statement.text).all(...(statement.params as SQLQueryBindings[])) as T[]
     })
   }
 
   get<T = Record<string, unknown>>(sql: string, params?: Bindings): Promise<T | null> {
-    return this.retry(() => {
+    const active = this.context.getStore()
+    if (active) return active.get<T>(sql, params)
+    return this.outside(() => {
       const statement = sqliteDialect.prepare(sql, params)
       return (this.raw.query(statement.text).get(...(statement.params as SQLQueryBindings[])) as T | null) ?? null
     })
   }
 
   run(sql: string, params?: Bindings): Promise<ExecuteResult> {
-    return this.retry(() => {
+    const active = this.context.getStore()
+    if (active) return active.run(sql, params)
+    return this.outside(() => {
       const statement = sqliteDialect.prepare(sql, params)
       const result = this.raw.query(statement.text).run(...(statement.params as SQLQueryBindings[]))
       return { changes: Number(result.changes ?? 0), lastInsertId: normalizeRowId(result.lastInsertRowid) }
@@ -156,20 +178,24 @@ export class SqliteDriver implements SqlDriver {
   }
 
   exec(sql: string): Promise<void> {
-    return this.retry(() => {
+    const active = this.context.getStore()
+    if (active) return active.exec(sql)
+    return this.outside(() => {
       this.raw.exec(sql)
     })
   }
 
   async transaction<T>(fn: (tx: SqlTransaction) => Promise<T>): Promise<T> {
-    // A nested call is a savepoint, not a second BEGIN.
-    if (this.depth > 0) return this.executor().savepoint(`bunwrite_sp_${++this.savepointSeq}`, fn)
+    // Nested calls in the same async chain are savepoints; a transaction from
+    // another request waits on the mutex instead of joining this one.
+    const active = this.context.getStore()
+    if (active) return active.savepoint(`bunwrite_sp_${++this.savepointSeq}`, fn)
     return this.mutex.run(async () => {
       const tx = this.executor()
-      await this.retry(() => this.raw.run('BEGIN IMMEDIATE'))
       this.depth++
       try {
-        const value = await fn(tx)
+        await this.retry(() => this.raw.run('BEGIN IMMEDIATE'))
+        const value = await this.context.run(tx, () => fn(tx))
         await this.retry(() => this.raw.run('COMMIT'))
         return value
       } catch (error) {

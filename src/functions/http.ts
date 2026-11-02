@@ -1,7 +1,7 @@
 import type { Caller } from '~/auth/caller'
 import { markStreaming } from '~/lib/streaming'
 import type { Services } from '~/services'
-import type { ExecutionStream, FunctionRow } from './service'
+import { HIDDEN_HEADERS, type ExecutionStream, type FunctionRow } from './service'
 
 const HOP_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection'])
 
@@ -61,7 +61,9 @@ export async function functionHttpResponse(services: Services, f: FunctionRow, c
         trigger: 'http',
         method: request.method,
         path,
-        headers: Object.fromEntries(request.headers),
+        // Never hand the caller's session cookie, API key or Authorization
+        // header to user code; `withCallerHeaders` adds only the user ID.
+        headers: Object.fromEntries([...request.headers].filter(([name]) => !HIDDEN_HEADERS.has(name.toLowerCase()))),
         body: bytes ? new TextDecoder().decode(bytes) : '',
         ...(bytes && bytes.length > 0 ? { bodyBytes: bytes } : {}),
         userId: caller.user?.id ?? null,

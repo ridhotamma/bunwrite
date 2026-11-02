@@ -10,6 +10,7 @@ import type { Admin, ConsoleAuth } from './auth'
 import type { Form } from './forms'
 import type { Html } from './html'
 import type { Flash } from './layout'
+import type { RateLimiter } from '~/lib/limits'
 
 export interface ConsoleContext {
   services: Services
@@ -19,6 +20,10 @@ export interface ConsoleContext {
   form: Form
   request: Request
   url: URL
+  /** Shared console rate limiter (database-backed across workers). */
+  limiter: RateLimiter
+  /** Client IP resolved through the trusted-proxy list. */
+  ip: string
   /** Project registry and switcher. */
   projects: ProjectResolver
   organizations: OrganizationService

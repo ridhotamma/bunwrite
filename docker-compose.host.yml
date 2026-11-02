@@ -8,6 +8,11 @@
 services:
   bunwrite:
     network_mode: host
+    # With host networking the base file's 0.0.0.0 would expose the API on
+    # every interface over plain HTTP, bypassing Caddy. Keep the socket local
+    # and let Caddy be the only public listener.
+    environment:
+      HOST: 127.0.0.1
     ports: !reset []
   caddy:
     network_mode: host

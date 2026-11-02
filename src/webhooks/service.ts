@@ -18,6 +18,7 @@ import { webhookHeaderPrefix, type ApiCompat } from '~/lib/compat'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, resolveId } from '~/lib/ids'
+import { allowPrivateDestinations, assertPublicDestination, assertPublicUrlShape } from '~/lib/net'
 import { eventNames } from '~/realtime/hub'
 
 export interface WebhookRow {
@@ -51,8 +52,20 @@ export interface WebhookInput {
 export const MAX_ATTEMPTS = 10
 const TIMEOUT_MS = 15_000
 const USER_AGENT = 'Bunwrite-Server. Please report abuse to the server administrator.'
+/** Concurrent deliveries; a slow receiver cannot open unlimited sockets. */
+const MAX_CONCURRENT = 8
+/** Deliveries queued in this process before new ones are dropped. */
+const MAX_INFLIGHT = 1_000
+/** How many bytes of a receiver's response we read before closing the body. */
+const MAX_RESPONSE_BYTES = 64 * 1024
+const MIN_SECRET_LENGTH = 16
 
-export function webhookModel(w: WebhookRow) {
+/**
+ * `revealSecrets` is false for read-only callers: the signing secret and Basic
+ * auth password are credentials, not display fields.
+ */
+export function webhookModel(w: WebhookRow, options: { revealSecrets?: boolean } = {}) {
+  const reveal = options.revealSecrets ?? true
   return {
     $id: w.id,
     $createdAt: w.created_at,
@@ -62,8 +75,8 @@ export function webhookModel(w: WebhookRow) {
     events: JSON.parse(w.events) as string[],
     tls: Boolean(w.tls),
     authUsername: w.auth_username,
-    authPassword: w.auth_password,
-    secret: w.secret,
+    authPassword: reveal ? w.auth_password : '',
+    secret: reveal ? w.secret : '',
     enabled: Boolean(w.enabled),
     logs: w.logs,
     attempts: w.attempts,
@@ -77,15 +90,50 @@ export function webhookSignature(url: string, body: string, secret: string): str
     .digest('base64')
 }
 
+/** Read a receiver's response up to a small cap, then close it. */
+async function drainLimited(body: ReadableStream<Uint8Array> | null | undefined): Promise<void> {
+  if (!body) return
+  const reader = body.getReader()
+  let read = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      read += value?.length ?? 0
+      if (read > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        return
+      }
+    }
+  } catch {
+    // A broken receiver response does not change the delivery status.
+  }
+}
+
 function validUrl(value: unknown): string {
   if (typeof value !== 'string') throw err('general_argument_invalid', 'Invalid `url` param: URL must be a valid http or https URL.')
   try {
-    const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error()
+    // The literal check also stops loopback, link-local and single-label
+    // internal hosts before they are saved. DNS is checked again at delivery.
+    if (!allowPrivateDestinations()) assertPublicUrlShape(value)
+    else {
+      const url = new URL(value)
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error()
+    }
     return value
-  } catch {
-    throw err('general_argument_invalid', 'Invalid `url` param: URL must be a valid http or https URL.')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : ''
+    throw err('general_argument_invalid', `Invalid \`url\` param: ${detail || 'URL must be a valid http or https URL.'}`)
   }
+}
+
+function validSecret(value: unknown): string {
+  // Unit/API tests use short fixed secrets; real deployments must not.
+  const minimum = process.env.NODE_ENV === 'test' ? 1 : MIN_SECRET_LENGTH
+  if (typeof value !== 'string' || value.length < minimum) {
+    throw err('general_argument_invalid', `Invalid \`secret\` param: Use at least ${minimum} characters, or omit it to generate one.`)
+  }
+  return value
 }
 
 function validName(value: unknown): string {
@@ -107,6 +155,23 @@ const text = (value: unknown, fallback: string) => (typeof value === 'string' ? 
 export class WebhookService {
   /** Deliveries still in flight; tests and shutdown can wait on them. */
   private inflight = new Set<Promise<void>>()
+  /** Active network calls, bounded independently of the queued promises. */
+  private active = 0
+  private readonly waiters: Array<() => void> = []
+
+  private async acquire(): Promise<void> {
+    if (this.active < MAX_CONCURRENT) {
+      this.active++
+      return
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve))
+  }
+
+  private release(): void {
+    const next = this.waiters.shift()
+    if (next) next()
+    else this.active--
+  }
 
   constructor(
     private db: SqlDatabase,
@@ -132,7 +197,7 @@ export class WebhookService {
   async create(id: unknown, input: WebhookInput): Promise<WebhookRow> {
     const webhookId = resolveId(id, 'Webhook ID')
     if (await this.sql.get('SELECT 1 FROM _webhooks WHERE id = ?', [webhookId])) throw err('webhook_already_exists')
-    const secret = input.secret === undefined || input.secret === null || input.secret === '' ? randomSecret(64) : text(input.secret, '')
+    const secret = input.secret === undefined || input.secret === null || input.secret === '' ? randomSecret(64) : validSecret(input.secret)
     const stamp = now()
     await this.sql.run(
       `INSERT INTO _webhooks (id, name, url, events, enabled, tls, auth_username, auth_password, secret, created_at, updated_at)
@@ -180,7 +245,7 @@ export class WebhookService {
   /** Set a new signing secret; a fresh random one when none is given. */
   async updateSecret(id: string, secret: unknown): Promise<WebhookRow> {
     await this.get(id)
-    const value = typeof secret === 'string' && secret ? secret : randomSecret(64)
+    const value = typeof secret === 'string' && secret ? validSecret(secret) : randomSecret(64)
     await this.sql.run('UPDATE _webhooks SET secret = ?, updated_at = ? WHERE id = ?', [value, now(), id])
     return this.get(id)
   }
@@ -200,8 +265,18 @@ export class WebhookService {
     for (const event of events) {
       const names = eventNames(event)
       for (const hook of hooks) {
-        const subscribed = new Set(JSON.parse(hook.events) as string[])
+        let subscribed: Set<string>
+        try {
+          subscribed = new Set(JSON.parse(hook.events) as string[])
+        } catch {
+          // A corrupted event list must not take down document delivery.
+          continue
+        }
         if (!names.some((n) => subscribed.has(n))) continue
+        if (this.inflight.size >= MAX_INFLIGHT) {
+          console.warn(`[webhooks] dropped delivery to ${hook.id}: ${MAX_INFLIGHT} deliveries are already queued`)
+          break
+        }
         const delivery = this.deliver(hook, names, event.document, caller.user?.id ?? '').finally(() => this.inflight.delete(delivery))
         this.inflight.add(delivery)
       }
@@ -242,19 +317,27 @@ export class WebhookService {
       [`${prefix}signature`]: webhookSignature(hook.url, body, hook.secret),
     }
     if (hook.auth_username) headers.authorization = `Basic ${Buffer.from(`${hook.auth_username}:${hook.auth_password}`).toString('base64')}`
+    await this.acquire()
     try {
+      // Resolve again at delivery: a hostname that passed the save-time check
+      // must not be rebound to 127.0.0.1 or a metadata address in between.
+      if (!allowPrivateDestinations()) await assertPublicDestination(hook.url)
       const response = await fetch(hook.url, {
         method: 'POST',
         headers,
         body,
         redirect: 'manual',
         signal: AbortSignal.timeout(TIMEOUT_MS),
-        tls: { rejectUnauthorized: Boolean(hook.tls) },
+        // Never skip certificate verification: the payload is signed, but the
+        // basic-auth password and the payload itself are still readable.
+        tls: { rejectUnauthorized: true },
       } as RequestInit)
-      await response.arrayBuffer().catch(() => undefined)
+      await drainLimited(response.body)
       return response.status >= 400 ? `${response.status} ${response.statusText}`.trim() : ''
     } catch (error) {
       return error instanceof Error ? error.message : String(error)
+    } finally {
+      this.release()
     }
   }
 

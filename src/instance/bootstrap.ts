@@ -90,6 +90,8 @@ interface Plan {
   /** Only settings this boot changed; rewriting every row would bump versions. */
   settings: Map<string, string>
   apiKeys: NewApiKey[]
+  /** Bootstrap keys to revoke once a console admin exists. */
+  deleteApiKeys: string[]
   instance?: InstanceInfo
 }
 
@@ -199,6 +201,7 @@ function planBootstrap(
   const dirty = new Set<string>()
   const hashes = new Set(snapshot.apiKeyHashes)
   const apiKeys: NewApiKey[] = []
+  const deleteApiKeys: string[] = []
 
   const readSetting = <T>(key: string): T | null => {
     const raw = settings.get(key)
@@ -327,7 +330,9 @@ function planBootstrap(
     ensureApiKeyRow(apiKey)
   }
   if (setupComplete && info.apiKey) {
-    // The key stays valid in _api_keys; only the plaintext copy is removed.
+    // Revoke the bootstrap key itself, not just its plaintext copy: a copy in
+    // an old log or terminal must stop working once an admin exists.
+    deleteApiKeys.push(sha256(info.apiKey))
     delete info.apiKey
     created = true
   }
@@ -345,6 +350,7 @@ function planBootstrap(
     },
     settings: new Map([...dirty].map((key) => [key, settings.get(key)!])),
     apiKeys,
+    deleteApiKeys,
     instance: created ? info : undefined,
   }
 }
@@ -358,6 +364,8 @@ function applyPlanSync(db: Database, plan: Plan): void {
   const stamp = now()
   const setting = db.query(UPSERT_SETTING)
   for (const [key, value] of plan.settings) setting.run(key, value, stamp)
+  const removeKey = db.query('DELETE FROM _api_keys WHERE secret_hash = ?')
+  for (const hash of plan.deleteApiKeys) removeKey.run(hash)
   const apiKey = db.query(INSERT_API_KEY)
   for (const row of plan.apiKeys) apiKey.run(uniqueId(), row.name, row.hash, row.hint, stamp, stamp)
   if (plan.instance) setting.run(INSTANCE_KEY, JSON.stringify(plan.instance), stamp)
@@ -366,6 +374,7 @@ function applyPlanSync(db: Database, plan: Plan): void {
 async function applyPlanAsync(tx: SqlExecutor, plan: Plan): Promise<void> {
   const stamp = now()
   for (const [key, value] of plan.settings) await tx.run(UPSERT_SETTING, [key, value, stamp])
+  for (const hash of plan.deleteApiKeys) await tx.run('DELETE FROM _api_keys WHERE secret_hash = ?', [hash])
   for (const row of plan.apiKeys) await tx.run(INSERT_API_KEY, [uniqueId(), row.name, row.hash, row.hint, stamp, stamp])
   if (plan.instance) await tx.run(UPSERT_INSTANCE, [INSTANCE_KEY, JSON.stringify(plan.instance), stamp])
 }
@@ -408,7 +417,7 @@ export async function bootstrapInstanceAsync(
 }
 
 /** Drop the plaintext bootstrap key after the first admin is created (SQLite). */
-export function clearInstanceApiKey(db: SqlDatabase): void {
+export function clearInstanceApiKey(db: SqlDatabase, revoke = true): void {
   const sqlite = db.sqlite
   if (!sqlite) throw new Error('clearInstanceApiKey is the synchronous SQLite entry point; use clearInstanceApiKeyAsync for a network backend.')
   sqlite
@@ -420,6 +429,8 @@ export function clearInstanceApiKey(db: SqlDatabase): void {
         result: { orgId: stored.orgId, projectId: stored.projectId, projectName: stored.projectName, secret: stored.secret, generated: false, created: true, ignoredEnv: [] },
         settings: new Map(),
         apiKeys: [],
+        // `revoke: false` keeps a key returned to a caller (new project).
+        deleteApiKeys: revoke ? [sha256(stored.apiKey)] : [],
         instance: { ...stored, apiKey: undefined },
       })
     })
@@ -427,7 +438,7 @@ export function clearInstanceApiKey(db: SqlDatabase): void {
 }
 
 /** Drop the plaintext bootstrap key after the first admin is created (network backend). */
-export async function clearInstanceApiKeyAsync(db: SqlDatabase): Promise<void> {
+export async function clearInstanceApiKeyAsync(db: SqlDatabase, revoke = true): Promise<void> {
   await db.driver.transaction(async (tx) => {
     const row = await tx.get<{ value: string }>('SELECT value FROM _settings WHERE key = ?', [INSTANCE_KEY])
     const stored = instanceOf(row?.value)
@@ -436,6 +447,7 @@ export async function clearInstanceApiKeyAsync(db: SqlDatabase): Promise<void> {
       result: { orgId: stored.orgId, projectId: stored.projectId, projectName: stored.projectName, secret: stored.secret, generated: false, created: true, ignoredEnv: [] },
       settings: new Map(),
       apiKeys: [],
+      deleteApiKeys: revoke ? [sha256(stored.apiKey)] : [],
       instance: { ...stored, apiKey: undefined },
     })
   })

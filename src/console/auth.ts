@@ -8,6 +8,8 @@
  * Everything goes through the database port so the console can run on a
  * network backend as well as SQLite.
  */
+import { timingSafeEqual } from 'node:crypto'
+
 import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -65,11 +67,19 @@ export class ConsoleAuth {
        ON CONFLICT(email) DO UPDATE SET password = excluded.password, updated_at = excluded.updated_at`,
       [address, hash, stamp, stamp],
     )
+    // Rotating an admin password ends existing console sessions, including a
+    // stolen one. Signing in again creates a fresh row.
+    await this.db.driver.run('DELETE FROM _console_sessions WHERE admin_id = (SELECT seq FROM _console_admins WHERE email = ?)', [address])
   }
 
   async remove(seq: number): Promise<void> {
-    if ((await this.count()) <= 1) throw err('general_argument_invalid', 'The last admin cannot be removed.')
-    await this.db.driver.run('DELETE FROM _console_admins WHERE seq = ?', [seq])
+    // Count and delete in one statement: two concurrent removals must not
+    // both observe two admins and leave the instance with none.
+    const result = await this.db.driver.run(
+      'DELETE FROM _console_admins WHERE seq = ? AND (SELECT count(*) FROM _console_admins) > 1',
+      [seq],
+    )
+    if (result.changes === 0) throw err('general_argument_invalid', 'The last admin cannot be removed.')
   }
 
   /** Whether this admin must enter an emailed code after the password. */
@@ -131,7 +141,9 @@ export class ConsoleAuth {
       await this.db.driver.run('DELETE FROM _console_mfa_challenges WHERE seq = ?', [row.seq])
       return false
     }
-    if (row.code_hash !== sha256(code.trim())) {
+    const provided = Buffer.from(sha256(code.trim()))
+    const expected = Buffer.from(row.code_hash)
+    if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
       await this.db.driver.run('UPDATE _console_mfa_challenges SET attempts = attempts + 1 WHERE seq = ?', [row.seq])
       return false
     }

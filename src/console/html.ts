@@ -30,6 +30,17 @@ export function page(body: Html | string, status = 200, headers: Record<string, 
   const text = String(body)
   return new Response(text, {
     status,
-    headers: { 'content-type': 'text/html; charset=utf-8', 'content-length': String(Buffer.byteLength(text)), 'cache-control': 'no-store', 'x-frame-options': 'DENY', ...headers },
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': String(Buffer.byteLength(text)),
+      'cache-control': 'no-store',
+      'x-frame-options': 'DENY',
+      'x-content-type-options': 'nosniff',
+      // Signed file links and invite tokens live in console URLs; do not send
+      // them to third-party sites through the Referer header.
+      'referrer-policy': 'no-referrer',
+      'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+      ...headers,
+    },
   })
 }

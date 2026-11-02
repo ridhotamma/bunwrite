@@ -1,3 +1,5 @@
+import { isSafeRelativePath } from '~/lib/paths'
+
 /**
  * After-build cleanup for SSR sites. A build leaves the full development
  * install in node_modules (compilers, bundlers, linters), which the running
@@ -102,6 +104,8 @@ rm -rf node_modules "$app/node_modules"`
 /** The cleanup shell script, run in the deployment root; null for `none`. */
 export function pruneScript(options: PruneOptions): string | null {
   if (options.mode === 'none') return null
+  // The folder is interpolated into `rm -rf`; never let it walk out of the build.
+  if (options.appDir && !isSafeRelativePath(options.appDir)) return null
   const app = options.appDir ? `./${options.appDir}` : '.'
   let body: string
   if (options.mode === 'standalone') body = standaloneBody()

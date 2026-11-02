@@ -111,13 +111,29 @@ export function resolveClientIp(request: Request, peer: string | undefined, trus
 }
 
 const resolved = new WeakMap<Request, string>()
+/** Requests whose forwarding headers came from a trusted peer. */
+const forwarded = new WeakSet<Request>()
 let defaultTrust: TrustedProxies | null = null
 
 /** Record the client's address for this request, once, where the server is known. */
 export function rememberClientIp(request: Request, peer: string | undefined, trust: TrustedProxies): string {
+  const direct = normalize(peer)
+  // No peer means the app was called directly (tests, embedded use): the
+  // caller cannot forge a connection address there, so headers are usable.
+  if (!direct || trusted(trust, direct)) forwarded.add(request)
   const ip = resolveClientIp(request, peer, trust)
   resolved.set(request, ip)
   return ip
+}
+
+/** May `requestEndpoint` believe X-Forwarded-Host/-Proto on this request? */
+export function forwardedHeadersTrusted(request: Request): boolean {
+  return forwarded.has(request)
+}
+
+/** Has this request gone through `rememberClientIp`? Embedded/test calls may not. */
+export function clientIpRecorded(request: Request): boolean {
+  return resolved.has(request)
 }
 
 /** The client's address for this request (see rememberClientIp). */

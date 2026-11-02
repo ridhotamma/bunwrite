@@ -1,3 +1,5 @@
+import { timingSafeEqual } from 'node:crypto'
+
 import type { AuthService } from '~/auth/service'
 import { validEmail } from '~/auth/service'
 import type { Caller } from '~/auth/caller'
@@ -219,7 +221,9 @@ export class TeamService {
     if (membership.user_id !== userId) throw err('team_invite_mismatch')
     if (membership.confirm) throw err('membership_already_confirmed')
     const row = await this.db.driver.get<{ secret_hash: string | null }>('SELECT secret_hash FROM _memberships WHERE id = ?', [membershipId])
-    if (typeof secret !== 'string' || !row?.secret_hash || row.secret_hash !== sha256(secret)) throw err('team_invalid_secret')
+    const provided = typeof secret === 'string' ? Buffer.from(sha256(secret)) : null
+    const expected = row?.secret_hash ? Buffer.from(row.secret_hash) : null
+    if (!provided || !expected || provided.length !== expected.length || !timingSafeEqual(provided, expected)) throw err('team_invalid_secret')
     const stamp = now()
     await this.db.driver.transaction(async (tx) => {
       await tx.run('UPDATE _memberships SET confirm = 1, joined = ?, secret_hash = NULL, updated_at = ? WHERE id = ?', [stamp, stamp, membershipId])

@@ -141,7 +141,9 @@ export async function* decrypt(source: AsyncIterable<Uint8Array>, secret: string
   const [version, compression, logN] = [header[4]!, header[5]!, header[6]!]
   if (version !== VERSION) throw new Error(`Unsupported backup format version ${version}.`)
   if (compression !== ZSTD) throw new Error(`Unsupported backup compression ${compression}.`)
-  if (logN < 10 || logN > 20) throw new Error('Backup header is invalid.')
+  // The writer always uses LOG_N. Trusting a wider header range lets a crafted
+  // backup request hundreds of MiB of scrypt memory per restore attempt.
+  if (logN !== LOG_N) throw new Error('Backup header is invalid.')
   const salt = header.subarray(7, 7 + SALT_BYTES)
   const prefix = header.subarray(7 + SALT_BYTES, HEADER_BYTES)
   const key = await scrypt(secret, Buffer.from(salt), logN)

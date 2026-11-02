@@ -417,7 +417,8 @@ export function smtpFromEnv(env: Record<string, string | undefined>): SmtpConfig
     port: Number(env.SMTP_PORT ?? 587),
     user: env.SMTP_USERNAME || undefined,
     password: env.SMTP_PASSWORD || undefined,
-    secure: env.SMTP_SECURE === 'tls',
+    // Accept the spellings operators actually use; anything else is STARTTLS.
+    secure: ['tls', 'ssl', 'smtps', 'true', '1'].includes((env.SMTP_SECURE ?? '').trim().toLowerCase()),
     senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@example.com',
     senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Bunwrite'} Team`,
   }

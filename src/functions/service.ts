@@ -18,24 +18,31 @@ import { err } from '~/lib/errors'
 import { providerOf, type ProviderColumns, type ProviderSettings } from '~/vcs/source'
 import { functionHost, functionsDomainOf, hostOf, urlForHost } from '~/lib/hosts'
 import { uniqueId } from '~/lib/ids'
+import { scopedFunctionKey } from '~/lib/internal-key'
+import { isSafeRelativePath } from '~/lib/paths'
 import type { ProxyService } from '~/proxy/service'
 import { normalizeAttribute, type Collection } from '~/schema/types'
 import { listSeqs } from '~/system/list'
 import { parseCron } from './cron'
 import { ENV_KEY_RE, type EnvVariable } from './env'
+import { readCapped } from '~/deploy/command'
 import { Deployments, deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
 import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
-import { PRIVATE_ENV } from '~/lib/private-env'
+import { isPrivateEnv } from '~/lib/private-env'
 import { resolveContext, type DeployContext, type VariableContext } from '~/variables/context'
 
 const RESULT_MARKER = '__BUNWRITE_EXECUTION_RESULT__'
 const STREAM_MARKER = '__BUNWRITE_EXECUTION_STREAM__'
 /** How much of a response body an execution record keeps. */
 const MAX_RECORDED_BYTES = 1_000_000
+/** A run that writes more than this to stdout is stopped, not buffered. */
+const MAX_STDOUT_BYTES = 16 * 1024 * 1024
+/** Largest unterminated line held while waiting for a newline. */
+const MAX_STDOUT_LINE = 4 * 1024 * 1024
 /** Request headers a function never sees: credentials. */
-const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
+export const HIDDEN_HEADERS = new Set(['authorization', 'cookie', 'x-fallback-cookies', ...CREDENTIAL_HEADERS])
 const SYNC_TIMEOUT = 30
 const NODE_RUNNER_MODE = '__bunwrite-runner-node'
 
@@ -211,6 +218,20 @@ const EXECUTIONS: Collection = (() => {
     attributeMap: new Map(attributes.map((a) => [a.key, a])),
   }
 })()
+
+/** Function scopes from the database. Corrupt non-empty data fails closed. */
+function configuredScopes(raw: unknown): string[] {
+  if (raw === null || raw === undefined) return []
+  if (Array.isArray(raw)) return [...new Set(raw.filter((scope): scope is string => typeof scope === 'string'))]
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return ['__invalid_scopes__']
+    return [...new Set(parsed.filter((scope): scope is string => typeof scope === 'string'))]
+  } catch {
+    return ['__invalid_scopes__']
+  }
+}
 
 const parse = <T>(text: string, fallback: T): T => {
   try {
@@ -626,7 +647,14 @@ export class FunctionService {
 
   /** Who may run it: API keys always; others need a role in `execute`. */
   assertCanExecute(caller: Caller, f: FunctionRow): void {
-    if (caller.privileged) return
+    if (caller.privileged) {
+      // A scoped key needs the execution scope; otherwise it could call any
+      // function through the public HTTP endpoint despite its scopes.
+      if (caller.kind === 'key' && caller.scopes !== null && !caller.scopes.has('execution.write')) {
+        throw err('general_unauthorized_scope', 'User (role: applications) missing scopes (["execution.write"])')
+      }
+      return
+    }
     const execute = parse<string[]>(f.execute, [])
     if (!execute.some((role) => caller.roles.has(role))) {
       throw err('user_unauthorized', 'To execute function using client SDK, please add your role to function "execute" field.')
@@ -859,9 +887,15 @@ export class FunctionService {
    */
   async env(f: FunctionRow, trigger: string, context: DeployContext = 'live'): Promise<Record<string, string>> {
     const base: Record<string, string> = {}
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !PRIVATE_ENV.includes(k)) base[k] = v
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !isPrivateEnv(k)) base[k] = v
     const endpoint = this.options.internalEndpoint ?? `http://127.0.0.1:${this.config.port}/v1`
-    const key = this.config.internalKey ?? this.config.apiKeys[0] ?? ''
+    const scopes = configuredScopes(f.scopes)
+    // A function with configured scopes gets a key that carries exactly those
+    // scopes; an empty list keeps the legacy project key used by older
+    // deployments and the shipped templates.
+    const key = scopes.length
+      ? scopedFunctionKey(this.config.secret, f.id, scopes)
+      : (this.config.internalKey ?? this.config.apiKeys[0] ?? '')
     // The function's own values for this deploy context; they win over project variables.
     const vars = resolveContext(await this.variables(f.id), context)
     const projectVars = (await this.options.projectVariables?.(context)) ?? {}
@@ -909,6 +943,8 @@ export class FunctionService {
         "SELECT entrypoint, runtime FROM _deployments WHERE id = ? AND function_id = ? AND status = 'ready'",
         [f.deployment_id, f.id],
       )
+      // A row written before entrypoints were validated must not escape the deployment.
+      if (deployment && deployment.entrypoint && !isSafeRelativePath(deployment.entrypoint)) deployment.entrypoint = ''
       const dir = deploymentDir(this.config, f.id, f.deployment_id)
       // An isolated deployment folder is closed to the server; the build already checked the entrypoint.
       const present = existsSync(join(dir, deployment?.entrypoint ?? '')) || (Boolean(this.config.functionsSandbox) && existsSync(dir))
@@ -933,6 +969,7 @@ export class FunctionService {
   }
 
   private command(f: FunctionRow, dir: string, entrypoint: string, runtime: ResolvedRuntime | null): string[] {
+    if (!isSafeRelativePath(entrypoint)) throw new Error(`Invalid entrypoint: ${entrypoint}`)
     const entry = join(dir, entrypoint)
     if (f.runtime.startsWith('python')) return [process.env.PYTHON_BIN ?? 'python3', pythonRunner(this.config), entry]
     // A downloaded Node.js or Bun runs the plain-JavaScript runner itself.
@@ -1073,13 +1110,25 @@ export class FunctionService {
             }
             return
           }
-          if (heldEmpty) plain += '\n'
-          heldEmpty = text === ''
-          if (!heldEmpty) plain += `${text}\n`
+          // Keep the recorded log bounded; the result marker is a separate
+          // line and is still parsed even after the log cap is reached.
+          if (plain.length < MAX_RECORDED_BYTES) {
+            if (heldEmpty) plain += '\n'
+            heldEmpty = text === ''
+            if (!heldEmpty) plain += `${text}\n`.slice(0, MAX_RECORDED_BYTES - plain.length)
+          }
         }
         const decoder = new TextDecoder()
+        let received = 0
         for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+          received += chunk.length
+          if (received > MAX_STDOUT_BYTES) {
+            proc.kill()
+            throw new Error(`The function wrote more than ${MAX_STDOUT_BYTES / 1_000_000} MB to stdout.`)
+          }
           pending += decoder.decode(chunk, { stream: true })
+          // A single unterminated line must not grow forever either.
+          if (pending.length > MAX_STDOUT_LINE) pending = pending.slice(-MAX_STDOUT_LINE)
           let at: number
           while ((at = pending.indexOf('\n')) >= 0) {
             line(pending.slice(0, at))
@@ -1091,7 +1140,7 @@ export class FunctionService {
         return plain + pending
       }
 
-      const [stdout, stderr] = await Promise.all([readStdout(), new Response(proc.stderr).text(), proc.exited])
+      const [stdout, stderr] = await Promise.all([readStdout(), readCapped(proc.stderr), proc.exited])
       clearTimeout(timer)
       stream?.signal?.removeEventListener('abort', onAbort)
       const markerAt = stdout.lastIndexOf(RESULT_MARKER)

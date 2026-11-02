@@ -22,6 +22,8 @@ Object.assign(process.env, {
   API_KEYS: 'demo-key',
   SECRET: 'demo-secret-demo-secret-demo-secret-0000',
   PORT: port,
+  // The demo has fixed credentials; never expose it on the network.
+  HOST: '127.0.0.1',
   DATABASE_PATH: `${dir}bunwrite.sqlite`,
   STORAGE_PATH: `${dir}storage`,
   PUBLIC_ENDPOINT: `http://localhost:${port}/v1`,

@@ -30,10 +30,22 @@ import { signInPage } from './pages/sign-in'
 import { alert, emptyState, header } from './ui'
 import { inviteAcceptContent, inviteUnavailableContent } from './views/organization'
 
-function loopback(request: Request, server?: Server<unknown>): boolean {
-  const ip = server?.requestIP(request)?.address ?? ''
-  const forwarded = request.headers.get('x-forwarded-for') || request.headers.get('cf-connecting-ip')
-  return !forwarded && (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')
+function loopback(request: Request, _server?: Server<unknown>): boolean {
+  // Use the same trusted-proxy resolution as rate limits. Reading the raw
+  // socket here made every visitor behind a local reverse proxy look like
+  // loopback, exposing the unauthenticated first-admin setup page. The Host
+  // must also be a loopback name: a proxy forwarding the public domain is not
+  // a local operator even when it does not add X-Forwarded-For.
+  let host: string
+  try {
+    host = new URL(request.url).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  const localHost = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1'
+  if (!localHost) return false
+  const ip = clientIpOf(request)
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
 }
 
 function flashFrom(url: URL): Flash {
@@ -75,7 +87,12 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       // Forms must come from this console (SameSite=Lax withholds cookies from cross-site POSTs; this covers the rest).
       if (request.method === 'POST') {
         const origin = request.headers.get('origin')
-        if (origin && new URL(origin).host !== url.host) return new Response('Cross-site request refused', { status: 403 })
+        if (origin) {
+          if (new URL(origin).host !== url.host) return new Response('Cross-site request refused', { status: 403 })
+        } else if (request.headers.get('sec-fetch-site') === 'cross-site') {
+          // Older browsers omit Origin on some form posts; Fetch Metadata marks it.
+          return new Response('Cross-site request refused', { status: 403 })
+        }
       }
 
       const ip = clientIpOf(request)
@@ -282,6 +299,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         form: await readForm(request),
         request,
         url,
+        limiter,
+        ip,
         projects,
         organizations,
         hub,

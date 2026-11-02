@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import type { Config } from '~/config'
+import { resolveInside } from '~/lib/paths'
 
 /** `<data>/sites[/<siteId>[/<deploymentId>]]`, next to the database file. */
 export function sitesDir(config: Config, siteId?: string, deploymentId?: string): string {
@@ -12,7 +13,14 @@ export function sitesDir(config: Config, siteId?: string, deploymentId?: string)
   // share deployments.
   const scope = config.instanceKey ? `${config.projectId}-${config.instanceKey}` : config.projectId
   const base = memory ? join(tmpdir(), 'bunwrite', scope, 'sites') : join(dirname(resolve(config.databasePath)), 'sites')
-  return join(...[base, siteId, deploymentId].filter((p): p is string => Boolean(p)))
+  let path = base
+  for (const part of [siteId, deploymentId]) {
+    if (!part) continue
+    const next = resolveInside(path, part)
+    if (!next) throw new Error(`Invalid site path component: ${part}`)
+    path = next
+  }
+  return path
 }
 
 /**

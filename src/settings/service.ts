@@ -12,6 +12,7 @@ import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
+import { parseScopedFunctionKey } from '~/lib/internal-key'
 import type { SqliteSynchronous } from '~/system/autotune'
 import { storedApiKeyScopes } from './scopes'
 
@@ -372,6 +373,27 @@ export interface ApiKeyIdentity {
 export async function resolveApiKey(db: SqlDatabase, config: Config, key: string, versions?: VersionMonitor): Promise<ApiKeyIdentity | null> {
   if (config.apiKeys.includes(key) || (config.internalKey && key === config.internalKey)) {
     return { id: null, scopes: null }
+  }
+  // Per-function keys carry their scopes in a signed payload, so a function
+  // cannot widen access by editing a variable or the request. Check the
+  // function still exists and its scopes have not changed since the key was
+  // minted: a deleted or narrowed function must not keep the old access.
+  const functionKey = parseScopedFunctionKey(config.secret, key)
+  if (functionKey) {
+    const fn = await db.driver.get<{ scopes: string; enabled: number | boolean }>('SELECT scopes, enabled FROM _functions WHERE id = ?', [
+      functionKey.functionId,
+    ])
+    if (!fn || !fn.enabled) return null
+    let current: string[] = []
+    try {
+      // SQLite stores JSON as text; Postgres jsonb comes back already parsed.
+      const parsed = typeof fn.scopes === 'string' ? (JSON.parse(fn.scopes) as unknown) : fn.scopes
+      if (Array.isArray(parsed)) current = [...new Set(parsed.map(String))].sort()
+    } catch {
+      return null
+    }
+    if (JSON.stringify(current) !== JSON.stringify([...functionKey.scopes].sort())) return null
+    return { id: null, scopes: functionKey.scopes }
   }
 
   const hash = sha256(key)

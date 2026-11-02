@@ -83,7 +83,10 @@ export class TransactionService {
 
   private async find(caller: Caller, id: string): Promise<TxRow> {
     const row = await this.db.driver.get<TxRow>('SELECT * FROM _transactions WHERE id = ?', [id])
-    if (!row || (!caller.privileged && row.user_id !== (caller.user?.id ?? null))) {
+    // A transaction opened with an API key has user_id = NULL. A guest also
+    // has no user, so comparing the two nulls would hand it to every visitor.
+    const owned = Boolean(caller.user) && row?.user_id === caller.user!.id
+    if (!row || (!caller.privileged && !owned)) {
       throw err('transaction_not_found', undefined, [id])
     }
     return row
@@ -158,12 +161,21 @@ export class TransactionService {
     const data = await this.prepare(caller, tx, collection, input)
     const stamp = now()
     await this.db.driver.transaction(async (db) => {
+      // Claim a slot atomically; a concurrent stage must not push the count
+      // past MAX_OPERATIONS after both read the same value.
+      const updated = await db.run('UPDATE _transactions SET operations = operations + 1, updated_at = ? WHERE seq = ? AND operations < ?', [
+        stamp,
+        tx.seq,
+        MAX_OPERATIONS,
+      ])
+      if (updated.changes === 0) {
+        throw err('transaction_limit_exceeded', `Transaction already has ${MAX_OPERATIONS} operations, adding 1 would exceed the maximum of ${MAX_OPERATIONS}`)
+      }
       await db.run(
         `INSERT INTO _transaction_logs (transaction_seq, database_id, collection_id, document_id, action, data, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [tx.seq, input.databaseId, input.collectionId, input.documentId ?? null, input.action, JSON.stringify(data), stamp],
       )
-      await db.run('UPDATE _transactions SET operations = operations + 1, updated_at = ? WHERE seq = ?', [stamp, tx.seq])
     })
   }
 
@@ -270,13 +282,27 @@ export class TransactionService {
     const tx = await this.find(caller, id)
 
     if (rollback) {
-      if (tx.status !== 'pending' && tx.status !== 'failed') throw err('transaction_not_ready')
+      // Claim the transition atomically so a concurrent commit cannot read the
+      // logs while this request deletes them.
+      const claimed = await this.db.driver.get<TxRow>(
+        "UPDATE _transactions SET status = 'rolledBack', updated_at = ? WHERE seq = ? AND status IN ('pending', 'failed') RETURNING *",
+        [now(), tx.seq],
+      )
+      if (!claimed) throw err('transaction_not_ready')
       await this.db.driver.run('DELETE FROM _transaction_logs WHERE transaction_seq = ?', [tx.seq])
-      return txModel(await this.setStatus(tx.seq, 'rolledBack'))
+      return txModel(claimed)
     }
 
     if (tx.status !== 'pending') throw err('transaction_not_ready')
     if (tx.expires_at < now()) throw err('transaction_expired')
+
+    // Two concurrent commit requests used to both observe `pending` and replay
+    // the same logs. Only the request that wins this comparison replays them.
+    const claimed = await this.db.driver.get<TxRow>(
+      "UPDATE _transactions SET status = 'committing', updated_at = ? WHERE seq = ? AND status = 'pending' RETURNING *",
+      [now(), tx.seq],
+    )
+    if (!claimed) throw err('transaction_not_ready')
 
     const logs = await this.logs(tx)
     try {
@@ -294,6 +320,13 @@ export class TransactionService {
   /** Remove transactions that expired or finished more than an hour ago. */
   async prune(): Promise<number> {
     const cutoff = addSeconds(-TTL_MAX)
+    // Postgres has no cascade on these tables; remove logs explicitly.
+    await this.db.driver.run(
+      `DELETE FROM _transaction_logs WHERE transaction_seq IN (
+         SELECT seq FROM _transactions WHERE expires_at < ? OR (status != ? AND updated_at < ?)
+       )`,
+      [cutoff, 'pending', cutoff],
+    )
     const result = await this.db.driver.run('DELETE FROM _transactions WHERE expires_at < ? OR (status != ? AND updated_at < ?)', [cutoff, 'pending', cutoff])
     return result.changes
   }

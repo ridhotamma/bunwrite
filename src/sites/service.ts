@@ -18,7 +18,8 @@ import { removeTree } from '~/functions/sandbox'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { hostOf, siteHost, sitesDomainOf, urlForHost } from '~/lib/hosts'
-import { uniqueId } from '~/lib/ids'
+import { isValidId, uniqueId } from '~/lib/ids'
+import { isSafeRelativePath, resolveInside } from '~/lib/paths'
 import type { ProxyService } from '~/proxy/service'
 import { parseRuntime, SERVER_BUN_LINE } from '~/runtimes/catalog'
 import { ensureRuntime, withRuntime } from '~/runtimes/install'
@@ -518,8 +519,10 @@ export class SiteService {
   /** The folder the live deployment serves from, or null when nothing is live. */
   root(site: SiteRow, deploymentId = site.deployment_id): string | null {
     if (!deploymentId) return null
-    const dir = join(sitesDir(this.config, site.id, deploymentId), site.output_directory)
-    return existsSync(dir) ? dir : null
+    // `outputDirectory` is a site setting; it must not walk out of the
+    // deployment (and an old malicious deployment ID must not either).
+    const dir = resolveInside(sitesDir(this.config, site.id), join(deploymentId, site.output_directory))
+    return dir && existsSync(dir) ? dir : null
   }
 
   /** The live SSR app, when the deployment has a start command. */
@@ -532,8 +535,8 @@ export class SiteService {
     if (!deployment || deployment.status !== 'ready') return null
     const command = deployment.start_command.trim()
     if (!command) return null
-    const cwd = join(sitesDir(this.config, site.id, deployment.id), site.output_directory)
-    if (!existsSync(cwd)) return null
+    const cwd = resolveInside(sitesDir(this.config, site.id), join(deployment.id, site.output_directory))
+    if (!cwd || !existsSync(cwd)) return null
     // The live app and a preview of the same build run with different values, so they are different apps.
     const context: DeployContext = deployment.id === site.deployment_id ? 'live' : 'preview'
     return { key: `${site.id}/${deployment.id}/${context}`, siteId: site.id, deploymentId: deployment.id, command, cwd, runtime: deployment.runtime, context }
@@ -574,7 +577,9 @@ export class SiteService {
   }
 
   private archivePath(siteId: string, id: string) {
-    return join(sitesDir(this.config, siteId), `${id}.upload`)
+    const path = resolveInside(sitesDir(this.config, siteId), `${id}.upload`)
+    if (!path) throw err('general_argument_invalid', 'Invalid deployment ID.')
+    return path
   }
 
   private async insert(
@@ -600,6 +605,10 @@ export class SiteService {
   async upload(site: SiteRow, input: SiteUpload): Promise<SiteDeploymentRow> {
     const bytes = new Uint8Array(await input.code.arrayBuffer())
     const { start, total } = chunkRange(input.contentRange, bytes.length)
+    // Like a function deployment, a client-chosen ID becomes part of a path.
+    if (input.uploadId && !isValidId(input.uploadId)) {
+      throw err('general_argument_invalid', 'Invalid deployment ID.')
+    }
     let row: SiteDeploymentRow
     if (input.uploadId && total > bytes.length && start > 0) {
       row = await this.deployment(site.id, input.uploadId)
@@ -747,8 +756,8 @@ export class SiteService {
     if (!built && (site.build_command || site.install_command)) {
       logs.push('Static sites are served as uploaded; this server runs no install or build command. Build first and upload the output.')
     }
-    const out = join(dir, site.output_directory)
-    if (!existsSync(out) || !statSync(out).isDirectory()) {
+    const out = resolveInside(dir, site.output_directory)
+    if (!out || !existsSync(out) || !statSync(out).isDirectory()) {
       throw new Error(
         `Output directory "${site.output_directory}" is not in the upload. Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`,
       )
@@ -797,6 +806,7 @@ export class SiteService {
       sandbox.adopt(work, siteHome(this.config, site.id), uid)
       await this.runSiteCommands(site, runtime, work, logs, set, { sandbox, uid }, context)
       const out = site.output_directory || '.'
+      if (out !== '.' && !isSafeRelativePath(out)) throw new Error(`Invalid output directory: ${out}`)
       const pack = Bun.spawn(sandbox.wrap(uid, work, ['tar', '-cf', '-', out]), { stdout: 'pipe', stderr: 'pipe' })
       const unpack = Bun.spawn(['tar', '-xf', '-', '-C', dir], { stdin: pack.stdout, stdout: 'ignore', stderr: 'pipe' })
       const [packErr, unpackErr, packCode, unpackCode] = await Promise.all([
@@ -849,8 +859,8 @@ export class SiteService {
       if (env) await this.pruneBuild(site, command, dir, logs, isolated ? { sandbox, uid } : null, env)
     }
 
-    const cwd = join(dir, site.output_directory)
-    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
+    const cwd = resolveInside(dir, site.output_directory)
+    if (!cwd || !existsSync(cwd) || !statSync(cwd).isDirectory()) {
       const top = isolated ? '' : ` Files at the top: ${readdirSync(dir).slice(0, 20).join(', ') || '(none)'}`
       throw new Error(`The app folder "${site.output_directory}" is not in the deployment.${top}`)
     }

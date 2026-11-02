@@ -111,14 +111,18 @@ export function apiKeyScopes(input: unknown): string[] | null {
   return scopes
 }
 
-/** Parse a stored JSON scope list; anything malformed falls back to full access. */
+/**
+ * Parse a stored JSON scope list. Only an absent value means "legacy/full
+ * access"; a corrupt or non-array value fails closed (no scopes) instead of
+ * silently upgrading a restricted key to full access.
+ */
 export function storedApiKeyScopes(value: unknown): string[] | null {
   if (value === null || value === undefined || value === '') return null
   try {
     const parsed = JSON.parse(String(value)) as unknown
-    if (!Array.isArray(parsed)) return null
+    if (!Array.isArray(parsed)) return []
     return parsed.map(String).filter((scope) => KNOWN.has(scope))
   } catch {
-    return null
+    return []
   }
 }

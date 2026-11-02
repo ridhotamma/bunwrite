@@ -200,6 +200,15 @@ export class AuthService {
     return this.updateUser(id, { password: hash, hash: 'argon2', hash_options: JSON.stringify(appwriteHashOptions()), password_update: now() })
   }
 
+  /**
+   * Drop live sessions after a password change or recovery. `except` keeps the
+   * caller's own session when they are changing their password while signed in.
+   */
+  async revokeSessions(userId: string, except?: string | null): Promise<void> {
+    if (except) await this.db.driver.run('DELETE FROM _sessions WHERE user_id = ? AND id != ?', [userId, except])
+    else await this.db.driver.run('DELETE FROM _sessions WHERE user_id = ?', [userId])
+  }
+
   async deleteUser(id: string): Promise<void> {
     await this.user(id)
     await this.db.driver.transaction(async (tx) => {

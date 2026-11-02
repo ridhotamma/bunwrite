@@ -16,6 +16,7 @@
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -24,7 +25,6 @@ import {
   renameSync,
   rmdirSync,
   rmSync,
-  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
@@ -36,7 +36,8 @@ import type { SqlDatabase } from '~/db/driver'
 import { BUILD_TIMEOUT_MS, runShell } from '~/deploy/command'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
-import { uniqueId } from '~/lib/ids'
+import { isValidId, uniqueId } from '~/lib/ids'
+import { isSafeRelativePath, resolveInside } from '~/lib/paths'
 import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { SOURCE_COLUMNS, sourceModel, sourceValues, type DeploymentSource, type SourceColumns } from '~/vcs/source'
 import { isPython } from './templates'
@@ -84,7 +85,14 @@ export function deploymentDir(config: Config, functionId?: string, deploymentId?
   // See sitesDir: in-memory test servers need a key so they do not share folders.
   const scope = config.instanceKey ? `${config.projectId}-${config.instanceKey}` : config.projectId
   const base = memory ? join(tmpdir(), 'bunwrite', scope, 'deployments') : join(dirname(resolve(config.databasePath)), 'deployments')
-  return join(...[base, functionId, deploymentId].filter((p): p is string => Boolean(p)))
+  let path = base
+  for (const part of [functionId, deploymentId]) {
+    if (!part) continue
+    const next = resolveInside(path, part)
+    if (!next) throw new Error(`Invalid deployment path component: ${part}`)
+    path = next
+  }
+  return path
 }
 
 /** A function's own writable home (HOME, TMPDIR, package caches) when functions are isolated. */
@@ -144,6 +152,86 @@ export function writeChunk(path: string, bytes: Uint8Array, start: number): void
 
 export const chunksFor = (total: number) => Math.max(1, Math.ceil(total / CHUNK_SIZE))
 
+/** Read at most `limit` bytes of a child's output, so a broken archive cannot exhaust memory. */
+async function readLimited(stream: ReadableStream<Uint8Array> | undefined, limit: number): Promise<string> {
+  if (!stream) return ''
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    total += value.length
+    if (total > limit) {
+      await reader.cancel().catch(() => undefined)
+      throw new Error('The archive listing is too large.')
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * Refuse tar members that are not plain files or directories. Symlinks (and
+ * hardlinks, devices and FIFOs) are how an archive escapes its extraction
+ * folder when a later member is written through them.
+ */
+async function assertSafeTar(archive: string): Promise<void> {
+  // Names come from `tar -t` (one member per line), because verbose output
+  // aligns owner/group columns and is easy to misparse. Types come from the
+  // verbose listing, where the first character is always the member type.
+  const names = Bun.spawn(['tar', '-tzf', archive], { stdout: 'pipe', stderr: 'pipe', env: { ...TAR_ENV, LC_ALL: 'C' } })
+  const [list, listError, listCode] = await Promise.all([
+    readLimited(names.stdout, 8 * 1024 * 1024),
+    readLimited(names.stderr, 64 * 1024),
+    names.exited,
+  ])
+  if (listCode !== 0) throw new Error(`Could not read the upload archive. ${listError.trim() || `tar exited with ${listCode}`}`)
+  for (const raw of list.split('\n')) {
+    if (!raw) continue
+    const name = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+    // `tar -C folder .` writes a harmless root entry named "./".
+    if (name === '.' || name === './') continue
+    const clean = name.replace(/^\.\//, '')
+    if (!isSafeRelativePath(clean) || clean.split('/').includes('..')) {
+      throw new Error(`Unsafe path in the upload: ${name}`)
+    }
+  }
+
+  const types = Bun.spawn(['tar', '-tvzf', archive, '--numeric-owner'], { stdout: 'pipe', stderr: 'pipe', env: { ...TAR_ENV, LC_ALL: 'C' } })
+  const [listing, typeError, typeCode] = await Promise.all([
+    readLimited(types.stdout, 8 * 1024 * 1024),
+    readLimited(types.stderr, 64 * 1024),
+    types.exited,
+  ])
+  if (typeCode !== 0) throw new Error(`Could not read the upload archive. ${typeError.trim() || `tar exited with ${typeCode}`}`)
+  for (const line of listing.split('\n')) {
+    if (!line) continue
+    const type = line[0]
+    if (type !== '-' && type !== 'd') throw new Error('The upload contains a symbolic link, hard link or special file, which is not allowed.')
+  }
+}
+
+/** Reject links and special files that would let a later request escape a deployment folder. */
+export function assertNoLinks(root: string): void {
+  const seen = new Set<string>()
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      const stats = lstatSync(path)
+      if (stats.isSymbolicLink()) throw new Error(`The upload contains a symbolic link: ${path.slice(root.length + 1)}`)
+      if (stats.isDirectory()) {
+        const real = resolve(path)
+        if (seen.has(real)) continue
+        seen.add(real)
+        walk(path)
+      } else if (!stats.isFile()) throw new Error('The upload contains a special file, which is not allowed.')
+    }
+  }
+  walk(root)
+}
+
 /** Unpack a .tar.gz or .zip upload into `dir`. */
 export async function unpackArchive(archive: string, dir: string): Promise<void> {
   const head = new Uint8Array(4)
@@ -153,13 +241,25 @@ export async function unpackArchive(archive: string, dir: string): Promise<void>
   } finally {
     closeSync(fd)
   }
-  if (isZip(head)) {
-    extractZip(readFileSync(archive), dir)
-    return
+  try {
+    if (isZip(head)) {
+      extractZip(readFileSync(archive), dir)
+    } else {
+      await assertSafeTar(archive)
+      const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir, '--no-same-owner', '--no-same-permissions'], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: TAR_ENV,
+      })
+      const [untarErr, untarCode] = await Promise.all([readLimited(untar.stderr, 64 * 1024), untar.exited])
+      if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
+    }
+    assertNoLinks(dir)
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    throw error
   }
-  const untar = Bun.spawn(['tar', '-xzf', archive, '-C', dir], { stdout: 'pipe', stderr: 'pipe' })
-  const [untarErr, untarCode] = await Promise.all([new Response(untar.stderr).text(), untar.exited])
-  if (untarCode !== 0) throw new Error(`Could not unpack the upload. Use a .tar.gz or .zip file. ${untarErr.trim() || `tar exited with ${untarCode}`}`)
 }
 
 /** Pack a folder as .tar.gz in memory. `exclude` entries are tar patterns relative to the folder. */
@@ -181,7 +281,10 @@ export function liftSingleFolder(dir: string, marker: string): string | null {
   const top = readdirSync(dir).filter((name) => !name.startsWith('.') && name !== '__MACOSX')
   if (top.length !== 1) return null
   const inner = join(dir, top[0]!)
-  if (!statSync(inner).isDirectory() || !existsSync(join(inner, marker))) return null
+  // lstat: a symlinked folder must never be followed, or its target's files
+  // would be moved into the deployment.
+  const stats = lstatSync(inner)
+  if (stats.isSymbolicLink() || !stats.isDirectory() || !existsSync(join(inner, marker))) return null
   const temp = `${dir}.lift`
   rmSync(temp, { recursive: true, force: true })
   renameSync(inner, temp)
@@ -253,6 +356,14 @@ export class Deployments {
   async upload(f: FunctionRow, input: UploadInput): Promise<DeploymentRow> {
     const bytes = new Uint8Array(await input.code.arrayBuffer())
     const { start, total } = chunkRange(input.contentRange, bytes.length)
+    // The SDK may choose the deployment ID, but it is still a filename below:
+    // `../../projects/x` must never become a path.
+    if (input.uploadId && !isValidId(input.uploadId)) {
+      throw err('general_argument_invalid', 'Invalid deployment ID.')
+    }
+    if (input.entrypoint && !isSafeRelativePath(input.entrypoint)) {
+      throw err('general_argument_invalid', `Invalid entrypoint: ${input.entrypoint}`)
+    }
 
     let row: DeploymentRow
     if (input.uploadId && total > bytes.length && start > 0) {
@@ -283,12 +394,16 @@ export class Deployments {
   }
 
   private archivePath(functionId: string, id: string) {
-    return join(deploymentDir(this.config, functionId), `${id}.upload`)
+    const path = resolveInside(deploymentDir(this.config, functionId), `${id}.upload`)
+    if (!path) throw err('general_argument_invalid', 'Invalid deployment ID.')
+    return path
   }
 
   /** The deployment's code as uploaded, before its build command ran (`appwrite pull functions`). */
   private sourcePath(functionId: string, id: string) {
-    return join(deploymentDir(this.config, functionId), `${id}.source.tar.gz`)
+    const path = resolveInside(deploymentDir(this.config, functionId), `${id}.source.tar.gz`)
+    if (!path) throw err('general_argument_invalid', 'Invalid deployment ID.')
+    return path
   }
 
   /**
@@ -328,6 +443,7 @@ export class Deployments {
    */
   async deployFiles(f: FunctionRow, input: FilesInput): Promise<DeploymentRow> {
     if (!input.files.length) throw err('general_argument_invalid', 'Add at least one file.')
+    if (input.entrypoint && !isSafeRelativePath(input.entrypoint)) throw err('general_argument_invalid', `Invalid entrypoint: ${input.entrypoint}`)
     const id = uniqueId()
     const dir = deploymentDir(this.config, f.id, id)
     const root = resolve(dir)

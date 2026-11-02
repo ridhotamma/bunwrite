@@ -124,7 +124,10 @@ export class SchemaAdmin {
       }
       await tx.run('DELETE FROM _collections WHERE database_id = ?', [id])
       await tx.run('DELETE FROM _databases WHERE id = ?', [id])
-      await tx.run('DELETE FROM _meta WHERE key LIKE ?', [`collection:${id}/%`])
+      // `%` and `_` are valid ID characters; escape them so deleting `foo_bar`
+      // cannot also delete `fooXbar`'s version keys.
+      const escaped = id.replace(/[\\%_]/g, (character) => `\\${character}`)
+      await tx.run("DELETE FROM _meta WHERE key LIKE ? ESCAPE '\\'", [`collection:${escaped}/%`])
     })
   }
 
@@ -244,6 +247,9 @@ export class SchemaAdmin {
       const databaseId = String(entry.databaseId ?? '')
       const id = String(entry.$id ?? entry.id ?? '')
       if (!databaseId || !id) throw err('general_argument_invalid', 'Each collection needs a databaseId and $id.')
+      if (!isValidId(databaseId) || !isValidId(id)) {
+        throw err('general_argument_invalid', `Collection ${id}: IDs use at most 36 chars of a-z, A-Z, 0-9, period, hyphen and underscore.`)
+      }
       if (!Array.isArray(entry.columns ?? entry.attributes ?? [])) throw err('general_argument_invalid', `Collection ${id}: columns must be an array.`)
       entry.databaseId = databaseId
       entry.$id = id

@@ -11,6 +11,7 @@ import type { BucketConfig, FunctionConfig, ProjectConfig } from './config'
 import { q, type Db } from '~/db/connection'
 import { collectionVersionTriggers } from '~/db/cluster-schema'
 import { now } from '~/lib/datetime'
+import { isValidId } from '~/lib/ids'
 import {
   ftsTableName,
   normalizeAttribute,
@@ -75,6 +76,7 @@ export function readConfig(config: unknown): { databases: { id: string; name: st
   const databases = databaseList.map((raw) => {
     const d = raw as Record<string, unknown>
     const id = typeof d.$id === 'string' ? d.$id : ''
+    if (!isValidId(id)) throw new Error(`Database ID "${id}" is not valid.`)
     return {
       id,
       name: typeof d.name === 'string' ? d.name : id,
@@ -85,8 +87,11 @@ export function readConfig(config: unknown): { databases: { id: string; name: st
   const collections = collectionList.map((raw): ConfigCollection => {
     const c = raw as Record<string, unknown>
     const id = typeof c.$id === 'string' ? c.$id : ''
+    const databaseId = typeof c.databaseId === 'string' ? c.databaseId : ''
+    // `databaseId/id` is a registry key; a slash in either part would collide.
+    if (!isValidId(id) || !isValidId(databaseId)) throw new Error(`Collection "${databaseId}/${id}" has an invalid ID.`)
     return {
-      databaseId: typeof c.databaseId === 'string' ? c.databaseId : '',
+      databaseId,
       id,
       name: typeof c.name === 'string' ? c.name : id,
       enabled: c.enabled === undefined || c.enabled === null ? true : Boolean(c.enabled),
@@ -289,8 +294,9 @@ function createIndexes(db: Db, table: string, indexes: Index[], attributes: Attr
       continue
     }
     const columns = index.attributes.map((key, i) => {
-      const column = SYSTEM_INDEX_COLUMNS[key] ?? key
-      if (!SYSTEM_INDEX_COLUMNS[key] && !attributeMap.has(key)) {
+      const system = Object.hasOwn(SYSTEM_INDEX_COLUMNS, key) ? SYSTEM_INDEX_COLUMNS[key] : undefined
+      const column = system ?? key
+      if (!system && !attributeMap.has(key)) {
         throw new Error(`Index ${index.key} on ${table} uses unknown attribute ${key}`)
       }
       const order = (index.orders[i] ?? 'ASC').toUpperCase() === 'DESC' ? ' DESC' : ''
@@ -308,9 +314,10 @@ function createIndexes(db: Db, table: string, indexes: Index[], attributes: Attr
  */
 function createFulltext(db: Db, table: string, index: Index): void {
   const fts = ftsTableName(table, index.key)
-  const cols = index.attributes.map(q).join(', ')
-  const newCols = index.attributes.map((c) => `new.${q(c)}`).join(', ')
-  const oldCols = index.attributes.map((c) => `old.${q(c)}`).join(', ')
+  const columns = index.attributes.map((key) => (Object.hasOwn(SYSTEM_INDEX_COLUMNS, key) ? SYSTEM_INDEX_COLUMNS[key]! : key))
+  const cols = columns.map(q).join(', ')
+  const newCols = columns.map((c) => `new.${q(c)}`).join(', ')
+  const oldCols = columns.map((c) => `old.${q(c)}`).join(', ')
   db.sqlite.run(
     `CREATE VIRTUAL TABLE ${q(fts)} USING fts5(${cols}, content=${q(table)}, content_rowid='_seq', tokenize='porter unicode61 remove_diacritics 2')`,
   )

@@ -149,7 +149,12 @@ export async function pushCollectionPostgres(driver: SqlExecutor, collection: Co
       await driver.exec(`ALTER TABLE ${q(table)} ALTER COLUMN ${q(attribute.key)} TYPE ${type} USING ${q(attribute.key)}::${type}`)
       log(`~ collection ${collection.id}: ${attribute.key} -> ${type}`)
     } catch (error) {
-      log(`! collection ${collection.id}: could not retype ${attribute.key}: ${error instanceof Error ? error.message : String(error)}`)
+      // Do not update `_collections.attributes`: the API and registry would
+      // then advertise a type the physical column does not have.
+      throw new Error(
+        `collection ${collection.id}: could not retype ${attribute.key}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      )
     }
   }
   for (const attribute of removed) {

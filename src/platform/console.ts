@@ -323,6 +323,18 @@ export function createConsoleApi(projects: ProjectResolver) {
     /** A console admin acting on a project: their session cookie plus `X-Bunwrite-Mode: admin` (or X-Appwrite-Mode). */
     async adminOf(request: Request): Promise<Admin | null> {
       if (apiHeader(request, 'mode') !== 'admin') return null
+      // A long-lived admin cookie must not be usable by a hosted site on a
+      // sibling subdomain. Only a same-host browser origin gets admin mode.
+      const origin = request.headers.get('origin')
+      if (origin) {
+        try {
+          if (new URL(origin).host !== new URL(request.url).host) return null
+        } catch {
+          return null
+        }
+      } else if (request.headers.get('sec-fetch-site') === 'cross-site') {
+        return null
+      }
       const secret = sessionSecret(request)
       return secret ? ((await auth.session(secret))?.admin ?? null) : null
     },

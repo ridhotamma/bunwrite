@@ -6,18 +6,26 @@
  * caller decides whether to commit or roll back.
  */
 import { keyCaller } from '~/auth/caller'
-import type { DocumentBackend, Guard } from '~/documents/store'
+import type { DocEvent, DocumentBackend, Guard } from '~/documents/store'
 import type { Registry } from '~/schema/registry'
 import { documentsOf, numberOf, queriesOf, recordOf, stringOf } from './payload'
 import type { LogRow } from './service'
 
 /** Apply one staged operation inside the current transaction. */
-export async function applyLog(registry: Registry, store: DocumentBackend, log: LogRow, guard?: Guard): Promise<void> {
+export async function applyLog(
+  registry: Registry,
+  store: DocumentBackend,
+  log: LogRow,
+  guard?: Guard,
+  events?: DocEvent[],
+): Promise<void> {
   const caller = keyCaller()
   const collection = registry.collection(log.database_id, log.collection_id, true)
   const data = recordOf(JSON.parse(log.data ?? '{}'))
   const id = log.document_id!
-  const options = { guard }
+  // A preview must not append to the shared event buffer: a concurrent real
+  // write would then be truncated away by the caller.
+  const options = events ? { guard, events } : { guard }
   switch (log.action) {
     case 'create':
       await store.createDocument(caller, collection, { id, data: recordOf(data.data), permissions: data.permissions }, options)
@@ -72,14 +80,15 @@ export async function commitLogs(registry: Registry, store: DocumentBackend, log
  * A staged write that cannot apply yet is simply not visible.
  */
 export async function replayStaged<T>(registry: Registry, store: DocumentBackend, logs: LogRow[], read: () => Promise<T> | T): Promise<T> {
-  const events = store.events.length
-  // A staged write is not real: never fill (or read) the list cache here.
+  // A staged write is not real: never fill (or read) the list cache here, and
+  // collect its events privately instead of touching the process-wide buffer.
+  const events: DocEvent[] = []
   store.beginStagedRead()
   try {
     return await store.preview(async () => {
       for (const log of logs) {
         try {
-          await applyLog(registry, store, log)
+          await applyLog(registry, store, log, undefined, events)
         } catch {
           // Not visible yet.
         }
@@ -88,7 +97,5 @@ export async function replayStaged<T>(registry: Registry, store: DocumentBackend
     })
   } finally {
     store.endStagedRead()
-    // Replayed writes were never real; nobody may hear about them.
-    store.events.length = events
   }
 }

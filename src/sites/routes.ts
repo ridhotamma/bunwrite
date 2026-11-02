@@ -13,6 +13,7 @@ import { apiHeader } from '~/lib/compat'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { resolveId, uniqueId } from '~/lib/ids'
+import { isSafeRelativePath } from '~/lib/paths'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { variableModel } from '~/variables/model'
@@ -98,6 +99,12 @@ export async function siteModel(ctx: AppContext, s: SiteRow) {
   }
 }
 
+/** The build output is both a served path and a shell argument; keep it inside the deployment. */
+function validOutputDirectory(value: string): string {
+  if (value && !isSafeRelativePath(value)) throw err('general_argument_invalid', `Invalid \`outputDirectory\` param: ${value}`)
+  return value
+}
+
 async function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): Promise<SiteSettings> {
   const apiFunctionId = str(p.apiFunctionId) ?? base.apiFunctionId
   if (apiFunctionId && apiFunctionId !== base.apiFunctionId) await ctx.functions.fn(apiFunctionId)
@@ -106,7 +113,7 @@ async function settingsFrom(ctx: AppContext, p: Params, base: SiteSettings): Pro
     name: str(p.name) ?? base.name,
     enabled: bool(p.enabled, base.enabled),
     framework: str(p.framework) || base.framework,
-    outputDirectory: str(p.outputDirectory) ?? base.outputDirectory,
+    outputDirectory: validOutputDirectory(str(p.outputDirectory) ?? base.outputDirectory),
     fallbackFile: str(p.fallbackFile) ?? base.fallbackFile,
     domains,
     apiFunctionId,
@@ -271,7 +278,7 @@ export function siteRoutes(router: Router<AppContext>): void {
       headers: {
         'content-type': 'application/gzip',
         'content-length': String(archive.size),
-        'content-disposition': `attachment; filename="${path.deploymentId}.tar.gz"`,
+        'content-disposition': `attachment; filename="${encodeURIComponent(path.deploymentId!)}.tar.gz"`,
       },
     })
   })

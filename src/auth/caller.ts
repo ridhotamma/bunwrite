@@ -192,6 +192,9 @@ async function cachedSession(db: SqlDatabase, secret: string, authVersion?: numb
 export async function sessionCaller(db: SqlDatabase, secret: string, authVersion?: number): Promise<Caller | null> {
   const found = await cachedSession(db, secret, authVersion)
   if (!found) return null
+  // Blocked users keep their session rows; every authentication path must
+  // still refuse them (including realtime re-authentication).
+  if (!found.user.status) return null
   return { kind: 'user', privileged: false, user: found.user, sessionId: found.sessionId, roles: new Set(found.roles), scopes: null }
 }
 

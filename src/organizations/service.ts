@@ -9,6 +9,8 @@ import { randomSecret, sha256, uniqueId } from '~/lib/ids'
 
 export type OrganizationRole = 'owner' | 'developer'
 export type OrganizationMemberStatus = 'invited' | 'active'
+/** An emailed invite link is a bearer credential; don't keep it valid forever. */
+const INVITE_TTL_DAYS = 30
 
 export interface OrganizationInfo {
   id: string
@@ -243,7 +245,11 @@ export class OrganizationService {
   }
 
   async inviteByToken(token: string): Promise<OrganizationMember | null> {
-    const row = await this.db.driver.get<MemberRow>("SELECT * FROM _organization_members WHERE invite_hash = ? AND status = 'invited'", [sha256(token)])
+    const cutoff = new Date(Date.now() - INVITE_TTL_DAYS * 86_400_000).toISOString()
+    const row = await this.db.driver.get<MemberRow>(
+      "SELECT * FROM _organization_members WHERE invite_hash = ? AND status = 'invited' AND invited_at > ?",
+      [sha256(token), cutoff],
+    )
     return row ? memberOf(row) : null
   }
 

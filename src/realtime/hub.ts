@@ -36,6 +36,7 @@ export interface SocketData {
 export type Socket = ServerWebSocket<SocketData>
 
 /** Keep one abusive client from turning the subscribe message into a memory sink. */
+const MAX_SOCKETS = 10_000
 const MAX_SUBSCRIPTIONS = 1000
 const MAX_CHANNELS_PER_SUBSCRIPTION = 1000
 const MAX_CHANNELS_PER_SOCKET = 2000
@@ -122,6 +123,11 @@ export class RealtimeHub {
   }
 
   open(ws: Socket): void {
+    // One guest must not be able to exhaust descriptors or hub memory.
+    if (this.sockets.size >= MAX_SOCKETS) {
+      ws.close(1013, 'The realtime server is at capacity.')
+      return
+    }
     this.sockets.add(ws)
     // A socket may arrive with subscriptions already populated (or from a test
     // harness), so index them before the first event.

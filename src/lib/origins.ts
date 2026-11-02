@@ -1,3 +1,4 @@
+import { clientIpRecorded, forwardedHeadersTrusted } from './client-ip'
 import { err } from './errors'
 
 /** Does `origin` (or any URL) match the allowed list? `*.example.com` matches subdomains. */
@@ -24,8 +25,11 @@ export function originAllowed(origin: string, allowed: string[]): boolean {
 
 /** Appwrite only redirects to hosts on the project's platform list. */
 export function assertRedirect(url: unknown, allowed: string[], param: string): string {
-  if (typeof url !== 'string' || !/^https?:\/\//.test(url) || !originAllowed(url, allowed)) {
-    throw err('general_argument_invalid', `Invalid \`${param}\` param: URL host must be one of: ${allowed.join(', ')}`)
+  // `*` is fine for CORS reads but never for a redirect that carries a
+  // session token or recovery secret: it would be an open redirect.
+  const concrete = allowed.filter((pattern) => pattern !== '*')
+  if (typeof url !== 'string' || !/^https?:\/\//.test(url) || !originAllowed(url, concrete)) {
+    throw err('general_argument_invalid', `Invalid \`${param}\` param: URL host must be one of: ${concrete.join(', ') || '(configure at least one allowed origin)'}`)
   }
   return url
 }
@@ -50,14 +54,25 @@ export function requestEndpoint(request: Request, fallback: string): string {
   const configured = fallback.replace(/\/$/, '')
   const first = (name: string) => request.headers.get(name)?.split(',')[0]?.trim() ?? ''
   const url = new URL(request.url)
-  const forwardedHost = first('x-forwarded-host')
+  // Forwarding headers are client-controlled unless the direct peer is a
+  // configured proxy. Honouring them on a direct connection would let an
+  // attacker make the console mint a signed file URL for their own host.
+  const tracked = clientIpRecorded(request)
+  const proxiedTrusted = forwardedHeadersTrusted(request)
+  // A direct client controls its Host header. Generated links (signed file
+  // URLs, password recovery) use the configured public endpoint unless the
+  // request arrived through a trusted proxy that reports another host. An
+  // untracked request is an embedded/test call, which keeps the old behavior.
+  if (tracked && !proxiedTrusted) return configured
+  const trusted = !tracked || proxiedTrusted
+  const forwardedHost = trusted ? first('x-forwarded-host') : ''
   const host = forwardedHost || request.headers.get('host') || url.host
-  const proxied = Boolean(forwardedHost || first('x-forwarded-for') || request.headers.get('cf-connecting-ip'))
+  const proxied = trusted && Boolean(forwardedHost || first('x-forwarded-for') || request.headers.get('cf-connecting-ip'))
   // A proxy that forwards to 127.0.0.1 without passing the Host header on.
   if (!HOST.test(host) || (proxied && LOOPBACK_HOST.test(host))) return configured
 
-  const visitor = request.headers.get('cf-visitor') ?? ''
-  const proto = (first('x-forwarded-proto') || (visitor.includes('"https"') ? 'https' : '') || url.protocol.slice(0, -1)).toLowerCase()
+  const visitor = trusted ? (request.headers.get('cf-visitor') ?? '') : ''
+  const proto = ((trusted ? first('x-forwarded-proto') : '') || (visitor.includes('"https"') ? 'https' : '') || url.protocol.slice(0, -1)).toLowerCase()
   if (proto !== 'http' && proto !== 'https') return configured
 
   // Same host as PUBLIC_ENDPOINT: keep its exact form (path, scheme).

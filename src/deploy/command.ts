@@ -13,6 +13,26 @@ export const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 
 /** How long a build gets to exit after SIGTERM before its group is killed. */
 const KILL_GRACE_MS = 5_000
+/** Build output kept in memory; the rest is drained and discarded. */
+const MAX_OUTPUT_BYTES = 1_000_000
+
+/** Drain a child stream without letting it grow memory without bound. */
+export async function readCapped(stream: ReadableStream<Uint8Array> | undefined, limit = MAX_OUTPUT_BYTES): Promise<string> {
+  if (!stream) return ''
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let kept = ''
+  let truncated = false
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    if (kept.length < limit) kept += decoder.decode(value, { stream: true })
+    else truncated = true
+  }
+  kept += decoder.decode()
+  return truncated ? `${kept}\n… output truncated at ${limit.toLocaleString('en-US')} bytes …` : kept
+}
 
 export interface ShellResult {
   code: number
@@ -100,7 +120,7 @@ export async function runShell(options: ShellOptions): Promise<ShellResult> {
   }, timeoutMs)
   timer.unref?.()
   try {
-    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited])
+    const [out, err, code] = await Promise.all([readCapped(proc.stdout), readCapped(proc.stderr), proc.exited])
     return { code, output: [out.trim(), err.trim()].filter(Boolean).join('\n'), timedOut }
   } finally {
     clearTimeout(timer)

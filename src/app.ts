@@ -13,7 +13,7 @@ import { addVary, compressResponse } from './lib/compress'
 import { isStreaming } from './lib/streaming'
 import { BunwriteError, err } from './lib/errors'
 import { errorResponse, json, readParams } from './lib/http'
-import { parseTrustedProxies, rememberClientIp } from './lib/client-ip'
+import { forwardedHeadersTrusted, parseTrustedProxies, rememberClientIp } from './lib/client-ip'
 import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
@@ -61,6 +61,15 @@ interface RequestMeta {
 }
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
+
+const refererOrigin = (value: string | null): string | null => {
+  if (!value) return null
+  try {
+    return new URL(value).origin
+  } catch {
+    return null
+  }
+}
 
 // htmx sends its own headers on every request; a browser preflight rejects them
 // unless they are listed here, so cross-origin htmx clients need these too.
@@ -146,10 +155,46 @@ export function createApp(source: Services | ProjectResolver) {
   vectorRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
-  const cors = async (request: Request, allowedOrigins: string[]): Promise<Record<string, string>> => {
+  /**
+   * Is this browser origin allowed to act for `projectId`? A hosted site or
+   * function counts only for its own project: otherwise any tenant could make
+   * credentialed requests against every other tenant's API.
+   */
+  const trustedOrigin = async (origin: string, projectId: string, allowedOrigins: string[], request?: Request): Promise<boolean> => {
+    // A same-host browser request is not cross-site, whatever the allowlist.
+    if (request) {
+      try {
+        if (new URL(origin).host === new URL(request.url).host) return true
+      } catch {
+        // fall through to the configured origins
+      }
+    }
+    // `*` is never accepted for credentialed or state-changing requests.
+    if (originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*'))) return true
+    const hosted = await siteOfOrigin(origin)
+    return hosted?.project.info.id === projectId
+  }
+
+  const cors = async (request: Request, projectId: string, allowedOrigins: string[]): Promise<Record<string, string>> => {
     const origin = request.headers.get('origin')
-    // Sites hosted here may call the API from the browser without being listed.
-    if (!origin || !(originAllowed(origin, allowedOrigins) || (await siteOfOrigin(origin)))) return {}
+    if (!origin) return {}
+    // Same-project sites may call the API from the browser without being listed.
+    const siteOrigin = await siteOfOrigin(origin)
+    const ownSite = siteOrigin?.project.info.id === projectId
+    if (!ownSite && !originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*'))) return {}
+    // A literal `*` cannot be combined with credentials. Reflect it without
+    // them so the operator's opt-in still permits reads, but not cookies.
+    const wildcardOnly = !ownSite && !originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*')) && allowedOrigins.includes('*')
+    if (wildcardOnly) {
+      return {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE',
+        'access-control-allow-headers': ALLOW_HEADERS,
+        'access-control-expose-headers': EXPOSE_HEADERS,
+        'access-control-max-age': '86400',
+        vary: 'Origin',
+      }
+    }
     return {
       'access-control-allow-origin': origin,
       'access-control-allow-credentials': 'true',
@@ -162,8 +207,8 @@ export function createApp(source: Services | ProjectResolver) {
   }
 
   /** Apply CORS to a response; keep a handler's Vary (for example Accept-Encoding) and add Origin beside it. */
-  const corsResponse = async (request: Request, response: Response, allowedOrigins: string[]): Promise<Response> => {
-    for (const [k, v] of Object.entries(await cors(request, allowedOrigins))) {
+  const corsResponse = async (request: Request, response: Response, projectId: string, allowedOrigins: string[]): Promise<Response> => {
+    for (const [k, v] of Object.entries(await cors(request, projectId, allowedOrigins))) {
       if (k === 'vary') addVary(response.headers, v)
       else response.headers.set(k, v)
     }
@@ -182,14 +227,16 @@ export function createApp(source: Services | ProjectResolver) {
   /** A site's own domain: `<siteId>.<SITES_DOMAIN>` or one of its custom domains. */
   async function siteFor(request: Request) {
     const host = request.headers.get('host')
-    const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
+    // Only a trusted proxy controls X-Forwarded-Host; otherwise a client
+    // could make a request resolve to a host it was not sent to.
+    const forwarded = forwardedHeadersTrusted(request) ? request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() : undefined
     return (host ? await projects.findSite(host) : null) ?? (forwarded ? await projects.findSite(forwarded) : null)
   }
 
   /** A function's own domain: `<functionId>.<FUNCTIONS_DOMAIN>` or one of its custom domains. */
   async function functionFor(request: Request) {
     const host = request.headers.get('host')
-    const forwarded = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
+    const forwarded = forwardedHeadersTrusted(request) ? request.headers.get('x-forwarded-host')?.split(',')[0]?.trim() : undefined
     return (host ? await projects.findFunctionByHost(host) : null) ?? (forwarded ? await projects.findFunctionByHost(forwarded) : null)
   }
 
@@ -293,6 +340,11 @@ export function createApp(source: Services | ProjectResolver) {
     if (services !== control) await syncServices(services)
 
     if (pathname === '/realtime') {
+      // A browser WebSocket carries cookies and is not covered by CORS.
+      const origin = request.headers.get('origin')
+      if (origin && !(await trustedOrigin(origin, runtime.info.id, services.config.allowedOrigins, request))) {
+        throw err('general_unauthorized_scope', 'This origin may not open a realtime connection.')
+      }
       const caller = await callerOf(services, request, meta)
       if (!caller.privileged) services.access.assertProtocol('websocket')
       if (server?.upgrade(request, { data: { caller, subscriptions: new Map(), projectId: runtime.info.id } })) return undefined
@@ -317,6 +369,23 @@ export function createApp(source: Services | ProjectResolver) {
 
     const params = match.raw ? {} : await readParams(request, url)
     const caller = await callerOf(services, request, meta)
+    // A browser origin on a state-changing request must be one this project
+    // trusts. Sessions are SameSite=None for cross-origin apps, so a hostile
+    // page could otherwise submit a form with the victim's cookie (or perform
+    // login CSRF on the unauthenticated session routes).
+    // Apple posts its OAuth callback from appleid.apple.com; the signed state
+    // is the CSRF protection for that route, not a project Origin.
+    const oauthCallback = pathname.startsWith('/account/sessions/oauth2/callback/')
+    if (!oauthCallback && request.method !== 'GET' && request.method !== 'HEAD' && request.method !== 'OPTIONS') {
+      const origin = request.headers.get('origin') ?? refererOrigin(request.headers.get('referer'))
+      if (origin) {
+        if (!(await trustedOrigin(origin, runtime.info.id, services.config.allowedOrigins, request))) {
+          throw err('general_unauthorized_scope', 'Cross-site request refused.')
+        }
+      } else if (request.headers.get('sec-fetch-site') === 'cross-site') {
+        throw err('general_unauthorized_scope', 'Cross-site request refused.')
+      }
+    }
     // Like Appwrite, switched-off services and protocols stop clients but not API keys or console admins.
     // A function's own HTTP endpoint stands in for its public domain, so it is not part of the Functions API.
     if (!caller.privileged && !/^\/functions\/[^/]+\/http(?:\/|$)/.test(pathname)) {
@@ -339,7 +408,7 @@ export function createApp(source: Services | ProjectResolver) {
       assertCompatHeaders(request)
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
-      return await corsResponse(request, errorResponse(error), control.config.allowedOrigins)
+      return await corsResponse(request, errorResponse(error), control.config.projectId, control.config.allowedOrigins)
     }
     const hosted = await siteFor(request)
     if (hosted) {
@@ -428,7 +497,7 @@ export function createApp(source: Services | ProjectResolver) {
       response = errorResponse(error)
       if (!(error instanceof BunwriteError)) console.error(error)
     }
-    return await corsResponse(request, response, runtime.services.config.allowedOrigins)
+    return await corsResponse(request, response, runtime.info.id, runtime.services.config.allowedOrigins)
   }
 
   return {
@@ -466,6 +535,12 @@ export function createApp(source: Services | ProjectResolver) {
         status = response.status
         responseBytes = Number(response.headers.get('content-length') ?? 0) || 0
         response.headers.set('x-request-id', id)
+        response.headers.set('x-content-type-options', 'nosniff')
+        // Only claim HSTS when this instance is actually served over HTTPS;
+        // setting it on a plain-HTTP development server would lock the host.
+        if (control.config.publicEndpoint.startsWith('https')) {
+          response.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains')
+        }
         if (observation) response.headers.set('x-trace-id', observation.traceId)
         // HEAD runs the GET handler so headers and cache validation match, then drops the body.
         return request.method === 'HEAD'

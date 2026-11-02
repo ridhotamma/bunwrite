@@ -30,8 +30,18 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtClaim
     return null
   }
   try {
+    const parsedHeader = JSON.parse(Buffer.from(header, 'base64url').toString()) as { alg?: unknown; typ?: unknown }
+    if (parsedHeader.alg !== 'HS256' || (parsedHeader.typ !== undefined && parsedHeader.typ !== 'JWT')) return null
     const claims = JSON.parse(Buffer.from(payload, 'base64url').toString()) as JwtClaims
-    if (typeof claims.exp !== 'number' || claims.exp < Date.now() / 1000) return null
+    if (
+      typeof claims.userId !== 'string' ||
+      !claims.userId ||
+      typeof claims.sessionId !== 'string' ||
+      typeof claims.exp !== 'number' ||
+      claims.exp < Date.now() / 1000
+    ) {
+      return null
+    }
     return claims
   } catch {
     return null

@@ -68,6 +68,12 @@ export function securityPages(router: ConsoleRouter): void {
   router.post(`${SECURITY}/mfa`, async ({ ctx }) => {
     const admin = await ctx.auth.find(ctx.admin.email)
     if (!admin) return ctx.go('/console/login')
+    // Re-authentication is a password oracle; limit it like the login form.
+    try {
+      await ctx.limiter.hit(`console-password:${admin.seq}:${ctx.ip}`, 10, 900)
+    } catch {
+      return ctx.go(SECURITY, { tone: 'critical', text: 'Too many attempts. Try again in 15 minutes.' })
+    }
     if (!(await ctx.auth.verifyPassword(admin.seq, value(ctx.form, 'password')))) {
       return ctx.go(SECURITY, { tone: 'critical', text: 'That password is not correct.' })
     }

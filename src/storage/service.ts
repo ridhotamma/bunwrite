@@ -24,6 +24,9 @@ import { s3Call, s3Client, s3Key } from './s3'
 import { loadSharp, type SharpModule } from './sharp'
 import { previewKey, previewOptions, renderPreview } from './transform'
 
+/** Distinct transformation variants kept per file; query parameters are attacker-controlled. */
+const MAX_PREVIEW_VARIANTS = 64
+
 /** Cache headers for a file or preview: `private` so only the visitor's browser keeps it, never a shared proxy. */
 function cacheHeaders(maxAge: number, etag: string): Record<string, string> {
   return { 'cache-control': maxAge > 0 ? `private, max-age=${maxAge}` : 'private, no-cache', etag }
@@ -576,6 +579,7 @@ export class StorageService {
     const unchanged = notModified(request, caching)
     if (unchanged) return unchanged
     if (!existsSync(cached)) {
+      this.trimPreviewVariants(dirname(cached))
       let sharp: SharpModule
       try {
         sharp = await loadSharp(this.config)
@@ -623,6 +627,23 @@ export class StorageService {
   }
 
   private lastPreviewPrune = 0
+
+  /** Keep one file's transform cache bounded when callers vary the query. */
+  private trimPreviewVariants(dir: string): void {
+    try {
+      const files = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && !entry.name.endsWith('.tmp'))
+        .map((entry) => {
+          const path = join(dir, entry.name)
+          return { path, mtime: statSync(path).mtimeMs }
+        })
+        .sort((a, b) => a.mtime - b.mtime)
+      const excess = files.length - MAX_PREVIEW_VARIANTS + 1
+      for (let i = 0; i < excess; i++) rmSync(files[i]!.path, { force: true })
+    } catch {
+      // Missing directory or a concurrent prune: rendering still works.
+    }
+  }
 
   /** Delete previews older than the retention setting. Runs at most once an hour unless forced. */
   prunePreviews(force = false): number {

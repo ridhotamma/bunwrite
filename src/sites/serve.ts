@@ -11,7 +11,7 @@
  * - With an API function set, `/api` and `/api/*` run that function.
  * - `adapter: 'ssr'` sites run an app instead (see ssr.ts).
  */
-import { statSync } from 'node:fs'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
 
 import { resolveCaller } from '~/auth/caller'
@@ -28,9 +28,16 @@ const HASHED = /[.-][a-zA-Z0-9_-]{8,}\.(?:js|mjs|css|woff2?|ttf|otf|png|jpe?g|gi
 
 const page = (status: number, title: string, text: string) => sitePage(status, title, text)
 
-const isFile = (path: string) => {
+/**
+ * A regular file whose real path is still inside the deployment. lstat is
+ * deliberate: a symlink planted by an archive must not become a file read.
+ */
+const isFileWithin = (root: string, path: string): boolean => {
   try {
-    return statSync(path).isFile()
+    if (!lstatSync(path).isFile()) return false
+    const realRoot = realpathSync(root)
+    const real = realpathSync(path)
+    return real.startsWith(realRoot + sep)
   } catch {
     return false
   }
@@ -54,14 +61,14 @@ export function findFile(root: string, pathname: string): { path: string; folder
   if (target !== base && !target.startsWith(base + sep)) return null
   if (decoded.endsWith('/')) {
     const index = join(target, 'index.html')
-    return isFile(index) ? { path: index, folder: false } : null
+    return isFileWithin(base, index) ? { path: index, folder: false } : null
   }
-  for (const path of [target, `${target}.html`]) if (isFile(path)) return { path, folder: false }
+  for (const path of [target, `${target}.html`]) if (isFileWithin(base, path)) return { path, folder: false }
   const index = join(target, 'index.html')
-  return isFile(index) ? { path: index, folder: true } : null
+  return isFileWithin(base, index) ? { path: index, folder: true } : null
 }
 
-function fileResponse(request: Request, path: string, deploymentId: string, status = 200): Response {
+function fileResponse(request: Request, root: string, path: string, deploymentId: string, status = 200): Response {
   const stats = statSync(path)
   const etag = `"${deploymentId}-${stats.size.toString(36)}-${Math.floor(stats.mtimeMs).toString(36)}"`
   const type = Bun.file(path).type
@@ -80,7 +87,7 @@ function fileResponse(request: Request, path: string, deploymentId: string, stat
     ['br', '.br'],
     ['gzip', '.gz'],
   ] as const) {
-    if (pickEncoding(accept, [encoding]) && isFile(path + ext)) {
+    if (pickEncoding(accept, [encoding]) && isFileWithin(root, path + ext)) {
       const file = Bun.file(path + ext)
       return new Response(file, { status, headers: { ...headers, 'content-encoding': encoding, 'content-length': String(file.size) } })
     }
@@ -144,14 +151,14 @@ export async function serveSite(services: Services, site: SiteRow, request: Requ
 
   const found = findFile(root, url.pathname)
   if (found?.folder) return new Response(null, { status: 308, headers: { location: `${url.pathname}/${url.search}` } })
-  if (found) return fileResponse(request, found.path, shown)
+  if (found) return fileResponse(request, root, found.path, shown)
   // Single-page apps route in the browser: unknown paths get the app shell,
   // but a missing asset (it has an extension) stays a 404.
   if (site.fallback_file && wantsPage(request, url.pathname) && !extname(url.pathname)) {
     const fallback = findFile(root, `/${site.fallback_file}`)
-    if (fallback && !fallback.folder) return fileResponse(request, fallback.path, shown)
+    if (fallback && !fallback.folder) return fileResponse(request, root, fallback.path, shown)
   }
   const notFound = findFile(root, '/404.html')
-  if (notFound) return fileResponse(request, notFound.path, shown, 404)
+  if (notFound) return fileResponse(request, root, notFound.path, shown, 404)
   return page(404, 'Page not found', 'There is nothing at this address.')
 }

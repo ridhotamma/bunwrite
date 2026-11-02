@@ -309,13 +309,16 @@ export function postgresDocumentIndexStatements(table: string, indexes: Index[],
   const attributeMap = new Map(attributes.map((attribute) => [attribute.key, attribute]))
   for (const index of indexes) {
     if (index.type === 'fulltext') {
-      const expression = index.attributes.map((key) => `coalesce(${q(key)}, '')`).join(` || ' ' || `)
+      const expression = index.attributes
+        .map((key) => `coalesce(${q(Object.hasOwn(SYSTEM_INDEX_COLUMNS, key) ? SYSTEM_INDEX_COLUMNS[key]! : key)}, '')`)
+        .join(` || ' ' || `)
       statements.push(`CREATE INDEX IF NOT EXISTS ${q(ftsTableName(table, index.key))} ON ${q(table)} USING GIN (to_tsvector('english', ${expression}))`)
       continue
     }
     const columns = index.attributes.map((key, i) => {
-      const column = SYSTEM_INDEX_COLUMNS[key] ?? key
-      if (!SYSTEM_INDEX_COLUMNS[key] && !attributeMap.has(key)) {
+      const system = Object.hasOwn(SYSTEM_INDEX_COLUMNS, key) ? SYSTEM_INDEX_COLUMNS[key] : undefined
+      const column = system ?? key
+      if (!system && !attributeMap.has(key)) {
         throw new Error(`Index ${index.key} on ${table} uses unknown attribute ${key}`)
       }
       const order = (index.orders[i] ?? 'ASC').toUpperCase() === 'DESC' ? ' DESC' : ''

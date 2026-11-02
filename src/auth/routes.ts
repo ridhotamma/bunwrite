@@ -141,7 +141,10 @@ export function accountRoutes(router: Router<AppContext>): void {
       throw err('user_invalid_credentials')
     }
     ctx.access.assertPasswordPersonalData(params.password, user)
-    return json(accountModel(await ctx.auth.setPassword(user.id, params.password)))
+    const saved = await ctx.auth.setPassword(user.id, params.password)
+    // A stolen session or JWT must not survive the owner changing the password.
+    await ctx.auth.revokeSessions(user.id, ctx.caller.sessionId)
+    return json(accountModel(saved))
   })
 
   router.patch('/account/email', async ({ ctx, params }) => {
@@ -305,6 +308,8 @@ export function accountRoutes(router: Router<AppContext>): void {
     const token = await ctx.auth.verifyToken(user.id, params.secret, ['recovery'])
     ctx.access.assertPasswordPersonalData(params.password, user)
     await ctx.auth.setPassword(user.id, params.password)
+    // Recovery means the old password may be compromised: end every session.
+    await ctx.auth.revokeSessions(user.id)
     await ctx.auth.updateUser(user.id, { email_verification: 1 })
     await ctx.auth.deleteToken(token.id)
     return json(tokenModel(token))

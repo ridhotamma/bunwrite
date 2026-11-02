@@ -5,6 +5,7 @@ import { normalizeDate } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { bool, json, list, noContent, num, str, type Params } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
+import { isSafeRelativePath } from '~/lib/paths'
 import { page } from '~/lib/paging'
 import type { Router } from '~/lib/router'
 import { deploymentModel, Deployments } from './deployments'
@@ -24,6 +25,12 @@ async function model(ctx: AppContext, f: FunctionRow) {
   return functionModel(f, await deployments.latest(f.id), Boolean((await ctx.functions.codeDir(f)).dir), ctx.functions.domains(f), ctx.functions.url(f))
 }
 
+/** An entrypoint is a path inside the deployment, never an absolute or escaping path. */
+function validEntrypoint(value: string): string {
+  if (value && !isSafeRelativePath(value)) throw err('general_argument_invalid', `Invalid entrypoint: ${value}`)
+  return value
+}
+
 /** Settings from a create or update call; anything left out keeps `base`. */
 function settingsFrom(p: Params, base: FunctionSettings): FunctionSettings {
   return {
@@ -35,7 +42,7 @@ function settingsFrom(p: Params, base: FunctionSettings): FunctionSettings {
     timeout: num(p.timeout, base.timeout)!,
     enabled: bool(p.enabled, base.enabled),
     logging: bool(p.logging, base.logging),
-    entrypoint: str(p.entrypoint) || base.entrypoint,
+    entrypoint: validEntrypoint(str(p.entrypoint) || base.entrypoint),
     commands: str(p.commands) ?? base.commands,
     scopes: strings(p.scopes, base.scopes),
     buildSpecification: str(p.buildSpecification) || base.buildSpecification,
@@ -198,7 +205,7 @@ export function functionRoutes(router: Router<AppContext>): void {
       headers: {
         'content-type': 'application/gzip',
         'content-length': String(archive.size),
-        'content-disposition': `attachment; filename="${path.deploymentId}.tar.gz"`,
+        'content-disposition': `attachment; filename="${encodeURIComponent(path.deploymentId!)}.tar.gz"`,
       },
     })
   })

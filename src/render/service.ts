@@ -98,6 +98,22 @@ const JOB_ATTEMPTS = 3
 /** How often each project looks for due jobs (retries, jobs left by a restart). */
 const JOB_POLL_MS = 5_000
 const BLOCKED_URLS = ['http://*', 'https://*', 'ws://*', 'wss://*', 'file://*', 'ftp://*']
+/**
+ * Blocked even when RENDER_ALLOW_REMOTE is on: local files and the well-known
+ * cloud metadata endpoints. Enabling remote loading is an explicit operator
+ * opt-in; it also permits private-network hosts (needed by self-hosted asset
+ * servers), so run rendering with a sandbox and no server credentials.
+ */
+const ALWAYS_BLOCKED_URLS = [
+  'file://*',
+  'ftp://*',
+  'http://169.254.169.254/*',
+  'http://metadata.google.internal/*',
+  'http://*.internal/*',
+  'http://*.local/*',
+  'https://169.254.169.254/*',
+  'https://metadata.google.internal/*',
+]
 
 const CHROME_ARGS = [
   '--disable-gpu',
@@ -528,10 +544,8 @@ export class RenderService {
     const view = new Bun.WebView({ width: setup.width, height: setup.height, backend: { type: 'chrome', url: false, path: chrome, argv: chromeArgs() } })
     try {
       await view.navigate('about:blank')
-      if (!this.config.render.allowRemote) {
-        await view.cdp('Network.enable')
-        await view.cdp('Network.setBlockedURLs', { urls: BLOCKED_URLS })
-      }
+      await view.cdp('Network.enable')
+      await view.cdp('Network.setBlockedURLs', { urls: this.config.render.allowRemote ? ALWAYS_BLOCKED_URLS : BLOCKED_URLS })
       await view.cdp('Emulation.setDeviceMetricsOverride', { width: setup.width, height: setup.height, deviceScaleFactor: setup.scale, mobile: false })
       // Same result on every host: light colour scheme, white page unless transparent was asked for.
       await view.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })

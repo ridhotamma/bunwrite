@@ -20,7 +20,7 @@ describe('API key scopes', () => {
     expect(() => apiKeyScopes(['documents.read', 'nope'])).toThrow()
     expect(storedApiKeyScopes('["documents.read"]')).toEqual(['documents.read'])
     expect(storedApiKeyScopes(null)).toBeNull()
-    expect(storedApiKeyScopes('not json')).toBeNull()
+    expect(storedApiKeyScopes('not json')).toEqual([])
   })
 
   test('a scoped key only reaches the API groups it was given', async () => {

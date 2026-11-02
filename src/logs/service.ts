@@ -68,6 +68,8 @@ const STATUS_RANGES: Record<string, [number, number]> = {
 
 const BATCH_SIZE = 100
 const FLUSH_MS = 1000
+/** Hard cap while the database is slower than request traffic; oldest lines go first. */
+const MAX_QUEUED = 10_000
 const COLUMNS = 'seq, id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at'
 
 export class RequestLogService {
@@ -87,6 +89,9 @@ export class RequestLogService {
 
   /** Queue one line. Synchronous: the write happens on the next flush. */
   record(entry: RequestLog): void {
+    // Drop a chunk, not one entry per request: shifting a full 10k array on
+    // every request would make the overload worse.
+    if (this.queue.length >= MAX_QUEUED) this.queue.splice(0, Math.max(1, Math.floor(MAX_QUEUED / 10)))
     this.queue.push({ ...entry, createdAt: now() })
     if (this.queue.length >= BATCH_SIZE) void this.flush()
     else if (!this.timer) {

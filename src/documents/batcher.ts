@@ -11,6 +11,7 @@
  * own savepoint, permissions and events; one failure never rolls back the
  * other requests in the batch.
  */
+import { err } from '~/lib/errors'
 import type { BatchOutcome, DocEvent, DocumentBackend } from './store'
 
 /** A committed write: its result plus the realtime/webhook events it produced. */
@@ -28,6 +29,8 @@ interface Pending {
 
 /** Bounds both latency and memory when requests arrive faster than the writer. */
 const MAX_BATCH = 256
+/** A hard ceiling on queued writes; beyond it the caller gets backpressure. */
+const MAX_QUEUED = 10_000
 
 export class WriteBatcher {
   private queue: Pending[] = []
@@ -71,6 +74,10 @@ export class WriteBatcher {
         this.writes++
         return { value: outcome.value as T, events }
       })
+    }
+
+    if (this.queue.length >= MAX_QUEUED) {
+      return Promise.reject(err('general_rate_limit_exceeded', 'The write queue is full. Try again shortly.'))
     }
 
     return new Promise<WriteResult<T>>((resolve, reject) => {

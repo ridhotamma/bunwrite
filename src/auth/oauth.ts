@@ -17,6 +17,8 @@ import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
 import type { SqlDatabase } from '~/db/driver'
 import type { Params } from '~/lib/http'
 import { now } from '~/lib/datetime'
+import { timingSafeEqual } from 'node:crypto'
+
 import { BunwriteError, err } from '~/lib/errors'
 import { uniqueId } from '~/lib/ids'
 import { assertRedirect, withQuery } from '~/lib/origins'
@@ -38,6 +40,12 @@ interface State {
 async function sign(secret: string, data: string): Promise<string> {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   return Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))).toString('base64url')
+}
+
+const sameSecret = (a: string, b: string): boolean => {
+  const left = Buffer.from(a)
+  const right = Buffer.from(b)
+  return left.length === right.length && timingSafeEqual(left, right)
 }
 
 /** Apple posts `user` as JSON on the first authorization. */
@@ -106,7 +114,7 @@ export class OAuthService {
   private async readState(raw: string | null): Promise<State | null> {
     if (!raw) return null
     const [payload, signature] = raw.split('.')
-    if (!payload || !signature || (await sign(this.config.secret, payload)) !== signature) return null
+    if (!payload || !signature || !sameSecret(await sign(this.config.secret, payload), signature)) return null
     try {
       const state = JSON.parse(Buffer.from(payload, 'base64url').toString()) as State
       return state.exp > Date.now() / 1000 ? state : null

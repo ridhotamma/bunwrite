@@ -279,7 +279,7 @@ describe('instance bootstrap', () => {
     }
   })
 
-  test('drops the plaintext key after the first admin exists', async () => {
+  test('revokes the bootstrap key after the first admin exists', async () => {
     const db = openDb(':memory:')
     try {
       const first = bootstrapInstance(db, {})
@@ -289,21 +289,21 @@ describe('instance bootstrap', () => {
       const after = bootstrapInstance(db, {})
       expect(after.apiKey).toBeUndefined()
       expect(instanceRecord(db)).not.toHaveProperty('apiKey')
-      // The generated key still works: only the plaintext copy is removed.
-      expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256(first.apiKey!))).toBeTruthy()
+      // A copy of the key in an old log or terminal must stop working.
+      expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256(first.apiKey!))).toBeNull()
     } finally {
       db.sqlite.close()
     }
   })
 
-  test('clearInstanceApiKey removes the displayed copy but keeps the key row', () => {
+  test('clearInstanceApiKey removes and revokes the displayed key', () => {
     const db = openDb(':memory:')
     try {
       const result = bootstrapInstance(db, {})
       clearInstanceApiKey(db)
       expect(instanceRecord(db)).not.toHaveProperty('apiKey')
       expect(instanceRecord(db)).toMatchObject({ projectName: result.projectName })
-      expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256(result.apiKey!))).toBeTruthy()
+      expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256(result.apiKey!))).toBeNull()
     } finally {
       db.sqlite.close()
     }

@@ -74,6 +74,8 @@ export function vcsPages(router: ConsoleRouter): void {
   })
 
   router.post('/console/vcs/installations/:id/delete', async ({ ctx, path }) => {
+    // Installations are server-wide; revoking one disconnects every project.
+    if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can remove a GitHub installation.')
     const installation = await ctx.hub.installations.get(path.id!)
     await ctx.hub.removeInstallation(installation.id)
     return ctx.go('/console/settings/git', { tone: 'success', text: `${installation.organization || 'Installation'} removed from this server` })

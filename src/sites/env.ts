@@ -7,7 +7,7 @@
 import { buildToolsDir } from '~/functions/runtime'
 import type { Config } from '~/config'
 import { siteHome } from './paths'
-import { PRIVATE_ENV } from '~/lib/private-env'
+import { isPrivateEnv } from '~/lib/private-env'
 
 /**
  * The base environment for building and running a site. `HOME` and `TMPDIR`
@@ -20,7 +20,7 @@ export function siteBaseEnv(
   variables: Record<string, string> = {},
 ): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !PRIVATE_ENV.includes(key)) env[key] = value
+  for (const [key, value] of Object.entries(process.env)) if (value !== undefined && !isPrivateEnv(key)) env[key] = value
   // Project variables first, then the site's own (the caller has already
   // merged them). A variable saved in the console wins over the host env.
   Object.assign(env, variables)

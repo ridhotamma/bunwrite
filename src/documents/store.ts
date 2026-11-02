@@ -24,7 +24,7 @@ import type { Collection } from '~/schema/types'
 import { assertBulkPermission, assertCreatePermission, assertRevision, assertUnchangedSince, canAccess } from './access'
 import { decodeRow, type Doc, type SqlValue } from './codec'
 import { DocumentListCache, MAX_CACHEABLE_LIMIT } from './list-cache'
-import { compileCached, parseQueries, type Compiled, type Query } from './query'
+import { compileCached, MAX_QUERY_LIMIT, parseQueries, type Compiled, type Query } from './query'
 import { countAllRows, countRows, readFilter, rowById, rowBySeq, selectRows, type Row } from './sql-read'
 import { deleteRow, insertRow, updateRow, type SqlWriteContext } from './sql-write'
 
@@ -258,8 +258,8 @@ export class DocumentStore implements DocumentBackend {
 
   // ---------------------------------------------------------------- reads
 
-  private row(collection: Collection, id: string): Promise<Row | null> {
-    return rowById(this.exec(), collection, id)
+  private row(collection: Collection, id: string, forUpdate = false): Promise<Row | null> {
+    return rowById(this.exec(), collection, id, forUpdate && this.db.dialect === 'postgres')
   }
 
   private rowBySeq(collection: Collection, seq: number): Promise<Row> {
@@ -329,7 +329,9 @@ export class DocumentStore implements DocumentBackend {
   }
 
   private async requireRow(caller: Caller, collection: Collection, id: string, type: PermissionType): Promise<Row> {
-    const row = await this.row(collection, id)
+    // Called only from the `...InTx` write paths, so Postgres can hold a row
+    // lock through the permission check and the write.
+    const row = await this.row(collection, id, true)
     if (!row) throw err('document_not_found', undefined, [id])
     if (!this.can(caller, collection, row, type)) {
       // Hide documents the caller cannot even read.
@@ -451,7 +453,9 @@ export class DocumentStore implements DocumentBackend {
     options: WriteOptions = {},
   ): Promise<{ doc: Doc; created: boolean }> {
     assertCallerScope(caller, 'documents.write')
-    const row = await this.row(collection, id)
+    // Lock an existing row for the same reason as an update; a missing row
+    // falls through to the insert and its unique constraint.
+    const row = await this.row(collection, id, true)
     if (row) {
       if (!this.can(caller, collection, row, 'update')) throw err('user_unauthorized')
       return { doc: decodeRow(collection, await updateRow(this.writeContext, caller, collection, row, data ?? {}, permissions, options)), created: false }
@@ -533,6 +537,9 @@ export class DocumentStore implements DocumentBackend {
     if (typeof by !== 'number' || !Number.isFinite(by) || by <= 0) {
       throw err('general_argument_invalid', 'Invalid `value` param: Value must be a number greater than 0.')
     }
+    if (a.type === 'integer' && !Number.isInteger(by)) {
+      throw err('general_argument_invalid', 'Invalid `value` param: An integer attribute can only be incremented by a whole number.')
+    }
     const row = await this.requireRow(caller, collection, id, 'update')
     if (options.guard) assertUnchangedSince(collection, row._id, row._updatedAt, options.guard.touched, options.guard.before)
     assertRevision(row._id, Number(row._rev ?? 1), options.revision)
@@ -562,9 +569,15 @@ export class DocumentStore implements DocumentBackend {
   private async bulkRows(caller: Caller, collection: Collection, rawQueries: unknown[]): Promise<Row[]> {
     const queries: Query[] = parseQueries(rawQueries)
     const compiled = compileCached(collection, rawQueries, this.db.dialect)
-    // Compiled queries are shared; copy before replacing the limit.
-    const effective = queries.some((query) => query.method === 'limit') ? compiled : { ...compiled, limit: Number.MAX_SAFE_INTEGER }
-    return selectRows(this.exec(), (c, id) => this.row(c, id), caller, collection, effective)
+    // Compiled queries are shared; copy before replacing the limit. A bulk
+    // request without its own limit gets one extra row so an oversized match
+    // fails loudly instead of loading the entire collection into memory.
+    const effective = queries.some((query) => query.method === 'limit') ? compiled : { ...compiled, limit: MAX_QUERY_LIMIT + 1 }
+    const rows = await selectRows(this.exec(), (c, id) => this.row(c, id), caller, collection, effective)
+    if (rows.length > MAX_QUERY_LIMIT) {
+      throw err('general_argument_invalid', `Bulk writes match more than ${MAX_QUERY_LIMIT.toLocaleString('en-US')} documents. Add a \`limit\` query.`)
+    }
+    return rows
   }
 
   async updateDocuments(

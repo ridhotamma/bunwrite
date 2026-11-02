@@ -79,7 +79,6 @@ ENV HOST=0.0.0.0 \
     STORAGE_PATH=/app/data/storage \
     BACKUPS_PATH=/app/data/backups \
     CHROME_PATH=/usr/bin/chromium \
-    CHROME_NO_SANDBOX=true \
     WORKERS=auto
 VOLUME ["/app/data"]
 EXPOSE 8080

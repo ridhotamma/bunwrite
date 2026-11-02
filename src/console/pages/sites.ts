@@ -443,7 +443,7 @@ export function sitePages(router: ConsoleRouter): void {
   router.get(`${SITES}/:id/deployments/:did/download`, async ({ ctx, path }) => {
     const archive = await ctx.services.sites.download(path.id!, path.did!)
     return new Response(archive, {
-      headers: { 'content-type': 'application/gzip', 'content-disposition': `attachment; filename="${path.id}-${path.did}.tar.gz"` },
+      headers: { 'content-type': 'application/gzip', 'content-disposition': `attachment; filename="${encodeURIComponent(path.id!)}-${encodeURIComponent(path.did!)}.tar.gz"` },
     })
   })
 

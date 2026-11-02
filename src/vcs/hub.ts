@@ -30,6 +30,30 @@ import { approvedPulls, RepositoryLinks, type RepositoryRow, type ResourceType }
 import { firstLine, NO_PROVIDER, providerOf, type DeploymentSource, type ProviderSettings } from './source'
 import { readState, signState } from './state'
 
+/** GitHub webhook payloads are small; anything larger is not a real event. */
+const MAX_WEBHOOK_BYTES = 10 * 1024 * 1024
+
+async function readLimitedBody(request: Request, max: number): Promise<Uint8Array | null> {
+  const declared = Number(request.headers.get('content-length') ?? 0)
+  if (declared > max) return null
+  if (!request.body) return new Uint8Array()
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    total += value.length
+    if (total > max) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(value)
+  }
+  return new Uint8Array(Buffer.concat(chunks))
+}
+
 /** A site or function that a repository deploys. */
 export interface HubTarget {
   project: ProjectRuntime
@@ -610,7 +634,10 @@ export class VcsHub {
   async webhook(request: Request): Promise<Response> {
     const app = this.apps.get()
     if (!app) return Response.json({ message: 'No GitHub App is set up on this server.', code: 404 }, { status: 404 })
-    const body = new Uint8Array(await request.arrayBuffer())
+    // Read with a cap: this route is unauthenticated until the signature is
+    // checked, so `arrayBuffer()` on an arbitrary body is a memory primitive.
+    const body = await readLimitedBody(request, MAX_WEBHOOK_BYTES)
+    if (!body) return Response.json({ message: 'The webhook body is too large.', code: 413 }, { status: 413 })
     if (!verifyWebhookSignature(app.webhookSecret, body, request.headers.get('x-hub-signature-256'))) {
       return Response.json({ message: 'The webhook signature does not match.', code: 401 }, { status: 401 })
     }

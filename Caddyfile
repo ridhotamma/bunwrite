@@ -18,6 +18,13 @@
 
 {$DOMAIN:localhost} {
 	encode zstd gzip
+	# Edge-level headers. HSTS is safe because Caddy always serves HTTPS here.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
 
 	# Compose's service name by default; docker-compose.host.yml sets 127.0.0.1:8080.
 	# Set UPSTREAM to a range (for example bunwrite:8080-8083) when WORKER_PORTS=1,
@@ -56,6 +63,11 @@ https:// {
 		on_demand
 	}
 	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
 	reverse_proxy {$UPSTREAM:bunwrite:8080} {
 		lb_policy least_conn
 		health_uri /v1/health

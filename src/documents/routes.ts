@@ -98,11 +98,13 @@ export function documentRoutes(router: Router<AppContext>): void {
       return json(result)
     }
     const version = await ctx.store.collectionVersion(collection)
+    // The project ID is part of the tag: the same URL can target different
+    // projects via X-Appwrite-Project, and a shared cache must not mix them.
     const etag = etagFor(
-      `${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${includeTotal ? 1 : 0}\u0000${JSON.stringify(queries)}`,
+      `${ctx.config.projectId}\u0000${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${includeTotal ? 1 : 0}\u0000${JSON.stringify(queries)}`,
     )
-    const headers = { 'cache-control': cacheControl(ctx, collection), etag }
-    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'] })
+    const headers = { 'cache-control': cacheControl(ctx, collection), etag, vary: 'X-Bunwrite-Project, X-Appwrite-Project' }
+    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'], vary: headers.vary })
     return json(await ctx.store.listDocuments(ctx.caller, collection, queries, includeTotal, version), 200, headers)
   })
 
@@ -116,10 +118,10 @@ export function documentRoutes(router: Router<AppContext>): void {
     }
     const version = await ctx.store.collectionVersion(collection)
     const etag = etagFor(
-      `${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${path.documentId}\u0000${JSON.stringify(queries)}`,
+      `${ctx.config.projectId}\u0000${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${path.documentId}\u0000${JSON.stringify(queries)}`,
     )
-    const headers = { 'cache-control': cacheControl(ctx, collection), etag }
-    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'] })
+    const headers = { 'cache-control': cacheControl(ctx, collection), etag, vary: 'X-Bunwrite-Project, X-Appwrite-Project' }
+    if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'], vary: headers.vary })
     return json(await ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries), 200, headers)
   })
 

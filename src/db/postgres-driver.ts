@@ -10,6 +10,7 @@
  * a different session.
  */
 import { SQL } from 'bun'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 import { postgresDialect } from './dialect'
 import {
@@ -68,6 +69,9 @@ export class PostgresDriver implements SqlDriver {
   readonly client: SQL
   private readonly onQuery?: (sql: string, durationMs: number) => void
   private readonly schema: string
+  /** The transaction belonging to the current async call chain, if any. */
+  private readonly context = new AsyncLocalStorage<SqlTransaction>()
+  private savepointSeq = 0
   private closed = false
 
   constructor(options: PostgresDriverOptions) {
@@ -79,8 +83,11 @@ export class PostgresDriver implements SqlDriver {
       idleTimeout: options.idleTimeoutSeconds ?? 30,
       connectionTimeout: options.connectionTimeoutSeconds ?? 30,
       // Every pooled connection needs the search path; a one-off `SET` would
-      // only apply to whichever connection served that statement.
-      connection: { search_path: this.schema === 'public' ? 'public' : `${this.schema}, public` },
+      // only apply to whichever connection served that statement. Only this
+      // project's schema is on the path: falling back to `public` would let a
+      // missing table resolve to the control project's table. The identifier
+      // is quoted, so a project ID cannot inject another schema.
+      connection: { search_path: `"${this.schema.replace(/"/g, '""')}"` },
       ...(options.tls !== undefined ? { tls: options.tls as never } : {}),
     })
   }
@@ -160,25 +167,36 @@ export class PostgresDriver implements SqlDriver {
     return error
   }
 
+  private executorFor(): SqlTransaction {
+    return this.context.getStore() ?? this.executor(this.client)
+  }
+
   all<T = Record<string, unknown>>(sql: string, params?: Bindings): Promise<T[]> {
-    return this.executor(this.client).all<T>(sql, params)
+    return this.executorFor().all<T>(sql, params)
   }
 
   get<T = Record<string, unknown>>(sql: string, params?: Bindings): Promise<T | null> {
-    return this.executor(this.client).get<T>(sql, params)
+    return this.executorFor().get<T>(sql, params)
   }
 
   run(sql: string, params?: Bindings): Promise<ExecuteResult> {
-    return this.executor(this.client).run(sql, params)
+    return this.executorFor().run(sql, params)
   }
 
   exec(sql: string): Promise<void> {
-    return this.executor(this.client).exec(sql)
+    return this.executorFor().exec(sql)
   }
 
   async transaction<T>(fn: (tx: SqlTransaction) => Promise<T>): Promise<T> {
+    const active = this.context.getStore()
+    // A nested call must join the same connection. `client.begin` would take
+    // another pooled connection and start an independent transaction.
+    if (active) return active.savepoint(`bunwrite_sp_${++this.savepointSeq}`, fn)
     try {
-      return (await this.client.begin(async (client) => fn(this.executor(client)))) as T
+      return (await this.client.begin(async (client) => {
+        const tx = this.executor(client)
+        return this.context.run(tx, () => fn(tx))
+      })) as T
     } catch (error) {
       throw error instanceof DatabaseConnectionError ? error : this.wrap(error, 'transaction')
     }

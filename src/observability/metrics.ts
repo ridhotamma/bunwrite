@@ -57,6 +57,9 @@ interface Entry {
   buckets: number[]
 }
 
+/** Unique series kept in memory; arbitrary request paths must not grow this forever. */
+const MAX_SERIES = 10_000
+
 export class MetricRegistry {
   private readonly entries = new Map<string, Entry>()
 
@@ -98,6 +101,11 @@ export class MetricRegistry {
         max: 0,
         bounds,
         buckets: new Array(bounds.length + 1).fill(0) as number[],
+      }
+      // Evict the oldest series rather than letting a scanner grow memory.
+      if (this.entries.size >= MAX_SERIES) {
+        const oldest = this.entries.keys().next().value
+        if (oldest !== undefined) this.entries.delete(oldest)
       }
       this.entries.set(key, entry)
     }
