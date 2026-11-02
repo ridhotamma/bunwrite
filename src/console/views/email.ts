@@ -14,7 +14,7 @@ export interface OrganizationEmailOptions {
 
 export function organizationEmailView({ smtp, recipient }: OrganizationEmailOptions): Html {
   return settingsSection(
-    'Console email delivery',
+    'Email delivery',
     'Sends console sign-in codes, MFA codes and organization invitations. Each project has its own SMTP settings.',
     smtpForm({ action: ORGANIZATION_EMAIL, testAction: `${ORGANIZATION_EMAIL}/test`, smtp, recipient }),
     { id: 'email' },

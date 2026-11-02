@@ -13,7 +13,14 @@ import type { Config } from '~/config'
 import { databaseOptionsOf, dropDatabase, openDatabase, sqlDatabaseOf, sqliteDatabase, type Database, type DatabaseOptions } from '~/db'
 import { openDb } from '~/db/connection'
 import type { SqlDatabase } from '~/db/driver'
-import { bootstrapInstance, bootstrapInstanceAsync, clearInstanceApiKey, clearInstanceApiKeyAsync, type BootstrapResult } from '~/instance/bootstrap'
+import {
+  bootstrapInstance,
+  bootstrapInstanceAsync,
+  clearInstanceApiKey,
+  clearInstanceApiKeyAsync,
+  type BootstrapOptions,
+  type BootstrapResult,
+} from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { siteHost } from '~/lib/hosts'
@@ -238,11 +245,7 @@ export class ProjectManager implements ProjectResolver {
     return openDatabase(this.projectOptions(id))
   }
 
-  private async bootstrap(
-    db: SqlDatabase,
-    env: Record<string, string | undefined>,
-    options: { generateApiKey: boolean },
-  ): Promise<BootstrapResult> {
+  private async bootstrap(db: SqlDatabase, env: Record<string, string | undefined>, options: BootstrapOptions): Promise<BootstrapResult> {
     return db.dialect === 'sqlite' ? bootstrapInstance(db, env, options) : bootstrapInstanceAsync(db, env, options)
   }
 

@@ -34,10 +34,11 @@ describe('instance bootstrap', () => {
       FUNCTIONS_SKIP_SCHEDULES: 'cron',
     })
     expect([config.projectId, config.orgId, config.projectName, config.apiKeys, config.secret]).toEqual(['', '', 'Bunwrite', [], ''])
-    expect([config.allowedOrigins, config.sessionDuration, config.sessionsLimit, config.smtp, config.oauth, config.skipSchedules]).toEqual([
+    expect([config.allowedOrigins, config.sessionDuration, config.sessionsLimit, config.smtp, config.consoleSmtp, config.oauth, config.skipSchedules]).toEqual([
       [],
       31536000,
       10,
+      null,
       null,
       {},
       [],
@@ -236,6 +237,7 @@ describe('instance bootstrap', () => {
         secure: true,
         senderEmail: 'shop@example.com',
       })
+      expect(setting<Record<string, unknown>>(db, 'consoleSmtp')).toMatchObject({ host: 'smtp.example.com' })
       expect(setting<Record<string, unknown>>(db, 'google')).toMatchObject({ clientId: 'google-id', clientSecret: 'google-secret' })
       expect(setting<Record<string, unknown>>(db, 'facebook')).toMatchObject({ clientId: 'facebook-id', clientSecret: 'facebook-secret' })
       expect(setting<Record<string, unknown>>(db, 'github')).toMatchObject({ clientId: 'github-id', clientSecret: 'github-secret' })

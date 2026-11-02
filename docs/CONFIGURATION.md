@@ -558,7 +558,11 @@ openssl rand -hex 32
 
 ### Email
 
-SMTP can also be configured in **Console → Settings → Email & sign-in**. Each project can set its own SMTP there; a project without one uses the default project's current SMTP settings.
+Console sign-in codes, MFA and organization invitations use the SMTP configured
+in **Organization → Settings → Email delivery**. Each project sets its own SMTP
+in **Project Settings → Email & sign-in**, and projects never inherit the
+console SMTP. The `SMTP_*` variables seed both on first start; change either one
+in the console afterwards.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
