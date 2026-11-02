@@ -64,11 +64,10 @@ const renameId = (index: number) => `rename-project-${index}`
 
 function projectActions(project: ProjectInfo, index: number, options: ProjectsViewOptions): Html {
   const id = encodeURIComponent(project.id)
-  // Developers cannot rename or delete projects, so a one-item menu is just noise.
-  if (!options.canManage) return html`<a class="btn small project-open" href="/console/projects/${id}/open">Open</a>`
+  // Developers cannot rename or delete projects, so there is nothing to show.
+  if (!options.canManage) return html``
   return menu(
-    html`<a class="menu-item" href="/console/projects/${id}/open">Open</a>
-      <button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>
+    html`<button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>
       ${project.id !== options.defaultId
         ? html`<hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`
         : ''}`,
@@ -97,14 +96,14 @@ function projectCard(project: ProjectInfo, index: number, options: ProjectsViewO
 }
 
 function projectList(options: ProjectsViewOptions): Html {
-  return html`<div class="card flush"><div class="scroll"><table><thead><tr><th>Project</th><th class="num">Requests</th><th class="hide-sm">Created</th><th class="actions-col"><span class="visually-hidden">Actions</span></th></tr></thead><tbody>
+  return html`<div class="card flush"><div class="scroll"><table><thead><tr><th>Project</th><th class="num">Requests</th><th class="hide-sm">Created</th>${options.canManage ? html`<th class="actions-col"><span class="visually-hidden">Actions</span></th>` : ''}</tr></thead><tbody>
     ${options.projects.map((project, index) => {
       const id = encodeURIComponent(project.id)
       return html`<tr>
         <td><a class="project-row" href="/console/projects/${id}/open">${tile(project.name, project.id, 'sm')}<span><b>${project.name}</b><span class="mono subdued">${project.id}</span></span></a> ${badges(project, options.currentId, options.defaultId)}</td>
         <td class="num">${compact(statsFor(options, project).requests)}</td>
         <td class="subdued hide-sm">${day(project.createdAt)}</td>
-        <td class="num">${projectActions(project, index, options)}</td>
+        ${options.canManage ? html`<td class="num">${projectActions(project, index, options)}</td>` : ''}
       </tr>`
     })}
   </tbody></table></div></div>`

@@ -68,7 +68,6 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .project-card-link:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 .project-card-head{display:flex;align-items:center;gap:12px;min-width:0}
 .project-card-head .menu-root{position:relative;z-index:2;margin:-4px -6px 0 auto;align-self:flex-start}
-.project-card-head .project-open{position:relative;z-index:2;margin:-4px -4px 0 auto;align-self:flex-start}
 .project-card-name{display:flex;flex-direction:column;min-width:0}
 .project-card-name h3{margin:0;font-size:14px;line-height:20px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .project-card-name .mono{font-size:11.5px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

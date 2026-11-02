@@ -1,6 +1,6 @@
 # Taste
 - Expects a fix to start from understanding the whole code and flow plus established framework best practices — find and explain the root cause before editing, rather than patching symptoms ("make sure you understand all the code and flow first before proceeding"). Confidence: 0.7
-- Ships straight to production from `main` ("commit and deploy into main") — commit, push to `origin/main`, then deploy the running server — rather than opening branches/PRs for review. Confidence: 0.5
+- Ships straight to production from `main` ("commit and deploy into main", "commit everything and push into main") — commit all pending changes, push to `origin/main`, then deploy the running server — rather than opening branches/PRs for review. Confidence: 0.6
 - Values maintainability over minimal-diff churn: asks for code to be made "cleaner, scalable" and welcomes refactors that deduplicate shared logic into one place, split oversized modules, and separate pure rendering from data loading. Confidence: 0.55
 - Reacts to accumulated complexity as "over engineered" and wants it deleted outright — whole feature stacks, wizards, flows, UI and their docs/config removed and replaced with the simplest thing that still works — rather than trimmed or left behind flags. Confidence: 0.6
 - Dislikes duplicated functionality: when two surfaces manage the same concept (e.g. globals editable in two settings pages), calls it redundant and wants one canonical source of truth, with the duplicate removed and existing data migrated — not two parallel systems kept in sync. Confidence: 0.5
