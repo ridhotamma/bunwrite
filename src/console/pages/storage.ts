@@ -322,7 +322,7 @@ export function storagePages(router: ConsoleRouter): void {
       'storage',
       html`${bucketHeader(b, uploadButton(b, true))}${bucketTabs(b, 'files')}
       ${listCard('files', {
-        toolbar: searchForm({ action: bucketUrl(b.id), target: 'files', value: search, placeholder: 'Search files' }),
+        toolbar: searchForm({ action: bucketUrl(b.id), target: 'files', name: 'search', value: search, placeholder: 'Search files' }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'file')}` }),
       })}

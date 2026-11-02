@@ -161,7 +161,8 @@ export interface SearchOptions {
   /** ID of the card the response should swap into. */
   target: string
   placeholder: string
-  name?: string
+  /** Query-string field the page handler reads. Keep it aligned with `value`. */
+  name: string
   value?: string
   submit?: string
   mono?: boolean
@@ -176,7 +177,7 @@ export interface SearchOptions {
  * keystroke loses focus and the value the user is entering.
  */
 export function searchForm(options: SearchOptions): Html {
-  const { action, target, placeholder, name = 'search', value = '', submit, mono, title, extra } = options
+  const { action, target, placeholder, name, value = '', submit, mono, title, extra } = options
   // Search submits only on Enter (or the explicit button), never while typing:
   // replacing the form on each keystroke steals focus and makes the value jump.
   return html`<form class="toolbar" method="get" action="${action}" hx-get="${action}" hx-target="#${target}" hx-select="#${target}" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit">

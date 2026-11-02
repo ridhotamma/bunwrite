@@ -92,7 +92,7 @@ export function userPages(router: ConsoleRouter): void {
       'users',
       html`${header('Users', { actions: users.length || search ? create : undefined })}
       ${listCard('users', {
-        toolbar: searchForm({ action: USERS, target: 'users', value: search, placeholder: 'Search name, email, phone or ID' }),
+        toolbar: searchForm({ action: USERS, target: 'users', name: 'search', value: search, placeholder: 'Search name, email, phone or ID' }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'user')}` }),
       })}`,

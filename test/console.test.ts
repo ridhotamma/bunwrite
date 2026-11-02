@@ -83,23 +83,29 @@ describe('console access', () => {
       expect({ file, live: readFileSync(join(dir, file), 'utf8').includes('input changed') }).toEqual({ file, live: false })
     }
 
-    for (const path of [
-      '/console?q=kept',
-      '/console/auth/users?search=kept',
-      '/console/auth/teams?search=kept',
-      '/console/databases/main?q=kept',
-      '/console/databases/main/collections/products/documents?q=kept',
-      '/console/logs?q=kept',
-      '/console/observability/traces?q=kept',
-      '/console/observability/analytics?q=kept',
-      '/console/organization/members?q=kept',
-    ]) {
+    const searches: Array<[string, string]> = [
+      ['/console?q=kept', 'q'],
+      ['/console/auth/users?search=kept', 'search'],
+      ['/console/auth/teams?search=kept', 'search'],
+      ['/console/databases/main?q=kept', 'q'],
+      ['/console/databases/main/collections/products/documents?q=kept', 'q'],
+      ['/console/logs?q=kept', 'q'],
+      ['/console/observability/traces?q=kept', 'q'],
+      ['/console/observability/analytics?q=kept', 'q'],
+      ['/console/organization/members?q=kept', 'q'],
+    ]
+    for (const [path, field] of searches) {
       const response = await get(path)
       expect(response.status).toBe(200)
       const body = await response.text()
-      expect(body).toContain('value="kept"')
+      expect(body).toContain(`name="${field}" value="kept"`)
       expect(body).toContain('hx-trigger="submit"')
     }
+
+    // The form field and the handler must use the same query parameter.
+    const filtered = await (await get('/console/databases/main?q=products')).text()
+    expect(filtered).toContain('/console/databases/main/collections/products')
+    expect(filtered).not.toContain('/console/databases/main/collections/notes')
   })
 
   test('forms posted from another site are refused', async () => {

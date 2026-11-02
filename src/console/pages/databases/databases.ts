@@ -135,7 +135,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       })}${databaseTabs(d.id, 'collections')}
       ${listCard('collections', {
         toolbar: all.length
-          ? searchForm({ action: databaseUrl(d.id), target: 'collections', value: url.searchParams.get('q') ?? '', placeholder: 'Search collections' })
+          ? searchForm({ action: databaseUrl(d.id), target: 'collections', name: 'q', value: url.searchParams.get('q') ?? '', placeholder: 'Search collections' })
           : undefined,
         body,
       })}`,

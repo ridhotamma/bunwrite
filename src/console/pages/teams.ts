@@ -78,7 +78,7 @@ export function teamPages(router: ConsoleRouter): void {
       'teams',
       html`${header('Teams', { actions: teams.length || search ? create : undefined })}
       ${listCard('teams', {
-        toolbar: searchForm({ action: TEAMS, target: 'teams', value: search, placeholder: 'Search teams' }),
+        toolbar: searchForm({ action: TEAMS, target: 'teams', name: 'search', value: search, placeholder: 'Search teams' }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'team')}` }),
       })}`,
