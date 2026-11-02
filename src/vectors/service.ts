@@ -45,6 +45,7 @@ import type {
   StoredPoint,
   VectorCollection,
   VectorCollectionRow,
+  VectorDocument,
   VectorMatch,
   VectorPoint,
   VectorPointRow,
@@ -175,6 +176,12 @@ export class VectorService {
     options: { limit?: number; offset?: number } = {},
   ): Promise<{ total: number; points: VectorPoint[] }> {
     return this.listPoints(collectionId, { ...options, documentId })
+  }
+
+  /** Ingested documents for the console and any client that wants a document index. */
+  async listDocuments(collectionId: string, limit = 100): Promise<VectorDocument[]> {
+    const collection = await this.collectionRow(collectionId)
+    return this.store.listDocuments(collection.id, integer(limit, 100, 1, 1000, 'limit'))
   }
 
   async upsertPoints(collectionId: string, inputs: PointInput[]): Promise<VectorPoint[]> {

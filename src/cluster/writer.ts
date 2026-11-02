@@ -64,6 +64,8 @@ const CONSOLE_LOCAL_WRITES = [
   /^\/console\/functions\/[^/]+\/delete\/?$/,
   /^\/console\/functions\/[^/]+\/run\/?$/,
   /^\/console\/functions\/[^/]+\/deployments(?:\/|$)/,
+  // Vector ingest, search and RAG may call an embedding/chat model.
+  /^\/console\/vectors(?:\/|$)/,
   /^\/console\/storage\/[^/]+\/files\/?$/,
   /^\/console\/storage\/[^/]+\/delete\/?$/,
   /^\/console\/organization\/backups\/(?:create|restore|restore\/cancel)\/?$/,

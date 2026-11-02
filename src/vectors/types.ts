@@ -51,6 +51,14 @@ export interface VectorMatch extends VectorPoint {
   score: number
 }
 
+/** One ingested document, grouped from its chunks. */
+export interface VectorDocument {
+  documentId: string
+  chunks: number
+  $createdAt: string
+  $updatedAt: string
+}
+
 /** A point after validation and embedding, ready for the store. */
 export interface StoredPoint {
   id: string

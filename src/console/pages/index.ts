@@ -17,6 +17,7 @@ import { vcsPages } from './vcs'
 import { storagePages } from './storage'
 import { teamPages } from './teams'
 import { userPages } from './users'
+import { vectorPages } from './vectors'
 import { webhookPages } from './webhooks'
 
 /** Mount every console page group. Order matters only within a group. */
@@ -28,6 +29,7 @@ export function registerConsolePages(router: ConsoleRouter): void {
   userPages(router)
   teamPages(router)
   databasePages(router)
+  vectorPages(router)
   storagePages(router)
   functionPages(router)
   sitePages(router)

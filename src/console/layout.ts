@@ -29,6 +29,7 @@ export interface Nav {
 const MAIN: [string, string, string, IconName][] = [
   ['overview', 'Home', '/console/overview', 'house'],
   ['databases', 'Databases', '/console/databases', 'database'],
+  ['vectors', 'Vectors', '/console/vectors', 'cube'],
   ['users', 'Users', '/console/auth/users', 'users'],
   ['teams', 'Teams', '/console/auth/teams', 'users-three'],
   ['storage', 'Storage', '/console/storage', 'folder-simple'],

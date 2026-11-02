@@ -133,6 +133,7 @@ describe('writer role', () => {
     expect(isForwardedConsoleWrite('POST', '/console/storage/photos/files')).toBe(false)
     expect(isForwardedConsoleWrite('POST', '/console/functions/fn/run')).toBe(false)
     expect(isForwardedConsoleWrite('POST', '/console/functions/fn/deployments')).toBe(false)
+    expect(isForwardedConsoleWrite('POST', '/console/vectors/knowledge/rag/query')).toBe(false)
     expect(isForwardedConsoleWrite('POST', '/console/sites/site-1/deployments')).toBe(false)
     expect(isForwardedConsoleWrite('POST', '/console/organization/backups/create')).toBe(false)
     expect(isForwardedConsoleWrite('POST', '/console/organization/backups/restore/cancel')).toBe(false)

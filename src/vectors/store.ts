@@ -8,7 +8,7 @@
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { compact, norm } from './similarity'
-import type { StoredPoint, VectorCollection, VectorCollectionRow, VectorPoint, VectorPointRow } from './types'
+import type { StoredPoint, VectorCollection, VectorCollectionRow, VectorDocument, VectorPoint, VectorPointRow } from './types'
 import { collectionModel, pointModel } from './rows'
 
 export interface CollectionRecord {
@@ -154,6 +154,25 @@ export class VectorStore {
       [...params, options.limit, options.offset],
     )
     return { total: Number(total?.total) || 0, rows }
+  }
+
+  /** Ingested documents with their chunk counts, newest first. */
+  async listDocuments(collectionId: string, limit: number): Promise<VectorDocument[]> {
+    const rows = await this.db.driver.all<{ document_id: string; chunks: number; created_at: string; updated_at: string }>(
+      `SELECT document_id, count(*) AS chunks, min(created_at) AS created_at, max(updated_at) AS updated_at
+       FROM _vector_points
+       WHERE collection_id = ? AND document_id <> ''
+       GROUP BY document_id
+       ORDER BY max(updated_at) DESC
+       LIMIT ?`,
+      [collectionId, limit],
+    )
+    return rows.map((row) => ({
+      documentId: row.document_id,
+      chunks: Number(row.chunks) || 0,
+      $createdAt: row.created_at,
+      $updatedAt: row.updated_at,
+    }))
   }
 
   async deletePoint(collectionId: string, pointId: string): Promise<boolean> {

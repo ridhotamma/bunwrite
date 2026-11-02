@@ -42,6 +42,22 @@ A collection records the embedder name that created it. If you change the model
 or dimension later, **re-index the collection**; Bunwrite refuses to mix vectors
 from different embedders rather than returning quietly wrong results.
 
+## Console
+
+Open **Vectors** in the project sidebar. It has:
+
+- **Collections** — list, create and delete vector collections, with their
+  dimension, metric, embedder and point count.
+- **Points** — browse and search, add a text point or an explicit vector, open a
+  point to see its content and metadata, and delete it.
+- **RAG** — paste text to chunk/embed a document, see ingested documents, ask a
+  question, and review the generated answer, sources and context.
+- **Settings** — inspect the collection and the active embedder/chat settings,
+  then delete the collection.
+
+The console calls the same `VectorService` as the API, so anything visible there
+is stored in the project's normal SQLite or Postgres database.
+
 ## Configuration
 
 | Variable | Default | Meaning |
