@@ -1,0 +1,50 @@
+# Isolated Postgres restore target for WAL-G backups.
+#
+#   docker compose -f docker-compose.restore.yml --profile restore up --build postgres-restore
+#
+# This never mounts the production volume. It fetches a base backup into a new
+# volume and exposes the result on RESTORE_PORT (default 55432) so you can
+# verify it before pointing Bunwrite at it. Set RESTORE_TARGET_TIME for
+# point-in-time recovery.
+services:
+  postgres-restore:
+    profiles: ["restore"]
+    build:
+      context: deploy/postgres
+      dockerfile: Dockerfile
+    image: bunwrite-postgres-restore:latest
+    restart: "no"
+    environment:
+      POSTGRES_DB: ${RESTORE_DB:-bunwrite}
+      POSTGRES_USER: ${RESTORE_USER:-bunwrite}
+      POSTGRES_PASSWORD: ${RESTORE_PASSWORD:-bunwrite}
+      PGDATA: /var/lib/postgresql/data
+      RESTORE_BACKUP: ${RESTORE_BACKUP:-LATEST}
+      RESTORE_TARGET_TIME: ${RESTORE_TARGET_TIME:-}
+      WALG_S3_PREFIX: ${WALG_S3_PREFIX:-}
+      WALG_FILE_PREFIX: ${WALG_FILE_PREFIX:-}
+      WALG_GS_PREFIX: ${WALG_GS_PREFIX:-}
+      WALG_AZ_PREFIX: ${WALG_AZ_PREFIX:-}
+      WALG_SWIFT_PREFIX: ${WALG_SWIFT_PREFIX:-}
+      WALG_COMPRESSION_METHOD: ${WALG_COMPRESSION_METHOD:-}
+      WALG_LIBSODIUM_KEY: ${WALG_LIBSODIUM_KEY:-}
+      WALG_PGP_KEY: ${WALG_PGP_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+    volumes:
+      - postgres-restore-data:/var/lib/postgresql/data
+    ports:
+      - "${RESTORE_PORT:-55432}:5432"
+    entrypoint: ["/usr/local/bin/postgres-restore-entrypoint.sh"]
+    command: ["postgres"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+volumes:
+  postgres-restore-data:

@@ -308,6 +308,7 @@ td .badge+.badge{margin-left:6px}
 .backup-actions{display:flex;align-items:center;gap:8px;flex:none}
 .backup-actions form{display:inline;margin:0}
 pre{background:#f7f7f7;border-radius:8px;padding:12px;overflow:auto;max-height:360px;margin:0;white-space:pre-wrap;word-break:break-word}
+pre.runbook{max-height:520px;white-space:pre;font-size:12px;line-height:1.55}
 details>summary{cursor:pointer;font-weight:550;margin:4px 0 12px}
 .disclosure{border-top:1px solid var(--border);margin-top:16px;padding-top:12px}.disclosure>summary{margin:0}.disclosure[open]>summary{margin-bottom:10px}
 .field-heading{font-size:14px;line-height:20px;font-weight:650;margin:16px 0 10px}

@@ -3,6 +3,7 @@ import { readPendingRestore } from '~/backups/pending'
 import type { BackupFile } from '~/backups/service'
 import { litestreamStatus, maskReplica } from '~/backups/litestream'
 import { litestreamSettingsFromEnv, readLitestreamSettings } from '~/backups/litestream-settings'
+import { doctorLabel, doctorTone, postgresDoctor, type PostgresDoctorReport } from '~/backups/postgres'
 import { walgStatus } from '~/backups/walg'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
@@ -56,7 +57,7 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   const c = control.config
   // Whole-instance archives use VACUUM INTO on local SQLite files. Postgres
   // deployments use WAL-G or the provider's managed PITR instead.
-  if (!control.db.capabilities.localFile) return postgresBackupsView()
+  if (!control.db.capabilities.localFile) return postgresBackupsView(ctx)
   let backups: BackupFile[] = []
   let error = ''
   try {
@@ -240,12 +241,42 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
 /**
  * Postgres backups run outside the app: WAL-G archives WAL and base backups on
  * the database host, or a managed provider exposes its own PITR. The console
- * reports the environment and the exact Postgres settings; it never starts a
- * backup-push against a data directory it does not own.
+ * reports the live server state and prints operator steps; it never starts a
+ * backup-push or a restore against a data directory it does not own.
  */
-function postgresBackupsView(): Html {
+async function postgresBackupsView(ctx: ConsoleContext): Promise<Html> {
   const walg = walgStatus()
+  const target = (ctx.url.searchParams.get('target') ?? '').trim().replace(/[\r\n]/g, ' ').slice(0, 80) || undefined
+  let report: PostgresDoctorReport | null = null
+  let statusError = ''
+  try {
+    report = await postgresDoctor({
+      sql: ctx.projects.control.db.driver,
+      env: process.env,
+      databaseUrl: ctx.projects.control.config.databaseUrl,
+      pgdata: process.env.PGDATA,
+      targetTime: target,
+      docker: true,
+      walgAdvisory: true,
+    })
+  } catch (error) {
+    statusError = error instanceof Error ? error.message : String(error)
+  }
+  const status = report?.status
+  const archiver = status?.archiver
+  const latest = report?.walg.backups[0]
+  const failures = report?.checks.filter((check) => check.status === 'fail').length ?? 0
+  const warnings = report?.checks.filter((check) => check.status === 'warn').length ?? 0
   return html`
+    ${statusError ? alert('warning', html`Could not read the Postgres backup status: ${statusError}`) : ''}
+    ${report
+      ? html`<div class="stats" style="margin-bottom:24px">
+          <div class="stat"><span>WAL-G storage</span><b style="font-size:14px">${walg.configured ? badge('On', 'success') : badge('Off')}</b></div>
+          <div class="stat"><span>Last archived WAL</span><b style="font-size:14px">${archiver?.lastArchivedAt ? when(archiver.lastArchivedAt) : 'Never'}</b></div>
+          <div class="stat"><span>Archive failures</span><b style="font-size:14px">${archiver ? archiver.failedCount : '—'} ${archiver && archiver.failedCount > 0 ? badge('Check', 'critical') : ''}</b></div>
+          <div class="stat"><span>Latest base backup</span><b style="font-size:14px">${latest ? html`${latest.name}${latest.modified ? html`<span class="subdued" style="font-size:12px;font-weight:450"> · ${when(latest.modified)}</span>` : ''}` : 'None'}</b></div>
+        </div>`
+      : ''}
     ${settingsSection(
       'Postgres continuous backup (WAL-G)',
       'Postgres uses WAL archiving and base backups on the database host instead of the SQLite archive files.',
@@ -263,6 +294,41 @@ function postgresBackupsView(): Html {
       </ul>
       <p class="subdued">Uploaded files, function code and site builds are not in WAL-G; back up your storage bucket separately. If the provider offers managed PITR, use that instead of running WAL-G yourself.</p>`,
       { id: 'postgres-backup' },
+    )}
+    ${report
+      ? settingsSection(
+          'Restore readiness',
+          'Live checks from the Postgres server and the WAL-G environment. Fix failures before you need a restore.',
+          html`<div class="toolbar">
+              <span class="subdued">${failures} failed · ${warnings} warnings</span>
+              <code class="mono" style="margin-left:auto">bunwrite postgres:doctor</code>
+            </div>
+            <ul class="list doctor-checks">
+              ${report.checks.map(
+                (check) => html`<li>
+                  <div>
+                    <b>${check.label}</b>
+                    <div class="subdued cell-sub">${check.detail}</div>
+                    ${check.fix ? html`<div class="help"><code>${check.fix}</code></div>` : ''}
+                  </div>
+                  ${badge(doctorLabel(check.status), doctorTone(check.status))}
+                </li>`,
+              )}
+            </ul>`,
+          { id: 'postgres-doctor', badge: failures ? badge(`${failures} failed`, 'critical') : warnings ? badge(`${warnings} warnings`, 'attention') : badge('Ready', 'success') },
+        )
+      : ''}
+    ${settingsSection(
+      'Postgres restore runbook',
+      'Bunwrite cannot replace a remote PGDATA. Copy these steps, review them, and run them as the Postgres operator.',
+      html`<form method="get" action="${BACKUPS}" class="toolbar">
+          <label style="flex:1">Point in time <span class="subdued">(optional)</span><input name="target" value="${target ?? ''}" placeholder="2026-11-02 10:00:00+00"></label>
+          <button class="small">Update runbook</button>
+          <button type="button" class="small" data-copy-target="#postgres-restore-runbook">${icon('copy')}<span data-copy-label>Copy</span></button>
+        </form>
+        <pre id="postgres-restore-runbook" class="runbook">${report?.runbook ?? '# Run `bunwrite postgres:doctor` on the Postgres host to generate the runbook.'}</pre>
+        <p class="help">The runbook stops Bunwrite and Postgres before touching the data directory. Use a maintenance window, and keep the old PGDATA until verification is complete. For Docker, use the isolated <code>docker-compose.restore.yml</code> profile instead of overwriting the production volume.</p>`,
+      { id: 'postgres-restore', badge: badge('Operator step', 'attention') },
     )}
     ${settingsSection(
       'Logical backups',

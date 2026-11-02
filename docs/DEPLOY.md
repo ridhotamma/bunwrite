@@ -576,6 +576,107 @@ WAL is still needed.
 SQLite commands (`bunwrite snapshot`, `bunwrite restore`, `bunwrite failover`)
 refuse to run with `DB_DRIVER=postgres`; use WAL-G or the provider's PITR there.
 
+#### Check readiness first
+
+`bunwrite postgres:doctor` reads the running server and the WAL-G environment
+without changing anything. It checks `wal_level`, `archive_mode`,
+`archive_command`, `restore_command`, `archive_timeout`, `pg_stat_archiver`,
+the `wal-g` binary, the storage prefix and the latest base backup:
+
+```bash
+bunwrite postgres:doctor
+bunwrite postgres:doctor --json
+bunwrite postgres:doctor --runbook
+```
+
+It exits with status 1 when a required check fails, so it can gate a deploy.
+The same report appears in **Organization → Backups → Restore readiness**, and
+**Postgres restore runbook** gives copy-paste steps for the current server.
+
+The console and the CLI never run `wal-g backup-fetch` or replace `PGDATA`
+themselves. Those steps run on the Postgres host, as the `postgres` user, with
+the same `WALG_*` and storage credentials used for archiving.
+
+#### Restore a base backup and replay WAL
+
+```bash
+# 1. Stop Bunwrite and Postgres. Never leave a second writer running.
+sudo systemctl stop bunwrite
+sudo systemctl stop postgresql
+
+# 2. Confirm the backup and set the WAL-G environment.
+sudo -u postgres -E wal-g backup-list
+export PGDATA=/var/lib/postgresql/16/main
+export WALG_S3_PREFIX=s3://my-bucket/bunwrite/postgres
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+
+# 3. Move the old data directory aside. Keep it until verification passes.
+sudo -u postgres mv "$PGDATA" "$PGDATA.before-restore.$(date +%Y%m%d%H%M%S)"
+sudo -u postgres mkdir -p "$PGDATA"
+sudo -u postgres chmod 700 "$PGDATA"
+
+# 4. Fetch the base backup, then let Postgres replay archived WAL.
+sudo -u postgres -E wal-g backup-fetch "$PGDATA" LATEST
+```
+
+Add the recovery settings to `$PGDATA/postgresql.conf`:
+
+```conf
+restore_command = 'wal-g wal-fetch %f %p'
+
+# Optional point-in-time target. Omit these two lines to replay all WAL.
+recovery_target_time = '2026-11-02 10:00:00+00'
+recovery_target_action = 'promote'
+```
+
+Then start recovery and verify:
+
+```bash
+sudo -u postgres touch "$PGDATA/recovery.signal"
+sudo systemctl start postgresql
+sudo -u postgres psql -c "SELECT pg_last_wal_replay_lsn(), pg_is_in_recovery();"
+```
+
+Once `pg_is_in_recovery()` returns `false`, point `DATABASE_URL` at the restored
+server and start Bunwrite. Migrations run automatically at startup.
+
+A restored base backup contains the Postgres configuration files unless WAL-G
+was told to exclude them, so review `postgresql.conf` before starting. Use the
+same Postgres major version and the same `PGDATA` filesystem layout as the
+source. `recovery.signal` is for Postgres 12+; Postgres 11 and older use
+`recovery.conf`.
+
+#### Restore into an isolated instance with Docker
+
+Do not restore into the production volume. Restore into a new instance, verify
+it, then switch `DATABASE_URL`:
+
+```bash
+docker compose stop bunwrite postgres
+docker compose -f docker-compose.restore.yml --profile restore up --build postgres-restore
+```
+
+The restore service builds Postgres with WAL-G, fetches `RESTORE_BACKUP`
+(default `LATEST`) into a fresh volume and exposes it on port `55432`. Set
+`RESTORE_TARGET_TIME` for a point-in-time restore:
+
+```bash
+RESTORE_TARGET_TIME='2026-11-02 10:00:00+00' \
+  docker compose -f docker-compose.restore.yml --profile restore up --build postgres-restore
+```
+
+Then verify:
+
+```bash
+psql 'postgres://bunwrite:...@127.0.0.1:55432/bunwrite' -c 'SELECT pg_is_in_recovery();'
+```
+
+And run Bunwrite against it with `DB_DRIVER=postgres` and the new
+`DATABASE_URL`. Leave the production volume untouched until the restored
+instance passes your checks. Remove the test volume with
+`docker compose -f docker-compose.restore.yml down -v` when finished.
+
 ## Upgrades
 
 With Docker Compose, see Option B. Manual install:

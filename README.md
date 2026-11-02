@@ -599,7 +599,9 @@ With `DB_DRIVER=postgres`, the archive buttons are hidden: the databases are
 not local files. Use WAL-G on the Postgres host or a managed PITR service; see
 [Postgres continuous backup (WAL-G)](docs/DEPLOY.md#postgres-continuous-backup-wal-g).
 The console page reports the WAL-G environment and the `archive_command` /
-`restore_command` to configure.
+`restore_command` to configure, plus live restore-readiness checks and a
+copy-paste runbook. Run `bunwrite postgres:doctor` (or `--runbook` / `--json`)
+on the host for the same checks outside the console.
 
 Archives are compressed with zstd (`.archive.zst`). They include every project's
 stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well

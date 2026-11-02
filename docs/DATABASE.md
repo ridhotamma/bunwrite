@@ -80,6 +80,12 @@ The legacy SQLite file commands (`bunwrite backup:open`, `snapshot`, `restore`
 and `failover`) only work with local SQLite databases. On Postgres they either
 have no meaning (`backup:open`) or stop with a WAL-G/PITR message.
 
+For Postgres, `bunwrite postgres:doctor` checks `wal_level`, `archive_mode`,
+`archive_command`, `restore_command`, `pg_stat_archiver`, the WAL-G binary and
+the latest base backup. Add `--runbook` for copy-paste restore steps, or
+`--json` for automation. It never changes the server or touches `PGDATA`; see
+[DEPLOY.md](DEPLOY.md#restoring-postgres-with-wal-g).
+
 `DB_DRIVER=postgres` boots the server and serves API traffic. The boot path
 opens the control schema, runs the instance bootstrap through the driver, loads
 every service cache with `services.ready()`, and opens each project in its own
