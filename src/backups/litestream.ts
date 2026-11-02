@@ -18,7 +18,7 @@ export interface LitestreamStatus {
   forceRestore: boolean
 }
 
-function maskReplica(value: string): string {
+export function maskReplica(value: string): string {
   try {
     const url = new URL(value)
     if (url.username || url.password) {

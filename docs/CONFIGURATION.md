@@ -161,6 +161,12 @@ there is no per-project backup.
 
 ### Continuous replication and failover
 
+The replica, S3 credentials, sync interval, heartbeat and retention can also be
+configured in **Organization → Backups → Continuous replication**. The console
+writes `litestream.env` and a generated `litestream.generated.yml` beside the
+SQLite database; those values override the environment on the next restart.
+**Reset to environment** removes the files and restores the `.env` fallback.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LITESTREAM_REPLICA_URL` | unset | Base Litestream replica URL, for example `s3://bucket/bunwrite`. Setting it enables restore-on-start and continuous replication on Docker `serve`. |
@@ -171,7 +177,7 @@ there is no per-project backup.
 | `LITESTREAM_S3_ENDPOINT` | unset | S3-compatible endpoint for R2/MinIO. Omit for AWS S3. `bunwrite failover` uses it for restore too. |
 | `LITESTREAM_S3_REGION` | `auto` with an endpoint | Region for the S3-compatible endpoint. |
 | `LITESTREAM_S3_FORCE_PATH_STYLE` | unset | Use path-style addressing; most non-AWS providers need it. |
-| `LITESTREAM_CONFIG` | `/app/litestream.yml` | Litestream config file for replication tuning. Keep the same replica URL layout as `bunwrite failover`. |
+| `LITESTREAM_CONFIG` | `/app/litestream.yml`, or the generated file | Litestream config file for replication tuning. Console-managed settings point this at `litestream.generated.yml`. Keep the same replica URL layout as `bunwrite failover`. |
 | `LITESTREAM_BIN` | `litestream` | Litestream executable used by `bunwrite failover` and the Docker entrypoint. |
 
 Litestream reads `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,

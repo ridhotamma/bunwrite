@@ -586,7 +586,10 @@ backup-<timestamp>.archive.zst
 - turn on daily automatic backups at 02:00 UTC and choose how many to keep
   (1–100);
 - keep archives on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
-  bucket.
+  bucket;
+- configure continuous Litestream replication, including the replica URL, S3
+  credentials, endpoint, sync interval, heartbeat and retention. Changes apply
+  on the next restart; the `.env` values remain the fallback.
 
 Each database is copied with SQLite's `VACUUM INTO`, so the archive is
 consistent even while requests are being handled. One archive covers the whole

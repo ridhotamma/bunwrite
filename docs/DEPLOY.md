@@ -429,7 +429,12 @@ continuous WAL replication to object storage, and restore onto a replacement
 instance when the host is lost. It is **not** active/active HA and does not
 make SQLite multi-writer.
 
-The Docker image includes Litestream. Enable it in `.env`:
+The Docker image includes Litestream. Enable it in **Organization → Backups →
+Continuous replication** in the console, or use the `.env` values below. The
+console writes the replica, credentials, endpoint, sync interval, heartbeat and
+retention to `litestream.env`/`litestream.generated.yml` beside the database;
+restart Bunwrite after saving. Console settings override `.env` until you press
+**Reset to environment**.
 
 ```env
 LITESTREAM_REPLICA_URL=s3://my-bucket/bunwrite

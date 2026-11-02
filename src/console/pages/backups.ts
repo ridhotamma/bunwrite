@@ -5,6 +5,7 @@
 import { basename, dirname, join } from 'node:path'
 import { rmSync } from 'node:fs'
 
+import { litestreamSettingsFromEnv, readLitestreamSettings, resetLitestreamSettings, writeLitestreamSettings, type LitestreamSettings } from '~/backups/litestream-settings'
 import { cancelPendingRestore, pendingRestoreDir, readPendingRestore, stagePendingRestore } from '~/backups/pending'
 import { restoreInstance } from '~/backups/restore'
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
@@ -26,6 +27,25 @@ async function requireOwner(ctx: ConsoleContext): Promise<void> {
 function requireLocalBackups(ctx: ConsoleContext): void {
   if (!ctx.projects.control.db.capabilities.localFile) {
     throw err('general_argument_invalid', 'Whole-instance archives are only available with DB_DRIVER=sqlite. Use WAL-G or managed PITR for Postgres.')
+  }
+}
+
+function litestreamFromForm(ctx: ConsoleContext, current: LitestreamSettings): LitestreamSettings {
+  const f = ctx.form
+  const clear = checked(f.clearLitestreamCredentials)
+  return {
+    enabled: checked(f.litestreamEnabled),
+    replicaUrl: value(f, 'litestreamReplicaUrl'),
+    accessKeyId: clear ? '' : value(f, 'litestreamAccessKeyId') || current.accessKeyId,
+    secretAccessKey: clear ? '' : String(f.litestreamSecretAccessKey ?? '') || current.secretAccessKey,
+    region: value(f, 'litestreamRegion'),
+    endpoint: value(f, 'litestreamEndpoint'),
+    forcePathStyle: checked(f.litestreamForcePathStyle),
+    syncInterval: value(f, 'litestreamSyncInterval') || '1s',
+    heartbeatUrl: value(f, 'litestreamHeartbeatUrl'),
+    snapshotInterval: value(f, 'litestreamSnapshotInterval') || '24h',
+    snapshotRetention: value(f, 'litestreamSnapshotRetention') || '168h',
+    l0Retention: value(f, 'litestreamL0Retention') || '24h',
   }
 }
 
@@ -68,6 +88,26 @@ export function backupPages(router: ConsoleRouter): void {
     requireLocalBackups(ctx)
     await ctx.projects.control.settings.reset('backups')
     return ctx.go(BACKUPS, { tone: 'success', text: 'Backup settings reset' })
+  })
+
+  router.post(`${BACKUPS}/litestream`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    requireLocalBackups(ctx)
+    const config = ctx.projects.control.config
+    const current = readLitestreamSettings(config.databasePath) ?? litestreamSettingsFromEnv()
+    try {
+      writeLitestreamSettings(config.databasePath, litestreamFromForm(ctx, current))
+    } catch (error) {
+      throw err('general_argument_invalid', error instanceof Error ? error.message : String(error))
+    }
+    return ctx.go(BACKUPS, { tone: 'success', text: 'Litestream settings saved. Restart Bunwrite to apply them.' })
+  })
+
+  router.post(`${BACKUPS}/litestream/reset`, async ({ ctx }) => {
+    await requireOwner(ctx)
+    requireLocalBackups(ctx)
+    resetLitestreamSettings(ctx.projects.control.config.databasePath)
+    return ctx.go(BACKUPS, { tone: 'success', text: 'Litestream console settings removed. Restart Bunwrite to use the environment again.' })
   })
 
   router.post(`${BACKUPS}/create`, async ({ ctx }) => {

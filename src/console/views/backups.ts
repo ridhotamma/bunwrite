@@ -1,7 +1,8 @@
 /** Organization-level whole-instance backups: one archive for every project. */
 import { readPendingRestore } from '~/backups/pending'
 import type { BackupFile } from '~/backups/service'
-import { litestreamStatus } from '~/backups/litestream'
+import { litestreamStatus, maskReplica } from '~/backups/litestream'
+import { litestreamSettingsFromEnv, readLitestreamSettings } from '~/backups/litestream-settings'
 import { walgStatus } from '~/backups/walg'
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
@@ -25,6 +26,8 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   }
   const pending = readPendingRestore(c.databasePath)
   const litestream = litestreamStatus()
+  const storedLitestream = readLitestreamSettings(c.databasePath)
+  const litestreamSettings = storedLitestream ?? litestreamSettingsFromEnv()
   const encryption = c.backupEncryptionKey
     ? alert('info', html`Backups are compressed and encrypted with <code>BACKUP_ENCRYPTION_KEY</code>. Keep a copy of that key somewhere other than this server; without it the backups cannot be opened. Restore one here, or with <code>bunwrite restore &lt;file&gt;</code>.`)
     : alert('warning', html`Backups are compressed but not encrypted, and they include every project's stored secrets. Set <code>BACKUP_ENCRYPTION_KEY</code> in the server environment (for example from <code>openssl rand -base64 32</code>) and restart to encrypt new backups.`)
@@ -83,17 +86,60 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
         )}
     ${settingsSection(
       'Continuous replication (Litestream)',
-      'Continuous WAL replication to object storage, separate from the archives above. Configured in the server environment, not in this console.',
-      html`${litestream.configured
-        ? alert('info', html`Configured for <code class="mono">${litestream.replica}</code> · every ${litestream.syncInterval}${litestream.heartbeat ? ' · heartbeat on' : ''}.`)
-        : alert('warning', html`Not configured. Without Litestream, recovery can only reach the last archive above, so writes since then are lost if the host or disk fails. Set <code>LITESTREAM_REPLICA_URL</code> and S3 credentials in the server environment, then restart.`)}
+      'Continuous WAL replication to object storage, separate from the archives above. Save it here; restart Bunwrite to apply it.',
+      html`${storedLitestream
+          ? alert(
+              'info',
+              html`Console settings saved${litestreamSettings.enabled
+                ? html` for <code class="mono">${maskReplica(litestreamSettings.replicaUrl)}</code>`
+                : ' with replication turned off'}. Restart Bunwrite to apply them.`,
+            )
+          : litestream.configured
+            ? alert(
+                'info',
+                html`Using the server environment for <code class="mono">${litestream.replica}</code> · every ${litestream.syncInterval}${litestream.heartbeat ? ' · heartbeat on' : ''}. Save below to manage it here.`,
+              )
+            : alert(
+                'warning',
+                html`Not configured. Without Litestream, recovery can only reach the last archive above, so writes since then are lost if the host or disk fails. Configure a replica below, or set the Litestream variables in the server environment.`,
+              )}
+        <form method="post" action="${BACKUPS}/litestream">
+          <label class="check"><input type="checkbox" name="litestreamEnabled" ${litestreamSettings.enabled ? 'checked' : ''}><span>Enable continuous replication</span><small>Changes are written to the data directory and apply on the next restart.</small></label>
+          <label>Replica URL<input name="litestreamReplicaUrl" class="mono" value="${litestreamSettings.replicaUrl}" placeholder="s3://my-bucket/bunwrite"><small>Use a bucket/prefix dedicated to this instance. S3, GCS, Azure Blob and file URLs are accepted.</small></label>
+          <div class="fields">
+            <label>S3 access key ID<input name="litestreamAccessKeyId" value="${litestreamSettings.accessKeyId}" autocomplete="off"><small>Leave both credentials empty to use an instance role.</small></label>
+            <label>Secret access key<input name="litestreamSecretAccessKey" type="password" autocomplete="new-password" placeholder="${litestreamSettings.secretAccessKey ? 'Configured; leave blank to keep' : ''}"></label>
+          </div>
+          <label class="check"><input type="checkbox" name="clearLitestreamCredentials"><span>Remove stored S3 credentials</span></label>
+          <div class="fields">
+            <label>Region<input name="litestreamRegion" value="${litestreamSettings.region}" placeholder="us-east-1 or auto"></label>
+            <label>S3 endpoint<input name="litestreamEndpoint" type="url" class="mono" value="${litestreamSettings.endpoint}" placeholder="https://…r2.cloudflarestorage.com"><small>Optional. R2, MinIO and other S3-compatible stores need it.</small></label>
+          </div>
+          <label class="check"><input type="checkbox" name="litestreamForcePathStyle" ${litestreamSettings.forcePathStyle ? 'checked' : ''}><span>Use path-style S3 addressing</span><small>Most non-AWS providers need this.</small></label>
+          <div class="fields">
+            <label>Sync interval<input name="litestreamSyncInterval" value="${litestreamSettings.syncInterval}" placeholder="1s"><small>How often WAL frames are pushed.</small></label>
+            <label>Heartbeat URL<input name="litestreamHeartbeatUrl" type="url" class="mono" value="${litestreamSettings.heartbeatUrl}" placeholder="Optional Healthchecks.io ping URL"></label>
+          </div>
+          <div class="fields">
+            <label>Snapshot interval<input name="litestreamSnapshotInterval" value="${litestreamSettings.snapshotInterval}" placeholder="24h"></label>
+            <label>Snapshot retention<input name="litestreamSnapshotRetention" value="${litestreamSettings.snapshotRetention}" placeholder="168h"></label>
+            <label>L0 retention<input name="litestreamL0Retention" value="${litestreamSettings.l0Retention}" placeholder="24h"></label>
+          </div>
+          <div class="foot"><button class="primary">Save Litestream settings</button></div>
+        </form>
+        ${storedLitestream
+          ? html`<div class="disclosure"><p class="subdued">Remove the console override and use the server environment again.</p>${destroy(`${BACKUPS}/litestream/reset`, 'Reset to environment', 'Remove the saved Litestream settings and use the server environment on the next restart?')}</div>`
+          : ''}
         <p>Litestream streams SQLite WAL frames to the replica while the server runs. On start, the entrypoint restores missing databases; on a replacement host, run <code>bunwrite failover</code> before starting to restore the control database and every project database. It is single-writer disaster recovery, not active/active HA.</p>
         <p>It covers databases only. Uploaded files, function code and site builds are not replicated; back up <code>STORAGE_PATH</code> or the uploads bucket separately.</p>
         <p>If the replica and the backup archives share one bucket, use different key prefixes (for example <code>litestream</code> in the replica URL and <code>backups</code> in Backup options) and credentials scoped to each prefix.</p>
-        <p class="subdued">Retention and sync tuning live in the Litestream config (<code>LITESTREAM_CONFIG</code>, default <code>deploy/litestream.yml</code>): one week of restore points in the bundled file. <code>bunwrite failover</code> restores the latest point; use Litestream's <code>restore -timestamp</code> for point-in-time recovery.</p>
+        <p class="subdued">The generated config lives beside the SQLite database. <code>bunwrite failover</code> restores the latest point; use Litestream's <code>restore -timestamp</code> for point-in-time recovery.</p>
         ${litestream.allowEmpty ? alert('warning', html`<code>LITESTREAM_ALLOW_EMPTY</code> is set. A missing restore point will start an empty instance instead of failing closed; remove it after the first deployment.`) : ''}
         ${litestream.forceRestore ? alert('critical', html`<code>LITESTREAM_FORCE_RESTORE</code> is set. Every start replaces local databases from the replica; remove it unless you mean it.`) : ''}`,
-      { id: 'litestream' },
+      {
+        id: 'litestream',
+        badge: storedLitestream ? badge('Console', 'info') : litestream.configured ? badge('Environment') : badge('Off'),
+      },
     )}
     ${settingsSection(
       'Backup options',

@@ -8,6 +8,16 @@ fi
 # One HTTP process per CPU; set WORKERS=1 in .env to opt out.
 export WORKERS="${WORKERS:-auto}"
 
+database="${DATABASE_PATH:-/opt/bunwrite/data/bunwrite.sqlite}"
+export DATABASE_PATH="$database"
+export DATA_DIR="${DATA_DIR:-$(dirname "$database")}"
+
+# The console writes this file when Litestream is configured there. Sourcing it
+# overrides .env values, so a console setting wins until it is reset.
+if [ -f "$DATA_DIR/litestream.env" ]; then
+  . "$DATA_DIR/litestream.env"
+fi
+
 # Optional PocketBase Cloud-style continuous replication. Keep the database on
 # local disk; Litestream streams WAL frames to object storage. The failover
 # command restores the control database and every project database first.
@@ -17,9 +27,6 @@ if [ -n "${LITESTREAM_REPLICA_URL:-}" ]; then
     echo "LITESTREAM_REPLICA_URL is set but $litestream_bin is not installed" >&2
     exit 1
   fi
-  database="${DATABASE_PATH:-/opt/bunwrite/data/bunwrite.sqlite}"
-  export DATABASE_PATH="$database"
-  export DATA_DIR="${DATA_DIR:-$(dirname "$database")}"
   export LITESTREAM_DATABASE_NAME="${LITESTREAM_DATABASE_NAME:-$(basename "$database")}"
   export LITESTREAM_SYNC_INTERVAL="${LITESTREAM_SYNC_INTERVAL:-1s}"
   export LITESTREAM_REPLICA_URL="${LITESTREAM_REPLICA_URL%/}"
