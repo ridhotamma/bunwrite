@@ -20,7 +20,7 @@ import { now } from '~/lib/datetime'
 import { timingSafeEqual } from 'node:crypto'
 
 import { BunwriteError, err } from '~/lib/errors'
-import { uniqueId } from '~/lib/ids'
+import { randomSecret, uniqueId } from '~/lib/ids'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import { OAUTH_PROVIDERS_BY_ID, type OAuthIdentity, type OAuthProvider, type OAuthTokens } from './providers'
 import type { AuthService } from './service'
@@ -34,7 +34,25 @@ interface State {
   failure: string
   token: boolean
   exp: number
+  /** Random value mirrored in an HttpOnly cookie for browser-bound flows. */
   nonce: string
+  /** False for states issued while binding was disabled (legacy compatibility). */
+  bound?: boolean
+}
+
+/** The cookie that proves a callback belongs to the browser that started the flow. */
+export const oauthStateCookieName = (projectId: string): string => `bw_oauth_state_${projectId.toLowerCase()}`
+
+export function oauthStateCookie(config: Pick<Config, 'projectId' | 'publicEndpoint'>, nonce: string, maxAge = STATE_TTL): string {
+  const secure = config.publicEndpoint.startsWith('https')
+  // Apple posts its callback cross-site; SameSite=None is required there and
+  // must be paired with Secure. Local HTTP development uses Lax.
+  const sameSite = secure ? 'None' : 'Lax'
+  return `${oauthStateCookieName(config.projectId)}=${encodeURIComponent(nonce)}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}${secure ? '; Secure' : ''}`
+}
+
+export function clearOAuthStateCookie(config: Pick<Config, 'projectId' | 'publicEndpoint'>): string {
+  return `${oauthStateCookieName(config.projectId)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${config.publicEndpoint.startsWith('https') ? '; Secure' : ''}`
 }
 
 async function sign(secret: string, data: string): Promise<string> {
@@ -88,16 +106,24 @@ export class OAuthService {
     return `${this.config.publicEndpoint}/account/sessions/oauth2/callback/${provider}/${this.config.projectId}`
   }
 
-  /** Step 1: where to send the browser. */
-  async authorizeUrl(provider: string, success: unknown, failure: unknown, scopes: unknown): Promise<string> {
+  /** Step 1: where to send the browser, and the nonce cookie that binds the callback to it. */
+  async authorizeUrl(
+    provider: string,
+    success: unknown,
+    failure: unknown,
+    scopes: unknown,
+  ): Promise<{ location: string; nonce: string | null }> {
     const { id, config, definition } = this.provider(provider)
     const meta = OAUTH_PROVIDERS[id]
+    const bound = this.config.oauthStateBinding
+    const nonce = bound ? randomSecret(24) : ''
     const state: State = {
       success: assertRedirect(success, this.origins(), 'success'),
       failure: assertRedirect(failure ?? success, this.origins(), 'failure'),
       token: true,
       exp: Math.floor(Date.now() / 1000) + STATE_TTL,
-      nonce: uniqueId(),
+      nonce,
+      bound,
     }
     const payload = Buffer.from(JSON.stringify(state)).toString('base64url')
     const extra = Array.isArray(scopes) ? scopes.map(String) : []
@@ -108,7 +134,7 @@ export class OAuthService {
     url.searchParams.set('state', `${payload}.${await sign(this.config.secret, payload)}`)
     url.searchParams.set('response_type', 'code')
     definition.authorize?.(url)
-    return url.toString()
+    return { location: url.toString(), nonce: bound ? nonce : null }
   }
 
   private async readState(raw: string | null): Promise<State | null> {
@@ -124,9 +150,17 @@ export class OAuthService {
   }
 
   /** Steps 2–3: returns the URL to redirect the browser to. */
-  async callback(provider: string, params: Params): Promise<string> {
+  async callback(provider: string, params: Params, cookieNonce?: string | null): Promise<string> {
     const state = await this.readState(typeof params.state === 'string' ? params.state : null)
     if (!state) throw err('general_argument_invalid', 'Invalid `state` param.')
+    // A signed state alone is not enough: otherwise an attacker can start a
+    // flow for their own provider account and send the callback URL to a
+    // victim (login CSRF/session swapping). The nonce must match this browser.
+    if (this.config.oauthStateBinding) {
+      if (state.bound !== true || !cookieNonce || !state.nonce || !sameSecret(cookieNonce, state.nonce)) {
+        throw err('general_argument_invalid', 'Invalid or expired OAuth state. Start sign-in again from this browser.')
+      }
+    }
     try {
       const { id, config, definition } = this.provider(provider)
       const code = typeof params.code === 'string' ? params.code : ''

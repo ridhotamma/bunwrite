@@ -73,6 +73,25 @@ describe('API key scopes', () => {
     const envUsers = await fetch(`${origin}/v1/users`, { headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY } })
     expect(envUsers.status).toBe(200)
 
+    // Even in appwrite compatibility mode, users.read alone cannot dump
+    // password hashes: the explicit users.secrets scope is required.
+    await fetch(`${origin}/v1/users`, {
+      method: 'POST',
+      headers: headers(fullKey),
+      body: JSON.stringify({ userId: 'wallet-user', email: 'wallet@example.com', password: 'password123' }),
+    })
+    const usersReadKey = (await server.services.settings.createKey('users-reader', null, ['users.read'])).secret
+    const scopedUsers = (await (await fetch(`${origin}/v1/users`, { headers: headers(usersReadKey) })).json()) as {
+      users: Array<Record<string, unknown>>
+    }
+    expect(scopedUsers.users.find((user) => user.$id === 'wallet-user')).not.toHaveProperty('hash')
+    expect(scopedUsers.users.find((user) => user.$id === 'wallet-user')).not.toHaveProperty('password')
+    const secretKey = (await server.services.settings.createKey('users-secrets', null, ['users.read', 'users.secrets'])).secret
+    const secretUsers = (await (await fetch(`${origin}/v1/users`, { headers: headers(secretKey) })).json()) as {
+      users: Array<Record<string, unknown>>
+    }
+    expect(secretUsers.users.find((user) => user.$id === 'wallet-user')).toHaveProperty('hash')
+
     // The cached lookup keeps the scopes too.
     const identity = await resolveApiKey(server.db, server.config, readKey)
     expect(identity?.scopes).toEqual(['documents.read'])

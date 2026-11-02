@@ -227,8 +227,8 @@ describe('the Appwrite CLI against the default (bunwrite) naming', () => {
       writeFileSync(join(bin, 'git'), '#!/bin/sh\nexit 1\n')
       chmodSync(join(bin, 'git'), 0o755)
       const stamp = new Date().toISOString()
-      writeFileSync(join(home, '.config', 'appwrite', 'update-check.json'), JSON.stringify({ checkedAt: stamp, latest: '22.0.0', notifiedAt: stamp }))
-      const cli = join(import.meta.dir, '..', 'node_modules', 'appwrite-cli', 'dist', 'cli.cjs')
+      writeFileSync(join(home, '.config', 'appwrite', 'update-check.json'), JSON.stringify({ checkedAt: stamp, latest: '28.10.2', notifiedAt: stamp }))
+      const cli = join(import.meta.dir, '..', 'node_modules', 'appwrite-cli', 'run.js')
       const run = async (args: string[], stdin = '') => {
         const proc = Bun.spawn(['bun', cli, ...args], {
           cwd: dir,
@@ -242,7 +242,7 @@ describe('the Appwrite CLI against the default (bunwrite) naming', () => {
       }
       expect((await run(['login', '--email', 'cli-compat@example.com', '--password', 'admin-password', '--endpoint', server.endpoint])).out).toContain('Successfully signed in')
       expect((await run(['whoami'])).out).toContain('cli-compat@example.com')
-      await run(['init', 'project', '--organization-id', 'org_test', '--project-id', PROJECT, '--project-name', 'x'], 'n\n')
+      await run(['init', 'project', '--organization-id', 'org_test', '--project-id', PROJECT, '--project-name', 'x', '--force'], 'n\n')
       expect((await run(['pull', 'tables'])).out).toContain('Successfully pulled 3 tables')
     } finally {
       server.stop()

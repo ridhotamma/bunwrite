@@ -200,6 +200,12 @@ export class AuthService {
     return this.updateUser(id, { password: hash, hash: 'argon2', hash_options: JSON.stringify(appwriteHashOptions()), password_update: now() })
   }
 
+  /** Upgrade an old Argon2 hash after a successful sign-in, without changing the password. */
+  async rehashPassword(id: string, password: string): Promise<void> {
+    const hash = await hashPassword(password)
+    await this.updateUser(id, { password: hash, hash: 'argon2', hash_options: JSON.stringify(appwriteHashOptions()) })
+  }
+
   /**
    * Drop live sessions after a password change or recovery. `except` keeps the
    * caller's own session when they are changing their password while signed in.

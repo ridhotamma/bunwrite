@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { Client, ID, Messaging, Project, Query, Storage, Webhooks } from 'node-appwrite'
 
 import { ConsoleAuth } from '~/console/auth'
-import { webhookSignature } from '~/webhooks/service'
+import { webhookSignature, webhookSignatureSha256 } from '~/webhooks/service'
 import { adminClient, DB, failure, KEY, makeUser, PROJECT, sessionClient, startServer, type TestServer } from './helpers'
 
 const keyClient = (s: TestServer) => new Client().setEndpoint(s.endpoint).setProject(PROJECT).setKey(KEY)
@@ -300,6 +300,11 @@ describe('Webhooks', () => {
     const [hit] = hits
     expect(hit!.headers.get('authorization')).toBe(`Basic ${btoa('bob:pw')}`)
     expect(hit!.headers.get('x-appwrite-webhook-signature')).toBe(webhookSignature(url('/auth'), hit!.body, 's3cret'))
+    const timestamp = hit!.headers.get('x-appwrite-webhook-timestamp')!
+    expect(timestamp).toMatch(/^\d+$/)
+    expect(hit!.headers.get('x-appwrite-webhook-signature-sha256')).toBe(
+      webhookSignatureSha256(url('/auth'), hit!.body, 's3cret', timestamp),
+    )
     expect(hit!.headers.get('content-type')).toBe('application/json')
     expect(JSON.parse(hit!.body)).toMatchObject({ $id: 'd1', text: 'changed' })
   })

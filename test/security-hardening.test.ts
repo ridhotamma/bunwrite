@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { verifyJwt, signJwt } from '~/auth/jwt'
+import { sessionModel, userModel, type SessionRow, type UserRowFull } from '~/auth/models'
+import { needsPasswordRehash } from '~/auth/passwords'
 import { unpackArchive } from '~/functions/deployments'
 import { isPrivateEnv } from '~/lib/private-env'
 import { parseScopedFunctionKey, scopedFunctionKey } from '~/lib/internal-key'
@@ -37,6 +39,68 @@ describe('request parsing hardening', () => {
   test('wildcards never authorize a redirect that carries a token', () => {
     expect(() => assertRedirect('https://evil.example/cb', ['*'], 'success')).toThrow()
     expect(assertRedirect('https://app.example/cb', ['https://app.example'], 'success')).toBe('https://app.example/cb')
+  })
+})
+
+describe('native API models', () => {
+  const user = {
+    seq: 1,
+    id: 'u1',
+    name: 'User',
+    email: 'user@example.com',
+    phone: null,
+    password: '$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA',
+    hash: 'argon2',
+    hash_options: '{"type":"argon2","memory_cost":19456,"time_cost":2,"threads":1}',
+    registration: '2024-01-01T00:00:00.000Z',
+    status: 1,
+    labels: '[]',
+    password_update: null,
+    email_verification: 1,
+    phone_verification: 0,
+    mfa: 0,
+    prefs: '{}',
+    accessed_at: null,
+    created_at: '2024-01-01T00:00:00.000Z',
+    updated_at: '2024-01-01T00:00:00.000Z',
+  } satisfies UserRowFull
+
+  const session = {
+    id: 's1',
+    user_id: 'u1',
+    provider: 'google',
+    provider_uid: 'g1',
+    provider_access_token: 'access-secret',
+    provider_access_token_expiry: '2030-01-01T00:00:00.000Z',
+    provider_refresh_token: 'refresh-secret',
+    ip: '127.0.0.1',
+    user_agent: 'test',
+    factors: '["email"]',
+    expire: '2030-01-01T00:00:00.000Z',
+    created_at: '2024-01-01T00:00:00.000Z',
+    updated_at: '2024-01-01T00:00:00.000Z',
+  } satisfies SessionRow
+
+  test('native user/session responses never expose hashes or provider tokens', () => {
+    const nativeUser = userModel(user)
+    expect(nativeUser).not.toHaveProperty('password')
+    expect(nativeUser).not.toHaveProperty('hash')
+    expect(nativeUser).not.toHaveProperty('hashOptions')
+    expect(nativeUser.email).toBe('user@example.com')
+
+    const nativeSession = sessionModel(session)
+    expect(nativeSession.providerAccessToken).toBe('')
+    expect(nativeSession.providerRefreshToken).toBe('')
+
+    // API_COMPAT=appwrite keeps the historical fields for old SDK consumers.
+    expect(userModel(user, { revealSensitive: true }).password).toStartWith('$argon2id$')
+    expect(sessionModel(session, { revealProviderTokens: true }).providerRefreshToken).toBe('refresh-secret')
+  })
+
+  test('legacy Argon2 hashes are recognized for rehash on login', () => {
+    expect(needsPasswordRehash('$argon2id$v=19$m=7168,t=5,p=1$c2FsdA$aGFzaA')).toBe(true)
+    expect(needsPasswordRehash(user.password)).toBe(false)
+    expect(needsPasswordRehash('$2b$12$bcrypt')).toBe(true)
   })
 })
 

@@ -8,7 +8,7 @@ import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
 import { documentRoutes, transactionRoutes } from './documents/routes'
 import type { DocEvent } from './documents/store'
-import { apiHeader, assertCompatHeaders, corsHeaderNames } from './lib/compat'
+import { apiHeader, assertCompatHeaders, corsHeaderNames, sessionFromCookies } from './lib/compat'
 import { addVary, compressResponse } from './lib/compress'
 import { isStreaming } from './lib/streaming'
 import { BunwriteError, err } from './lib/errors'
@@ -480,7 +480,16 @@ export function createApp(source: Services | ProjectResolver) {
     let response: Response | undefined
     try {
       // The Appwrite CLI's console calls (login, organizations, projects).
-      if (projectOf(request, url) === CONSOLE_PROJECT && request.method !== 'OPTIONS') {
+      // Newer CLI versions call /account/sessions/current without a project
+      // header; its console session cookie is enough to identify the scope.
+      const requestedProject = projectOf(request, url)
+      const consoleCookie =
+        !requestedProject &&
+        /^\/v1\/account(?:\/|$)/.test(pathname) &&
+        Boolean(
+          sessionFromCookies(parseCookies(request.headers.get('cookie') ?? ''), request.headers.get('x-fallback-cookies'), CONSOLE_PROJECT),
+        )
+      if ((requestedProject === CONSOLE_PROJECT || consoleCookie) && request.method !== 'OPTIONS') {
         response = await consoleApi.handle(request, pathname.replace(/^\/v1(?=\/|$)/, '') || '/')
         if (response) meta.auth ??= 'console'
       }

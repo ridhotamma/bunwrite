@@ -251,6 +251,8 @@ export interface Config {
    * BUNWRITE_* function variables) or `appwrite`. Both families are always accepted.
    */
   apiCompat: ApiCompat
+  /** Bind OAuth state to a browser cookie (default true; disable only for legacy server-side flows). */
+  oauthStateBinding: boolean
   /** Interface to bind (defaults to all interfaces). */
   hostname: string
   /** SQLite file path. */
@@ -520,6 +522,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),
+    oauthStateBinding: env.OAUTH_STATE_BINDING !== 'false',
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
     ...databaseConfig(env),

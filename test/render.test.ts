@@ -83,8 +83,17 @@ describe('html rendering', () => {
       expect(hits).toBe(0)
 
       await on(true)
+      // Remote loading alone does not open loopback/private networks.
       expect((await post('/image', { html })).status).toBe(200)
-      expect(hits).toBeGreaterThan(0)
+      expect(hits).toBe(0)
+
+      process.env.RENDER_ALLOW_PRIVATE = 'true'
+      try {
+        expect((await post('/image', { html })).status).toBe(200)
+        expect(hits).toBeGreaterThan(0)
+      } finally {
+        delete process.env.RENDER_ALLOW_PRIVATE
+      }
     } finally {
       assets.stop(true)
     }

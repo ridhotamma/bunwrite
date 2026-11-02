@@ -97,15 +97,19 @@ const LIVE_ORDER = [
   'prefs', 'impersonator', 'impersonatorUserId',
 ]
 
-/** The User model (`users.*`): the account plus its password hash, in the live server's field order. */
-export function userModel(u: UserRowFull) {
-  const all: Record<string, unknown> = {
-    ...accountModel(u),
-    password: u.password ?? '',
-    hash: u.hash,
-    hashOptions: parse<Record<string, unknown>>(u.hash_options, {}),
+/**
+ * The User model (`users.*`). Bunwrite's native model never returns the
+ * password hash: a read-only `users.read` key must not become an offline
+ * cracking oracle. Appwrite compatibility mode can reveal the legacy fields.
+ */
+export function userModel(u: UserRowFull, options: { revealSensitive?: boolean } = {}) {
+  const all: Record<string, unknown> = { ...accountModel(u) }
+  if (options.revealSensitive) {
+    all.password = u.password ?? ''
+    all.hash = u.hash
+    all.hashOptions = parse<Record<string, unknown>>(u.hash_options, {})
   }
-  return Object.fromEntries(LIVE_ORDER.map((k) => [k, all[k]]))
+  return Object.fromEntries(LIVE_ORDER.filter((key) => key in all).map((key) => [key, all[key]]))
 }
 
 export interface SessionRow {
@@ -124,7 +128,11 @@ export interface SessionRow {
   updated_at: string
 }
 
-export function sessionModel(s: SessionRow, opts: { secret?: string; current?: boolean; country?: string } = {}) {
+export function sessionModel(
+  s: SessionRow,
+  opts: { secret?: string; current?: boolean; country?: string; revealProviderTokens?: boolean } = {},
+) {
+  const revealTokens = opts.revealProviderTokens ?? false
   return {
     $id: s.id,
     $createdAt: s.created_at,
@@ -133,9 +141,9 @@ export function sessionModel(s: SessionRow, opts: { secret?: string; current?: b
     expire: s.expire,
     provider: s.provider,
     providerUid: s.provider_uid,
-    providerAccessToken: s.provider_access_token,
-    providerAccessTokenExpiry: s.provider_access_token_expiry,
-    providerRefreshToken: s.provider_refresh_token,
+    providerAccessToken: revealTokens ? s.provider_access_token : '',
+    providerAccessTokenExpiry: revealTokens ? s.provider_access_token_expiry : '',
+    providerRefreshToken: revealTokens ? s.provider_refresh_token : '',
     ip: s.ip,
     osCode: '',
     osName: '',

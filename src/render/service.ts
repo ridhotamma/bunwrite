@@ -19,6 +19,7 @@ import { isLeader } from '~/cluster/role'
 import type { Config } from '~/config'
 import { BunwriteError, err } from '~/lib/errors'
 import { resolveId } from '~/lib/ids'
+import { assertPublicDestination } from '~/lib/net'
 import type { QueueMessageRow, QueueService } from '~/queue/service'
 import type { StorageService } from '~/storage/service'
 import { loadSharp } from '~/storage/sharp'
@@ -97,23 +98,26 @@ const JOB_LEASE_S = 120
 const JOB_ATTEMPTS = 3
 /** How often each project looks for due jobs (retries, jobs left by a restart). */
 const JOB_POLL_MS = 5_000
-const BLOCKED_URLS = ['http://*', 'https://*', 'ws://*', 'wss://*', 'file://*', 'ftp://*']
 /**
- * Blocked even when RENDER_ALLOW_REMOTE is on: local files and the well-known
- * cloud metadata endpoints. Enabling remote loading is an explicit operator
- * opt-in; it also permits private-network hosts (needed by self-hosted asset
- * servers), so run rendering with a sandbox and no server credentials.
+ * Schemes the Fetch interceptor does not see, plus local file access. http(s)
+ * is handled by Fetch so each request can be resolved and checked.
  */
-const ALWAYS_BLOCKED_URLS = [
-  'file://*',
-  'ftp://*',
-  'http://169.254.169.254/*',
-  'http://metadata.google.internal/*',
-  'http://*.internal/*',
-  'http://*.local/*',
-  'https://169.254.169.254/*',
-  'https://metadata.google.internal/*',
-]
+const NETWORK_BLOCKED_URLS = ['ws://*', 'wss://*', 'file://*', 'ftp://*']
+/** Private-network rendering is a deliberate, separate opt-in for local asset servers. */
+const allowPrivateRender = (): boolean => process.env.RENDER_ALLOW_PRIVATE === 'true'
+
+/** Serializes CDP commands: Bun.WebView allows only one in flight per view. */
+class CdpSession {
+  private chain: Promise<unknown> = Promise.resolve()
+
+  constructor(private readonly view: InstanceType<typeof Bun.WebView>) {}
+
+  call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
+    const next = this.chain.then(() => this.view.cdp<T>(method, params))
+    this.chain = next.catch(() => undefined)
+    return next
+  }
+}
 
 const CHROME_ARGS = [
   '--disable-gpu',
@@ -248,12 +252,21 @@ export class RenderService {
 
   /** Render HTML to PDF bytes. */
   pdf(html: string, o: PdfOptions = {}, fromJob = false): Promise<Uint8Array> {
-    return this.inLine(html, { width: 794, height: 1123, scale: 1, transparent: false }, fromJob, async (view) => {
+    return this.inLine(html, { width: 794, height: 1123, scale: 1, transparent: false }, fromJob, async (_view, cdp) => {
       const [width, height] = PAPER_SIZES[o.format ?? 'A4']
       const margin = o.margin ?? {}
       const header = o.headerTemplate ?? ''
       const footer = o.footerTemplate ?? ''
-      const { data } = (await view.cdp('Page.printToPDF', {
+      // The header/footer templates render after Fetch interception is
+      // disabled; refuse URLs there rather than opening a second SSRF path.
+      if (
+        /(?:https?:|ftp:|file:|^|\W)\/\//i.test(header + footer) ||
+        /url\s*\(|@import/i.test(header + footer) ||
+        /(?:src|href)\s*=\s*["']\s*(?!#|data:)/i.test(header + footer)
+      ) {
+        throw err('general_argument_invalid', 'Header and footer templates may not load remote or local resources; use inline styles or data: URLs.')
+      }
+      const { data } = (await cdp.call('Page.printToPDF', {
         landscape: o.landscape ?? false,
         printBackground: o.printBackground ?? true,
         scale: o.scale ?? 1,
@@ -282,7 +295,7 @@ export class RenderService {
     const transparent = Boolean(o.transparent) && output !== 'jpg'
     const maxPixels = maxImagePixels()
     if (width * height * scale * scale > maxPixels) throw tooLarge(maxPixels)
-    const bytes = await this.inLine(html, { width, height, scale, transparent }, fromJob, async (view) => {
+    const bytes = await this.inLine(html, { width, height, scale, transparent }, fromJob, async (view, cdp) => {
       let clip: Rect = { x: 0, y: 0, width, height }
       if (o.selector) {
         const found = await view.evaluate<Rect | null>(
@@ -291,7 +304,7 @@ export class RenderService {
         if (!found || found.width < 1 || found.height < 1) throw err('general_argument_invalid', `No visible element matches selector "${o.selector}".`)
         clip = found
       } else if (o.fullPage ?? true) {
-        const metrics = (await view.cdp('Page.getLayoutMetrics')) as { cssContentSize: { height: number } }
+        const metrics = (await cdp.call('Page.getLayoutMetrics')) as { cssContentSize: { height: number } }
         clip.height = Math.max(height, Math.ceil(metrics.cssContentSize.height))
       }
       const pixels = clip.width * clip.height * scale * scale
@@ -301,7 +314,7 @@ export class RenderService {
       // Chromium encodes png, jpeg and webp itself; avif and gif go through sharp.
       const native = output === 'png' || output === 'jpg' || output === 'webp'
       const quality = o.quality !== undefined && output !== 'png' ? { quality: o.quality } : {}
-      const { data } = (await view.cdp('Page.captureScreenshot', {
+      const { data } = (await cdp.call('Page.captureScreenshot', {
         format: native ? (output === 'jpg' ? 'jpeg' : output) : 'png',
         ...(native ? quality : {}),
         clip: { ...clip, scale: 1 },
@@ -475,7 +488,7 @@ export class RenderService {
    * minute idle. Direct requests are refused once MAX_WAITING are in line;
    * queued jobs always get a place (at most one per project).
    */
-  private async inLine<T>(html: string, setup: PageSetup, fromJob: boolean, work: (view: View) => Promise<T>): Promise<T> {
+  private async inLine<T>(html: string, setup: PageSetup, fromJob: boolean, work: (view: View, cdp: CdpSession) => Promise<T>): Promise<T> {
     this.check(html)
     if (!fromJob && shared.waiting >= MAX_WAITING) {
       throw err(
@@ -539,26 +552,94 @@ export class RenderService {
   }
 
   /** Open a tab, load the HTML, wait for images and fonts, run `work`, close the tab. */
-  private async withPage<T>(chrome: string, html: string, setup: PageSetup, work: (view: View) => Promise<T>): Promise<T> {
+  private async withPage<T>(chrome: string, html: string, setup: PageSetup, work: (view: View, cdp: CdpSession) => Promise<T>): Promise<T> {
     shared.running = true
     const view = new Bun.WebView({ width: setup.width, height: setup.height, backend: { type: 'chrome', url: false, path: chrome, argv: chromeArgs() } })
+    const cdp = new CdpSession(view)
+    const paused = new Set<Promise<void>>()
+    const hostChecks = new Map<string, Promise<boolean>>()
+
+    const hostAllowed = async (url: URL): Promise<boolean> => {
+      if (url.username || url.password) return false
+      const key = url.host
+      let check = hostChecks.get(key)
+      if (!check) {
+        check = (async () => {
+          if (allowPrivateRender()) return true
+          try {
+            await assertPublicDestination(url.toString())
+            return true
+          } catch {
+            return false
+          }
+        })()
+        hostChecks.set(key, check)
+      }
+      return check
+    }
+
+    const requestAllowed = async (raw: string): Promise<boolean> => {
+      let url: URL
+      try {
+        url = new URL(raw)
+      } catch {
+        return false
+      }
+      if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') return true
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+      if (!this.config.render.allowRemote) return false
+      return hostAllowed(url)
+    }
+
+    const onPaused = (event: MessageEvent<{ requestId: string; request: { url: string } }>) => {
+      const task = (async () => {
+        try {
+          const allowed = await requestAllowed(event.data.request.url)
+          await cdp.call(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest', {
+            requestId: event.data.requestId,
+            ...(allowed ? {} : { errorReason: 'BlockedByClient' }),
+          })
+        } catch {
+          // Never leave a request paused: a missed response hangs the render.
+          await cdp.call('Fetch.failRequest', { requestId: event.data.requestId, errorReason: 'Failed' }).catch(() => undefined)
+        }
+      })()
+      paused.add(task)
+      void task.finally(() => paused.delete(task))
+    }
+
     try {
       await view.navigate('about:blank')
-      await view.cdp('Network.enable')
-      await view.cdp('Network.setBlockedURLs', { urls: this.config.render.allowRemote ? ALWAYS_BLOCKED_URLS : BLOCKED_URLS })
-      await view.cdp('Emulation.setDeviceMetricsOverride', { width: setup.width, height: setup.height, deviceScaleFactor: setup.scale, mobile: false })
+      await cdp.call('Network.enable')
+      // When remote loading is off, block at the network layer too. When it is
+      // on, http(s) goes through Fetch so the resolved destination is checked.
+      await cdp.call('Network.setBlockedURLs', {
+        urls: this.config.render.allowRemote
+          ? NETWORK_BLOCKED_URLS
+          : ['http://*', 'https://*', 'ws://*', 'wss://*', 'file://*', 'ftp://*'],
+      })
+      view.addEventListener('Fetch.requestPaused', onPaused)
+      await cdp.call('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] })
+      await cdp.call('Emulation.setDeviceMetricsOverride', { width: setup.width, height: setup.height, deviceScaleFactor: setup.scale, mobile: false })
       // Same result on every host: light colour scheme, white page unless transparent was asked for.
-      await view.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
-      await view.cdp('Emulation.setDefaultBackgroundColorOverride', {
+      await cdp.call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+      await cdp.call('Emulation.setDefaultBackgroundColorOverride', {
         color: setup.transparent ? { r: 0, g: 0, b: 0, a: 0 } : { r: 255, g: 255, b: 255, a: 1 },
       })
-      const { frameTree } = (await view.cdp('Page.getFrameTree')) as { frameTree: { frame: { id: string } } }
-      await view.cdp('Page.setDocumentContent', { frameId: frameTree.frame.id, html })
-      await view.evaluate(
-        `new Promise((resolve) => document.readyState === 'complete' ? resolve(true) : addEventListener('load', () => resolve(true), { once: true }))`,
-      )
-      await view.evaluate('document.fonts.ready.then(() => true)')
-      return await work(view)
+      const { frameTree } = (await cdp.call('Page.getFrameTree')) as { frameTree: { frame: { id: string } } }
+      await cdp.call('Page.setDocumentContent', { frameId: frameTree.frame.id, html })
+      // Use CDP for the waits too: `view.evaluate` and a paused request cannot
+      // both hold the view's single in-flight CDP slot.
+      await cdp.call('Runtime.evaluate', {
+        expression: `new Promise((resolve) => document.readyState === 'complete' ? resolve(true) : addEventListener('load', () => resolve(true), { once: true }))`,
+        awaitPromise: true,
+      })
+      await cdp.call('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true })
+      await Promise.allSettled([...paused])
+      // Header/footer templates are checked separately; work runs without a
+      // fetch pause that could block printToPDF/screenshot commands.
+      await cdp.call('Fetch.disable')
+      return await work(view, cdp)
     } finally {
       view.close()
     }

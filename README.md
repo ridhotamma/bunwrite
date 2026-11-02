@@ -312,7 +312,7 @@ at the server; the bundled Caddy obtains certificates on demand. The
 ## Appwrite CLI
 
 The [Appwrite CLI](https://appwrite.io/docs/tooling/command-line/installation)
-(tested with 22.0.0) works against Bunwrite. Either point it at a project with an
+(tested with 28.10.2) works against Bunwrite. Either point it at a project with an
 API key:
 
 ```bash
@@ -515,6 +515,15 @@ follow, `API_COMPAT` in `.env` decides:
 | Function variables | `BUNWRITE_FUNCTION_ID`, `BUNWRITE_API_KEY`, `BUNWRITE_ENDPOINT`, … | the same plus `APPWRITE_FUNCTION_ID`, `APPWRITE_API_KEY`, … |
 | Session cookie without a project header (`?project=`) | `bw_session_<project>` | `a_session_<project>` |
 | Config file the console exports | `bunwrite.config.json` | `appwrite.config.json` |
+| User model | password hash fields omitted | legacy `password`, `hash`, `hashOptions` fields included only with the `users.secrets` scope |
+| Session/identity model | provider access and refresh tokens redacted | legacy provider tokens included only with `users.secrets` |
+| Webhook signature | HMAC-SHA256 + timestamp, legacy HMAC-SHA1 also sent | same headers for compatibility |
+
+Bunwrite's native model is the secure default. Appwrite mode exists to keep old
+SDK consumers and receivers working; it deliberately exposes the legacy fields
+they expect. OAuth callbacks are browser-bound in both modes by default; set
+`OAUTH_STATE_BINDING=false` only for a legacy server-side flow that cannot
+preserve the state cookie.
 
 Moving from Appwrite, set `API_COMPAT=appwrite` so webhook receivers and
 functions written for Appwrite keep working unchanged. Error bodies, paths,
@@ -778,7 +787,7 @@ assets, saving to S3 and the HTTP examples.
 | Git deployments | GitHub App (one-click setup or `VCS_GITHUB_*`), one server-wide installation shared by every project, repository browsing and detection, `createVcsDeployment`; pushes deploy sites and functions, other branches get preview URLs, commit statuses and one PR comment, fork PRs need approval. See [docs/GIT.md](docs/GIT.md) |
 | Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |
 | Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
-| Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Appwrite's headers and HMAC signature; ten failures in a row turn a webhook off |
+| Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Bunwrite's HMAC-SHA256 timestamp signature plus the legacy Appwrite HMAC-SHA1 header; ten failures in a row turn a webhook off |
 | Messaging | topics (create, list, update, delete) |
 | Realtime | WebSocket at `/v1/realtime`: document events to subscribers who may read them |
 | Email | SMTP via nodemailer, Appwrite's English templates |

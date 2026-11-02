@@ -26,7 +26,7 @@ describe('password sign-in (dashboard flow)', () => {
     userId = user.$id
     expect(user.email).toBe('seller@example.com')
     expect(user.hash).toBe('argon2')
-    expect(user.hashOptions).toEqual({ type: 'argon2', memory_cost: 7168, time_cost: 5, threads: 1 })
+    expect(user.hashOptions).toEqual({ type: 'argon2', memory_cost: 19456, time_cost: 2, threads: 1 })
     expect(user.password).toStartWith('$argon2id$')
 
     const session = await admin.account.createEmailPasswordSession('seller@example.com', 'correct horse')
@@ -393,15 +393,30 @@ describe('Google sign-in', () => {
     oauthServer.stop()
   })
 
+  async function authorizeGoogle() {
+    const url = new URL(`${oauthServer.endpoint}/account/tokens/oauth2/google`)
+    url.searchParams.set('project', PROJECT)
+    url.searchParams.set('success', 'https://dashboard.example.com/api/oauth/callback?next=%2Fx')
+    url.searchParams.set('failure', 'https://dashboard.example.com/login')
+    const response = await fetch(url, { redirect: 'manual' })
+    expect(response.status).toBe(301)
+    return {
+      auth: new URL(response.headers.get('location')!),
+      cookie: response.headers.get('set-cookie')?.split(';')[0] ?? '',
+    }
+  }
+
   async function signIn(code = 'good-code') {
-    const a = adminClient(oauthServer.endpoint)
-    const redirect = await a.account.createOAuth2Token('google', 'https://dashboard.example.com/api/oauth/callback?next=%2Fx', 'https://dashboard.example.com/login')
-    const auth = new URL(redirect)
+    const { auth, cookie } = await authorizeGoogle()
     expect(auth.pathname).toBe('/auth')
     expect(auth.searchParams.get('redirect_uri')).toBe(`${oauthServer.endpoint}/account/sessions/oauth2/callback/google/${PROJECT}`)
     expect(auth.searchParams.get('scope')).toContain('userinfo.email')
-    // Google sends the browser back to our callback.
-    const back = await fetch(`${auth.searchParams.get('redirect_uri')}?code=${code}&state=${encodeURIComponent(auth.searchParams.get('state')!)}`, { redirect: 'manual' })
+    expect(cookie).toContain('bw_oauth_state_')
+    // Google sends the browser back to our callback with the state cookie.
+    const back = await fetch(`${auth.searchParams.get('redirect_uri')}?code=${code}&state=${encodeURIComponent(auth.searchParams.get('state')!)}`, {
+      redirect: 'manual',
+      headers: { cookie },
+    })
     expect(back.status).toBe(301)
     return new URL(back.headers.get('location')!)
   }
@@ -434,6 +449,14 @@ describe('Google sign-in', () => {
     const failed = await signIn('bad-code')
     expect(failed.origin + failed.pathname).toBe('https://dashboard.example.com/login')
     expect(JSON.parse(failed.searchParams.get('error')!).type).toBe('user_oauth2_provider_error')
+  })
+
+  test('a callback without the state cookie is refused', async () => {
+    const { auth } = await authorizeGoogle()
+    const callback = `${auth.searchParams.get('redirect_uri')}?code=good-code&state=${encodeURIComponent(auth.searchParams.get('state')!)}`
+    const missing = await fetch(callback, { redirect: 'manual' })
+    expect(missing.status).toBe(400)
+    expect(((await missing.json()) as { type: string }).type).toBe('general_argument_invalid')
   })
 
   test('redirects to other hosts are refused; disabled provider is reported', async () => {
@@ -539,14 +562,27 @@ describe('Apple, Facebook and GitHub sign-in', () => {
 
   async function authorize(id: string) {
     const client = adminClient(oauthServer.endpoint)
-    const redirect = await client.account.createOAuth2Token(id as any, 'https://dashboard.example.com/ok', 'https://dashboard.example.com/fail')
-    const url = new URL(redirect)
-    return { client, url, state: url.searchParams.get('state')! }
+    const request = new URL(`${oauthServer.endpoint}/account/tokens/oauth2/${id}`)
+    request.searchParams.set('project', PROJECT)
+    request.searchParams.set('success', 'https://dashboard.example.com/ok')
+    request.searchParams.set('failure', 'https://dashboard.example.com/fail')
+    const response = await fetch(request, { redirect: 'manual' })
+    expect(response.status).toBe(301)
+    const url = new URL(response.headers.get('location')!)
+    return {
+      client,
+      url,
+      state: url.searchParams.get('state')!,
+      cookie: response.headers.get('set-cookie')?.split(';')[0] ?? '',
+    }
   }
 
   async function signIn(id: string, code: string) {
-    const { client, url, state } = await authorize(id)
-    const back = await fetch(`${callbackUrl(id)}?code=${code}&state=${encodeURIComponent(state)}`, { redirect: 'manual' })
+    const { client, url, state, cookie } = await authorize(id)
+    const back = await fetch(`${callbackUrl(id)}?code=${code}&state=${encodeURIComponent(state)}`, {
+      redirect: 'manual',
+      headers: { cookie },
+    })
     expect(back.status).toBe(301)
     return { client, url, location: new URL(back.headers.get('location')!) }
   }
@@ -594,14 +630,14 @@ describe('Apple, Facebook and GitHub sign-in', () => {
   })
 
   test('Apple posts the callback and accepts the signed client secret', async () => {
-    const { client, url, state } = await authorize('apple')
+    const { client, url, state, cookie } = await authorize('apple')
     expect(url.pathname).toBe('/apple/auth')
     expect(url.searchParams.get('response_mode')).toBe('form_post')
     expect(url.searchParams.get('scope')).toBe('name email')
 
     const back = await fetch(callbackUrl('apple'), {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie },
       body: new URLSearchParams({
         code: 'apple-code',
         state,

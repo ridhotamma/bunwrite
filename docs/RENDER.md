@@ -168,7 +168,10 @@ const { status } = await render.getJob({ jobId: job.$id })
 By default every `http(s)`, `ws(s)`, `file` and `ftp` request from the page is
 blocked, so a render never touches the network. Embed logos and fonts as
 `data:` URLs, or tick **Allow remote images, fonts and stylesheets**. Even
-then, Chromium refuses requests to `localhost` and private networks.
+then, each host is resolved and checked at request time: loopback, RFC1918,
+link-local and cloud-metadata destinations are blocked. `RENDER_ALLOW_PRIVATE=true`
+is the explicit opt-in for a local/private asset server. Header and footer
+templates may not load remote resources.
 
 JavaScript in the page runs, so templates can format numbers or dates, but
 it cannot reach the network while remote assets are blocked.
@@ -189,5 +192,6 @@ it cannot reach the network while remote assets are blocked.
 - AVIF output is limited to 4 MP (`AVIF_MAX_MEGAPIXELS`): encoding needs about
   30 bytes per pixel, so a 15 MP AVIF takes about 460 MB on its own.
 - Larger requests get a 400 error before anything is rendered.
-- `CHROME_ARGS` adds Chromium flags; `CHROME_NO_SANDBOX=true` is needed in
-  most containers (the compose file sets it).
+- `CHROME_ARGS` adds Chromium flags. `CHROME_NO_SANDBOX=true` disables
+  Chromium's sandbox; only use it when the host cannot provide user namespaces
+  (the compose file leaves the sandbox on by default).

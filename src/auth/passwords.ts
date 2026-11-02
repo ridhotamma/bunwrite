@@ -1,13 +1,22 @@
 /**
- * Password hashing. New hashes are argon2id with Appwrite's own parameters
- * (m=7168 KiB, t=5, p=1), so migrated and new users look the same. Hashes
- * imported from Appwrite in other formats keep working.
+ * Password hashing. New hashes use argon2id at OWASP's minimum (m=19456 KiB,
+ * t=2, p=1). Older Appwrite-parameter hashes (m=7168, t=5) continue to verify
+ * and are upgraded after a successful sign-in. Hashes imported from Appwrite
+ * in other formats keep working.
  */
 import { createHash, scryptSync, timingSafeEqual } from 'node:crypto'
 
 import { err } from '~/lib/errors'
 
-export const HASH_OPTIONS = { type: 'argon2', memoryCost: 7168, timeCost: 5, threads: 1 } as const
+export const HASH_OPTIONS = { type: 'argon2', memoryCost: 19_456, timeCost: 2, threads: 1 } as const
+
+/** True when a stored hash is weaker than the current Argon2id policy. */
+export function needsPasswordRehash(hash: string | null | undefined): boolean {
+  if (!hash) return false
+  if (!hash.startsWith('$argon2')) return true // bcrypt, md5, sha, scrypt, ...
+  const memory = /\$argon2(?:id|i)?\$v=\d+\$m=(\d+)/.exec(hash)
+  return memory ? Number(memory[1]) < HASH_OPTIONS.memoryCost : true
+}
 
 export function validatePassword(password: unknown, param = 'password'): string {
   if (typeof password !== 'string' || password.length < 8 || password.length > 256) {

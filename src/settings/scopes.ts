@@ -16,6 +16,7 @@ export const API_KEY_SCOPE_GROUPS: ApiKeyScopeGroup[] = [
     scopes: [
       { id: 'users.read', label: 'Read users' },
       { id: 'users.write', label: 'Create, update and delete users' },
+      { id: 'users.secrets', label: 'Read password hashes and provider tokens (legacy Appwrite mode)' },
       { id: 'teams.read', label: 'Read teams and memberships' },
       { id: 'teams.write', label: 'Create, update and delete teams and memberships' },
     ],

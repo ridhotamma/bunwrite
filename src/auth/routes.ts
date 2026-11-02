@@ -2,13 +2,14 @@ import type { AppContext } from '~/app'
 import { sessionCookieName } from '~/lib/compat'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
-import { bool, json, list, noContent, num, str } from '~/lib/http'
+import { bool, errorResponse, json, list, noContent, num, str } from '~/lib/http'
 import { assertRedirect, withQuery } from '~/lib/origins'
 import type { RouteContext, Router } from '~/lib/router'
 import { signJwt } from './jwt'
-import { callerHasScope } from './caller'
+import { callerHasScope, parseCookies } from './caller'
+import { clearOAuthStateCookie, oauthStateCookie, oauthStateCookieName } from './oauth'
 import { accountModel, membershipModel, sessionModel, tokenModel, userModel, type IdentityRow, type SessionRow, type UserRowFull } from './models'
-import { verifyPassword } from './passwords'
+import { needsPasswordRehash, verifyPassword } from './passwords'
 import { otpCode, requestInfo, validEmail, validPhone, type TokenRowFull } from './service'
 import { FailedAttempts, RateLimiter } from '~/lib/limits'
 import type { AuthMethodId } from '~/settings/access'
@@ -63,13 +64,19 @@ const cookieName = (ctx: AppContext, request: Request) => sessionCookieName(ctx.
  * own cookie); browsers get it as the session cookie instead: `bw_session_<project>`,
  * or `a_session_<project>` for a request made with Appwrite's headers.
  */
+/** Legacy Appwrite secret fields require both compatibility mode and the explicit secret scope. */
+function revealLegacySecrets(ctx: AppContext): boolean {
+  return ctx.config.apiCompat === 'appwrite' && (ctx.caller.scopes === null || ctx.caller.scopes.has('users.secrets'))
+}
+
 function sessionResponse(route: RouteContext<AppContext>, session: SessionRow, secret: string): Response {
   const { ctx } = route
   const country = requestInfo(route.request).country
-  if (ctx.caller.privileged) return json(sessionModel(session, { secret, country }), 201)
+  const revealProviderTokens = revealLegacySecrets(ctx)
+  if (ctx.caller.privileged) return json(sessionModel(session, { secret, country, revealProviderTokens }), 201)
   const secure = ctx.config.publicEndpoint.startsWith('https') ? '; Secure; SameSite=None' : '; SameSite=Lax'
   const cookie = `${cookieName(ctx, route.request)}=${encodeURIComponent(secret)}; Expires=${new Date(session.expire).toUTCString()}; Path=/; HttpOnly${secure}`
-  return json(sessionModel(session, { current: true, country }), 201, {
+  return json(sessionModel(session, { current: true, country, revealProviderTokens }), 201, {
     'set-cookie': cookie,
     'x-fallback-cookies': JSON.stringify({ [cookieName(ctx, route.request)]: secret }),
   })
@@ -170,7 +177,10 @@ export function accountRoutes(router: Router<AppContext>): void {
 
   router.get('/account/sessions', async ({ ctx }) => {
     const user = await me(ctx)
-    const sessions = (await ctx.auth.sessions(user.id)).map((s) => sessionModel(s, { current: s.id === ctx.caller.sessionId }))
+    const revealProviderTokens = revealLegacySecrets(ctx)
+    const sessions = (await ctx.auth.sessions(user.id)).map((s) =>
+      sessionModel(s, { current: s.id === ctx.caller.sessionId, revealProviderTokens }),
+    )
     return json({ total: sessions.length, sessions })
   })
 
@@ -186,7 +196,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     const id = sessionIdOf(ctx, path.sessionId!)
     const session = await ctx.auth.session(id)
     if (!session || session.user_id !== user.id) throw err('user_session_not_found')
-    return json(sessionModel(session, { current: id === ctx.caller.sessionId }))
+    return json(sessionModel(session, { current: id === ctx.caller.sessionId, revealProviderTokens: revealLegacySecrets(ctx) }))
   })
 
   router.patch('/account/sessions/:sessionId', async ({ ctx, path }) => {
@@ -194,7 +204,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     const id = sessionIdOf(ctx, path.sessionId!)
     const session = await ctx.auth.session(id)
     if (!session || session.user_id !== user.id) throw err('user_session_not_found')
-    return json(sessionModel(session, { current: id === ctx.caller.sessionId }))
+    return json(sessionModel(session, { current: id === ctx.caller.sessionId, revealProviderTokens: revealLegacySecrets(ctx) }))
   })
 
   router.delete('/account/sessions/:sessionId', async ({ ctx, path, request }) => {
@@ -216,6 +226,10 @@ export function accountRoutes(router: Router<AppContext>): void {
     const ok = user && (await verifyPassword(String(params.password ?? ''), user.password, user.hash, JSON.parse(user.hash_options)))
     if (!user || !ok) throw err('user_invalid_credentials')
     if (!user.status) throw err('user_blocked')
+    if (needsPasswordRehash(user.password)) {
+      // Older Appwrite hashes upgrade transparently on their next sign-in.
+      await ctx.auth.rehashPassword(user.id, String(params.password)).catch(() => undefined)
+    }
     const { session, secret } = await ctx.auth.createSession(user.id, { provider: 'email', factors: ['password'], info: requestInfo(route.request) })
     return sessionResponse(route, session, secret)
   })
@@ -263,14 +277,26 @@ export function accountRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/account/tokens/oauth2/:provider', async ({ ctx, params, path }) => {
-    const location = await ctx.oauth.authorizeUrl(path.provider!, params.success, params.failure, params.scopes)
-    return new Response(null, { status: 301, headers: { location, 'cache-control': 'no-store' } })
+    const { location, nonce } = await ctx.oauth.authorizeUrl(path.provider!, params.success, params.failure, params.scopes)
+    const headers: Record<string, string> = { location, 'cache-control': 'no-store' }
+    if (nonce) headers['set-cookie'] = oauthStateCookie(ctx.config, nonce)
+    return new Response(null, { status: 301, headers })
   })
 
-  const oauthCallback = async ({ ctx, params, path }: RouteContext<AppContext>) => {
+  const oauthCallback = async ({ ctx, request, params, path }: RouteContext<AppContext>) => {
     if (path.projectId !== ctx.config.projectId) throw err('project_not_found')
-    const location = await ctx.oauth.callback(path.provider!, params)
-    return new Response(null, { status: 301, headers: { location, 'cache-control': 'no-store' } })
+    const cookie = parseCookies(request.headers.get('cookie') ?? '')[oauthStateCookieName(ctx.config.projectId)]
+    try {
+      const location = await ctx.oauth.callback(path.provider!, params, cookie)
+      return new Response(null, {
+        status: 301,
+        headers: { location, 'cache-control': 'no-store', 'set-cookie': clearOAuthStateCookie(ctx.config) },
+      })
+    } catch (error) {
+      const response = errorResponse(error)
+      response.headers.set('set-cookie', clearOAuthStateCookie(ctx.config))
+      return response
+    }
   }
 
   router.get('/account/sessions/oauth2/callback/:provider/:projectId', oauthCallback)
@@ -337,11 +363,14 @@ export function accountRoutes(router: Router<AppContext>): void {
 }
 
 export function userRoutes(router: Router<AppContext>): void {
+  /** Legacy Appwrite models expose password hashes only with the explicit secret scope. */
+  const revealSensitive = revealLegacySecrets
+  const userModelFor = (ctx: AppContext, row: UserRowFull) => userModel(row, { revealSensitive: revealSensitive(ctx) })
   const user = async (ctx: AppContext, id: string) => {
     requireKey(ctx, 'users.read')
     return ctx.auth.user(id)
   }
-  const done = async (ctx: AppContext, id: string) => json(userModel(await ctx.auth.user(id)))
+  const done = async (ctx: AppContext, id: string) => json(userModelFor(ctx, await ctx.auth.user(id)))
   /** Mutating user routes need `users.write`, not only `users.read`. */
   const writable = async (ctx: AppContext, id: string) => {
     requireKey(ctx, 'users.write')
@@ -366,6 +395,7 @@ export function userRoutes(router: Router<AppContext>): void {
     }
     const rows = await ctx.db.driver.all<IdentityRow>('SELECT * FROM _identities WHERE seq > ? ORDER BY seq LIMIT ? OFFSET ?', [after, limit, offset])
     const total = Number((await ctx.db.driver.get<{ n: number }>('SELECT count(*) AS n FROM _identities'))?.n ?? 0)
+    const reveal = revealSensitive(ctx)
     return json({
       total,
       identities: rows.map((r) => ({
@@ -376,9 +406,9 @@ export function userRoutes(router: Router<AppContext>): void {
         provider: r.provider,
         providerUid: r.provider_uid,
         providerEmail: r.provider_email,
-        providerAccessToken: r.provider_access_token,
-        providerAccessTokenExpiry: r.provider_access_token_expiry,
-        providerRefreshToken: r.provider_refresh_token,
+        providerAccessToken: reveal ? r.provider_access_token : '',
+        providerAccessTokenExpiry: reveal ? r.provider_access_token_expiry : '',
+        providerRefreshToken: reveal ? r.provider_refresh_token : '',
       })),
     })
   })
@@ -386,17 +416,17 @@ export function userRoutes(router: Router<AppContext>): void {
   router.get('/users', async ({ ctx, params }) => {
     requireKey(ctx, 'users.read')
     const { total, users } = await ctx.auth.listUsers(list(params.queries), str(params.search), bool(params.total, true))
-    return json({ total, users: users.map(userModel) })
+    return json({ total, users: users.map((row) => userModelFor(ctx, row)) })
   })
 
   router.post('/users', async ({ ctx, params }) => {
     requireKey(ctx, 'users.write')
     ctx.access.assertPasswordPersonalData(params.password, { id: params.userId, name: params.name, email: params.email, phone: params.phone })
     const created = await ctx.auth.createUser({ id: params.userId, email: params.email, phone: params.phone, password: params.password, name: params.name })
-    return json(userModel(created), 201)
+    return json(userModelFor(ctx, created), 201)
   })
 
-  router.get('/users/:userId', async ({ ctx, path }) => json(userModel(await user(ctx, path.userId!))))
+  router.get('/users/:userId', async ({ ctx, path }) => json(userModelFor(ctx, await user(ctx, path.userId!))))
 
   router.delete('/users/:userId', async ({ ctx, path }) => {
     requireKey(ctx, 'users.write')
@@ -479,7 +509,8 @@ export function userRoutes(router: Router<AppContext>): void {
 
   router.get('/users/:userId/sessions', async ({ ctx, path }) => {
     await user(ctx, path.userId!)
-    const sessions = (await ctx.auth.sessions(path.userId!)).map((s) => sessionModel(s))
+    const revealProviderTokens = revealLegacySecrets(ctx)
+    const sessions = (await ctx.auth.sessions(path.userId!)).map((s) => sessionModel(s, { revealProviderTokens }))
     return json({ total: sessions.length, sessions })
   })
 
@@ -487,7 +518,7 @@ export function userRoutes(router: Router<AppContext>): void {
     const { ctx, path } = route
     await writable(ctx, path.userId!)
     const { session, secret } = await ctx.auth.createSession(path.userId!, { provider: 'server', factors: ['server'], info: requestInfo(route.request) })
-    return json(sessionModel(session, { secret }), 201)
+    return json(sessionModel(session, { secret, revealProviderTokens: revealLegacySecrets(ctx) }), 201)
   })
 
   router.delete('/users/:userId/sessions', async ({ ctx, path }) => {

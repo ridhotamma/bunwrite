@@ -83,10 +83,21 @@ export function webhookModel(w: WebhookRow, options: { revealSecrets?: boolean }
   }
 }
 
-/** The signature Appwrite sends, so receivers can reuse their check. */
+/** The legacy Appwrite signature, kept so existing receivers keep working. */
 export function webhookSignature(url: string, body: string, secret: string): string {
   return createHmac('sha1', secret)
     .update(url + body)
+    .digest('base64')
+}
+
+/**
+ * Bunwrite's modern signature: HMAC-SHA256 over `<unix-seconds>.<url><body>`.
+ * The timestamp is sent in the `*-timestamp` header, so receivers can reject
+ * old deliveries instead of accepting an indefinite replay.
+ */
+export function webhookSignatureSha256(url: string, body: string, secret: string, timestamp: string): string {
+  return createHmac('sha256', secret)
+    .update(`${timestamp}.${url}${body}`)
     .digest('base64')
 }
 
@@ -306,6 +317,7 @@ export class WebhookService {
   private async post(hook: WebhookRow, events: string[], payload: unknown, userId: string): Promise<string> {
     const body = JSON.stringify(payload)
     const prefix = webhookHeaderPrefix({ apiCompat: this.compat() })
+    const timestamp = String(Math.floor(Date.now() / 1000))
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       'user-agent': USER_AGENT,
@@ -314,7 +326,9 @@ export class WebhookService {
       [`${prefix}events`]: events.join(','),
       [`${prefix}project-id`]: this.projectId(),
       [`${prefix}user-id`]: userId,
+      [`${prefix}timestamp`]: timestamp,
       [`${prefix}signature`]: webhookSignature(hook.url, body, hook.secret),
+      [`${prefix}signature-sha256`]: webhookSignatureSha256(hook.url, body, hook.secret, timestamp),
     }
     if (hook.auth_username) headers.authorization = `Basic ${Buffer.from(`${hook.auth_username}:${hook.auth_password}`).toString('base64')}`
     await this.acquire()

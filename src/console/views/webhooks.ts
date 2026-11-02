@@ -144,19 +144,20 @@ function deliveriesView(w: WebhookRow, env: WebhookEnv): Html {
         : 'Bunwrite headers. Set API_COMPAT=appwrite in the server environment to send Appwrite\'s instead.',
       html`<ul class="list">
         <li><span class="subdued">Method and body</span><span><span class="mono">POST</span> with the document as JSON</span></li>
-        <li><span class="subdued">Signature</span><span class="mono">${env.headerName}-Signature</span></li>
+        <li><span class="subdued">Signature (modern)</span><span class="mono">${env.headerName}-Signature-SHA256</span> with <span class="mono">-Timestamp</span></li>
+        <li><span class="subdued">Signature (legacy)</span><span class="mono">${env.headerName}-Signature</span></li>
         <li><span class="subdued">Webhook</span><span class="mono">${env.headerName}-Id</span>, <span class="mono">-Name</span></span></li>
         <li><span class="subdued">Events</span><span class="mono">${env.headerName}-Events</span></li>
         <li><span class="subdued">Project and user</span><span class="mono">${env.headerName}-Project-Id</span>, <span class="mono">-User-Id</span></span></li>
       </ul>
-      <p class="help">The signature is the base64 HMAC-SHA1 of the URL followed by the raw body, keyed by the signing secret.</p>`,
+      <p class="help">Modern: base64 HMAC-SHA256 of <span class="mono">&lt;timestamp&gt;.&lt;url&gt;&lt;raw body&gt;</span>, sent with the Unix timestamp header. Legacy <span class="mono">-Signature</span> remains HMAC-SHA1 for Appwrite-compatible receivers. Reject timestamps older than a few minutes.</p>`,
     )}`
 }
 
 function secretSection(w: WebhookRow, env: WebhookEnv): Html {
   return settingsSection(
     'Signing secret',
-    `Receivers check ${env.headerName}-Signature with this secret. Rotate it if it may have leaked; deliveries fail verification until the receiver is updated.`,
+    `Receivers check ${env.headerName}-Signature-SHA256 (or the legacy -Signature) with this secret. Rotate it if it may have leaked; deliveries fail verification until the receiver is updated.`,
     html`<label>Secret<div class="copy-row"><input id="webhook-secret" type="password" class="mono" readonly value="${w.secret}" autocomplete="off"><button type="button" data-copy-target="#webhook-secret">${icon('copy')}<span data-copy-label>Copy</span></button></div><small>Stored with this project. Copy it into the receiver's configuration.</small></label>
       <form method="post" action="${webhookUrl(w.id)}/secret" class="foot" data-confirm="Replace the signing secret? Deliveries fail verification until the receiver is updated." data-confirm-label="Rotate secret">
         <button>Rotate secret</button>

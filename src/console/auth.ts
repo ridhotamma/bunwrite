@@ -14,7 +14,7 @@ import type { SqlDatabase } from '~/db/driver'
 import { addSeconds, now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { randomSecret, sha256 } from '~/lib/ids'
-import { hashPassword, validatePassword } from '~/auth/passwords'
+import { hashPassword, needsPasswordRehash, validatePassword } from '~/auth/passwords'
 import { validEmail } from '~/auth/service'
 import { parseCookies } from '~/auth/caller'
 
@@ -161,9 +161,17 @@ export class ConsoleAuth {
     ])
     // Verify against a dummy hash when the email is unknown so timing does not tell.
     const ok = await Bun.password
-      .verify(password, admin?.password ?? '$argon2id$v=19$m=7168,t=5,p=1$c2FsdHNhbHRzYWx0$Zq3U7Wo3l1nq5y3V5i0l0g')
+      .verify(
+        password,
+        admin?.password ?? '$argon2id$v=19$m=19456,t=2,p=1$m5PipO+DgsGbUzlcxN7vKjY6UbshCj2Wg01YchDY5Hc$uoVgM3WOwqoKb4kbZWhbDhTW3Lkpigu5or41PFvs8Ic',
+      )
       .catch(() => false)
     if (!admin || !ok) return { status: 'invalid' }
+    if (needsPasswordRehash(admin.password)) {
+      await this.db.driver
+        .run('UPDATE _console_admins SET password = ?, updated_at = ? WHERE seq = ?', [await hashPassword(password), now(), admin.seq])
+        .catch(() => undefined)
+    }
     if (!admin.mfa) return { status: 'ok', secret: await this.newSession(admin.seq) }
     const { challenge, code } = await this.startMfaChallenge(admin.seq)
     return { status: 'mfa', challenge, code, email: email.trim().toLowerCase() }

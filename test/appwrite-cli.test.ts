@@ -1,5 +1,5 @@
 /**
- * The real Appwrite CLI (appwrite-cli 22, the devDependency) against Bunwrite:
+ * The real Appwrite CLI (appwrite-cli 28, the devDependency) against Bunwrite:
  * client, login/whoami/logout, init project, and pull/push for settings,
  * tables, functions, buckets, teams, webhooks and topics.
  *
@@ -14,12 +14,12 @@ import { join } from 'node:path'
 import { Client, Databases, Functions, Storage, TablesDB, Teams } from 'node-appwrite'
 
 import { ConsoleAuth } from '~/console/auth'
-import { webhookSignature } from '~/webhooks/service'
+import { webhookSignature, webhookSignatureSha256 } from '~/webhooks/service'
 import { DB, failure, KEY, makeUser, PROJECT, sessionClient, startServer, type TestServer } from './helpers'
 
 setDefaultTimeout(60_000)
 
-const CLI = join(import.meta.dir, '..', 'node_modules', 'appwrite-cli', 'dist', 'cli.cjs')
+const CLI = join(import.meta.dir, '..', 'node_modules', 'appwrite-cli', 'run.js')
 const ADMIN = { email: 'admin@example.com', password: 'admin-password' }
 const ORG = 'org_test'
 
@@ -64,7 +64,7 @@ class Workspace {
     mkdirSync(this.dir, { recursive: true })
     // Skip the CLI's npm update check.
     const stamp = new Date().toISOString()
-    writeFileSync(join(this.home, '.config', 'appwrite', 'update-check.json'), JSON.stringify({ checkedAt: stamp, latest: '22.0.0', notifiedAt: stamp }))
+    writeFileSync(join(this.home, '.config', 'appwrite', 'update-check.json'), JSON.stringify({ checkedAt: stamp, latest: '28.10.2', notifiedAt: stamp }))
   }
 
   async run(args: string[], stdin = ''): Promise<{ code: number; out: string }> {
@@ -116,7 +116,7 @@ class Workspace {
   /** Sign in as the console admin and link the project (`appwrite login` + `init project`). */
   async signedIn() {
     await this.ok('login', '--email', ADMIN.email, '--password', ADMIN.password, '--endpoint', server.endpoint)
-    const init = await this.run(['init', 'project', '--organization-id', ORG, '--project-id', PROJECT, '--project-name', 'ignored'], 'n\n')
+    const init = await this.run(['init', 'project', '--organization-id', ORG, '--project-id', PROJECT, '--project-name', 'ignored', '--force'], 'n\n')
     if (init.code !== 0) throw new Error(`init project failed:\n${init.out}`)
   }
 }
@@ -127,7 +127,7 @@ const consoleSessions = () => server.db.sqlite.query<{ n: number }, []>('SELECT 
 describe('appwrite client', () => {
   test('sets the endpoint, project and key; project commands then use the key', async () => {
     const ws = new Workspace('client')
-    expect(await ws.withKey()).toContain('Setting client')
+    expect(await ws.withKey()).toContain('Client configuration updated')
     expect(await ws.ok('pull', 'tables')).toContain('Successfully pulled 3 tables from 1 tableDBs')
     expect(ws.config).toMatchObject({ projectId: PROJECT, tablesDB: [{ $id: DB, name: 'Main', enabled: true }] })
   })
@@ -136,7 +136,7 @@ describe('appwrite client', () => {
     const ws = new Workspace('client-bad-endpoint')
     const result = await ws.run(['client', '--endpoint', `${server.endpoint}/nope`])
     expect(result.code).not.toBe(0)
-    expect(result.out).toContain('Invalid endpoint')
+    expect(result.out.toLowerCase()).toContain('invalid endpoint')
   })
 
   test('a wrong API key is refused by the server', async () => {
@@ -154,7 +154,7 @@ describe('appwrite login, whoami, logout', () => {
     const result = await ws.run(['login', '--email', ADMIN.email, '--password', 'not-the-password', '--endpoint', server.endpoint])
     expect(result.code).not.toBe(0)
     expect(result.out).toContain('Invalid credentials')
-    expect((await ws.run(['whoami'])).out).toContain('No user is signed in')
+    expect((await ws.run(['whoami'])).out.toLowerCase()).toContain('no active session')
   })
 
   test('project users cannot sign in to the console', async () => {
@@ -175,15 +175,15 @@ describe('appwrite login, whoami, logout', () => {
     expect(whoami).toContain(ADMIN.email)
     expect(whoami).toContain(server.endpoint)
 
-    expect(await ws.ok('logout')).toContain('Logged out')
+    expect(await ws.ok('logout')).toContain('Signed out')
     expect(consoleSessions()).toBe(before)
-    expect((await ws.run(['whoami'])).out).toContain('No user is signed in')
+    expect((await ws.run(['whoami'])).out.toLowerCase()).toContain('no active session')
   })
 
   test('the session cookie acts on a project only in admin mode', async () => {
     const ws = new Workspace('login-cookie')
     await ws.ok('login', '--email', ADMIN.email, '--password', ADMIN.password, '--endpoint', server.endpoint)
-    const prefs = JSON.parse(readFileSync(join(ws.home, '.appwrite', 'prefs.json'), 'utf8'))
+    const prefs = JSON.parse(readFileSync(join(ws.home, '.config', 'appwrite', 'prefs.json'), 'utf8'))
     const session = prefs[prefs.current]
     expect(session.cookie).toStartWith('a_session_console=')
     const cookie = session.cookie.split(';')[0]
@@ -199,13 +199,14 @@ describe('appwrite init project', () => {
   test('links the folder to an existing project', async () => {
     const ws = new Workspace('init')
     await ws.signedIn()
-    expect(ws.config).toEqual({ organizationId: ORG, projectId: PROJECT, projectName: 'Test Project' })
+    // Newer CLIs pull the project's resources while linking it.
+    expect(ws.config).toMatchObject({ organizationId: ORG, projectId: PROJECT, projectName: 'Test Project' })
   })
 
   test('an unknown organization is refused', async () => {
     const ws = new Workspace('init-org')
     await ws.ok('login', '--email', ADMIN.email, '--password', ADMIN.password, '--endpoint', server.endpoint)
-    const result = await ws.run(['init', 'project', '--organization-id', 'someone-else', '--project-id', PROJECT, '--project-name', 'x'], 'n\n')
+    const result = await ws.run(['init', 'project', '--organization-id', 'someone-else', '--project-id', PROJECT, '--project-name', 'x', '--force'], 'n\n')
     expect(result.out).toContain(`belongs to organization "${ORG}", not "someone-else"`)
     // The CLI empties appwrite.config.json before asking; no project gets linked.
     expect(existsSync(join(ws.dir, 'appwrite.config.json')) ? ws.config.projectId : undefined).toBeUndefined()
@@ -229,9 +230,9 @@ describe('pull and push settings', () => {
     expect(config.settings.auth.methods).toMatchObject({ 'email-password': true, 'email-otp': true, jwt: true, invites: true })
     expect(config.settings.auth.security).toEqual({
       duration: 31536000,
-      limit: 0,
+      limit: null,
       sessionsLimit: 10,
-      passwordHistory: 0,
+      passwordHistory: null,
       passwordDictionary: false,
       personalDataCheck: false,
       sessionAlerts: false,
@@ -412,7 +413,7 @@ describe('push and pull functions', () => {
     const fresh = new Workspace('functions-pull')
     await fresh.withKey()
     // --all picks every function; "y" answers "pull the source code?".
-    expect(await fresh.okWith('y\n', 'pull', 'functions', '--all')).toContain('Successfully pulled 1 functions')
+    expect(await fresh.okWith('y\n', 'pull', 'functions', '--all', '--force')).toContain('Successfully pulled 1 functions')
     const pulled = fresh.config.functions[0]
     expect(pulled).toMatchObject({ $id: 'hello', name: 'Hello', runtime: 'node-22', entrypoint: 'src/main.js', commands: 'echo built > built.txt', execute: ['any'], timeout: 15 })
     const folder = join(fresh.dir, pulled.path)
@@ -435,7 +436,7 @@ describe('push and pull functions', () => {
     const started = Date.now()
     const result = await ws.run(['push', 'functions', '--function-id', 'hello', '--force', '--activate', 'true'])
     expect(Date.now() - started).toBeLessThan(30_000)
-    expect(result.out).toContain('Failed to deploy')
+    expect(result.out).toContain('Deployed none')
     expect(result.out).toContain('broken')
     expect((await new Functions(admin()).get({ functionId: 'hello' })).deploymentId).toBe(before)
     // Put the working build command back for the next tests.
@@ -552,6 +553,10 @@ describe('push and pull webhooks', () => {
     expect(delivery!.headers.get('x-appwrite-webhook-project-id')).toBe(PROJECT)
     expect(delivery!.headers.get('x-appwrite-webhook-events')!.split(',')).toContain('databases.main.collections.notes.documents.n1.create')
     expect(delivery!.headers.get('x-appwrite-webhook-signature')).toBe(webhookSignature(url, delivery!.body, hook.secret))
+    const timestamp = delivery!.headers.get('x-appwrite-webhook-timestamp')!
+    expect(delivery!.headers.get('x-appwrite-webhook-signature-sha256')).toBe(
+      webhookSignatureSha256(url, delivery!.body, hook.secret, timestamp),
+    )
 
     // Now every change to notes, and a new name.
     ws.config = {
@@ -591,7 +596,7 @@ describe('pull all and push all', () => {
   test('a signed-in admin pulls everything, and pushing it straight back succeeds', async () => {
     const ws = new Workspace('everything')
     await ws.signedIn()
-    const out = await ws.okWith('y\n', 'pull', 'all')
+    const out = await ws.okWith('y\n', 'pull', 'all', '--force')
     for (const line of ['all project settings', '1 functions', '0 sites', 'tables from', '1 buckets', 'teams', '1 webhooks', '1 topics']) expect(out).toContain(line)
     const config = ws.config
     expect(Object.keys(config)).toEqual(expect.arrayContaining(['settings', 'functions', 'tablesDB', 'tables', 'buckets', 'teams', 'webhooks', 'topics']))

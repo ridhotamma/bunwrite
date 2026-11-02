@@ -25,6 +25,7 @@ The only value most deployments need is `DOMAIN`. Everything else has a default.
 | `HOST` | `0.0.0.0` (example: `127.0.0.1`) | Address Bun listens on. Use `127.0.0.1` when Caddy, nginx or cloudflared runs on the same host. Docker sets it to `0.0.0.0` inside the container. |
 | `PORT` | `8080` | HTTP port. Must be a number; an empty value is parsed as `0` (random port). |
 | `API_COMPAT` | `bunwrite` | Names Bunwrite sends: `bunwrite` or `appwrite`. Both naming families are always accepted. |
+| `OAUTH_STATE_BINDING` | `true` | Bind OAuth callbacks to a browser cookie. Set `false` only for legacy server-side flows that cannot preserve `Set-Cookie`. |
 | `COMPOSE_PROFILES` | `caddy` in `.env.example` | `caddy` starts the bundled Caddy container in Docker Compose. Remove it for your own proxy or a Cloudflare Tunnel. |
 
 `API_COMPAT` only changes what the server sends, not what it reads. A request
@@ -36,9 +37,11 @@ value, and an empty header counts as absent:
 | Session cookie | `bw_session_<project>` | `a_session_<project>` |
 | Webhook headers | `X-Bunwrite-Webhook-*` | `X-Appwrite-Webhook-*` |
 | Function variables | `BUNWRITE_*` | `BUNWRITE_*` and `APPWRITE_*` |
+| User/session secrets | omitted/redacted | legacy Appwrite fields only for keys with `users.secrets` |
 
 Use `appwrite` when moving an existing Appwrite app so webhook receivers and
-functions keep working unchanged.
+functions keep working unchanged. Bunwrite mode is the secure native model;
+Appwrite mode is the compatibility shim.
 
 ## Domains and HTTPS
 
@@ -511,10 +514,11 @@ Used by `POST /v1/pdf` and `POST /v1/image`. Also switchable in
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RENDER_ENABLED` | `false` | Turn rendering on. Needs Chromium on the host. |
-| `RENDER_ALLOW_REMOTE` | `false` | Allow pages to load remote images, fonts and stylesheets. Off blocks all remote requests. |
+| `RENDER_ALLOW_REMOTE` | `false` | Allow pages to load public remote images, fonts and stylesheets. Off blocks all remote requests. |
+| `RENDER_ALLOW_PRIVATE` | `false` | Explicitly allow loopback/private destinations while remote loading is on (local asset servers). |
 | `CHROME_PATH` | found on PATH | Chrome/Chromium executable. |
 | `CHROME_ARGS` | unset | Extra Chromium flags, space-separated. |
-| `CHROME_NO_SANDBOX` | unset | `true` in containers without user namespaces; `docker-compose.yml` sets it. |
+| `CHROME_NO_SANDBOX` | unset | `true` only when the host cannot provide user namespaces. The compose file leaves the sandbox on. |
 | `RENDER_MAX_MEGAPIXELS` | auto, 4–30 | Largest image `/v1/image` may produce. |
 
 Rendering is serialized and adds Chromium's memory cost. See
