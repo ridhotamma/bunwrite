@@ -79,22 +79,10 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
       'Backup status',
       'The current schedule, saved copies and whether a copy leaves this server.',
       html`<ul class="list">
-        <li>
-          <div><b>Automatic backups</b><div class="subdued cell-sub">${c.backups.enabled ? scheduleLabel(c.backups.schedule) : 'Paused'}</div></div>
-          ${c.backups.enabled ? badge('On', 'success') : badge('Off')}
-        </li>
-        <li>
-          <div><b>Next backup</b><div class="subdued cell-sub">All times are UTC</div></div>
-          <b>${nextBackup}</b>
-        </li>
-        <li>
-          <div><b>Saved backups</b><div class="subdued cell-sub">${backups.length ? `${formatBytes(totalSize)} total` : 'No backups yet'}</div></div>
-          <b>${backups.length}</b>
-        </li>
-        <li>
-          <div><b>Off-site copy</b><div class="subdued cell-sub">${offsite ? (local ? 'Litestream replica or S3 backup storage' : 'S3 backup storage') : 'This server only'}</div></div>
-          ${offsite ? badge('On', 'success') : badge('Off')}
-        </li>
+        <li><span class="subdued">Automatic backups</span><span>${c.backups.enabled ? badge('On', 'success') : badge('Off')} ${c.backups.enabled ? html`<span class="subdued">${scheduleLabel(c.backups.schedule)}</span>` : ''}</span></li>
+        <li><span class="subdued">Next backup</span><span>${nextBackup}</span></li>
+        <li><span class="subdued">Saved backups</span><span>${backups.length}${backups.length ? html` <span class="subdued">· ${formatBytes(totalSize)}</span>` : ''}</span></li>
+        <li><span class="subdued">Off-site copy</span><span>${offsite ? badge('On', 'success') : badge('Off')} <span class="subdued">${offsite ? (local ? 'Litestream replica or S3' : 'S3') : 'This server'}</span></span></li>
       </ul>`,
       { id: 'backup-status' },
     )}
