@@ -107,6 +107,49 @@ export const collections = sqliteTable(
   (t) => [uniqueIndex('_collections_db_id').on(t.databaseId, t.id)],
 )
 
+/**
+ * The built-in vector store (see docs/VECTORS.md). Vectors are JSON text so
+ * both SQLite and Postgres read the same value without a native extension;
+ * `norm` is cached to keep cosine scans cheap.
+ */
+export const vectorCollections = sqliteTable(
+  '_vector_collections',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull(),
+    name: text('name').notNull(),
+    dimension: integer('dimension').notNull(),
+    metric: text('metric').notNull().default('cosine'),
+    embedder: text('embedder').notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_vector_collections_id').on(t.id)],
+)
+
+export const vectorPoints = sqliteTable(
+  '_vector_points',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    collectionId: text('collection_id').notNull(),
+    id: text('id').notNull(),
+    documentId: text('document_id').notNull().default(''),
+    chunkIndex: integer('chunk_index').notNull().default(0),
+    content: text('content').notNull().default(''),
+    metadata: json<Record<string, unknown>>('metadata')
+      .notNull()
+      .default(sql`'{}'`),
+    embedding: text('embedding').notNull(),
+    norm: real('norm').notNull().default(0),
+    dimension: integer('dimension').notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex('_vector_points_collection_point').on(t.collectionId, t.id),
+    index('_vector_points_collection').on(t.collectionId),
+    index('_vector_points_document').on(t.collectionId, t.documentId),
+  ],
+)
+
 export const transactions = sqliteTable('_transactions', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   id: text('id').notNull().unique(),

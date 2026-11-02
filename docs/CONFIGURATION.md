@@ -459,6 +459,34 @@ also be changed in **Console → Settings → Caching**.
 | `PREVIEW_CONCURRENCY` | auto, 1–8 | Previews rendered at once; the rest wait in line. |
 | `AVIF_MAX_MEGAPIXELS` | auto, 2–16 | Largest AVIF output. AVIF needs about 30 bytes per pixel. |
 
+## Vectors and RAG
+
+The built-in vector store and retrieval-augmented generation endpoints. Local
+embeddings are the default and need no network; any OpenAI-compatible endpoint
+can be used instead. See [VECTORS.md](VECTORS.md) for the API and limits.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VECTORS_EMBEDDER` | `local`, or `http` when a URL/key is set | Embedding provider. |
+| `EMBEDDING_URL` | unset | OpenAI-compatible embeddings base URL or full endpoint. |
+| `EMBEDDING_API_KEY` | unset | Bearer token for embeddings. |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name. |
+| `EMBEDDING_DIMENSION` | `384` local, `1536` HTTP | Vector width; must match the model. |
+| `EMBEDDING_SEND_DIMENSIONS` | `false` | Send `dimensions` in the request; some gateways reject it. |
+| `EMBEDDING_BATCH_SIZE` | `64` | Texts per embeddings request. |
+| `VECTORS_TIMEOUT_MS` | `30000` | Outbound embeddings/chat timeout. |
+| `VECTORS_MAX_POINTS` | `50000` | Maximum points per collection. |
+| `RAG_CHAT_URL` | unset | OpenAI-compatible chat endpoint; empty means no generated answer. |
+| `RAG_CHAT_API_KEY` | `OPENAI_API_KEY` | Bearer token for chat. |
+| `RAG_CHAT_MODEL` | `gpt-4o-mini` | Chat model name. |
+| `RAG_SYSTEM_PROMPT` | built in | System prompt for answers. |
+| `RAG_TEMPERATURE` | `0.2` | Chat temperature. |
+| `RAG_MAX_TOKENS` | `800` | Maximum answer length. |
+| `RAG_CONTEXT_CHARS` | `12000` | Retrieved context sent to the chat model. |
+| `RAG_CHUNK_SIZE` | `1000` | Default chunk size for ingest. |
+| `RAG_CHUNK_OVERLAP` | `200` | Default chunk overlap. |
+| `OPENAI_API_KEY` | unset | Shortcut that enables the OpenAI embeddings and chat endpoints. |
+
 ## HTML rendering
 
 Used by `POST /v1/pdf` and `POST /v1/image`. Also switchable in
@@ -572,5 +600,6 @@ compatible endpoint.
 - [README quick start](../README.md#setup-from-zero)
 - [Deployment](DEPLOY.md)
 - [Sites and domains](SITES.md)
+- [Vectors and RAG](VECTORS.md)
 - [HTML rendering](RENDER.md)
 - [Architecture](ARCHITECTURE.md)

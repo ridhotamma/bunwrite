@@ -183,6 +183,13 @@
       "when": 1793553609340,
       "tag": "0025_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1793608378706,
+      "tag": "0026_vectors",
+      "breakpoints": true
     }
   ]
 }

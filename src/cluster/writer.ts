@@ -37,6 +37,9 @@ const LONG_RUNNING_WRITES = [
   /^\/sites\/[^/]+\/deployments(?:\/|$)/,
   // Rendering waits on Chromium.
   /^\/render\/(?:pdf|image)\/?$/,
+  // Vector ingest/search may call an embedding model or scan a large collection.
+  /^\/vectors(?:\/|$)/,
+  /^\/rag(?:\/|$)/,
   // GitHub calls and repository work can take seconds.
   /^\/vcs(?:\/|$)/,
 ]

@@ -25,6 +25,7 @@ import { StorageService } from './storage/service'
 import { TeamService } from './teams/service'
 import { TransactionService } from './transactions/service'
 import { VariablesService } from './variables/service'
+import { VectorService } from './vectors/service'
 import { AccessService } from './settings/access'
 import { TopicService } from './messaging/topics'
 import { WebhookService } from './webhooks/service'
@@ -67,6 +68,8 @@ export interface Services {
   render: RenderService
   /** Durable job queue for SDK workers (docs/QUEUE.md). */
   queue: QueueService
+  /** Built-in vector store and RAG (docs/VECTORS.md). */
+  vectors: VectorService
   /**
    * Load the database-backed caches. SQLite constructors load synchronously, so
    * this is a no-op there; a network backend must await it before serving
@@ -117,6 +120,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   })
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
+  const vectors = new VectorService(db, config.vectors)
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })
   const webhooks = new WebhookService(
@@ -153,6 +157,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     topics,
     templates,
     queue,
+    vectors,
   } as unknown as Services
   services.access = new AccessService(db, config, () => services.settings)
   // Settings saved in the console apply over env; a new SMTP setting rebuilds the mailer.

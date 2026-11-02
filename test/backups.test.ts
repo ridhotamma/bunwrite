@@ -214,9 +214,10 @@ describe('instance archives', () => {
       await readArchive({ input: sealed, destDir: open, secret: KEY })
       expect(readMarker(join(open, 'bunwrite.sqlite'))).toBe('control-before')
 
-      // One changed byte fails the SHA-256 check.
+      // One changed byte in the compressed body must fail extraction or a checksum.
+      // The very end of a zstd frame can contain padding, so tamper in the middle.
       const bytes = readFileSync(plain)
-      bytes[bytes.length - 32]! ^= 1
+      bytes[Math.floor(bytes.length / 2)]! ^= 1
       const tampered = join(root, 'tampered.archive.zst')
       writeFileSync(tampered, bytes)
       await expect(readArchive({ input: tampered, destDir: join(root, 'tampered') })).rejects.toThrow()

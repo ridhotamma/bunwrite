@@ -32,6 +32,7 @@ import { storageRoutes } from './storage/routes'
 import { teamRoutes } from './teams/routes'
 import { topicRoutes } from './messaging/topics'
 import { queueRoutes } from './queue/routes'
+import { vectorRoutes } from './vectors/routes'
 import { CONSOLE_PROJECT, createConsoleApi } from './platform/console'
 import { projectRoutes } from './platform/project'
 import { webhookRoutes } from './webhooks/routes'
@@ -126,6 +127,7 @@ export function createApp(source: Services | ProjectResolver) {
   webhookRoutes(router)
   topicRoutes(router)
   queueRoutes(router)
+  vectorRoutes(router)
   for (const extend of extraRoutes) extend(router)
 
   const cors = async (request: Request, allowedOrigins: string[]): Promise<Record<string, string>> => {

@@ -179,7 +179,9 @@ feature look enabled when it is not enforced.
 
 Current known gaps:
 
-- Queries: `regex`, geo, vector and `exists` are not implemented.
+- Queries: `regex`, geo, vector and `exists` are not implemented. Bunwrite has a
+  separate built-in `/vectors` and `/rag` extension (see
+  [VECTORS.md](VECTORS.md)); Appwrite's VectorsDB endpoints are not implemented.
 - Auth: project-user MFA (TOTP or email), phone/SMS sign-in and magic URLs are
   not implemented (magic-url token types exist in the token model, but the full
   client flow is not there). Console admins have optional email MFA.

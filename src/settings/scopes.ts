@@ -32,6 +32,15 @@ export const API_KEY_SCOPE_GROUPS: ApiKeyScopeGroup[] = [
     ],
   },
   {
+    label: 'Vectors and RAG',
+    scopes: [
+      { id: 'vectorsdb.collections.read', label: 'Read vector collections' },
+      { id: 'vectorsdb.collections.write', label: 'Create and delete vector collections' },
+      { id: 'vectorsdb.documents.read', label: 'Search vectors, read points and query RAG' },
+      { id: 'vectorsdb.documents.write', label: 'Upsert and delete points, ingest documents' },
+    ],
+  },
+  {
     label: 'Storage',
     scopes: [
       { id: 'buckets.read', label: 'Read buckets' },

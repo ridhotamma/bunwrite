@@ -9,6 +9,7 @@ import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 import { DEFAULT_RUNTIMES, type RuntimesConfig } from './runtimes/install'
 import { configuredBusyTimeout, configuredReaderBusyTimeout, configuredSqliteSynchronous, type SqliteSynchronous } from './system/autotune'
+import { vectorConfigFromEnv, type VectorsConfig } from './vectors/config'
 
 export interface SmtpConfig {
   host: string
@@ -367,6 +368,8 @@ export interface Config {
   render: RenderConfig
   /** Browser cache lifetimes and preview cache retention. */
   cache: CacheConfig
+  /** Built-in vector search and RAG (see docs/VECTORS.md). */
+  vectors: VectorsConfig
   /** Compress responses (Brotli or gzip). Server-wide; read from the main project's config. */
   compression: boolean
   /** Compress WebSocket messages (perMessageDeflate), independently of HTTP compression. */
@@ -571,6 +574,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
       previewRetentionDays: wholeNumber(env.PREVIEW_CACHE_DAYS, DEFAULT_CACHE.previewRetentionDays),
       publicMaxAge: wholeNumber(env.CACHE_PUBLIC_MAX_AGE, DEFAULT_CACHE.publicMaxAge),
     },
+    vectors: vectorConfigFromEnv(env),
     compression: env.COMPRESSION !== 'false',
     websocketCompression: env.WEBSOCKET_COMPRESSION !== 'false',
     trustedProxies: env.TRUSTED_PROXIES || undefined,

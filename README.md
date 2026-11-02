@@ -84,6 +84,10 @@ incremental instead of a rewrite. See
   [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.
+- **Vectors and RAG, built in.** Store embeddings in SQLite or Postgres, search
+  with cosine, dot or euclidean similarity, and chunk/retrieve text for RAG.
+  Local embeddings need no key; an OpenAI-compatible endpoint is optional. See
+  [docs/VECTORS.md](docs/VECTORS.md).
 - **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
   the host's CPU and RAM, including cgroup limits.
 - **Small footprint.** Designed for a 1 vCPU / 1 GB VPS.
@@ -758,6 +762,7 @@ assets, saving to S3 and the HTTP examples.
 | Area | Endpoints |
 | --- | --- |
 | Databases | document CRUD, bulk create/upsert/update/delete, increment/decrement, queries, row permissions, transactions with conflict detection, `If-Match`/`$revision` optimistic concurrency, database/collection metadata |
+| Vectors and RAG (extension) | `POST /v1/vectors` collections, point upsert/read/delete, similarity search with cosine/dot/euclidean, metadata filters, chunked `/v1/rag/ingest` and `/v1/rag/query`. Works on SQLite and Postgres; local embeddings or any OpenAI-compatible endpoint. See [docs/VECTORS.md](docs/VECTORS.md) |
 | Account | email + password, email OTP, token sessions, OAuth2 token flow (Google, Facebook, GitHub, Apple), recovery, email verification, JWT, sessions, prefs |
 | Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
 | Teams | teams, prefs, memberships, invites and accept-invite |
@@ -833,7 +838,8 @@ The full production-gap list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 - Every document includes a `$revision` field (see
   [Optimistic concurrency](#optimistic-concurrency)); Appwrite has no equivalent
   and its SDK types do not declare it, so TypeScript needs a cast to read it.
-- Not implemented: `regex`, geo, vector and `exists` queries; project-user MFA
+- Not implemented: Appwrite's `regex`, geo, vector and `exists` query methods
+  and its VectorsDB API (Bunwrite has a separate `/vectors` extension); project-user MFA
   (console admins have optional email MFA); phone/SMS login; magic URLs;
   sending messages (topics are stored only); server-side rendered Sites and
   site builds (sites are served as uploaded).
