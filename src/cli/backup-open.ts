@@ -1,10 +1,12 @@
 /**
- * Open a legacy per-project backup (`.sqlite.zst` / `.sqlite.zst.enc`) into a
- * plain `.sqlite` file. Kept for upgrades: current releases write one
- * whole-instance `.archive.zst`, restored by `bunwrite restore`.
+ * Decompress a backup into the file an operator restores by hand.
  *
- * `bun run backup:open <file> [out.sqlite]`. Encrypted backups need the
- * BACKUP_ENCRYPTION_KEY they were made with, from the environment or `.env`.
+ *   bunwrite backup:open backup-...dump.zst [bunwrite.dump]
+ *   pg_restore --clean --if-exists --dbname="$DATABASE_URL" bunwrite.dump
+ *
+ * It also opens the legacy per-project `.sqlite.zst` / `.sqlite.zst.enc`
+ * backups kept for upgrades. Encrypted backups need the BACKUP_ENCRYPTION_KEY
+ * they were made with, from the environment or `.env`.
  */
 import { existsSync } from 'node:fs'
 
@@ -12,11 +14,11 @@ import { unpackBackup } from '~/backups/format'
 
 const [input, given] = process.argv.slice(2)
 if (!input) {
-  console.error('Usage: backup:open <legacy per-project backup> [output.sqlite]')
+  console.error('Usage: backup:open <backup file> [output]')
   process.exit(1)
 }
-if (!/\.sqlite\.zst(\.enc)?$/.test(input)) {
-  console.error(`${input} is not a legacy compressed backup (.sqlite.zst or .sqlite.zst.enc). Use bunwrite restore for an .archive.zst.`)
+if (!/\.(?:sqlite|dump)\.zst(\.enc)?$/.test(input)) {
+  console.error(`${input} is not a compressed backup (.sqlite.zst, .dump.zst, or their .enc form). Use bunwrite restore for an .archive.zst.`)
   process.exit(1)
 }
 if (!existsSync(input)) {

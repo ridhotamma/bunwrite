@@ -127,7 +127,7 @@ through another.
 | `src/instance/` | First-run organization/project IDs, signing secret, initial API key and one-time env seed |
 | `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
-| `src/backups/` | Whole-instance archives (control + every project database), local/S3 storage, daily automatic backups, offline restore |
+| `src/backups/` | Whole-instance SQLite archives or Postgres `pg_dump` backups, local/S3 storage, cron schedules, offline SQLite restore |
 | `src/console/` | Console request lifecycle, shared UI/htmx/form helpers and page modules |
 | `src/migrate/` | Import from a live Appwrite project |
 | `src/lib/compat.ts` | Both naming families: reads `X-Bunwrite-*` and `X-Appwrite-*` headers and both session cookies; `API_COMPAT` picks the webhook headers, function variables and default cookie the server sends |
@@ -341,16 +341,19 @@ created with, so the execution returned to the caller is the one that runs.
 - Uploads are stored under `STORAGE_PATH`, or in an S3-compatible bucket when
   enabled in **Settings → File storage**. Switching storage does not migrate
   existing files; that is a manual step.
-- A backup is one archive of every database Bunwrite owns, laid out like the
-  Litestream replica: the control database and `projects/<id>/bunwrite.sqlite`
-  for each project. Databases are copied with `VACUUM INTO`, compressed with
-  zstd, and encrypted when `BACKUP_ENCRYPTION_KEY` is set. Manual archives can
-  be created, downloaded and deleted in **Organization → Backups** (organization
-  owners only); automatic archives follow a cron schedule (default daily at
-  02:00 UTC) and keep the configured number. Stored in `BACKUPS_PATH` or a
-  separate S3 bucket.
-- Restore is offline. The console validates an uploaded archive and stages it in
-  `<data>/.restore-pending`; the next start applies it before opening SQLite.
+- A SQLite backup is one archive of every database Bunwrite owns, laid out like
+  the Litestream replica: the control database and
+  `projects/<id>/bunwrite.sqlite` for each project. Databases are copied with
+  `VACUUM INTO`, compressed with zstd, and encrypted when
+  `BACKUP_ENCRYPTION_KEY` is set. A Postgres backup is one `pg_dump`. Manual
+  backups can be created, downloaded and deleted in **Organization → Backups**
+  (organization owners only); automatic backups follow a cron schedule (default
+  daily at 02:00 UTC) and keep the configured number. Stored in `BACKUPS_PATH`
+  or a separate S3 bucket.
+- SQLite restore is offline. The console validates an uploaded archive and
+  stages it in `<data>/.restore-pending`; the next start applies it before
+  opening SQLite. Postgres dumps are downloaded and restored with
+  `bunwrite backup:open` and `pg_restore`.
   `bunwrite restore <archive>` does the same with the server stopped. Both
   validate the manifest, checksums, SQLite integrity and every project ID, then
   swap the files and keep the previous ones as

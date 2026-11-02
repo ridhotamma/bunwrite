@@ -1,11 +1,12 @@
 /**
- * Whole-instance database backups.
+ * Database backups for the control instance.
  *
- * One archive holds the control database and every project database, laid out
- * like the Litestream replica (`bunwrite.sqlite`, `projects/<id>/...`). It is
- * compressed with zstd and encrypted when BACKUP_ENCRYPTION_KEY is set; the
- * console and the daily timer use this service, and `bunwrite restore` reads
- * what it writes.
+ * With SQLite, one archive holds the control database and every project
+ * database, laid out like the Litestream replica (`bunwrite.sqlite`,
+ * `projects/<id>/...`). With Postgres, one logical `pg_dump` covers the
+ * database instead. Both are compressed with zstd, encrypted when
+ * BACKUP_ENCRYPTION_KEY is set, and kept on local disk or in S3-compatible
+ * storage. The console and the cron timer use this service.
  *
  * Only the control instance creates backups. Other project service graphs get
  * an inert instance so the shared `Services` shape stays uniform.
@@ -21,6 +22,7 @@ import { err } from '~/lib/errors'
 import { s3Call, s3Client } from '~/storage/s3'
 import { contentType, MIN_KEY_LENGTH } from './format'
 import { createInstanceBackup } from './instance'
+import { createPostgresBackup } from './postgres'
 
 export interface BackupFile {
   name: string
@@ -28,7 +30,7 @@ export interface BackupFile {
   modified: string
 }
 
-const NAME_RE = /^[A-Za-z0-9._-]+\.archive\.zst(\.enc)?$/
+const NAME_RE = /^[A-Za-z0-9._-]+\.(?:archive|dump)\.zst(?:\.enc)?$/
 const AUTO_PREFIX = 'auto-'
 
 export class BackupService {
@@ -40,13 +42,13 @@ export class BackupService {
 
   constructor(
     private config: Config,
-    /** File archives only make sense when the database is a local SQLite file. */
+    /** Local SQLite databases get file archives; Postgres gets a pg_dump. */
     private readonly localFile = true,
   ) {}
 
-  /** Only the control instance owns whole-instance backups. */
+  /** Only the control instance owns instance-wide backups. */
   private get enabled(): boolean {
-    return this.config.instanceBackups !== false && this.localFile
+    return this.config.instanceBackups !== false
   }
 
   private get s3() {
@@ -116,13 +118,21 @@ export class BackupService {
     const dir = remote ? mkdtempSync(join(tmpdir(), 'bunwrite-backup-')) : this.config.backupsPath
     try {
       mkdirSync(dir, { recursive: true })
-      const created = await createInstanceBackup({
-        databasePath: this.config.databasePath,
-        outputDir: dir,
-        prefix: kind === 'auto' ? AUTO_PREFIX : 'backup-',
-        secret: key || undefined,
-        log: (line) => console.log(line),
-      })
+      const created = this.localFile
+        ? await createInstanceBackup({
+            databasePath: this.config.databasePath,
+            outputDir: dir,
+            prefix: kind === 'auto' ? AUTO_PREFIX : 'backup-',
+            secret: key || undefined,
+            log: (line) => console.log(line),
+          })
+        : await createPostgresBackup({
+            databaseUrl: this.config.databaseUrl ?? '',
+            outputDir: dir,
+            prefix: kind === 'auto' ? AUTO_PREFIX : 'backup-',
+            secret: key || undefined,
+            log: (line) => console.log(line),
+          })
       if (remote) {
         await s3Call(this.s3, () =>
           s3Client(this.s3).file(this.s3Key(created.name)).write(Bun.file(created.path), { type: contentType(created.name) }),

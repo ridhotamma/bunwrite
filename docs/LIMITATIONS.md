@@ -67,8 +67,8 @@ a real server. Postgres serves the API request path and the console, including
 one schema per project and Postgres schema DDL. The scheduler lease and
 cross-worker realtime fan-out also work there. Writer sharding and the local
 archive/Litestream snapshot flow stay SQLite-only by design; Postgres uses
-WAL-G or managed PITR. See [DATABASE.md](DATABASE.md) for the current state and
-the migration order.
+periodic `pg_dump` backups from the Backups page, or managed PITR. See
+[DATABASE.md](DATABASE.md) for the current state and the migration order.
 
 ### 2. API key scopes are available, but environment keys bypass them
 

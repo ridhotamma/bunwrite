@@ -26,9 +26,10 @@ deployments, executions), sites, messaging topics, the proxy/domain rules and
 the queue run on either backend. The project manager opens one Postgres schema
 per project, and `startServer` opens the configured backend. The console schema
 admin, settings, logs, VCS stores, scheduler lease and cross-worker realtime
-fan-out also run on Postgres. Writer sharding and the local archive/Litestream
-snapshot flow are SQLite-only by design; [Migration order](#migration-order)
-lists them. Nothing in the existing SQLite path changed behaviour.
+fan-out also run on Postgres. Writer sharding, whole-instance SQLite archives
+and Litestream are SQLite-only by design; Postgres uses the same Backups page to
+take periodic `pg_dump` dumps. [Migration order](#migration-order) lists them.
+Nothing in the existing SQLite path changed behaviour.
 
 ## Configuration
 
@@ -76,15 +77,14 @@ opens a read-only replica without touching the schema. `bun run schema:push`,
 `bun run migrate` and `bun run db:migrate --schema` all target the configured
 backend, including Postgres.
 
-The legacy SQLite file commands (`bunwrite backup:open`, `snapshot`, `restore`
-and `failover`) only work with local SQLite databases. On Postgres they either
-have no meaning (`backup:open`) or stop with a WAL-G/PITR message.
+The legacy SQLite file commands (`bunwrite snapshot`, `restore` and `failover`)
+only work with local SQLite databases and stop with a clear message on Postgres.
+`bunwrite backup:open` also unpacks a downloaded Postgres dump.
 
-For Postgres, `bunwrite postgres:doctor` checks `wal_level`, `archive_mode`,
-`archive_command`, `restore_command`, `pg_stat_archiver`, the WAL-G binary and
-the latest base backup. Add `--runbook` for copy-paste restore steps, or
-`--json` for automation. It never changes the server or touches `PGDATA`; see
-[DEPLOY.md](DEPLOY.md#restoring-postgres-with-wal-g).
+On Postgres, **Organization → Backups** runs `pg_dump` on the same automatic
+cron schedule and keeps the dump in `BACKUPS_PATH` or uploads it to the backup
+S3 bucket. Restore it with `bunwrite backup:open` and `pg_restore`; see
+[DEPLOY.md](DEPLOY.md#restoring-a-postgres-backup).
 
 `DB_DRIVER=postgres` boots the server and serves API traffic. The boot path
 opens the control schema, runs the instance bootstrap through the driver, loads
@@ -237,10 +237,10 @@ with the backend's own mechanism before sending them.
 ### Not available on Postgres yet
 
 - Whole-instance archives (`VACUUM INTO`), Litestream and the
-  `_realtime_events` file locks are SQLite-only. For Postgres, configure WAL-G
-  or use your provider's managed PITR; the console's **Organization → Backups**
-  page reports the WAL-G environment and the required `archive_command` /
-  `restore_command`. See [DEPLOY.md](DEPLOY.md#postgres-continuous-backup-wal-g).
+  `_realtime_events` file locks are SQLite-only. On Postgres, the same
+  **Organization → Backups** page creates periodic `pg_dump` dumps instead;
+  point-in-time recovery requires the provider's managed PITR or a separate
+  backup tool. See [DEPLOY.md](DEPLOY.md#restoring-a-postgres-backup).
 - The scheduler lease works on both backends: `_cluster_leases` is decided by a
   conditional upsert. Cross-process realtime fan-out uses `_realtime_events`
   polling on SQLite and `LISTEN`/`NOTIFY` on Postgres.
@@ -292,8 +292,8 @@ SQLite test suite green:
    running the Postgres apply inside a transaction and rolling it back.
 5. **Done.** The scheduler lease and cross-process realtime bus run on both
    backends. Writer sharding and local archive/Litestream snapshots stay
-   SQLite-only: Postgres scales with workers + the pool and uses WAL-G or
-   managed PITR for backup.
+   SQLite-only: Postgres scales with workers + the pool and uses the Backups
+   page's `pg_dump` dumps (or managed PITR) for backup.
 
 A converted method looks like this:
 

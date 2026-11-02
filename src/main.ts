@@ -17,9 +17,8 @@ Usage:
   bunwrite console:admin ...   Create, reset or remove a console admin
   bunwrite snapshot [dir]      Back up every database consistently
   bunwrite restore <archive>   Restore every database from a backup archive
-  bunwrite failover            Restore databases from Litestream
-  bunwrite postgres:doctor     Check WAL-G and print a Postgres restore runbook
-  bunwrite backup:open <file>  Open a legacy per-project backup (.sqlite.zst)
+  bunwrite failover            Restore SQLite databases from Litestream
+  bunwrite backup:open <file>  Unpack a downloaded backup (.dump.zst or legacy)
   bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
   bunwrite autotune [--json]   Show the auto-tuned resource limits
@@ -64,10 +63,6 @@ switch (command) {
   case 'failover':
     runCli(...args)
     await import('./cli/failover')
-    break
-  case 'postgres:doctor':
-    runCli(...args)
-    await import('./cli/postgres-doctor')
     break
   case 'backup:open':
     runCli(...args)

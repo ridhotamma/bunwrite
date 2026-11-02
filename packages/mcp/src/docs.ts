@@ -50,7 +50,7 @@ const STATIC: DocPage[] = [
     title: 'Database backends',
     url: `${REPO}/docs/DATABASE.md`,
     summary: 'SQLite and Postgres: DB_DRIVER, DATABASE_URL, per-project schemas, pooling, writer sharding and backups.',
-    keywords: 'database sqlite postgres db_driver database_url schema pool wal writer sharding backup wal-g',
+    keywords: 'database sqlite postgres db_driver database_url schema pool wal writer sharding backup pg_dump',
   },
   {
     slug: 'deploy',

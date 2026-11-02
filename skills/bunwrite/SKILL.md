@@ -105,8 +105,9 @@ DATABASE_POOL_MAX=10
 - Writer sharding (`WRITER_PORT`, `WRITER_SHARDS`, loopback write forwarding) is
   SQLite-only. On Postgres every worker uses the connection pool.
 - Local whole-instance backup archives, `snapshot`/`restore` and Litestream are
-  SQLite-only. On Postgres use WAL-G or your managed PITR; the console hides the
-  local archive buttons.
+  SQLite-only. On Postgres the Backups page runs `pg_dump` on the same automatic
+  schedule and can upload the dump to S3-compatible storage; install the
+  PostgreSQL client tools or set `PG_DUMP_BIN`.
 - Schema changes are applied on boot; there is no SQL console for app data.
 
 See [DATABASE.md](https://github.com/ridhotamma/bunwrite/blob/main/docs/DATABASE.md).
@@ -410,8 +411,8 @@ MCP server: a compact operator surface over the same API, over stdio or HTTP.
 - Put the console behind access control or set `CONSOLE_ENABLED=false` on a
   public API host, and use HTTPS.
 - Treat uploaded files as untrusted; limit extensions and size per bucket.
-- Back up SQLite databases and uploaded files separately. On Postgres use
-  WAL-G or managed PITR, and back up the object store separately.
+- Back up databases and uploaded files separately. On Postgres, enable the
+  Backups page's `pg_dump` schedule, and back up the object store separately.
 
 ## Moving from Appwrite
 

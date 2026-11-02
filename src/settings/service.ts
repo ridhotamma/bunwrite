@@ -23,20 +23,7 @@ export interface ProjectSettings {
 }
 
 export type SettingKey =
-  | 'project'
-  | 'smtp'
-  | 'consoleSmtp'
-  | 'google'
-  | 'facebook'
-  | 'github'
-  | 'apple'
-  | 'functions'
-  | 'logs'
-  | 's3'
-  | 'backups'
-  | 'render'
-  | 'cache'
-  | 'database'
+  'project' | 'smtp' | 'consoleSmtp' | 'google' | 'facebook' | 'github' | 'apple' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache' | 'database'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',

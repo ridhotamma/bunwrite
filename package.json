@@ -31,7 +31,6 @@
     "snapshot": "bun src/cli/snapshot.ts",
     "restore": "bun src/cli/restore.ts",
     "failover": "bun src/cli/failover.ts",
-    "postgres:doctor": "bun src/cli/postgres-doctor.ts",
     "backup:open": "bun src/cli/backup-open.ts",
     "console:admin": "bun src/cli/console-admin.ts",
     "autotune": "bun src/main.ts autotune",

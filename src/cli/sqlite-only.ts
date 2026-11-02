@@ -3,8 +3,8 @@ export function requireSqliteCommand(command: string, env: Record<string, string
   const driver = (env.DB_DRIVER || env.DATABASE_DRIVER || '').trim().toLowerCase()
   if (driver === 'postgres' || driver === 'postgresql' || driver === 'pg') {
     console.error(
-      `${command}: local SQLite archives are not available with DB_DRIVER=${driver}. ` +
-        `Use WAL-G (wal-g backup-push / wal-g wal-push) or your provider's managed PITR for Postgres.`,
+      `${command}: this command only works with local SQLite databases, not DB_DRIVER=${driver}. ` +
+        `Use Organization -> Backups for Postgres dumps, or your provider's managed PITR.`,
     )
     process.exit(1)
   }

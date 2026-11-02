@@ -152,14 +152,15 @@ terminator per host.
 | `DATABASE_POOL_MAX` | `10` | Connection-pool size for Postgres. |
 | `DATABASE_SSL` | `false` | Require TLS for Postgres. |
 | `STORAGE_PATH` | `./data/storage` | Uploaded files when S3 storage is off. |
-| `BACKUPS_PATH` | `./data/backups` | Local whole-instance backup archives when backup S3 storage is off. |
+| `BACKUPS_PATH` | `./data/backups` | Local backup folder when backup S3 storage is off: SQLite archives or Postgres dumps. |
+| `PG_DUMP_BIN` | `pg_dump` | PostgreSQL client used for Postgres backups. Set an absolute path when it is not on `PATH`. |
 | `BACKUP_ENCRYPTION_KEY` | unset | Encrypts backups (AES-256-GCM, key derived with scrypt). At least 16 characters; `openssl rand -base64 32` is a good value. Keep a copy off the server. Unset: backups are compressed only. Never passed to functions or sites. Restores read it from the environment or `.env`, or from `--key`. |
 
 Additional projects live under `data/projects/<project-id>/`, each with its own
-database, storage and functions folder. One archive covers every database;
-there is no per-project backup.
+database, storage and functions folder. One SQLite archive covers every
+database; a Postgres backup is one dump. There is no per-project backup.
 
-### Continuous replication and failover
+### Continuous SQLite replication (Litestream) and failover
 
 The replica, S3 credentials, sync interval, heartbeat and retention can also be
 configured in **Organization → Backups → Continuous replication**. The console
@@ -190,14 +191,16 @@ databases with `bunwrite failover` before starting the app and Litestream.
 This is a single-writer disaster-recovery setup, not active/active HA. Run only
 one instance against a replica prefix at a time. Uploaded files are not part of
 Litestream; back up `STORAGE_PATH` or the uploads bucket separately. See
-[DEPLOY.md](DEPLOY.md#continuous-backup-and-failover).
+[DEPLOY.md](DEPLOY.md#continuous-sqlite-backup-and-failover-litestream).
 
 S3 for uploads and backups is configured in **Console → Settings → File storage**
-and **Organization → Backups**, not in `.env`. An archive contains every database
-but no uploaded files; back up `STORAGE_PATH` or the uploads bucket separately.
-Automatic backups follow a five-field UTC cron schedule (default `0 2 * * *`,
-daily at 02:00); choose a preset or a custom cron in **Organization → Backups →
-Automatic backups**.
+and **Organization → Backups**, not in `.env`. A SQLite archive covers every
+database; a Postgres backup is one `pg_dump`. Neither includes uploaded files, so
+back up `STORAGE_PATH` or the uploads bucket separately. Automatic backups
+follow a five-field UTC cron schedule (default `0 2 * * *`, daily at 02:00);
+choose a preset or a custom cron in **Organization → Backups → Automatic
+backups**. With `DB_DRIVER=postgres`, install the PostgreSQL client tools or set
+`PG_DUMP_BIN`.
 
 Backups and Litestream may share one bucket if they use different key prefixes.
 Set the backup **Key prefix** in Organization → Backups (for example `backups`)

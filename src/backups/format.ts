@@ -4,8 +4,10 @@
  *
  *   backup-<stamp>.sqlite.zst       legacy single database; `zstd -d` opens it
  *   backup-<stamp>.sqlite.zst.enc   legacy, zstd then encrypted (format below)
- *   backup-<stamp>.archive.zst      every database (see ./archive.ts)
- *   backup-<stamp>.archive.zst.enc  every database, zstd then encrypted
+ *   backup-<stamp>.archive.zst      every SQLite database (see ./archive.ts)
+ *   backup-<stamp>.archive.zst.enc  every SQLite database, zstd then encrypted
+ *   backup-<stamp>.dump.zst         one Postgres pg_dump (see ./postgres.ts)
+ *   backup-<stamp>.dump.zst.enc     one Postgres pg_dump, zstd then encrypted
  *   backup-<stamp>.sqlite           older, uncompressed backups
  *
  * Encrypted file:
@@ -181,7 +183,7 @@ export async function packBackup(input: string, output: string, secret?: string)
   }
 }
 
-/** Turn any backup file back into a plain SQLite file. Never overwrites `output`. */
+/** Turn any compressed or encrypted backup back into a plain file. Never overwrites `output`. */
 export async function unpackBackup(input: string, output: string, secret?: string): Promise<void> {
   if (input.endsWith('.enc') && !secret) throw new Error('Set BACKUP_ENCRYPTION_KEY to open an encrypted backup.')
   const write = createWriteStream(output, { mode: 0o600, flags: 'wx' })

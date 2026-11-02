@@ -61,9 +61,10 @@ incremental instead of a rewrite. See
 - **Environments.** Keep staging and production as separate projects, on one
   server or several. The CLI's `bunwrite env` keeps each environment's
   variables in `.env` files, and previews can have their own values.
-- **Backups as a feature.** Create, download and delete one consistent archive
-  of the whole instance in the console; run daily automatic backups; keep them
-  on local disk or in any S3-compatible bucket. No separate backup service.
+- **Backups as a feature.** Create, download and delete one consistent SQLite
+  archive or Postgres dump in the console; run automatic backups on a cron
+  schedule; keep them on local disk or in any S3-compatible bucket. No separate
+  backup service.
 - **Invoices and images built in.** Render HTML to PDF or PNG/JPG/WebP/AVIF/GIF
   with headless Chromium, then return the file or save it to a bucket. No
   Puppeteer or Playwright in your app.
@@ -539,7 +540,7 @@ phone.
 | Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
 | Observability | Console pages for traffic, traces, product analytics and feature flags; console-managed OTLP/HTTP, Datadog, PostHog and local flag settings (environment remains the fallback); `GET /v1/flags` |
-| Backups | Whole-instance database archives; daily auto backups; optional S3 destination |
+| Backups | Whole-instance SQLite archives or Postgres dumps; automatic cron backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
 | Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |
 | API | Project endpoint, project ID and scoped server API keys |
@@ -577,13 +578,6 @@ backup-<timestamp>.archive.zst
 
 ### From the console
 
-The **Backup protection** card at the top of the page tracks four steps — storage,
-schedule, first backup and a tested restore. **Finish setup** opens a guided
-wizard with safe defaults: off-site storage is recommended, local storage still
-works, and the last step really opens the newest archive and checks every
-database inside it. You can leave and return; the card remembers the first
-unfinished step.
-
 **Organization → Backups** (organization owners) lets you:
 
 - create a manual archive;
@@ -602,15 +596,12 @@ Each database is copied with SQLite's `VACUUM INTO`, so the archive is
 consistent even while requests are being handled. One archive covers the whole
 instance; there is no per-project backup.
 
-With `DB_DRIVER=postgres`, the archive buttons are hidden: the databases are
-not local files. Use WAL-G on the Postgres host or a managed PITR service; see
-[Postgres continuous backup (WAL-G)](docs/DEPLOY.md#postgres-continuous-backup-wal-g).
-The console page reports the WAL-G environment and the `archive_command` /
-`restore_command` to configure, plus live restore-readiness checks and a
-copy-paste runbook. The setup wizard turns those checks into numbered steps and
-copies the S3 settings into the host commands; it never edits `PGDATA` or
-restarts Postgres for you. Run `bunwrite postgres:doctor` (or `--runbook` /
-`--json`) on the host for the same checks outside the console.
+With `DB_DRIVER=postgres`, the same page creates a logical `pg_dump` on the
+automatic schedule and uploads it to the backup S3 bucket. Install the
+PostgreSQL client tools on the server, or set `PG_DUMP_BIN`. The archive upload
+and Litestream flows are SQLite-only. Download a Postgres dump and restore it
+with `bunwrite backup:open` and `pg_restore`; see
+[Storage, backups and logs](docs/DEPLOY.md#storage-backups-and-logs).
 
 Archives are compressed with zstd (`.archive.zst`). They include every project's
 stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
@@ -666,7 +657,7 @@ uploads bucket separately. Test a restore before you need it.
 Older per-project backups (`.sqlite.zst`, `.sqlite.zst.enc`) can still be opened
 into a plain database with `bunwrite backup:open <file>`, then restored by hand.
 
-### Continuous replication and failover
+### Continuous SQLite replication and failover
 
 For PocketBase Cloud-style recovery, set `LITESTREAM_REPLICA_URL` to an
 S3-compatible bucket. The Docker entrypoint restores the control database and
@@ -687,7 +678,7 @@ bun run failover
 That restores `<replica>/bunwrite.sqlite`, reads `_projects`, then restores
 `<replica>/projects/<id>/bunwrite.sqlite` for each project. Keep only one writer
 against a replica prefix at a time. See
-[Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
+[Continuous SQLite backup and failover](docs/DEPLOY.md#continuous-sqlite-backup-and-failover-litestream).
 
 The organization **Backups** page shows whether Litestream is configured, the
 replica, sync interval and heartbeat, and warns when `LITESTREAM_ALLOW_EMPTY` or
@@ -983,7 +974,7 @@ separately. Restore with `bunwrite restore` while the server is stopped. See
 [Backups](#backups).
 For continuous SQLite replication and restore onto a replacement host, set
 `LITESTREAM_REPLICA_URL`; see
-[Continuous backup and failover](docs/DEPLOY.md#continuous-backup-and-failover).
+[Continuous SQLite backup and failover](docs/DEPLOY.md#continuous-sqlite-backup-and-failover-litestream).
 
 ## Database backends
 
