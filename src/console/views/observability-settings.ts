@@ -1,6 +1,7 @@
 /** Markup for the console-managed observability configuration. */
+import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { alert, badge, destroy, header, pageFooter, settingsSection, tabs } from '~/console/ui'
+import { alert, badge, destroy, header, icon, menu, pageFooter, plural, settingsSection, tabs } from '~/console/ui'
 import type { ObservabilitySettings } from '~/observability/settings'
 import { OBS, OBS_TABS } from './observability'
 
@@ -29,6 +30,99 @@ function signalField(settings: ObservabilitySettings): Html {
   </div>`
 }
 
+export interface FeatureFlagActions {
+  save: string
+  remove: string
+  clear: string
+}
+
+const flagValue = (value: boolean | string): Html =>
+  typeof value === 'boolean' ? badge(value ? 'On' : 'Off', value ? 'success' : 'info') : html`<span class="mono">${value || html`<span class="subdued">(empty)</span>`}</span>`
+
+function flagValueFields(value: boolean | string): Html {
+  const type = typeof value === 'boolean' ? 'boolean' : 'string'
+  return html`<label>Type<select name="type" data-show-by>
+      <option value="boolean" ${type === 'boolean' ? 'selected' : ''}>Boolean</option>
+      <option value="string" ${type === 'string' ? 'selected' : ''}>Text</option>
+    </select></label>
+    <div data-show-for="boolean" data-for-select="type">
+      <label>Value<select name="flagBoolean">
+        <option value="true" ${value === true ? 'selected' : ''}>On (true)</option>
+        <option value="false" ${value === false ? 'selected' : ''}>Off (false)</option>
+      </select></label>
+    </div>
+    <div data-show-for="string" data-for-select="type">
+      <label>Value<input name="flagString" value="${type === 'string' ? String(value) : ''}" placeholder="dark"></label>
+    </div>`
+}
+
+function addFlagDialog(actions: FeatureFlagActions): Html {
+  const form = 'feature-flag-add-form'
+  return dialog({
+    id: 'feature-flag-add',
+    title: 'Add feature flag',
+    body: html`<form id="${form}" method="post" action="${actions.save}" class="stack-fields">
+      <label>Name<input name="key" class="mono" required pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,127}" placeholder="new-checkout"><small>Letters, numbers, dot, hyphen or underscore.</small></label>
+      ${flagValueFields(true)}
+    </form>`,
+    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Add flag</button>`,
+  })
+}
+
+function editFlagDialog(key: string, value: boolean | string, index: number, actions: FeatureFlagActions): Html {
+  const id = `feature-flag-edit-${index}`
+  const form = `${id}-form`
+  return dialog({
+    id,
+    title: `Edit ${key}`,
+    body: html`<form id="${form}" method="post" action="${actions.save}" class="stack-fields">
+      <input type="hidden" name="key" value="${key}">
+      <label>Name<input value="${key}" class="mono" readonly></label>
+      ${flagValueFields(value)}
+    </form>`,
+    actions: html`<button type="button" data-dialog-close>Cancel</button><button type="submit" form="${form}" class="primary">Save</button>`,
+  })
+}
+
+function removeFlagForm(key: string, actions: FeatureFlagActions): Html {
+  return html`<form method="post" action="${actions.remove}" class="inline" data-confirm="Remove feature flag ${key}?" data-confirm-label="Remove" data-confirm-tone="critical">
+    <input type="hidden" name="key" value="${key}">
+    <button class="critical small">Remove</button>
+  </form>`
+}
+
+/** The local-overrides list, modelled on the project Variables table. */
+export function featureFlagsView(flags: Record<string, boolean | string>, actions: FeatureFlagActions, canManage: boolean): Html {
+  const entries = Object.entries(flags).sort(([a], [b]) => a.localeCompare(b))
+  const clear = html`<form method="post" action="${actions.clear}" data-confirm="Delete every local feature flag override?" data-confirm-label="Delete all" data-confirm-tone="critical"><button class="critical">Delete all</button></form>`
+  return html`
+    <div class="var-toolbar">
+      <span class="var-count">${plural(entries.length, 'local override')}</span>
+      <div class="var-toolbar-actions">
+        ${canManage && entries.length ? menu(clear, { label: 'Feature flag actions', align: 'end' }) : ''}
+        ${canManage ? html`<button type="button" class="btn primary" data-dialog-open="#feature-flag-add">${icon('plus')}<span>Add flag</span></button>` : ''}
+      </div>
+    </div>
+    ${entries.length
+      ? html`<div class="scroll"><table class="var-table">
+          <thead><tr><th>Flag</th><th>Value</th><th class="var-actions-col"></th></tr></thead>
+          <tbody>${entries.map(
+            ([key, value], index) => html`<tr>
+              <td class="var-name" title="${key}"><span class="mono">${key}</span>${badge(typeof value === 'boolean' ? 'Boolean' : 'Text')}</td>
+              <td class="clip">${flagValue(value)}</td>
+              <td class="var-actions">
+                ${canManage
+                  ? html`<button type="button" class="btn small" data-dialog-open="#feature-flag-edit-${index}">Edit</button>${removeFlagForm(key, actions)}`
+                  : ''}
+              </td>
+            </tr>`,
+          )}</tbody>
+        </table></div>`
+      : html`<p class="hint">No local overrides. Values from PostHog and the app's defaults still apply.</p>`}
+    ${canManage ? addFlagDialog(actions) : ''}
+    ${canManage ? entries.map(([key, value], index) => editFlagDialog(key, value, index, actions)) : ''}`
+}
+
 /** Instance-wide provider and sampling settings. Environment values are the defaults. */
 export function observabilitySettingsView(options: ObservabilitySettingsViewOptions): Html {
   const s = options.settings
@@ -42,7 +136,7 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
       ? ''
       : alert('info', html`Only an organization owner can change instance-wide observability settings. You can still review the current configuration.`)}
     ${options.error ? alert('critical', html`${options.error}`) : ''}
-    <form method="post" action="${OBS_SETTINGS}">
+    <form id="observability-settings-form" method="post" action="${OBS_SETTINGS}">
       ${settingsSection(
         'Local console',
         'Bunwrite keeps a bounded local copy of request traces and document events so the Observability pages work without a provider.',
@@ -111,7 +205,7 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
             <label>Project API key<input name="posthogApiKey" type="password" autocomplete="new-password" placeholder="${hasPosthogKey ? 'Configured; leave blank to keep' : 'phc_...'}"></label>
             <label>Host<input name="posthogHost" type="url" class="mono" value="${s.posthog?.host ?? 'https://us.i.posthog.com'}"></label>
           </div>
-          <div class="fields">
+          <div class="fields center">
             <label class="check"><input type="checkbox" name="posthogAnalytics" ${checked(s.posthog?.analytics ?? true)}><span>Send document analytics</span></label>
             <label class="check"><input type="checkbox" name="posthogFlags" ${checked(s.posthog?.flags ?? true)}><span>Evaluate feature flags</span></label>
             <label>Flag cache (seconds)<input name="posthogFlagsTtl" type="number" min="1" max="3600" value="${seconds(s.posthog?.flagsTtlMs ?? 30_000)}"></label>
@@ -119,14 +213,18 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
           <label class="check"><input type="checkbox" name="clearPosthogKey"><span>Remove stored PostHog key</span></label>`,
       )}
 
-      ${settingsSection(
-        'Feature flags',
-        'Local overrides win over PostHog. The same values are returned by GET /v1/flags.',
-        html`<label>Overrides JSON<textarea name="localFlags" class="mono" rows="6" spellcheck="false">${JSON.stringify(s.localFlags, null, 2)}</textarea><small>An object of string or boolean values, for example <span class="mono">{"new-checkout": true, "theme": "dark"}</span>.</small></label>`,
-      )}
-
-      ${options.canManage ? pageFooter(OBS, 'Save settings') : ''}
     </form>
+    ${settingsSection(
+      'Feature flags',
+      'Local overrides win over PostHog. Each flag is saved immediately; the same values are returned by GET /v1/flags.',
+      featureFlagsView(s.localFlags, {
+        save: `${OBS_SETTINGS}/flags`,
+        remove: `${OBS_SETTINGS}/flags/delete`,
+        clear: `${OBS_SETTINGS}/flags/clear`,
+      }, options.canManage),
+      { id: 'feature-flags' },
+    )}
+    ${options.canManage ? pageFooter(null, 'Save settings', { form: 'observability-settings-form' }) : ''}
     ${options.overridden && options.canManage
       ? settingsSection(
           'Environment defaults',

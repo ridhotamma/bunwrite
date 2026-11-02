@@ -1,8 +1,8 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { arrayOf, checked, parseJsonObject, value } from '~/console/forms'
+import { arrayOf, checked, value } from '~/console/forms'
 import { html } from '~/console/html'
 import { pageCount, pageParams } from '~/console/query'
-import { alert, badge, cardHead, destroy, emptyState, header, listCard, menu, pager, searchForm, stat, tabs, when } from '~/console/ui'
+import { alert, badge, cardHead, destroy, emptyState, header, listCard, menu, pager, plural, searchForm, stat, tabs, when } from '~/console/ui'
 import { lineChart } from '~/console/chart'
 import { addSeconds } from '~/lib/datetime'
 import { err, BunwriteError } from '~/lib/errors'
@@ -34,14 +34,19 @@ function rateOf(value: unknown, fallback: number): number {
   return number(value, fallback * 100, 0, 100) / 100
 }
 
-function flagOverrides(value: unknown): Record<string, boolean | string> {
-  const parsed = parseJsonObject(String(value ?? '').trim() || '{}', 'Feature flags must be a JSON object.')
-  for (const [key, flag] of Object.entries(parsed)) {
-    if (typeof flag !== 'boolean' && typeof flag !== 'string') {
-      throw err('general_argument_invalid', `Feature flag "${key}" must be a string or boolean.`)
-    }
+const FLAG_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
+function flagKey(value: unknown): string {
+  const key = String(value ?? '').trim()
+  if (!FLAG_KEY.test(key)) {
+    throw err('general_argument_invalid', 'Feature flag names must start with a letter or number and contain only letters, numbers, dot, hyphen or underscore.')
   }
-  return parsed as Record<string, boolean | string>
+  return key
+}
+
+function flagValue(ctx: ConsoleContext): boolean | string {
+  if (value(ctx.form, 'type') === 'boolean') return value(ctx.form, 'flagBoolean') === 'true'
+  return String(ctx.form.flagString ?? '')
 }
 
 /** Merge one form over the current settings; blank secret fields keep the stored values. */
@@ -87,7 +92,7 @@ function settingsFromForm(ctx: ConsoleContext, current: ObservabilitySettings): 
     otlp,
     datadog,
     posthog,
-    localFlags: flagOverrides(f.localFlags),
+    localFlags: { ...current.localFlags },
   }
 }
 
@@ -361,9 +366,12 @@ export function observabilityPages(router: ConsoleRouter): void {
 
   router.get(FLAGS, async ({ ctx, url }) => {
     const project = ctx.services.config.projectId
-    const subject = url.searchParams.get('subject')?.trim() || `project:${project}`
+    const requested = url.searchParams.get('subject')?.trim() ?? ''
+    const submitted = url.searchParams.has('subject')
+    const subject = requested || `project:${project}`
     const flags = await ctx.observability.flags.evaluate(subject, { project })
     const local = ctx.observability.config.localFlags
+    const configured = ctx.observability.flags.enabled
     const names = Object.keys(flags).sort()
     const source = (name: string) => (Object.hasOwn(local, name) ? 'Local override' : ctx.observability.config.posthog?.flags ? 'PostHog' : 'Local')
     const value = (name: string) => {
@@ -392,8 +400,22 @@ export function observabilityPages(router: ConsoleRouter): void {
             </tbody>
           </table>
         </div>`
-      : emptyState('No flags configured', 'Add local overrides or configure PostHog in Observability → Settings, then evaluate a subject.')
+      : submitted
+        ? emptyState(
+            'No flags for this subject',
+            `"${subject}" evaluated to no flags. Local overrides win over PostHog; add one in Observability settings, or check the subject and PostHog configuration.`,
+          )
+        : emptyState('No flags configured', 'Add local overrides or configure PostHog in Observability → Settings, then evaluate a subject.')
+    const feedback = submitted
+      ? html`<p class="help">Evaluated <code>${subject}</code>: ${names.length ? plural(names.length, 'flag') : 'no flags'} returned.</p>`
+      : ''
     const body = html`${header('Feature flags')} ${tabs(OBS_TABS, 'flags')}
+      ${configured
+        ? ''
+        : alert(
+            'info',
+            html`No flag source is configured yet, so every subject returns an empty result. Add a local override or enable PostHog in <a href="${OBS_SETTINGS}">Observability settings</a>.`,
+          )}
       <div class="stats" style="margin:16px 0">
         ${stat('Flags returned', names.length.toLocaleString('en-US'))} ${stat('Local overrides', Object.keys(local).length.toLocaleString('en-US'))}
         ${stat('Provider', ctx.observability.config.posthog?.flags ? 'PostHog' : 'Local only')}
@@ -404,6 +426,7 @@ export function observabilityPages(router: ConsoleRouter): void {
           <input type="text" name="subject" value="${subject}" placeholder="user ID or project:<id>" autocomplete="off" />
           <button class="btn primary">Evaluate</button>
         </form>
+        ${feedback}
         <p class="help">
           User sessions use the user ID; API-key calls use <code>project:${project}</code>. The value is cached for
           ${Math.round((ctx.observability.config.posthog?.flagsTtlMs ?? 30_000) / 1000)}s.
@@ -440,6 +463,34 @@ export function observabilityPages(router: ConsoleRouter): void {
         observabilitySettingsView({ settings: store.settings, canManage: true, overridden: store.overridden, error: error.message }),
       )
     }
+  })
+
+  router.post(`${OBS_SETTINGS}/flags`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
+    const key = flagKey(ctx.form.key)
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({
+      ...store.settings,
+      localFlags: { ...store.settings.localFlags, [key]: flagValue(ctx) },
+    })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: `Feature flag ${key} saved` })
+  })
+
+  router.post(`${OBS_SETTINGS}/flags/delete`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
+    const key = flagKey(ctx.form.key)
+    const store = ctx.projects.control.observabilitySettings
+    const localFlags = { ...store.settings.localFlags }
+    delete localFlags[key]
+    await store.save({ ...store.settings, localFlags })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: `Feature flag ${key} removed` })
+  })
+
+  router.post(`${OBS_SETTINGS}/flags/clear`, async ({ ctx }) => {
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
+    const store = ctx.projects.control.observabilitySettings
+    await store.save({ ...store.settings, localFlags: {} })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Feature flag overrides cleared' })
   })
 
   router.post(`${OBS_SETTINGS}/reset`, async ({ ctx }) => {

@@ -140,8 +140,8 @@ export function formFooter(cancel: string | null, submit: string): Html {
 }
 
 /** Actions at the end of a page-level form, outside the section cards. */
-export function pageFooter(cancel: string | null, submit: string): Html {
-  return html`<div class="page-foot">${cancel ? html`<a class="btn" href="${cancel}">Cancel</a>` : ''}<button class="primary">${submit}</button></div>`
+export function pageFooter(cancel: string | null, submit: string, options: { form?: string } = {}): Html {
+  return html`<div class="page-foot">${cancel ? html`<a class="btn" href="${cancel}">Cancel</a>` : ''}<button class="primary" ${options.form ? html`form="${options.form}"` : ''}>${submit}</button></div>`
 }
 
 export const formatBytes = (n: number) =>

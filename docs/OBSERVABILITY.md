@@ -92,7 +92,7 @@ Open **Observability → Settings**. Organization owners can edit:
 - **OTLP/HTTP** — base and per-signal endpoints, headers and signals.
 - **Datadog** — API key, site, logs and metrics.
 - **PostHog** — project API key, host, analytics, flags and cache TTL.
-- **Feature flags** — local overrides that win over PostHog.
+- **Feature flags** — local overrides as a list: add boolean or text flags, edit them, remove one, or clear all. Changes save immediately and win over PostHog.
 
 Saving applies the new configuration immediately: exporters are rebuilt and
 every project's local telemetry limits are updated. Stored API keys and headers
