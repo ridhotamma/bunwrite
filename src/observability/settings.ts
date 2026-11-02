@@ -159,7 +159,9 @@ function numberOf(value: unknown, fallback: number, min: number, max: number): n
 function flagsOf(value: unknown, fallback: Record<string, boolean | string>): Record<string, boolean | string> {
   const object = objectOf(value)
   if (!object) return { ...fallback }
-  return Object.fromEntries(Object.entries(object).filter((entry): entry is [string, boolean | string] => typeof entry[1] === 'boolean' || typeof entry[1] === 'string'))
+  return Object.fromEntries(
+    Object.entries(object).filter((entry): entry is [string, boolean | string] => typeof entry[1] === 'boolean' || typeof entry[1] === 'string'),
+  )
 }
 
 function normalizeOtlp(value: unknown, fallback: OtlpSettings | null): OtlpSettings | null {
