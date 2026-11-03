@@ -127,7 +127,9 @@ class SetprivSandbox implements FunctionSandbox {
     mkdirSync(dirname(home), { recursive: true })
     allowPassThrough(this.root, dirname(home))
     if (dir) allowPassThrough(this.root, dirname(dir))
-    const giveHome = 'install -d -o "$1" -g "$1" -m 0700 "$2" && chown "$1:$1" "$2" && chmod 0700 "$2"'
+    // Use mkdir, not install: the Docker image ships a /usr/local/bin/install
+    // wrapper for the one-command installer, which shadows GNU install here.
+    const giveHome = '/bin/mkdir -p "$2" && chown "$1:$1" "$2" && chmod 0700 "$2"'
     if (dir) this.asRoot(`${giveHome} && chown -R "$1:$1" "$3" && chmod 0700 "$3"`, String(uid), this.inside(home), this.inside(dir))
     else this.asRoot(giveHome, String(uid), this.inside(home))
   }
