@@ -375,6 +375,9 @@ variables. Secret values are write-only through the API. See
 | `SITES_SSR` | `true` | Allow sites with `adapter: ssr` to build and run. `false` answers those hosts with a "turned off" page. |
 | `SITES_SSR_IDLE_MS` | `300000` | Stop an SSR app that has had no requests for this long. `0` keeps apps running until the site changes. |
 | `SITES_SSR_MAX_PROCESSES` | `2` | Most SSR apps running at once per HTTP worker. The least recently used app is stopped first. Each worker keeps its own copy, so set `WORKERS=1` when hosting many SSR sites, or raise this to cover the sites you expect to be warm. Memory, not CPU, is the limit: a warm Next/Nuxt app is often 80–150 MB. |
+| `STICKY_SESSIONS` | `off` | Sticky requests for SSR sites and `/api/*` on sites with an API function: `off`, `ip` (hash client IP + site host) or `cookie` (a `bw_sticky` cookie with IP fallback). Use `cookie` for apps that keep sessions or SSE streams in process memory. API, console, standalone function and WebSocket traffic keeps its existing routing. |
+| `STICKY_PORT` | `PORT + 200` | First loopback port for the per-worker sticky listeners. They are private; keep the range away from `PORT`/`WORKER_PORTS`, `WRITER_PORT` and the SSR app range (10000–31999). `0` disables the listeners. |
+| `STICKY_HOST` | `127.0.0.1` | Interface for the sticky listeners. Workers share the same network namespace, so loopback is enough. |
 | `SITES_SSR_KEEP_PREVIOUS` | `2` | Ready SSR deployments kept besides the live one, for rollback. Each one is a full app folder on disk; set `0` or `1` on a small disk. |
 
 SSR apps are started on the first request and always listen on loopback; the

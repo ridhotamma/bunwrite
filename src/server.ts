@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { createApp, createServices } from './app'
 import { workerPort } from './cluster/config'
 import { LeaderLease } from './cluster/leader'
+import { publicWorkerIndex, stickyEnabled, stickyPortFor } from './cluster/sticky'
 import { isLeader } from './cluster/role'
 import { isWriterWorker } from './cluster/writer'
 import { configFromEnv } from './config'
@@ -141,6 +142,7 @@ export async function startServer(): Promise<void> {
   // are, and dividing a cluster-wide budget made adding CPUs shrink each
   // worker's headroom (200 / 4 workers = 50).
   const publicLimit = config.maxInflight > 0 ? config.maxInflight : 0
+  const publicIndex = publicWorkerIndex(config)
   const server = servesPublic
     ? Bun.serve({
         hostname: config.hostname,
@@ -155,20 +157,44 @@ export async function startServer(): Promise<void> {
       })
     : null
 
-  const publicIndex = Math.max(1, config.workerIndex - (dedicatedWriter ? config.writerShards : 0) + 1)
-  const label = config.workers > 1 ? `[${writer ? `writer ${writerShard + 1}/${config.writerShards}` : `worker ${publicIndex}/${config.publicWorkers}`}] ` : ''
+  // A private listener per public worker. Site requests that hash to another
+  // worker are streamed here, so SSE/session state stays on one SSR process
+  // even when SO_REUSEPORT put the original connection somewhere else.
+  let sticky: ReturnType<typeof Bun.serve> | null = null
+  if (server && stickyEnabled(config)) {
+    const stickyPort = stickyPortFor(config, publicIndex)
+    try {
+      sticky = Bun.serve({
+        hostname: config.stickyHost,
+        port: stickyPort,
+        fetch: withInflightLimit(app.fetchLocal, publicLimit),
+        websocket: app.websocket,
+        maxRequestBodySize: tuning?.maxRequestBodyBytes ?? bodyLimitBytes(),
+        idleTimeout: config.httpIdleTimeout,
+      })
+    } catch (error) {
+      console.error(
+        `[cluster] sticky listener ${config.stickyHost}:${stickyPort} failed to start; site sessions will not stick:`,
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
+
+  const label = config.workers > 1 ? `[${writer ? `writer ${writerShard + 1}/${config.writerShards}` : `worker ${publicIndex + 1}/${config.publicWorkers}`}] ` : ''
   if (server) {
     console.log(
       `${label}bunwrite listening on :${server.port} (${services.registry.collections.size} collections)${config.consoleEnabled ? ', console at /console' : ''}`,
     )
   }
   if (writes) console.log(`${label}database writes on ${config.writerHost}:${writes.port}`)
+  if (sticky) console.log(`${label}sticky session listener on ${config.stickyHost}:${sticky.port}`)
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
       void (async () => {
         await lease?.stop()
         server?.stop()
+        sticky?.stop()
         writes?.stop()
         await services.writes.drain()
         await services.requestLogs.flush()

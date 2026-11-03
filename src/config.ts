@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path'
 
 import { clusterConfig, workerPortsEnabled } from './cluster/config'
+import { parseStickyMode, type StickyMode } from './cluster/sticky'
 import type { DatabaseBackend } from './db/driver'
 import { parseDatabaseBackend } from './db/driver'
 import type { FunctionSandbox } from './functions/sandbox'
@@ -202,6 +203,15 @@ export interface Config {
    * around a stalled one.
    */
   workerPorts: boolean
+  /**
+   * Sticky site requests: `off`, `ip` (hash client IP + host) or `cookie`
+   * (affinity cookie with IP fallback). Requires more than one public worker.
+   */
+  stickySessions: StickyMode
+  /** First loopback port for the per-worker sticky listeners (STICKY_PORT). */
+  stickyPort: number
+  /** Interface for the sticky listeners; loopback by default (STICKY_HOST). */
+  stickyHost: string
   /** This process's position in the cluster, 0-based. Index 0 is the writer. */
   workerIndex: number
   /**
@@ -499,11 +509,16 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const ssrKeep = wholeNumber(env.SITES_SSR_KEEP_PREVIOUS, 2)
   const workerPorts = workerPortsEnabled(env)
   const idleTimeout = wholeNumber(env.HTTP_IDLE_TIMEOUT, 30)
+  const stickySessions = parseStickyMode(env.STICKY_SESSIONS)
+  const stickyPort = wholeNumber(env.STICKY_PORT, port + 200)
   return {
     port,
     workers: cluster.workers,
     publicWorkers: cluster.publicWorkers,
     workerPorts,
+    stickySessions,
+    stickyPort,
+    stickyHost: env.STICKY_HOST || '127.0.0.1',
     workerIndex: cluster.workerIndex,
     // Keep the writer off the public port range when workers bind PORT..PORT+N-1.
     writerPort: wholeNumber(env.WRITER_PORT, workerPorts ? port + 100 : port + 1),

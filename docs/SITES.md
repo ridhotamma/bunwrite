@@ -211,6 +211,9 @@ Requests are proxied to the app's process:
   first out). Each HTTP worker keeps its own app processes, so with
   `WORKERS=4` and the default `2` a server can hold up to eight, and visiting
   more sites evicts the least recently used ones;
+- with `STICKY_SESSIONS=cookie` (or `ip`), requests for the same client stay
+  on one worker, so in-memory sessions and SSE streams do not jump between the
+  per-worker app processes;
 - a crash answers `502` once, then the next request starts it again after a
   short backoff;
 - activating another deployment, deleting the site or project, and shutting

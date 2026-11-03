@@ -46,6 +46,18 @@ and loopback listeners are not started: every worker uses the connection pool
 and writes independently. The processes coordinate through the database
 (`src/cluster`):
 
+### Sticky site sessions
+
+With `SO_REUSEPORT`, the kernel spreads *connections* across workers, so an SSE
+stream and the POSTs that follow it can land on different processes. Set
+`STICKY_SESSIONS=cookie` (or `ip`) when an SSR site, or a site's API function,
+keeps state in the worker process. Each public worker then listens on
+a private loopback port at `STICKY_PORT + index`. A request that hashes to
+another worker is streamed to that worker's listener; the first response sets a
+`bw_sticky` cookie, and clients that do not keep cookies (EventSource/SSE) fall
+back to a stable hash of the client IP and site host. API, console, standalone
+function and WebSocket traffic does not use this path.
+
 - **Leader lease** — `_cluster_leases` names the process that runs cron
   schedules, automatic backups, the queue reaper, the render queue and pruning.
   Workers renew it every two seconds; when the leader stops, another worker

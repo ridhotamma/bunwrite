@@ -81,7 +81,9 @@ incremental instead of a rewrite. See
   single-page app, or an SSR app (`adapter: ssr`) that Bunwrite builds and runs
   on demand, on `<site-id>.<SITES_DOMAIN>` plus any number of custom domains.
   `/api/*` on the site can run a function on the same origin. Project and
-  per-site variables apply at build and runtime. See
+  per-site variables apply at build and runtime. For stateful SSR apps
+  (in-memory sessions, SSE), `STICKY_SESSIONS=cookie` pins each client to one
+  worker; it works with `SO_REUSEPORT` and needs no proxy change. See
   [docs/SITES.md](docs/SITES.md).
 - **S3-compatible storage.** Uploads and backups can live on local disk or any
   S3-compatible bucket.

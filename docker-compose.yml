@@ -46,6 +46,10 @@ services:
       # One listener per public worker (PORT, PORT+1, ...) so Caddy can health
       # check each one. Set UPSTREAM to the same range (see the caddy service).
       WORKER_PORTS: ${WORKER_PORTS:-false}
+      # Sticky site requests. `cookie` sets bw_sticky and falls back to client
+      # IP; `ip` uses the hash only. Use it for SSR apps with in-memory
+      # sessions or SSE. Works with SO_REUSEPORT; no Caddy change is needed.
+      STICKY_SESSIONS: ${STICKY_SESSIONS:-off}
       # In-flight requests allowed per public worker before that worker returns
       # 503 with Retry-After. It is not divided across the pool.
       MAX_INFLIGHT: ${MAX_INFLIGHT:-200}

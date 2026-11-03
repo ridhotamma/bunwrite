@@ -77,6 +77,8 @@ export interface TestServer {
   hub: VcsHub
   /** The control project's observability facade, rebuilt when its settings change. */
   observability: ReturnType<typeof createApp>['observability']
+  /** The app handler, for tests that start extra listeners (sticky sessions). */
+  app: ReturnType<typeof createApp>
   stop(): void
 }
 
@@ -86,6 +88,9 @@ export function testConfig(over: Partial<Config> = {}): Config {
     workers: 1,
     publicWorkers: 1,
     workerPorts: false,
+    stickySessions: 'off',
+    stickyPort: 0,
+    stickyHost: '127.0.0.1',
     workerIndex: 0,
     writerPort: 0,
     writerShards: 1,
@@ -186,6 +191,7 @@ export function startServer(
     config,
     hub: app.hub,
     observability: app.observability,
+    app,
     stop: () => server.stop(true),
   }
 }

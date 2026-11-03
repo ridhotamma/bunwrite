@@ -295,6 +295,24 @@ and never receives public traffic. Without `WORKER_PORTS`, the workers share one
 port with `SO_REUSEPORT`; that is slightly faster but the proxy cannot see an
 individual stalled worker.
 
+### Sticky site sessions
+
+If an SSR site, or a site's `/api/*` function, keeps state in process memory
+(in-memory sessions, SSE streams), enable sticky sessions:
+
+```dotenv
+STICKY_SESSIONS=cookie
+# Optional: defaults to PORT + 200
+STICKY_PORT=8280
+```
+
+This works with both `SO_REUSEPORT` and `WORKER_PORTS`; no Caddy change is
+needed. Each public worker also listens on a private loopback port, and a
+request that hashes to another worker is forwarded there. The first response
+sets `bw_sticky`, so browsers stay pinned; clients that do not keep cookies are
+pinned by client IP plus site host. API, console, standalone function and
+WebSocket traffic is not affected.
+
 `MAX_INFLIGHT` is per public worker. Above it, Bunwrite answers `503` with
 `Retry-After: 1` immediately instead of holding the request. Keep it near the
 measured safe concurrency per worker (about 200 for the write-heavy booking

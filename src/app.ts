@@ -3,6 +3,7 @@ import type { Server } from 'bun'
 import { keyCaller, parseCookies, resolveCaller, type Caller } from './auth/caller'
 import { BRAND_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
+import { forwardSticky, publicWorkerIndex, stickyHostOf, stickyTargetFor, withStickyCookie } from './cluster/sticky'
 import { forwardWrite, shouldForwardConsoleWrite, shouldForwardWrite } from './cluster/writer'
 import { createConsole } from './console/app'
 import { apiHomePage, notFoundPage, wantsHtml } from './console/public'
@@ -410,7 +411,12 @@ export function createApp(source: Services | ProjectResolver) {
     return response
   }
 
-  async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
+  async function respond(
+    request: Request,
+    server: Server<SocketData> | undefined,
+    meta: RequestMeta,
+    sticky: boolean,
+  ): Promise<Response | undefined> {
     const url = new URL(request.url)
     // Start with the project that will handle the request, not the default:
     // sampling and exporters are per project.
@@ -432,8 +438,37 @@ export function createApp(source: Services | ProjectResolver) {
       meta.auth = `site:${hosted.site.id}`
       meta.route = 'site'
       if (hosted.project.services !== control) await syncServices(hosted.project.services)
-      startObservation(hosted.project.services)
-      return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
+
+      const hostedConfig = hosted.project.services.config
+      const host = stickyHostOf(request)
+      // Static files are stateless. SSR sites send every request to their app;
+      // a static site only needs affinity on its API function paths.
+      const apiPath = url.pathname === '/api' || url.pathname.startsWith('/api/')
+      const stateful = hosted.site.adapter === 'ssr' || (apiPath && Boolean(hosted.site.api_function_id))
+      const target = sticky && stateful ? stickyTargetFor(request, hostedConfig, host) : undefined
+      const self = publicWorkerIndex(hostedConfig)
+      let response: Response | undefined
+
+      if (target !== undefined && target !== self) {
+        const forwarded = await forwardSticky(hostedConfig, request, host, target)
+        if (forwarded) {
+          meta.forwarded = true
+          response = forwarded
+        }
+      }
+
+      if (!response) {
+        startObservation(hosted.project.services)
+        response = await serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
+      }
+
+      // Pin browsers to the worker that handled this request (or whose sticky
+      // listener accepted the forward). If the target was unreachable and we
+      // served locally, leave the next request free to try again.
+      if (sticky && target !== undefined && (meta.forwarded || target === self)) {
+        response = withStickyCookie(response, hostedConfig, target)
+      }
+      return response
     }
     const hostedFunction = await functionFor(request)
     if (hostedFunction) {
@@ -539,11 +574,11 @@ export function createApp(source: Services | ProjectResolver) {
     return await corsResponse(request, response, runtime.info.id, runtime.services.config.allowedOrigins)
   }
 
-  return {
-    hub,
-    /** The control project's facade; per-project requests use their own runtime. */
-    observability: control.observability,
-    async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
+  const fetch = async (
+    request: Request,
+    server?: Server<SocketData>,
+    sticky = true,
+  ): Promise<Response | undefined> => {
       // Another worker may have changed projects, schema or settings.
       if (projects.sync) await projects.sync()
       else await syncServices(control)
@@ -560,7 +595,7 @@ export function createApp(source: Services | ProjectResolver) {
       let status = 500
       let responseBytes = 0
       try {
-        const raw = await respond(request, server, meta)
+        const raw = await respond(request, server, meta, sticky)
         if (!raw) {
           status = 101
           return undefined
@@ -629,7 +664,14 @@ export function createApp(source: Services | ProjectResolver) {
           })
         }
       }
-    },
+    }
+
+  return {
+    hub,
+    /** The control project's facade; per-project requests use their own runtime. */
+    observability: control.observability,
+    fetch,
+    fetchLocal: (request: Request, server?: Server<SocketData>) => fetch(request, server, false),
     websocket: {
       // Realtime messages are JSON; compressing them saves bandwidth for clients that support it.
       perMessageDeflate: control.config.websocketCompression,
