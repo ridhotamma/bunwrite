@@ -12,13 +12,7 @@ import { documentsOf, numberOf, queriesOf, recordOf, stringOf } from './payload'
 import type { LogRow } from './service'
 
 /** Apply one staged operation inside the current transaction. */
-export async function applyLog(
-  registry: Registry,
-  store: DocumentBackend,
-  log: LogRow,
-  guard?: Guard,
-  events?: DocEvent[],
-): Promise<void> {
+export async function applyLog(registry: Registry, store: DocumentBackend, log: LogRow, guard?: Guard, events?: DocEvent[]): Promise<void> {
   const caller = keyCaller()
   const collection = registry.collection(log.database_id, log.collection_id, true)
   const data = recordOf(JSON.parse(log.data ?? '{}'))

@@ -96,9 +96,7 @@ export function webhookSignature(url: string, body: string, secret: string): str
  * old deliveries instead of accepting an indefinite replay.
  */
 export function webhookSignatureSha256(url: string, body: string, secret: string, timestamp: string): string {
-  return createHmac('sha256', secret)
-    .update(`${timestamp}.${url}${body}`)
-    .digest('base64')
+  return createHmac('sha256', secret).update(`${timestamp}.${url}${body}`).digest('base64')
 }
 
 /** Read a receiver's response up to a small cap, then close it. */

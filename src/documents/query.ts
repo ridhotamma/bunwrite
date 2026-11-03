@@ -317,13 +317,7 @@ export function compileQueries(collection: Collection, queries: Query[], dialect
             out.select = null
             break
           }
-          if (
-            !Object.hasOwn(SYSTEM, v) &&
-            v !== '$permissions' &&
-            v !== '$collectionId' &&
-            v !== '$databaseId' &&
-            !collection.attributeMap.has(v)
-          ) {
+          if (!Object.hasOwn(SYSTEM, v) && v !== '$permissions' && v !== '$collectionId' && v !== '$databaseId' && !collection.attributeMap.has(v)) {
             throw invalidQuery(`Attribute not found in schema: ${v}`)
           }
           keys.add(v)

@@ -416,9 +416,6 @@ export class Observability {
 }
 
 /** Create the facade from a project's settings. */
-export function createObservability(
-  config: ObservabilityConfig = defaultObservabilityConfig(),
-  options: ObservabilityOptions = {},
-): Observability {
+export function createObservability(config: ObservabilityConfig = defaultObservabilityConfig(), options: ObservabilityOptions = {}): Observability {
   return new Observability(config, options)
 }

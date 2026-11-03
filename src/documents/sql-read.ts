@@ -75,10 +75,7 @@ export async function selectRows(
     const checkParams: SqlValue[] = []
     const cursorFilter = readFilter(caller, collection, checkParams)
     if (cursorFilter) {
-      const allowed = await exec.get(
-        `SELECT 1 FROM ${q(collection.table)} t WHERE t._id = ? AND ${cursorFilter}`,
-        [compiled.cursor.id, ...checkParams],
-      )
+      const allowed = await exec.get(`SELECT 1 FROM ${q(collection.table)} t WHERE t._id = ? AND ${cursorFilter}`, [compiled.cursor.id, ...checkParams])
       if (!allowed) throw err('general_cursor_not_found', `Document '${compiled.cursor.id}' for the 'cursor' value not found.`)
     }
     where.push(cursorCondition(effective, row, params))
