@@ -508,7 +508,11 @@ export class SiteService {
     await this.reload()
     // A request could have started the old app between the first stop and here.
     this.ssr.forget(id)
-    removeTree(this.config.functionsSandbox, sitesDir(this.config, id))
+    try {
+      removeTree(this.config.functionsSandbox, sitesDir(this.config, id))
+    } catch (error) {
+      console.error(`[sites] ${id}: could not remove the site's files:`, error)
+    }
   }
 
   /** Stop every SSR app (project shutdown). */
@@ -742,8 +746,14 @@ export class SiteService {
     } catch (error) {
       logs.push(error instanceof Error ? error.message : String(error))
       await set('failed')
-      rmSync(archive, { force: true })
-      removeTree(this.config.functionsSandbox, dir)
+      try {
+        rmSync(archive, { force: true })
+        removeTree(this.config.functionsSandbox, dir)
+      } catch (cleanupError) {
+        // Cleanup is best effort: a file left by an older run must not hide
+        // the build error or crash the deployment worker.
+        console.error(`[sites] ${siteId}: could not clean up failed deployment ${id}:`, cleanupError)
+      }
     }
     return this.deployment(siteId, id)
   }
@@ -992,7 +1002,13 @@ export class SiteService {
     // The next request starts the new deployment; the old app is stopped now.
     if (previous && previous !== id) this.ssr.stopDeployment(siteId, previous)
     this.ssr.stopDeployment(siteId, id)
-    await this.prune(siteId)
+    try {
+      await this.prune(siteId)
+    } catch (error) {
+      // The new deployment is already live. Retention cleanup must never turn
+      // a successful build into a failed deployment.
+      console.error(`[sites] ${siteId}: cleanup after activation failed:`, error)
+    }
     return this.site(siteId)
   }
 
@@ -1028,8 +1044,14 @@ export class SiteService {
     await this.db.driver.run('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?', [id, siteId])
     // A branch preview that pointed here has nothing left to serve.
     await this.db.driver.run('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [siteId, id])
-    removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
-    rmSync(this.archivePath(siteId, id), { force: true })
+    try {
+      removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
+      rmSync(this.archivePath(siteId, id), { force: true })
+    } catch (error) {
+      // Deployments made by an older server user may not be removable by the
+      // current one. The row is already gone; keep serving and log the path.
+      console.error(`[sites] ${siteId}: could not remove deployment ${id}:`, error)
+    }
   }
 
   /** The deployment's files as .tar.gz. For SSR sites these are the sources after the build. */
