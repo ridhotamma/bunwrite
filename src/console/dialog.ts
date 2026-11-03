@@ -222,6 +222,7 @@ export const DIALOG_SCRIPT = `
         const modal = selector ? document.querySelector(selector) : null
         if (modal) {
           // A link opener is the no-JavaScript fallback; with JavaScript, open the dialog instead.
+          // Link openers also need hx-boost="false", otherwise htmx starts navigating first.
           event.preventDefault()
           bindDialog(modal)
           if (!modal.open) modal.showModal()

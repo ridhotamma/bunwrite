@@ -16,13 +16,13 @@ import {
   pager,
   plural,
   settingsSection,
-  stat,
   tabs,
   when,
 } from '~/console/ui'
 import type { VectorCollection, VectorDocument, VectorMatch, VectorPoint } from '~/vectors/types'
 
 export const VECTORS = '/console/vectors'
+export const VECTOR_SETTINGS = '/console/settings/vectors'
 export const collectionUrl = (id: string) => `${VECTORS}/${encodeURIComponent(id)}`
 export const pointUrl = (collectionId: string, pointId: string) => `${collectionUrl(collectionId)}/points/${encodeURIComponent(pointId)}`
 export const documentPointsUrl = (collectionId: string, documentId: string) =>
@@ -152,18 +152,10 @@ function collectionShell(
     ${options.error ? alert('critical', html`${options.error}`) : ''}${body}`
 }
 
-function collectionStats(collection: VectorCollection, env: VectorEnv): Html {
-  return html`<div class="stats" style="margin-bottom:16px">
-    ${stat('Points', `${collection.points.toLocaleString('en-US')} / ${env.maxPoints.toLocaleString('en-US')}`)}
-    ${stat('Dimensions', collection.dimension.toLocaleString('en-US'))}
-    ${stat('Metric', metricLabel(collection.metric))}
-    ${stat('Embedder', collection.embedder)}
-  </div>`
-}
-
 /** The list page. */
-export function vectorsView(collections: VectorCollection[], env: VectorEnv): Html {
+export function vectorsView(collections: VectorCollection[]): Html {
   const create = html`<a class="btn primary" href="${VECTORS}/new">${icon('plus')}<span>Create collection</span></a>`
+  const settings = html`<a class="btn" href="${VECTOR_SETTINGS}">${icon('gear-six')}<span>Settings</span></a>`
   const body = collections.length
     ? html`<div class="scroll">
         <table>
@@ -187,12 +179,8 @@ export function vectorsView(collections: VectorCollection[], env: VectorEnv): Ht
         'Create a collection to store embeddings for semantic search, recommendations or RAG.',
         create,
       )
-  return html`${header('Vectors', { actions: collections.length ? create : undefined })}
-    ${listCard('vectors', { body })}
-    <p class="help">
-      Points live in this project's database on SQLite or Postgres. Search scans the collection in-process; keep
-      <span class="mono">VECTORS_MAX_POINTS</span> in mind for large corpora. ${plural(collections.length, 'collection')} · ${env.embedder}.
-    </p>`
+  return html`${header('Vectors', { actions: html`${settings}${collections.length ? create : ''}` })}
+    ${listCard('vectors', { body })}`
 }
 
 /** Create-collection page. */
@@ -223,7 +211,9 @@ export function collectionCreateView(env: VectorEnv, options: { draft?: Collecti
           <li><span class="subdued">Dimensions</span><span>${env.dimension}</span></li>
           <li><span class="subdued">Answer generation</span><span>${env.canAnswer ? badge(env.chatModel, 'success') : badge('Not configured')}</span></li>
         </ul>
-        <p class="help">Changing the embedder or its dimensions later means re-indexing the collection.</p>`,
+        <p class="help">
+          Configured in <a href="${VECTOR_SETTINGS}">Vectors &amp; RAG settings</a>. Changing the embedder or its dimensions later means re-indexing the collection.
+        </p>`,
       )}
       ${pageFooter(VECTORS, 'Create collection')}
     </form>`
@@ -323,7 +313,7 @@ export function pointsView(env: VectorEnv, options: PointsOptions): Html {
         label: `Page ${options.page} of ${options.pages} · ${plural(options.total, 'point')}`,
       })
 
-  return collectionShell(collection, 'points', html`${collectionStats(collection, env)}${documentNotice}
+  return collectionShell(collection, 'points', html`${documentNotice}
     ${listCard('points', { toolbar, body, footer })}`, { actions })
 }
 
@@ -425,7 +415,7 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
   const answer = options.result
   const chatHint = env.canAnswer
     ? `Answers are generated with ${env.chatModel}.`
-    : 'Answer generation is off. Retrieve context and sources here; set RAG_CHAT_URL or OPENAI_API_KEY to generate answers.'
+    : 'Context and sources are returned without a generated answer.'
 
   const answerSections = answer
     ? html`
@@ -466,9 +456,7 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
   return collectionShell(
     collection,
     'rag',
-    html`${collectionStats(collection, env)}
-      ${env.canAnswer ? '' : alert('info', html`${chatHint}`)}
-      ${options.error ? alert('critical', html`${options.error}`) : ''}
+    html`${options.error ? alert('critical', html`${options.error}`) : ''}
       ${settingsSection(
         'Ask a question',
         'Retrieve the closest chunks, then optionally ask the configured chat model to answer with them.',
@@ -516,13 +504,13 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
   return collectionShell(
     collection,
     'settings',
-    html`${collectionStats(collection, env)}
-      ${settingsSection(
+    html`${settingsSection(
         'Collection',
         'These values are fixed for the life of the collection.',
         html`<ul class="list">
           <li><span class="subdued">ID</span><span>${copyableId(collection.$id, 'vector-collection-id')}</span></li>
           <li><span class="subdued">Name</span><span>${collection.name}</span></li>
+          <li><span class="subdued">Points</span><span>${collection.points.toLocaleString('en-US')} / ${env.maxPoints.toLocaleString('en-US')}</span></li>
           <li><span class="subdued">Dimensions</span><span>${collection.dimension}</span></li>
           <li><span class="subdued">Metric</span><span>${metricLabel(collection.metric)}</span></li>
           <li><span class="subdued">Embedder</span><span class="mono">${collection.embedder}</span></li>
@@ -538,7 +526,8 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
           <li><span class="subdued">Answer model</span><span>${env.canAnswer ? env.chatModel : badge('Not configured')}</span></li>
           <li><span class="subdued">Point limit</span><span>${env.maxPoints.toLocaleString('en-US')}</span></li>
         </ul>
-        <p class="help">If the active embedder changes, add the points again or they will not match text queries.</p>`,
+        <p class="help">If the active embedder changes, add the points again or they will not match text queries.</p>
+        <div class="foot" style="justify-content:flex-start"><a class="btn" href="${VECTOR_SETTINGS}">Open Vectors &amp; RAG settings</a></div>`,
       )}
       ${settingsSection(
         'Delete collection',

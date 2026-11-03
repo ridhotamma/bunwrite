@@ -119,9 +119,35 @@ describe('console access', () => {
     expect(offenders).toEqual([])
   })
 
+  test('links that open dialogs opt out of htmx boosting', () => {
+    // htmx attaches its own click handler to boosted links, so it starts
+    // navigating to the no-JS fallback before the dialog handler runs.
+    const dir = join(import.meta.dir, '..', 'src', 'console')
+    const files = readdirSync(dir, { recursive: true }).map(String).filter((file) => file.endsWith('.ts'))
+    const offenders: string[] = []
+    for (const file of files) {
+      const source = readFileSync(join(dir, file), 'utf8')
+      for (const [tag] of source.matchAll(/<a\b[^>]*data-dialog-open[^>]*>/g)) {
+        if (!tag.includes('hx-boost="false"')) offenders.push(`${file}: ${tag.replace(/\s+/g, ' ').slice(0, 120)}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
   test('forms posted from another site are refused', async () => {
     const res = await form('/console/databases', { id: 'evil', name: 'Evil' }, { origin: 'https://evil.example' })
     expect(res.status).toBe(403)
+  })
+
+  test('an opaque or malformed Origin does not crash the console', async () => {
+    // Sandboxed iframes send `Origin: null`; the project switcher must still work.
+    const login = await form('/console/login', { email: 'admin@example.com', password: 'console-password' })
+    const session = login.headers.get('set-cookie')?.split(';')[0] ?? cookie
+    for (const origin of ['null', 'not a url']) {
+      const res = await form('/console/projects/select', { project: PROJECT, next: '/console/overview' }, { origin, cookie: session })
+      expect(res.status).toBe(303)
+      expect(res.headers.get('location')).toBe('/console/overview')
+    }
   })
 
   test('observability pages render with the shared console chrome', async () => {
@@ -589,13 +615,48 @@ describe('settings through the console', () => {
     expect(server.config.consoleSmtp).toBeNull()
   })
 
-  test('request log retention and IP logging can be changed and reset', async () => {
-    await form('/console/settings/logs', { retentionDays: '2', logIp: 'on' })
-    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([2, true])
-    await form('/console/settings/logs', { retentionDays: '0' })
-    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([0, false])
+  test('request log settings can be changed and reset', async () => {
+    const page = await (await get('/console/settings/logs')).text()
+    expect(page).toContain('name="logRequests"')
+    expect(page).toContain('name="logSampleRate"')
+    expect(page).toContain('name="logFormat"')
+
+    await form('/console/settings/logs', {
+      retentionDays: '2',
+      logIp: 'on',
+      logRequests: 'on',
+      logSampleRate: '25',
+      logFormat: 'json',
+    })
+    expect([server.config.logRetentionDays, server.config.logIp, server.config.logRequests, server.config.logSampleRate, server.config.logFormat]).toEqual([
+      2,
+      true,
+      true,
+      0.25,
+      'json',
+    ])
+
+    await form('/console/settings/logs', { retentionDays: '0', logSampleRate: '0', logFormat: 'text' })
+    expect([server.config.logRetentionDays, server.config.logIp, server.config.logRequests, server.config.logSampleRate, server.config.logFormat]).toEqual([
+      0,
+      false,
+      false,
+      0,
+      'text',
+    ])
+
+    const logs = await (await get('/console/logs')).text()
+    expect(logs).toContain('Request logging is off')
+    expect(logs).toContain('href="/console/settings/logs"')
+
     await form('/console/settings/logs/reset', {})
-    expect([server.config.logRetentionDays, server.config.logIp]).toEqual([7, true])
+    expect([server.config.logRetentionDays, server.config.logIp, server.config.logRequests, server.config.logSampleRate, server.config.logFormat]).toEqual([
+      7,
+      true,
+      false,
+      1,
+      'text',
+    ])
   })
 
   test('HTML rendering can be switched on and off', async () => {
@@ -1015,6 +1076,7 @@ describe('settings through the console', () => {
 
     const indexes = await (await get('/console/databases/main/collections/products/indexes')).text()
     expect(indexes).toContain('id="add-index"')
+    expect(indexes).toContain('data-dialog-open="#add-index" hx-boost="false"')
     expect((await get('/console/databases/main/collections/products/indexes/new')).status).toBe(200)
 
     // Users and teams have their own settings tab, plus dialogs with fallback pages.
@@ -1030,6 +1092,7 @@ describe('settings through the console', () => {
       expect(userSettings).toContain('Set password')
       const teamPage = await (await get(`/console/auth/teams/${team.$id}`)).text()
       expect(teamPage).toContain('id="add-member"')
+      expect(teamPage).toContain('data-dialog-open="#add-member" hx-boost="false"')
       const teamSettings = await (await get(`/console/auth/teams/${team.$id}/settings`)).text()
       expect(teamSettings).toContain('Delete team')
       expect((await get(`/console/auth/teams/${team.$id}/members/new`)).status).toBe(200)

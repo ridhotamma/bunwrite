@@ -181,10 +181,11 @@ export function createApp(source: Services | ProjectResolver) {
     // Same-project sites may call the API from the browser without being listed.
     const siteOrigin = await siteOfOrigin(origin)
     const ownSite = siteOrigin?.project.info.id === projectId
-    if (!ownSite && !originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*'))) return {}
+    const listed = originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*'))
+    if (!ownSite && !listed && !allowedOrigins.includes('*')) return {}
     // A literal `*` cannot be combined with credentials. Reflect it without
     // them so the operator's opt-in still permits reads, but not cookies.
-    const wildcardOnly = !ownSite && !originAllowed(origin, allowedOrigins.filter((pattern) => pattern !== '*')) && allowedOrigins.includes('*')
+    const wildcardOnly = !ownSite && !listed
     if (wildcardOnly) {
       return {
         'access-control-allow-origin': '*',
@@ -281,8 +282,40 @@ export function createApp(source: Services | ProjectResolver) {
   /** Which project's services handle this request. */
   async function runtimeFor(request: Request, url: URL): Promise<ProjectRuntime> {
     const pathname = url.pathname.replace(/^\/v1(?=\/|$)/, '') || '/'
-    // Browser preflights carry no custom project header.
-    if (request.method === 'OPTIONS') return projects.defaultProject()
+    // Function HTTP endpoints are called without a project header by the
+    // function's own integrations; resolve the owner by function ID.
+    const fn = /^\/functions\/([^/]+)\/http(?:\/|$)/.exec(pathname)
+    if (fn) {
+      const headerProject = projectOf(request, url)
+      if (headerProject) {
+        const byHeader = projects.get(headerProject)
+        if (!byHeader) throw err('project_not_found')
+        return byHeader
+      }
+      const owner = await projects.findFunction(decodeURIComponent(fn[1]!))
+      if (owner) return owner
+      throw err('project_not_found')
+    }
+    // Browser preflights carry no custom project header. Use the origin to
+    // find the project whose site or allowlist the browser is calling from;
+    // otherwise the default project's CORS settings would answer for every
+    // project, and a site allowed by its own project would fail preflight.
+    if (request.method === 'OPTIONS') {
+      const origin = request.headers.get('origin')
+      if (origin) {
+        const hosted = await siteOfOrigin(origin)
+        if (hosted) return hosted.project
+        // Prefer a project that lists the origin over one that only has `*`:
+        // a wildcard response is not usable with credentials.
+        for (const runtime of projects.list()) {
+          if (originAllowed(origin, runtime.services.config.allowedOrigins.filter((pattern) => pattern !== '*'))) return runtime
+        }
+        for (const runtime of projects.list()) {
+          if (runtime.services.config.allowedOrigins.includes('*')) return runtime
+        }
+      }
+      return projects.defaultProject()
+    }
     if (pathname === '/health' || pathname.startsWith('/health/')) {
       // Health answers without a project; when one is named, its key is the one
       // to validate, so `GET /health` can prove a second project's credentials.
@@ -301,21 +334,6 @@ export function createApp(source: Services | ProjectResolver) {
     if (oauth) {
       const project = projects.get(decodeURIComponent(oauth[1]!))
       if (project) return project
-      throw err('project_not_found')
-    }
-
-    // Function HTTP endpoints are called without a project header by the
-    // function's own integrations; resolve the owner by function ID.
-    const fn = /^\/functions\/([^/]+)\/http(?:\/|$)/.exec(pathname)
-    if (fn) {
-      const headerProject = projectOf(request, url)
-      if (headerProject) {
-        const byHeader = projects.get(headerProject)
-        if (!byHeader) throw err('project_not_found')
-        return byHeader
-      }
-      const owner = await projects.findFunction(decodeURIComponent(fn[1]!))
-      if (owner) return owner
       throw err('project_not_found')
     }
 

@@ -11,6 +11,7 @@ export const TABS = [
   { key: 'cache', label: 'Caching', href: `${SETTINGS}/cache` },
   { key: 'database', label: 'Database', href: `${SETTINGS}/database` },
   { key: 'functions', label: 'Functions', href: `${SETTINGS}/functions` },
+  { key: 'vectors', label: 'Vectors & RAG', href: `${SETTINGS}/vectors` },
   { key: 'variables', label: 'Variables', href: `${SETTINGS}/variables` },
   { key: 'git', label: 'Git', href: `${SETTINGS}/git` },
   { key: 'logs', label: 'Request logs', href: `${SETTINGS}/logs` },
@@ -23,7 +24,7 @@ export type SettingsTab = (typeof TABS)[number]['key']
 export const SETTING_GROUPS: { label: string; tabs: SettingsTab[] }[] = [
   { label: 'Project', tabs: ['general', 'email', 'templates'] },
   { label: 'Infrastructure', tabs: ['storage', 'cache', 'database', 'render'] },
-  { label: 'Platform', tabs: ['functions', 'variables', 'git', 'logs'] },
+  { label: 'Platform', tabs: ['functions', 'vectors', 'variables', 'git', 'logs'] },
 ]
 
 export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
@@ -41,6 +42,7 @@ export const TAB_OF_SETTING: Record<SettingKey, SettingsTab> = {
   render: 'render',
   cache: 'cache',
   database: 'database',
+  vectors: 'vectors',
 }
 
 export const tabPath = (tab: SettingsTab) => `${SETTINGS}/${tab}`

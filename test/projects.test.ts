@@ -85,6 +85,73 @@ describe('multiple projects', () => {
     expect((await new Users(client(PROJECT, KEY)).list()).total).toBe(0)
   })
 
+  test('preflight finds a project by its allowed origin', async () => {
+    const other = manager.get('project-b')!
+    const origin = 'https://app.project-b.test'
+    await other.services.settings.set('project', {
+      projectName: 'Project B',
+      allowedOrigins: [origin],
+      sessionDuration: 31_536_000,
+      sessionsLimit: 10,
+    })
+
+    const preflight = await fetch(`${endpoint}/account`, {
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'x-appwrite-project, x-appwrite-key',
+      },
+    })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe(origin)
+    expect(preflight.headers.get('access-control-allow-credentials')).toBe('true')
+
+    // An origin no project allows still gets no CORS headers.
+    const denied = await fetch(`${endpoint}/account`, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.test', 'access-control-request-method': 'GET' },
+    })
+    expect(denied.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  test('preflight trusts a project site host without listing it', async () => {
+    const other = manager.get('project-b')!
+    await other.services.settings.set('project', {
+      projectName: 'Project B',
+      allowedOrigins: [],
+      sessionDuration: 31_536_000,
+      sessionsLimit: 10,
+    })
+    await other.services.sites.create('app', {
+      name: 'App',
+      enabled: true,
+      framework: 'other',
+      outputDirectory: '',
+      fallbackFile: '',
+      domains: [],
+      apiFunctionId: '',
+      installCommand: '',
+      buildCommand: '',
+      startCommand: '',
+      buildRuntime: 'static-1',
+      adapter: 'static',
+      pruneMode: 'none',
+    })
+    const origin = 'https://app.sites.localhost'
+    const preflight = await fetch(`${endpoint}/account`, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'GET' },
+    })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe(origin)
+
+    const actual = await fetch(`${endpoint}/account`, {
+      headers: { origin, 'x-appwrite-project': 'project-b' },
+    })
+    expect(actual.headers.get('access-control-allow-origin')).toBe(origin)
+  })
+
   test('health checks credentials against the project in the header', async () => {
     for (const [project, key] of [
       [PROJECT, KEY],

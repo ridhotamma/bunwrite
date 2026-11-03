@@ -278,10 +278,14 @@ bun run console:admin you@example.com
 
 ## Request logs and client IP
 
+These are the defaults. Recording, sampling, format, retention and IP storage
+can be changed while the server runs in **Console → Settings → Request logs**;
+the saved values live in the project database and win over the environment.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `LOG_REQUESTS` | `true` | Write one line per HTTP request to stdout and the console's request log. |
-| `LOG_SAMPLE_RATE` | `1` | Fraction of successful requests to log (0–1). Errors are always logged. Lower it to keep visibility at a fraction of the cost. |
+| `LOG_SAMPLE_RATE` | `1` | Fraction of successful requests to log (0–1), shown as a percentage in the console. When recording is on, errors bypass sampling. Lower it to keep visibility at a fraction of the cost. |
 | `LOG_FORMAT` | `text` | `text` for journald, `json` for a log collector. |
 | `LOG_RETENTION_DAYS` | `7` | Days to keep request logs; `0` keeps them until cleared. |
 | `LOG_IP` | `true` | Store client IP addresses in request logs. |
@@ -482,7 +486,9 @@ also be changed in **Console → Settings → Caching**.
 
 The built-in vector store and retrieval-augmented generation endpoints. Local
 embeddings are the default and need no network; any OpenAI-compatible endpoint
-can be used instead. See [VECTORS.md](VECTORS.md) for the API and limits.
+can be used instead. Embeddings, answer generation, chunking and limits are
+editable at **Console → Settings → Vectors & RAG**; the variables below are the
+defaults. See [VECTORS.md](VECTORS.md) for the API and limits.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

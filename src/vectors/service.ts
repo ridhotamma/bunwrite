@@ -57,25 +57,44 @@ interface PendingPoint extends Omit<StoredPoint, 'vector'> {
 }
 
 export class VectorService {
-  private readonly embedder: EmbeddingProvider
-  private readonly chat: ChatProvider | null
+  private embedder: EmbeddingProvider
+  private chat: ChatProvider | null
   private readonly store: VectorStore
 
-  constructor(db: SqlDatabase, private config: VectorsConfig) {
+  constructor(
+    db: SqlDatabase,
+    private config: VectorsConfig,
+  ) {
     this.store = new VectorStore(db)
-    this.embedder =
-      config.embedder === 'http'
-        ? new HttpEmbedding({
-            url: config.embeddingUrl,
-            apiKey: config.embeddingApiKey,
-            model: config.embeddingModel,
-            dimension: config.dimension,
-            sendDimensions: config.sendDimensions,
-            batchSize: config.embeddingBatchSize,
-            timeoutMs: config.timeoutMs,
-          })
-        : new LocalEmbedding(config.dimension)
-    this.chat = config.chatUrl
+    this.embedder = this.makeEmbedder()
+    this.chat = this.makeChat()
+  }
+
+  /** Apply settings saved in the console without restarting the server. */
+  reload(config: VectorsConfig): void {
+    this.config = config
+    this.embedder = this.makeEmbedder()
+    this.chat = this.makeChat()
+  }
+
+  private makeEmbedder(): EmbeddingProvider {
+    const config = this.config
+    return config.embedder === 'http'
+      ? new HttpEmbedding({
+          url: config.embeddingUrl,
+          apiKey: config.embeddingApiKey,
+          model: config.embeddingModel,
+          dimension: config.dimension,
+          sendDimensions: config.sendDimensions,
+          batchSize: config.embeddingBatchSize,
+          timeoutMs: config.timeoutMs,
+        })
+      : new LocalEmbedding(config.dimension)
+  }
+
+  private makeChat(): ChatProvider | null {
+    const config = this.config
+    return config.chatUrl
       ? new HttpChat({
           url: config.chatUrl,
           apiKey: config.chatApiKey,
@@ -273,7 +292,7 @@ export class VectorService {
       exec,
     )
     if (existing - updates.size + points.length > this.config.maxPoints) {
-      throw invalid(`Collection "${collection.id}" would exceed VECTORS_MAX_POINTS (${this.config.maxPoints}).`)
+      throw invalid(`Collection "${collection.id}" would exceed the configured point limit (${this.config.maxPoints}).`)
     }
   }
 
@@ -289,7 +308,7 @@ export class VectorService {
     }
     if (this.embedder.dimension !== null && this.embedder.dimension !== Number(collection.dimension)) {
       throw invalid(
-        `Collection "${collection.id}" has ${collection.dimension} dimensions, but ${this.embedder.name} returns ${this.embedder.dimension}. Re-index with a matching EMBEDDING_DIMENSION.`,
+        `Collection "${collection.id}" has ${collection.dimension} dimensions, but ${this.embedder.name} returns ${this.embedder.dimension}. Re-index with a matching embedding dimension.`,
       )
     }
     try {

@@ -117,7 +117,9 @@ export function teamPages(router: ConsoleRouter): void {
       membershipModel,
     )
     const base = teamUrl(t.id)
-    const add = html`<a class="btn primary" href="${base}/members/new" data-dialog-open="#add-member">${icon('plus')}<span>Add member</span></a>`
+    const add = html`<a class="btn primary" href="${base}/members/new" data-dialog-open="#add-member" hx-boost="false"
+      >${icon('plus')}<span>Add member</span></a
+    >`
     return ctx.render(
       t.name,
       'teams',

@@ -165,7 +165,7 @@ async function pointsPage(ctx: ConsoleContext, collection: VectorCollection): Pr
 export function vectorPages(router: ConsoleRouter): void {
   router.get(VECTORS, async ({ ctx }) => {
     const collections = await ctx.services.vectors.listCollections()
-    return ctx.render('Vectors', 'vectors', vectorsView(collections, envOf(ctx)))
+    return ctx.render('Vectors', 'vectors', vectorsView(collections))
   })
 
   router.get(`${VECTORS}/new`, ({ ctx }) =>

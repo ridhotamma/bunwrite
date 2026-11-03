@@ -50,7 +50,7 @@ export function providerCard(observability: Observability): Html {
 export function trafficCard(minutes: MinutePoint[], summary: MetricSummary): Html {
   if (summary.requests === 0) {
     return html`<div class="card">
-      ${cardHead('Traffic, last hour')} ${emptyState('No requests yet', 'The chart fills in after some API traffic and LOG_REQUESTS=true.')}
+      ${cardHead('Traffic, last hour')} ${emptyState('No requests yet', 'The chart fills in after some API traffic.')}
     </div>`
   }
   return html`<div class="card">

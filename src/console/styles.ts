@@ -155,7 +155,9 @@ main{padding:20px 32px 48px;max-width:1100px;width:100%;margin:0 auto}
 .export-layout{align-items:start}
 .export-head{display:flex;flex-direction:column;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border)}
 .export-head-title{display:flex;align-items:baseline;gap:8px}.export-head-title h2{margin:0}.export-head-title .subdued{margin-left:auto;font-size:12px;white-space:nowrap}
-.export-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.export-tools .search-field{flex:1 1 180px;max-width:none}
+.export-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.export-tools .search-field{flex:1 1 100%;max-width:none}
+.export-actions{display:flex;flex:1 1 100%;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .export-group+.export-group{border-top:1px solid var(--border)}
 .export-group-head{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;margin:0;padding:8px 16px;background:var(--nav-on);border-bottom:1px solid var(--border);color:var(--subdued);font-size:12px;cursor:pointer;min-width:0}
 .export-group-name{font-weight:650;color:var(--text);white-space:nowrap}

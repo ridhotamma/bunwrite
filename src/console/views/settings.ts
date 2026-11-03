@@ -237,6 +237,95 @@ async function functionCards(ctx: ConsoleContext): Promise<Html> {
   )
 }
 
+function vectorsCards(ctx: ConsoleContext): Html {
+  const c = ctx.services.config.vectors
+  const http = c.embedder === 'http'
+  return html`${card(
+    ctx,
+    'vectors-embedding',
+    'Embeddings',
+    'vectors',
+    'How text is turned into vectors. Local works offline; HTTP calls any OpenAI-compatible embeddings API.',
+    html` <form method="post" action="${SETTINGS}/vectors/embedding">
+      <label
+        >Provider<select name="embedder">
+          <option value="local" ${http ? '' : 'selected'}>Local, offline feature hashing</option>
+          <option value="http" ${http ? 'selected' : ''}>OpenAI-compatible HTTP API</option>
+        </select>
+        <small>Collections record the provider and dimension they were built with. Changing either means re-indexing.</small></label
+      >
+      <div class="fields">
+        <label>Dimensions<input name="dimension" type="number" min="8" max="8192" value="${c.dimension}" required /><small>The local embedder uses this width; for HTTP it must match the model.</small></label>
+        <label>Batch size<input name="embeddingBatchSize" type="number" min="1" max="256" value="${c.embeddingBatchSize}" required /><small>Texts sent per embeddings request.</small></label>
+      </div>
+      <label
+        >Endpoint<input name="embeddingUrl" class="mono" value="${c.embeddingUrl}" placeholder="https://api.openai.com/v1" /><small
+          >Base URL or a full <span class="mono">/embeddings</span> endpoint. Required for HTTP; ignored by the local embedder.</small
+        ></label
+      >
+      <div class="fields">
+        <label>Model<input name="embeddingModel" class="mono" value="${c.embeddingModel}" placeholder="text-embedding-3-small" /></label>
+        <label>API key<input name="embeddingApiKey" type="password" placeholder="${c.embeddingApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small>Leave blank to keep the saved key.</small></label>
+      </div>
+      <div class="fields">
+        <label>Request timeout (ms)<input name="timeoutMs" type="number" min="1000" max="120000" value="${c.timeoutMs}" required /><small>Applies to embedding and chat requests.</small></label>
+        <label class="check"
+          ><input type="checkbox" name="sendDimensions" ${c.sendDimensions ? 'checked' : ''} /><span>Send the dimensions field</span
+          ><small>Needed by some OpenAI v3 models; turn off for gateways that reject it.</small></label
+        >
+      </div>
+      <p class="help">Existing collections keep their old provider and width. Add their points again after a change, or text queries will not match.</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}
+  ${card(
+    ctx,
+    'vectors-answers',
+    'Answer generation',
+    null,
+    'Optional. When off, RAG returns the retrieved context and sources without asking a model.',
+    html` <form method="post" action="${SETTINGS}/vectors/answers">
+      <label class="check"
+        ><input type="checkbox" name="enabled" ${c.chatUrl ? 'checked' : ''} /><span>Generate answers with a chat model</span
+        ><small>Uses an OpenAI-compatible <span class="mono">/chat/completions</span> endpoint.</small></label
+      >
+      <div class="fields">
+        <label>Chat endpoint<input name="chatUrl" class="mono" value="${c.chatUrl}" placeholder="https://api.openai.com/v1" /></label>
+        <label>Model<input name="chatModel" class="mono" value="${c.chatModel}" placeholder="gpt-4o-mini" /></label>
+      </div>
+      <label
+        >API key<input name="chatApiKey" type="password" placeholder="${c.chatApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small>Leave blank to keep the saved key.</small></label
+      >
+      <div class="fields">
+        <label>Temperature<input name="chatTemperature" type="number" min="0" max="2" step="0.1" value="${c.chatTemperature}" required /></label>
+        <label>Maximum answer tokens<input name="chatMaxTokens" type="number" min="1" max="32000" value="${c.chatMaxTokens}" required /></label>
+        <label>Context characters<input name="contextChars" type="number" min="256" max="200000" value="${c.contextChars}" required /><small>Retrieved text sent to the model.</small></label>
+      </div>
+      <label>System prompt<textarea name="chatSystemPrompt" rows="4">${c.chatSystemPrompt}</textarea></label>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}
+  ${card(
+    ctx,
+    'vectors-limits',
+    'Ingestion and limits',
+    null,
+    'Defaults for new ingests and the maximum points one collection may hold.',
+    html` <form method="post" action="${SETTINGS}/vectors/limits">
+      <label
+        >Points per collection<input name="maxPoints" type="number" min="1" max="1000000" value="${c.maxPoints}" required /><small
+          >Search scans points in-process. A lower cap keeps memory and search time predictable.</small
+        ></label
+      >
+      <div class="fields">
+        <label>Chunk size<input name="chunkSize" type="number" min="64" max="8000" value="${c.chunkSize}" required /><small>Characters per ingested chunk.</small></label>
+        <label>Chunk overlap<input name="chunkOverlap" type="number" min="0" value="${c.chunkOverlap}" required /><small>Cannot exceed half the chunk size.</small></label>
+      </div>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}`
+}
+
 /** Browser cache choices; a value set in env that is not listed shows as its own option. */
 export const CACHE_CHOICES: [number, string][] = [
   [0, 'Off, check every time'],
@@ -325,25 +414,43 @@ function cacheCards(ctx: ConsoleContext): Html {
 
 function logsCard(ctx: ConsoleContext): Html {
   const c = ctx.services.config
+  const samplePercent = Math.round(c.logSampleRate * 1000) / 10
   return card(
     ctx,
     'logs',
     'Request logs',
     'logs',
-    'How long request logs are kept, and whether client IP addresses are stored.',
+    'Whether requests are recorded, how they are sampled, where they are kept and how they are printed.',
     html` <form method="post" action="${SETTINGS}/logs">
-      <div class="fields center">
+      <label class="check"
+        ><input type="checkbox" name="logRequests" ${c.logRequests ? 'checked' : ''} /><span>Record requests</span
+        ><small>Writes one line per request to the server output and this project's request log. Only successful requests are sampled; errors are always recorded.</small></label
+      >
+      <div class="fields">
         <label
           >Retention (days)<input name="retentionDays" type="number" min="0" value="${c.logRetentionDays}" /><small
             >0 keeps logs until you clear them.</small
           ></label
+        >
+        <label
+          >Sample successful requests (%)<input name="logSampleRate" type="number" min="0" max="100" step="0.1" value="${samplePercent}" required /><small
+            >100 records every request. Errors bypass sampling.</small
+          ></label
+        >
+      </div>
+      <div class="fields">
+        <label
+          >Output format<select name="logFormat">
+            <option value="text" ${c.logFormat === 'text' ? 'selected' : ''}>Text, for journald and terminal logs</option>
+            <option value="json" ${c.logFormat === 'json' ? 'selected' : ''}>JSON, for a log collector</option>
+          </select></label
         >
         <label class="check"
           ><input type="checkbox" name="logIp" ${c.logIp ? 'checked' : ''} /><span>Store IP addresses</span
           ><small>Off keeps visitor IPs out of logs.</small></label
         >
       </div>
-      <p class="help">Recording is ${c.logRequests ? 'on' : 'off'} (LOG_REQUESTS). <a href="/console/logs">Open request logs</a>.</p>
+      <p class="help">Applies immediately. <a href="/console/logs">Open request logs</a>.</p>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`,
   )
@@ -448,6 +555,9 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       break
     case 'database':
       body = databaseCard(ctx)
+      break
+    case 'vectors':
+      body = vectorsCards(ctx)
       break
     case 'render':
       body = renderCards(ctx)

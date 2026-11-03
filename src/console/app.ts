@@ -48,6 +48,24 @@ function loopback(request: Request, _server?: Server<unknown>): boolean {
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1'
 }
 
+/**
+ * Refuse a POST from another site. Browsers control Origin, but an opaque
+ * origin is sent as the literal "null" (a sandboxed iframe, a file URL), which
+ * is not itself a URL. Compare parseable origins only and fall back to Fetch
+ * Metadata instead of letting a malformed value throw.
+ */
+function crossSitePost(request: Request, url: URL): boolean {
+  const origin = request.headers.get('origin')?.trim()
+  if (origin && origin !== 'null') {
+    try {
+      return new URL(origin).host !== url.host
+    } catch {
+      // Fall through to the Fetch Metadata hint.
+    }
+  }
+  return request.headers.get('sec-fetch-site') === 'cross-site'
+}
+
 function flashFrom(url: URL): Flash {
   const error = url.searchParams.get('err')
   if (error) return { tone: 'critical', text: error }
@@ -85,14 +103,8 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       }
 
       // Forms must come from this console (SameSite=Lax withholds cookies from cross-site POSTs; this covers the rest).
-      if (request.method === 'POST') {
-        const origin = request.headers.get('origin')
-        if (origin) {
-          if (new URL(origin).host !== url.host) return new Response('Cross-site request refused', { status: 403 })
-        } else if (request.headers.get('sec-fetch-site') === 'cross-site') {
-          // Older browsers omit Origin on some form posts; Fetch Metadata marks it.
-          return new Response('Cross-site request refused', { status: 403 })
-        }
+      if (request.method === 'POST' && crossSitePost(request, url)) {
+        return new Response('Cross-site request refused', { status: 403 })
       }
 
       const ip = clientIpOf(request)

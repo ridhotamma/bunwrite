@@ -170,7 +170,7 @@ export class HttpEmbedding implements EmbeddingProvider {
       if (vector.some((value) => !Number.isFinite(value))) throw new Error('Embedding provider returned a non-numeric vector.')
       if (this.dimension !== null && vector.length !== this.dimension) {
         throw new Error(
-          `Embedding dimension mismatch: provider returned ${vector.length}, but EMBEDDING_DIMENSION is ${this.dimension}. Re-index or set the right dimension.`,
+          `Embedding dimension mismatch: provider returned ${vector.length}, but the configured dimension is ${this.dimension}. Re-index or set the right dimension.`,
         )
       }
       return vector

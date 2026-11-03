@@ -144,7 +144,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     const eventCount = events.reduce((sum, event) => sum + event.n, 0)
     const errorRate = summary.requests > 0 ? (summary.errors / summary.requests) * 100 : 0
     const body = html`${header('Observability')} ${tabs(OBS_TABS, 'overview')}
-      ${!ctx.services.config.logRequests ? alert('warning', html`Request logging is off, so the traffic cards stay empty. Set <code>LOG_REQUESTS=true</code> and restart, or rely on the exported metrics.`) : ''}
+      ${!ctx.services.config.logRequests ? alert('warning', html`Request logging is off, so the traffic cards stay empty. <a href="/console/settings/logs">Turn it on in Settings</a>, or rely on the exported metrics.`) : ''}
       ${!ctx.observability.config.console ? alert('info', html`The local console trace store is off. Turn it on in <a href="${OBS}/settings">Observability settings</a>; external exporters are unaffected.`) : ''}
       <div class="stats" style="margin:16px 0">
         ${stat('Requests, 1h', summary.requests.toLocaleString('en-US'), '/console/logs')} ${stat('Error rate', percent(errorRate), '/console/logs?status=5xx')}

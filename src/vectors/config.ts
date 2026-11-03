@@ -1,6 +1,10 @@
 /**
  * Built-in vector search and RAG settings.
  *
+ * These values are the environment defaults. The console's Vectors & RAG
+ * settings store an override in the project database and apply it without a
+ * restart.
+ *
  * The defaults need no network and no extra dependency: a deterministic local
  * embedder turns text into a fixed-size feature-hashed vector. Setting
  * `EMBEDDING_URL` (or `OPENAI_API_KEY`) switches to any OpenAI-compatible

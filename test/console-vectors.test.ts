@@ -45,6 +45,9 @@ describe('vectors console', () => {
     expect(body).toContain('href="/console/vectors" class="on"')
     expect(body).toContain('No vector collections yet')
     expect(body).toContain('Create collection')
+    // Configuration lives in Settings instead of an explanatory paragraph.
+    expect(body).toContain('href="/console/settings/vectors"')
+    expect(body).not.toContain('Points live in this project')
 
     const create = await (await get('/console/vectors/new')).text()
     expect(create).toContain('Create collection')
@@ -67,8 +70,9 @@ describe('vectors console', () => {
     expect(page).toContain('RAG')
     expect(page).toContain('Settings')
     expect(page).toContain('/console/vectors/knowledge/points/new')
-    expect(page).toContain('0 / 50,000')
-    expect(page).toContain('local:64')
+    // The old summary cards were moved into the collection's Settings tab.
+    expect(page).not.toContain('class="stats"')
+    expect(page).toContain('/console/vectors/knowledge/settings')
   })
 
   test('a text point is embedded, listed, inspected and searched', async () => {
@@ -141,6 +145,9 @@ describe('vectors console', () => {
     expect(page).toContain('Ingest a document')
     expect(page).toContain('handbook')
     expect(page).not.toContain('No ingested documents')
+    // Answer generation is configured in Settings; the RAG page stays quiet.
+    expect(page).not.toContain('Answer generation is off')
+    expect(page).not.toContain('class="stats"')
 
     const answer = await form('/console/vectors/knowledge/rag/query', {
       query: 'Which database does Bunwrite use?',
@@ -175,6 +182,8 @@ describe('vectors console', () => {
     expect(settings).toContain('Collection')
     expect(settings).toContain('Delete collection')
     expect(settings).toContain('local:64')
+    expect(settings).toContain('2 / 50,000')
+    expect(settings).toContain('href="/console/settings/vectors"')
 
     const removed = await form('/console/vectors/knowledge/delete', {})
     expect(removed.status).toBe(303)
@@ -190,5 +199,80 @@ describe('vectors console', () => {
     expect(body).toContain('already exists')
     expect(body).toContain('Dup again')
     await form('/console/vectors/dup/delete', {})
+  })
+
+  test('Vectors & RAG settings are editable in the console and apply live', async () => {
+    const page = await (await get('/console/settings/vectors')).text()
+    expect(page).toContain('Embeddings')
+    expect(page).toContain('Answer generation')
+    expect(page).toContain('Ingestion and limits')
+    expect(page).toContain('action="/console/settings/vectors/embedding"')
+    expect(page).toContain('action="/console/settings/vectors/answers"')
+    expect(page).toContain('action="/console/settings/vectors/limits"')
+
+    const limits = await form('/console/settings/vectors/limits', { maxPoints: '1200', chunkSize: '600', chunkOverlap: '100' })
+    expect(limits.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({ maxPoints: 1200, chunkSize: 600, chunkOverlap: 100 })
+
+    const answers = await form('/console/settings/vectors/answers', {
+      enabled: 'on',
+      chatUrl: 'https://api.example.com/v1',
+      chatModel: 'gpt-test',
+      chatApiKey: 'chat-key',
+      chatSystemPrompt: 'Answer briefly.',
+      chatTemperature: '0.4',
+      chatMaxTokens: '500',
+      contextChars: '8000',
+    })
+    expect(answers.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({
+      chatUrl: 'https://api.example.com/v1',
+      chatModel: 'gpt-test',
+      chatApiKey: 'chat-key',
+      chatSystemPrompt: 'Answer briefly.',
+      chatTemperature: 0.4,
+      chatMaxTokens: 500,
+      contextChars: 8000,
+    })
+    expect(server.services.vectors.canAnswer).toBe(true)
+
+    const embedding = await form('/console/settings/vectors/embedding', {
+      embedder: 'http',
+      dimension: '64',
+      embeddingUrl: 'https://api.example.com/v1',
+      embeddingModel: 'embed-test',
+      embeddingApiKey: 'embed-key',
+      embeddingBatchSize: '32',
+      timeoutMs: '20000',
+      sendDimensions: 'on',
+    })
+    expect(embedding.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({
+      embedder: 'http',
+      dimension: 64,
+      embeddingUrl: 'https://api.example.com/v1',
+      embeddingModel: 'embed-test',
+      embeddingApiKey: 'embed-key',
+      embeddingBatchSize: 32,
+      timeoutMs: 20000,
+      sendDimensions: true,
+    })
+    expect(server.services.vectors.embedderName).toBe('http:embed-test')
+    const saved = await (await get('/console/settings/vectors')).text()
+    expect(saved).toContain('value="embed-test"')
+    expect(saved).not.toContain('embed-key')
+    expect(saved).not.toContain('chat-key')
+
+    await form('/console/settings/vectors/reset', {})
+    expect(server.config.vectors).toMatchObject({
+      embedder: 'local',
+      dimension: 64,
+      maxPoints: 50000,
+      chunkSize: 1000,
+      chunkOverlap: 200,
+      chatUrl: '',
+    })
+    expect(server.services.vectors.canAnswer).toBe(false)
+    expect(server.services.vectors.embedderName).toBe('local:64')
   })
 })

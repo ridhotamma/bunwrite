@@ -139,7 +139,8 @@ many workers, and for API-key and session users.
 - [x] Add `PRAGMA mmap_size` (`SQLITE_MMAP_MB`, default 256 MB) in
   [src/db/connection.ts](../src/db/connection.ts).
 - [x] Set `LOG_SAMPLE_RATE` (for example 0.1) in production, or turn
-  `LOG_REQUESTS` off. Available as an env setting; choose the value per host.
+  `LOG_REQUESTS` off. Both are available in **Console → Settings → Request
+  logs**; choose the value per project.
 - [ ] If the profile shows CPU steal, move to a VPS with dedicated cores.
 
 Check: rerun step 1.

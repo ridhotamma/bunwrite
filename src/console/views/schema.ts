@@ -219,9 +219,11 @@ export function exportView(options: ExportView): Html {
                   <span class="search-field-icon">${icon('magnifying-glass')}</span>
                   <input type="search" data-export-filter placeholder="Search collections..." autocomplete="off" aria-label="Search collections">
                 </div>
-                <button type="button" class="small" data-export-bulk="all">Select all</button>
-                <button type="button" class="small" data-export-bulk="none">Clear</button>
-                <noscript><button class="small primary">Preview</button></noscript>
+                <div class="export-actions">
+                  <button type="button" class="small" data-export-bulk="all">Select all</button>
+                  <button type="button" class="small" data-export-bulk="none">Clear</button>
+                  <noscript><button class="small primary">Preview</button></noscript>
+                </div>
               </div>`
             : ''}
         </div>

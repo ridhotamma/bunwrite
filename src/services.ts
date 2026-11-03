@@ -175,6 +175,15 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
       else services.render.shutdown()
     }
   })
+  // Vector providers are built once from the config. Rebuild them when the
+  // project's Vectors & RAG settings change, including changes made in another
+  // process and picked up by `settings.load()`.
+  services.settings.subscribe((key) => {
+    if (key === 'vectors') services.vectors.reload(config.vectors)
+  })
+  // SQLite applies stored settings in the SettingsService constructor, which
+  // runs after the vector service was built. Pick those values up on boot.
+  services.vectors.reload(config.vectors)
   if (!overrides.mailer) services.mailer = makeMailer()
   if (!overrides.consoleMailer) services.consoleMailer = makeConsoleMailer()
   services.ready = async () => {

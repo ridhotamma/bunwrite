@@ -57,4 +57,25 @@ describe('CORS', () => {
     const res = await fetch(`${server.endpoint}/health`, { headers: { origin: ORIGIN, 'hx-request': 'true' } })
     expect(res.status).toBe(200)
   })
+
+  test('a wildcard origin permits non-credentialed reads only', async () => {
+    await server.services.settings.set('project', {
+      projectName: 'Test Project',
+      allowedOrigins: ['*'],
+      sessionDuration: 31_536_000,
+      sessionsLimit: 10,
+    })
+    const origin = 'https://anywhere.test'
+
+    const preflight = await fetch(`${server.endpoint}/health`, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'GET' },
+    })
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
+    expect(preflight.headers.get('access-control-allow-credentials')).toBeNull()
+
+    const response = await fetch(`${server.endpoint}/health`, { headers: { origin } })
+    expect(response.headers.get('access-control-allow-origin')).toBe('*')
+    expect(response.headers.get('access-control-allow-credentials')).toBeNull()
+  })
 })

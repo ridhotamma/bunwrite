@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs'
 
 import { OAUTH_PROVIDERS, OAUTH_PROVIDER_IDS } from '~/config'
+import type { VectorsConfig } from '~/vectors/config'
 import { SETTING_KEYS, type SettingKey } from '~/settings/service'
 import type { ImageOutput } from '~/render/service'
 import { err } from '~/lib/errors'
 import { SmtpMailer } from '~/mail/mailer'
-import type { ConsoleRouter } from '~/console/context'
+import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { arrayOf, checked, lines, s3FromForm, value } from '~/console/forms'
 import { html, page } from '~/console/html'
 import { alert } from '~/console/ui'
@@ -16,6 +17,44 @@ import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templ
 import { BunwriteError } from '~/lib/errors'
 import { PROJECT_SCOPE } from '~/variables/service'
 import { registerVariableRoutes } from './variables'
+
+function wholeSetting(form: Record<string, unknown>, key: string, label: string, min: number, max: number): number {
+  const raw = value(form, key)
+  const parsed = Number(raw)
+  if (raw === '' || !Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw err(
+      'general_argument_invalid',
+      `${label} must be between ${min.toLocaleString('en-US')} and ${max.toLocaleString('en-US')}.`,
+    )
+  }
+  return Math.round(parsed)
+}
+
+function decimalSetting(form: Record<string, unknown>, key: string, label: string, min: number, max: number): number {
+  const raw = value(form, key)
+  const parsed = Number(raw)
+  if (raw === '' || !Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw err('general_argument_invalid', `${label} must be between ${min} and ${max}.`)
+  }
+  return parsed
+}
+
+function httpUrl(raw: string, label: string): string {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw err('general_argument_invalid', `${label} must be a valid http or https URL.`)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw err('general_argument_invalid', `${label} must be a valid http or https URL.`)
+  }
+  return raw.replace(/\/+$/, '')
+}
+
+async function saveVectors(ctx: ConsoleContext, patch: Partial<VectorsConfig>): Promise<void> {
+  await ctx.services.settings.set('vectors', { ...ctx.services.config.vectors, ...patch })
+}
 
 /** Settings handlers. Tab markup lives in console/views/settings. */
 export function settingsPages(router: ConsoleRouter): void {
@@ -173,9 +212,21 @@ export function settingsPages(router: ConsoleRouter): void {
   })
 
   router.post(`${SETTINGS}/logs`, async ({ ctx }) => {
-    const days = Number(ctx.form.retentionDays)
+    const f = ctx.form
+    const days = Number(f.retentionDays)
     if (!Number.isFinite(days) || days < 0) throw err('general_argument_invalid', 'Retention must be zero or more days.')
-    await ctx.services.settings.set('logs', { retentionDays: Math.round(days), logIp: checked(ctx.form.logIp) })
+    const sampleRaw = value(f, 'logSampleRate')
+    const sample = Number(sampleRaw)
+    if (sampleRaw === '' || !Number.isFinite(sample) || sample < 0 || sample > 100) {
+      throw err('general_argument_invalid', 'Successful request sampling must be between 0 and 100 percent.')
+    }
+    await ctx.services.settings.set('logs', {
+      retentionDays: Math.round(days),
+      logRequests: checked(f.logRequests),
+      logSampleRate: Math.round((sample / 100) * 1000) / 1000,
+      logFormat: value(f, 'logFormat') === 'json' ? 'json' : 'text',
+      logIp: checked(f.logIp),
+    })
     await ctx.services.requestLogs.prune()
     return ctx.go(tabPath('logs'), { tone: 'success', text: 'Log settings saved' })
   })
@@ -223,6 +274,65 @@ export function settingsPages(router: ConsoleRouter): void {
     if (mode !== 'NORMAL' && mode !== 'FULL') throw err('general_argument_invalid', 'Synchronous mode must be NORMAL or FULL.')
     await ctx.services.settings.set('database', { synchronous: mode })
     return ctx.go(tabPath('database'), { tone: 'success', text: `Database durability set to ${mode}` })
+  })
+
+  router.post(`${SETTINGS}/vectors/embedding`, async ({ ctx }) => {
+    const f = ctx.form
+    const current = ctx.services.config.vectors
+    const embedder = value(f, 'embedder') === 'http' ? 'http' : 'local'
+    const embeddingUrl = value(f, 'embeddingUrl').replace(/\/+$/, '')
+    const embeddingModel = value(f, 'embeddingModel')
+    if (embedder === 'http') {
+      if (!embeddingUrl) throw err('general_argument_invalid', 'Enter the embeddings endpoint.')
+      httpUrl(embeddingUrl, 'The embeddings endpoint')
+      if (!embeddingModel) throw err('general_argument_invalid', 'Enter the embedding model name.')
+    }
+    await saveVectors(ctx, {
+      embedder,
+      dimension: wholeSetting(f, 'dimension', 'Dimensions', 8, 8192),
+      embeddingUrl,
+      embeddingApiKey: String(f.embeddingApiKey ?? '').trim() || current.embeddingApiKey,
+      embeddingModel: embeddingModel || current.embeddingModel,
+      sendDimensions: checked(f.sendDimensions),
+      embeddingBatchSize: wholeSetting(f, 'embeddingBatchSize', 'Embedding batch size', 1, 256),
+      timeoutMs: wholeSetting(f, 'timeoutMs', 'Request timeout', 1_000, 120_000),
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Embedding settings saved' })
+  })
+
+  router.post(`${SETTINGS}/vectors/answers`, async ({ ctx }) => {
+    const f = ctx.form
+    const current = ctx.services.config.vectors
+    const enabled = checked(f.enabled)
+    const chatUrl = enabled ? value(f, 'chatUrl').replace(/\/+$/, '') : ''
+    if (enabled) {
+      if (!chatUrl) throw err('general_argument_invalid', 'Enter the chat completions endpoint or turn answer generation off.')
+      httpUrl(chatUrl, 'The chat endpoint')
+    }
+    const chatModel = value(f, 'chatModel') || current.chatModel
+    if (enabled && !chatModel) throw err('general_argument_invalid', 'Enter the chat model name.')
+    const chatSystemPrompt = String(f.chatSystemPrompt ?? '').trim() || current.chatSystemPrompt
+    await saveVectors(ctx, {
+      chatUrl,
+      chatApiKey: String(f.chatApiKey ?? '').trim() || current.chatApiKey,
+      chatModel,
+      chatSystemPrompt,
+      chatTemperature: decimalSetting(f, 'chatTemperature', 'Temperature', 0, 2),
+      chatMaxTokens: wholeSetting(f, 'chatMaxTokens', 'Maximum answer tokens', 1, 32_000),
+      contextChars: wholeSetting(f, 'contextChars', 'Context characters', 256, 200_000),
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Answer generation settings saved' })
+  })
+
+  router.post(`${SETTINGS}/vectors/limits`, async ({ ctx }) => {
+    const f = ctx.form
+    const chunkSize = wholeSetting(f, 'chunkSize', 'Chunk size', 64, 8_000)
+    await saveVectors(ctx, {
+      maxPoints: wholeSetting(f, 'maxPoints', 'Points per collection', 1, 1_000_000),
+      chunkSize,
+      chunkOverlap: wholeSetting(f, 'chunkOverlap', 'Chunk overlap', 0, Math.floor(chunkSize / 2)),
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Ingestion limits saved' })
   })
 
   router.post(`${SETTINGS}/:key/reset`, async ({ ctx, path }) => {

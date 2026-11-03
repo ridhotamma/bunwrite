@@ -35,7 +35,9 @@ function indexDialog(c: Collection): Html {
 export function indexPages(router: ConsoleRouter): void {
   router.get(`${COL}/indexes`, ({ ctx, path }) => {
     const c = loadCollection(ctx, path)
-    const add = html`<a class="btn primary" href="${collectionUrl(c)}/indexes/new" data-dialog-open="#add-index">${icon('plus')}<span>Add index</span></a>`
+    const add = html`<a class="btn primary" href="${collectionUrl(c)}/indexes/new" data-dialog-open="#add-index" hx-boost="false"
+      >${icon('plus')}<span>Add index</span></a
+    >`
     return ctx.render(
       c.name,
       'databases',

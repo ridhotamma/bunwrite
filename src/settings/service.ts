@@ -8,6 +8,7 @@ import type { BackupsConfig, CacheConfig, Config, OAuthConfig, OAuthProviderId, 
 import { OAUTH_PROVIDERS } from '~/config'
 import type { VersionMonitor } from '~/cluster/versions'
 import type { RenderConfig } from '~/render/service'
+import type { VectorsConfig } from '~/vectors/config'
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
@@ -24,7 +25,21 @@ export interface ProjectSettings {
 }
 
 export type SettingKey =
-  'project' | 'smtp' | 'consoleSmtp' | 'google' | 'facebook' | 'github' | 'apple' | 'functions' | 'logs' | 's3' | 'backups' | 'render' | 'cache' | 'database'
+  | 'project'
+  | 'smtp'
+  | 'consoleSmtp'
+  | 'google'
+  | 'facebook'
+  | 'github'
+  | 'apple'
+  | 'functions'
+  | 'logs'
+  | 's3'
+  | 'backups'
+  | 'render'
+  | 'cache'
+  | 'database'
+  | 'vectors'
 
 export const SETTING_KEYS: SettingKey[] = [
   'project',
@@ -41,6 +56,7 @@ export const SETTING_KEYS: SettingKey[] = [
   'render',
   'cache',
   'database',
+  'vectors',
 ]
 
 const cloneOAuth = (oauth: Config['oauth']): Config['oauth'] =>
@@ -72,11 +88,15 @@ export class SettingsService {
     | 'functionsDir'
     | 'logRetentionDays'
     | 'logIp'
+    | 'logRequests'
+    | 'logSampleRate'
+    | 'logFormat'
     | 's3'
     | 'backups'
     | 'render'
     | 'cache'
     | 'sqliteSynchronous'
+    | 'vectors'
   >
   private readonly listeners = new Set<(key: SettingKey) => void>()
   /** Parsed `_settings` rows; reads are synchronous so the config overlay stays cheap. */
@@ -99,11 +119,15 @@ export class SettingsService {
       functionsDir: config.functionsDir,
       logRetentionDays: config.logRetentionDays,
       logIp: config.logIp,
+      logRequests: config.logRequests,
+      logSampleRate: config.logSampleRate,
+      logFormat: config.logFormat,
       s3: { ...config.s3 },
       backups: { ...config.backups, s3: { ...config.backups.s3 } },
       render: { ...config.render },
       cache: { ...config.cache },
       sqliteSynchronous: config.sqliteSynchronous,
+      vectors: { ...config.vectors },
     }
     // SQLite loads synchronously, exactly as before. A network backend leaves
     // the map empty until `load()` runs; the boot path awaits `services.ready()`.
@@ -176,9 +200,12 @@ export class SettingsService {
         break
       }
       case 'logs': {
-        const v = this.read<{ retentionDays?: number; logIp?: boolean }>('logs')
+        const v = this.read<{ retentionDays?: number; logIp?: boolean; logRequests?: boolean; logSampleRate?: number; logFormat?: 'text' | 'json' }>('logs')
         c.logRetentionDays = v?.retentionDays ?? this.defaults.logRetentionDays
         c.logIp = v?.logIp ?? this.defaults.logIp
+        c.logRequests = v?.logRequests ?? this.defaults.logRequests
+        c.logSampleRate = v?.logSampleRate ?? this.defaults.logSampleRate
+        c.logFormat = v?.logFormat === 'json' ? 'json' : v?.logFormat === 'text' ? 'text' : this.defaults.logFormat
         break
       }
       case 's3': {
@@ -211,6 +238,11 @@ export class SettingsService {
         // stored value to its own connection when settings refresh. It is a
         // SQLite-only setting; other backends keep their own durability config.
         if (this.db.dialect === 'sqlite') this.db.sqlite!.run(`PRAGMA synchronous = ${mode}`)
+        break
+      }
+      case 'vectors': {
+        const v = this.read<Partial<VectorsConfig>>('vectors')
+        c.vectors = v ? { ...this.defaults.vectors, ...v } : { ...this.defaults.vectors }
         break
       }
     }

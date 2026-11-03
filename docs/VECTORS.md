@@ -52,13 +52,21 @@ Open **Vectors** in the project sidebar. It has:
   point to see its content and metadata, and delete it.
 - **RAG** — paste text to chunk/embed a document, see ingested documents, ask a
   question, and review the generated answer, sources and context.
-- **Settings** — inspect the collection and the active embedder/chat settings,
-  then delete the collection.
+- **Settings** — inspect the collection's fixed facts, open the project's
+  Vectors & RAG settings, and delete the collection.
 
-The console calls the same `VectorService` as the API, so anything visible there
-is stored in the project's normal SQLite or Postgres database.
+Embedding, answer generation, ingest defaults and limits are edited in
+**Settings → Vectors & RAG** and stored in the project database, so no restart
+or `.env` edit is needed. The console calls the same `VectorService` as the API,
+so anything visible there is stored in the project's normal SQLite or Postgres
+database.
 
 ## Configuration
+
+These environment variables are defaults. The same values can be changed while
+the server runs in **Console → Settings → Vectors & RAG**; saved values live in
+the project database and win over the environment. Reset the setting there to
+return to these defaults.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -98,7 +106,7 @@ A key without scopes (the environment key, legacy keys) has full access.
 ### Collections
 
 ```bash
-# Create (dimension defaults to EMBEDDING_DIMENSION)
+# Create (dimension defaults to the configured embedding dimension)
 curl -X POST "$API/vectors" \
   -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
   -H 'content-type: application/json' \
@@ -207,9 +215,9 @@ curl -X DELETE "$API/vectors/handbook/documents/guide" ...  # delete its chunks
 ## Limits and operations
 
 - Search scans every point in the collection in pages and keeps only the best
-  `topK` in memory. `VECTORS_MAX_POINTS` (default 50,000) keeps the scan
-  bounded. For larger corpora, lower the number or use a dedicated vector
-  database.
+  `topK` in memory. The point cap in **Settings → Vectors & RAG** (default
+  50,000) keeps the scan bounded. For larger corpora, lower the cap or use a
+  dedicated vector database.
 - Vectors are stored as JSON text. A 384-dimension vector is a few kilobytes;
   the default local embedder keeps collections small.
 - Writes are transactional. Ingest embeds first, then replaces a document's

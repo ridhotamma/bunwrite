@@ -1,9 +1,10 @@
 import type { ConsoleRouter } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { pageCount, pageParams } from '~/console/query'
-import { alert, badge, destroy, emptyState, formatBytes, header, listCard, menu, pager, searchForm, when } from '~/console/ui'
+import { alert, badge, destroy, emptyState, formatBytes, header, icon, listCard, menu, pager, searchForm, when } from '~/console/ui'
 
 const LOGS = '/console/logs'
+const LOG_SETTINGS = '/console/settings/logs'
 const LIMIT = 50
 
 const STATUS_FILTERS: [string, string][] = [
@@ -28,6 +29,7 @@ export function logPages(router: ConsoleRouter): void {
     const statusSelect = html`<select name="status" aria-label="Filter by status">
       ${STATUS_FILTERS.map(([value, label]) => html`<option value="${value}" ${value === status ? 'selected' : ''}>${label}</option>`)}
     </select>`
+    const recording = ctx.services.config.logRequests
     const body = logs.length
       ? html`<div class="scroll"><table><thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th class="num">Duration</th><th class="hide-sm">Auth</th><th class="hide-sm">IP</th><th class="hide-sm">Request ID</th></tr></thead><tbody>
         ${logs.map((l) => html`<tr class="row-link" onclick="location='${LOGS}/${l.seq}'"><td class="nowrap">${when(l.created_at)}</td><td class="mono">${l.method}</td>
@@ -36,22 +38,33 @@ export function logPages(router: ConsoleRouter): void {
           <td class="clip hide-sm">${l.auth || '—'}</td><td class="mono hide-sm">${l.ip || '—'}</td><td class="mono clip hide-sm" title="${l.id}">${l.id}</td></tr>`)}
         </tbody></table></div>`
       : emptyState(
-          ctx.services.config.logRequests ? 'No matching requests' : 'Request logging is off',
-          ctx.services.config.logRequests
+          recording ? 'No matching requests' : 'Request logging is off',
+          recording
             ? search || status
               ? 'Try a different filter.'
               : 'Requests appear here after the next call.'
-            : 'Set LOG_REQUESTS=true and restart to record requests.',
-          search || status ? html`<a class="btn" href="${LOGS}">Clear filters</a>` : undefined,
+            : 'Turn it on in Settings → Request logs. Existing entries stay until retention removes them.',
+          recording
+            ? search || status
+              ? html`<a class="btn" href="${LOGS}">Clear filters</a>`
+              : undefined
+            : html`<a class="btn" href="${LOG_SETTINGS}">Open log settings</a>`,
         )
     const retention = ctx.services.requestLogs.retentionDays > 0 ? `Stored for ${ctx.services.requestLogs.retentionDays} day${ctx.services.requestLogs.retentionDays === 1 ? '' : 's'}.` : 'Stored until you clear them.'
+    const sampling =
+      recording && ctx.services.config.logSampleRate < 1
+        ? ` ${Math.round(ctx.services.config.logSampleRate * 1000) / 10}% of successful requests are recorded; errors are always recorded.`
+        : ''
     return ctx.render(
       'Request logs',
       'logs',
       html`${header('Request logs', {
-        actions: menu(destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?'), { label: 'More actions' }),
+        actions: html`<a class="btn" href="${LOG_SETTINGS}">${icon('gear-six')}<span>Settings</span></a>${menu(
+          destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?'),
+          { label: 'More actions' },
+        )}`,
       })}
-      ${ctx.services.config.logRequests ? '' : alert('warning', html`Request logging is off. Set <code>LOG_REQUESTS=true</code> and restart to record new requests.`)}
+      ${recording ? '' : alert('warning', html`Request logging is off. <a href="${LOG_SETTINGS}">Turn it on in Settings</a>.`)}
       ${listCard('logs', {
         toolbar: searchForm({
           action: LOGS,
@@ -72,7 +85,7 @@ export function logPages(router: ConsoleRouter): void {
           label: `Page ${page} of ${pages} · ${total.toLocaleString('en-US')} request${total === 1 ? '' : 's'}`,
         }),
       })}
-      <p class="help">${retention} Requests to this page itself are not recorded.</p>`,
+      <p class="help">${retention}${sampling} Requests to this page itself are not recorded.</p>`,
     )
   })
 

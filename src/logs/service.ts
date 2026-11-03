@@ -1,6 +1,6 @@
 /**
  * Request logs for the console. Writes are batched so the request path stays
- * cheap, and the table is pruned to LOG_RETENTION_DAYS.
+ * cheap, and the table is pruned to the configured retention.
  *
  * `record()` stays synchronous (it only queues in memory); everything that
  * touches the database goes through the driver port so the service can run on
