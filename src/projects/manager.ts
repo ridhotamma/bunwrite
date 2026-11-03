@@ -223,6 +223,12 @@ export class ProjectManager implements ProjectResolver {
       // A network backend starts empty; load settings, registry and the other
       // caches before the runtime can receive traffic.
       await services.ready()
+      // Before observability became per project it lived in the control
+      // database. Give an existing project its own copy once, then let it
+      // diverge; later resets or edits only affect this project.
+      if (this.control.observabilitySettings.overridden && !services.observabilitySettings.overridden) {
+        await services.observabilitySettings.save(this.control.observabilitySettings.settings)
+      }
       if (services.config.projectName !== info.name) {
         info.name = services.config.projectName
         info.updatedAt = now()
@@ -295,9 +301,8 @@ export class ProjectManager implements ProjectResolver {
 
   /** Site IDs and custom domains are hosts, so they must be unique across projects. */
   private linkServices(services: Services): void {
-    // Observability is instance-wide; every project's local telemetry store
-    // follows the control database's limits.
-    services.telemetry.configure(telemetryOptionsOf(this.control.observabilitySettings.config))
+    // Each project's observability store and local telemetry limits are its own.
+    services.telemetry.configure(telemetryOptionsOf(services.observabilitySettings.config))
     services.sites.peers = () => [...this.runtimes.values()].map((r) => r.services.sites)
     services.functions.peers = () => [...this.runtimes.values()].map((r) => r.services.functions)
     services.proxy.peers = () => [...this.runtimes.values()].map((r) => r.services.proxy)
@@ -363,6 +368,7 @@ export class ProjectManager implements ProjectResolver {
       this.runtimes.delete(id)
       if (inserted) await this.db.driver.run('DELETE FROM _projects WHERE id = ?', [id]).catch(() => {})
       if (services) {
+        await services.observability.close()
         services.functions.stop()
         services.sites.stop()
         services.backups.stop()
@@ -427,6 +433,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.realtime.stop()
       // The runtime is going away; close the connection once its buffered logs are safe.
       await runtime.services.requestLogs.flush()
+      await runtime.services.observability.close()
       await runtime.services.db.driver.close()
       this.runtimes.delete(id)
     }
@@ -458,6 +465,7 @@ export class ProjectManager implements ProjectResolver {
     }
 
     await runtime.services.requestLogs.flush()
+    await runtime.services.observability.close()
     await this.db.driver.run('DELETE FROM _projects WHERE id = ?', [id])
     await runtime.services.db.driver.close()
     if (this.databaseOptions.backend !== 'sqlite') {
@@ -531,6 +539,7 @@ export class ProjectManager implements ProjectResolver {
     }
     await Promise.all(closing.map(([, runtime]) => runtime.services.requestLogs.flush()))
     await flushBackgroundMail()
+    await Promise.all(closing.map(([, runtime]) => runtime.services.observability.close()))
     await Promise.all(closing.map(([, runtime]) => runtime.services.telemetry.close()))
     for (const [id, runtime] of closing) {
       if (id !== this.config.projectId) await runtime.services.db.driver.close()

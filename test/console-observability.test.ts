@@ -130,7 +130,7 @@ describe('observability settings console', () => {
     })
 
     const page = await (await get('/console/observability/settings')).text()
-    expect(page).toContain('Console override')
+    expect(page).toContain('Project override')
     expect(page).toContain('value="1234"')
     expect(page).toContain('value="https://otlp.example.com"')
     expect(page).toContain('Configured; leave blank to keep')
@@ -187,6 +187,6 @@ describe('observability settings console', () => {
 
     const page = await (await get('/console/observability/settings')).text()
     expect(page).toContain('Environment defaults')
-    expect(page).not.toContain('Console override')
+    expect(page).not.toContain('Project override')
   })
 })

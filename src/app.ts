@@ -17,8 +17,7 @@ import { forwardedHeadersTrusted, parseTrustedProxies, rememberClientIp } from '
 import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
-import { createObservability, normalizePath } from './observability'
-import { telemetryOptionsOf } from './observability/settings'
+import { normalizePath, type RequestObservation } from './observability'
 import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
@@ -58,6 +57,8 @@ interface RequestMeta {
   route?: string
   /** Handed to the writer worker; that listener logs the real request. */
   forwarded?: boolean
+  /** Set once the request's project is known; ended in `fetch`'s finally block. */
+  observation?: RequestObservation
 }
 
 const authLabel = (caller: Caller) => (caller.kind === 'user' ? `user:${caller.user?.id ?? ''}` : caller.kind)
@@ -100,6 +101,7 @@ async function syncServices(services: Services): Promise<void> {
   if (changed.settings) {
     await services.settings.load()
     await services.access.load()
+    await services.observabilitySettings.load()
   }
   if (changed.catalog) {
     await services.proxy.reload()
@@ -112,29 +114,18 @@ export function createApp(source: Services | ProjectResolver) {
   const control = projects.control
   const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
   const hub = new VcsHub(projects)
-  const observability = createObservability(control.observabilitySettings.config)
-  const applyObservability = async () => {
-    const config = control.observabilitySettings.config
-    await observability.reconfigure(config)
-    for (const runtime of projects.list()) runtime.services.telemetry.configure(telemetryOptionsOf(config))
-  }
-  // Settings are instance-wide and stored in the control database. Reconfigure
-  // the live exporters when the console saves them, without a restart.
-  control.observabilitySettings.subscribe(async () => {
-    try {
-      await applyObservability()
-    } catch (error) {
-      console.error('[observability] could not apply console settings:', error)
-    }
-  })
-  for (const runtime of projects.list()) runtime.services.telemetry.configure(telemetryOptionsOf(observability.config))
+  // Observability is per project: each runtime owns its exporters, sampling,
+  // feature flags and local telemetry limits. Console pages and requests use
+  // the runtime resolved for the selected project.
+  const shouldObserve = (url: URL): boolean =>
+    !(url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || url.pathname.startsWith('/console/observability'))
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
   // Server-side feature flags: local FEATURE_FLAGS overrides plus PostHog.
   router.get('/flags', async ({ ctx }) => {
     const distinctId = ctx.caller.user?.id ?? `project:${ctx.config.projectId}`
-    return json({ flags: await observability.flags.evaluate(distinctId, { project: ctx.config.projectId }) })
+    return json({ flags: await ctx.observability.flags.evaluate(distinctId, { project: ctx.config.projectId }) })
   })
   documentRoutes(router)
   transactionRoutes(router)
@@ -241,7 +232,7 @@ export function createApp(source: Services | ProjectResolver) {
     return (host ? await projects.findFunctionByHost(host) : null) ?? (forwarded ? await projects.findFunctionByHost(forwarded) : null)
   }
 
-  const consoleApp = createConsole(projects, hub, observability)
+  const consoleApp = createConsole(projects, hub)
   const consoleApi = createConsoleApi(projects)
 
   /** API keys first; then a console admin's CLI session in admin mode; then the request's own session or JWT. */
@@ -355,7 +346,6 @@ export function createApp(source: Services | ProjectResolver) {
     const services = runtime.services
     meta.project = runtime.info.id
     meta.route = normalizePath(pathname)
-    if (services !== control) await syncServices(services)
 
     if (pathname === '/realtime') {
       // A browser WebSocket carries cookies and is not covered by CORS.
@@ -416,16 +406,24 @@ export function createApp(source: Services | ProjectResolver) {
     const published = [...events, ...services.store.drainEvents()]
     services.realtime.publish(published)
     await services.webhooks.dispatch(published, caller)
-    observability.captureEvents(published, caller, runtime.info.id, runtime.services.telemetry)
+    runtime.services.observability.captureEvents(published, caller, runtime.info.id, runtime.services.telemetry)
     return response
   }
 
   async function respond(request: Request, server: Server<SocketData> | undefined, meta: RequestMeta): Promise<Response | undefined> {
     const url = new URL(request.url)
+    // Start with the project that will handle the request, not the default:
+    // sampling and exporters are per project.
+    const startObservation = (services: Services) => {
+      if (meta.observation || !shouldObserve(url)) return
+      const observation = services.observability.begin(request)
+      if (observation) meta.observation = observation
+    }
     try {
       assertCompatHeaders(request)
     } catch (error) {
       meta.error = truncate(error instanceof Error ? error.message : String(error), 2000)
+      startObservation(control)
       return await corsResponse(request, errorResponse(error), control.config.projectId, control.config.allowedOrigins)
     }
     const hosted = await siteFor(request)
@@ -434,6 +432,7 @@ export function createApp(source: Services | ProjectResolver) {
       meta.auth = `site:${hosted.site.id}`
       meta.route = 'site'
       if (hosted.project.services !== control) await syncServices(hosted.project.services)
+      startObservation(hosted.project.services)
       return serveSite(hosted.project.services, hosted.site, request, hosted.deploymentId)
     }
     const hostedFunction = await functionFor(request)
@@ -443,6 +442,7 @@ export function createApp(source: Services | ProjectResolver) {
       meta.route = 'function'
       try {
         if (hostedFunction.project.services !== control) await syncServices(hostedFunction.project.services)
+        startObservation(hostedFunction.project.services)
         const caller = await resolveCaller(
           hostedFunction.project.services.db,
           hostedFunction.project.services.config,
@@ -459,11 +459,19 @@ export function createApp(source: Services | ProjectResolver) {
     // GitHub calls these without a project: the hub finds the project itself.
     if (url.pathname === '/v1/vcs/github/events' && request.method === 'POST') {
       meta.auth = 'github'
+      startObservation(control)
       return hub.webhook(request)
     }
-    if (url.pathname === '/v1/vcs/github/callback' && request.method === 'GET') return hub.completeInstall(url)
-    if (url.pathname === '/v1/vcs/github/manifest' && request.method === 'GET') return hub.completeManifest(url)
+    if (url.pathname === '/v1/vcs/github/callback' && request.method === 'GET') {
+      startObservation(control)
+      return hub.completeInstall(url)
+    }
+    if (url.pathname === '/v1/vcs/github/manifest' && request.method === 'GET') {
+      startObservation(control)
+      return hub.completeManifest(url)
+    }
     if ((url.pathname === '/.well-known/bunwrite/site-domain' || url.pathname === '/.well-known/bunwrite/host') && request.method === 'GET') {
+      startObservation(control)
       const domain = url.searchParams.get('domain') ?? ''
       return new Response(null, { status: domain && ((await projects.findSite(domain)) || (await projects.findFunctionByHost(domain))) ? 200 : 404 })
     }
@@ -486,12 +494,14 @@ export function createApp(source: Services | ProjectResolver) {
     const consoleResponse = await consoleApp.handle(request, server)
     if (consoleResponse) {
       meta.route = 'console'
+      startObservation(control)
       return consoleResponse
     }
     const pathname = url.pathname
     // The bare host is for people: send them to the console (or say the API is up).
     if (pathname === '/' && (request.method === 'GET' || request.method === 'HEAD')) {
       meta.route = '/'
+      startObservation(control)
       return control.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(control.config.projectName)
     }
     let runtime = projects.defaultProject()
@@ -512,6 +522,8 @@ export function createApp(source: Services | ProjectResolver) {
         if (response) meta.auth ??= 'console'
       }
       if (!response) runtime = await runtimeFor(request, url)
+      if (runtime.services !== control) await syncServices(runtime.services)
+      startObservation(runtime.services)
       response ??= await handle(request, server, meta, runtime)
       if (!response) return undefined
     } catch (error) {
@@ -529,17 +541,14 @@ export function createApp(source: Services | ProjectResolver) {
 
   return {
     hub,
-    observability,
+    /** The control project's facade; per-project requests use their own runtime. */
+    observability: control.observability,
     async fetch(request: Request, server?: Server<SocketData>): Promise<Response | undefined> {
       // Another worker may have changed projects, schema or settings.
       if (projects.sync) await projects.sync()
       else await syncServices(control)
       const started = performance.now()
       const url = new URL(request.url)
-      const staticAsset = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/')
-      // The Observability pages should not inflate their own traffic charts.
-      const selfPage = url.pathname.startsWith('/console/observability')
-      const observation = staticAsset || selfPage ? null : observability.begin(request)
       // The console resolves its own project, so refresh every runtime it may show.
       if (url.pathname.startsWith('/console')) {
         for (const runtime of projects.list()) if (runtime.services !== control) await syncServices(runtime.services)
@@ -568,7 +577,7 @@ export function createApp(source: Services | ProjectResolver) {
         if (control.config.publicEndpoint.startsWith('https')) {
           response.headers.set('strict-transport-security', 'max-age=31536000; includeSubDomains')
         }
-        if (observation) response.headers.set('x-trace-id', observation.traceId)
+        if (meta.observation) response.headers.set('x-trace-id', meta.observation.traceId)
         // HEAD runs the GET handler so headers and cache validation match, then drops the body.
         return request.method === 'HEAD'
           ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
@@ -601,8 +610,8 @@ export function createApp(source: Services | ProjectResolver) {
         }
         // Observability is independent of LOG_REQUESTS. Forwarded writes are
         // recorded by the writer that actually handled them.
-        if (observation) {
-          observation.end({
+        if (meta.observation) {
+          meta.observation.end({
             method: request.method,
             path: url.pathname,
             route: meta.route,

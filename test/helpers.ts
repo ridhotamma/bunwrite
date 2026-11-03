@@ -75,7 +75,7 @@ export interface TestServer {
   config: Config
   /** The app's Git deployment hub (GitHub App, webhooks, builds). */
   hub: VcsHub
-  /** Instance-wide observability facade, rebuilt when console settings change. */
+  /** The control project's observability facade, rebuilt when its settings change. */
   observability: ReturnType<typeof createApp>['observability']
   stop(): void
 }

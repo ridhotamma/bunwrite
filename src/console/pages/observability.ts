@@ -467,7 +467,7 @@ export function observabilityPages(router: ConsoleRouter): void {
   })
 
   router.get(OBS_SETTINGS, async ({ ctx }) => {
-    const store = ctx.projects.control.observabilitySettings
+    const store = ctx.services.observabilitySettings
     return ctx.render(
       'Observability settings',
       'observability',
@@ -476,44 +476,44 @@ export function observabilityPages(router: ConsoleRouter): void {
   })
 
   router.post(`${OBS_SETTINGS}/local`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's observability settings.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, ...localPatch(ctx, store.settings) })
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Local console settings saved' })
   })
 
   router.post(`${OBS_SETTINGS}/exporters`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's observability settings.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, ...exportersPatch(ctx, store.settings) })
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Exporter settings saved' })
   })
 
   router.post(`${OBS_SETTINGS}/otlp`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's observability settings.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, ...otlpPatch(ctx, store.settings) })
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'OTLP settings saved' })
   })
 
   router.post(`${OBS_SETTINGS}/datadog`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's observability settings.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, ...datadogPatch(ctx, store.settings) })
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Datadog settings saved' })
   })
 
   router.post(`${OBS_SETTINGS}/posthog`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change observability settings.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's observability settings.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, ...posthogPatch(ctx, store.settings) })
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'PostHog settings saved' })
   })
 
   router.post(FLAGS, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's feature flags.")
     const key = flagKey(ctx.form.key)
-    const store = ctx.projects.control.observabilitySettings
+    const store = ctx.services.observabilitySettings
     await store.save({
       ...store.settings,
       localFlags: { ...store.settings.localFlags, [key]: flagValue(ctx) },
@@ -522,9 +522,9 @@ export function observabilityPages(router: ConsoleRouter): void {
   })
 
   router.post(`${FLAGS}/delete`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's feature flags.")
     const key = flagKey(ctx.form.key)
-    const store = ctx.projects.control.observabilitySettings
+    const store = ctx.services.observabilitySettings
     const localFlags = { ...store.settings.localFlags }
     delete localFlags[key]
     await store.save({ ...store.settings, localFlags })
@@ -532,15 +532,15 @@ export function observabilityPages(router: ConsoleRouter): void {
   })
 
   router.post(`${FLAGS}/clear`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can change feature flags.')
-    const store = ctx.projects.control.observabilitySettings
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can change this project's feature flags.")
+    const store = ctx.services.observabilitySettings
     await store.save({ ...store.settings, localFlags: {} })
     return ctx.go(FLAGS, { tone: 'success', text: 'Feature flag overrides cleared' })
   })
 
   router.post(`${OBS_SETTINGS}/reset`, async ({ ctx }) => {
-    if (!(await canManage(ctx))) throw err('general_argument_invalid', 'Only an organization owner can reset observability settings.')
-    await ctx.projects.control.observabilitySettings.reset()
+    if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can reset this project's observability settings.")
+    await ctx.services.observabilitySettings.reset()
     return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings reset to environment defaults' })
   })
 }

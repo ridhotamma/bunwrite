@@ -13,7 +13,6 @@ import { sendMailLater } from '~/mail/mailer'
 import { RateLimiter } from '~/lib/limits'
 import { Router } from '~/lib/router'
 import { OrganizationService } from '~/organizations/service'
-import { createObservability } from '~/observability'
 import { singleProjectResolver, type ProjectResolver } from '~/projects/types'
 import { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
@@ -73,7 +72,7 @@ function flashFrom(url: URL): Flash {
   return ok ? { tone: 'success', text: ok } : null
 }
 
-export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHub, observability = createObservability()) {
+export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHub) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const hub = vcsHub ?? new VcsHub(projects)
   const control = projects.control
@@ -316,7 +315,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         projects,
         organizations,
         hub,
-        observability,
+        observability: services.observability,
         currentProject: current.info,
         selectedProjectId: selected?.info.id ?? null,
         render: (title, section, body) =>

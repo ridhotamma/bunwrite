@@ -311,8 +311,8 @@ local console copy is on by default. See
 [OBSERVABILITY.md](OBSERVABILITY.md) for setup examples. Providers, sampling
 and limits can also be edited in **Console → Observability → Settings**, and
 local feature flags in **Console → Observability → Feature flags**. A saved
-console value overrides the environment, and the settings apply without a
-restart.
+console value overrides the environment for that project, and the settings
+apply without a restart. Each project has its own settings.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

@@ -1,5 +1,5 @@
 /**
- * One observability facade for the process.
+ * One observability facade per project.
  *
  * `begin()` runs at the start of a request and `end()` is called from the
  * `finally` block, so metrics, traces and shipped logs all describe the same
@@ -50,6 +50,8 @@ export interface RequestObservation {
 export interface ObservabilityOptions {
   /** Disable the periodic timers (tests flush by hand). */
   timers?: boolean
+  /** Tags exported metrics with the project that owns this facade. */
+  projectId?: string
 }
 
 const TRACEPARENT = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/
@@ -91,6 +93,8 @@ export class Observability {
   enabled: boolean
   /** Keep a local copy for the console pages. */
   console: boolean
+  /** Project that owns this facade; used as a metric label. */
+  readonly projectId: string
 
   private traces: BatchQueue<SpanData> | null = null
   private logs: BatchQueue<LogData> | null = null
@@ -108,6 +112,7 @@ export class Observability {
     this.flags = new FlagService(this.config)
     this.enabled = false
     this.console = false
+    this.projectId = options.projectId ?? ''
     this.applyConfig(options.timers !== false)
   }
 
@@ -249,7 +254,7 @@ export class Observability {
     if (info.forwarded || this.closed) return
     const durationMs = Math.max(0, performance.now() - context.startMono)
     const statusClass = `${Math.floor(info.status / 100)}xx`
-    const labels = { method: info.method, route, status_class: statusClass }
+    const labels = { method: info.method, route, status_class: statusClass, project: info.project || this.projectId }
 
     // The overview needs every request, not only the sampled traces.
     if (this.console && info.telemetry) info.telemetry.recordRequest(info.project ?? '', durationMs, info.status)
@@ -362,7 +367,7 @@ export class Observability {
     this.metricsFlushing = true
     try {
       const endMs = Date.now()
-      collectProcessMetrics(this.metrics)
+      collectProcessMetrics(this.metrics, this.projectId)
       const points = this.metrics.snapshot()
       if (points.length === 0) return
       const startMs = this.metricsWindowStart

@@ -152,6 +152,31 @@ describe('multiple projects', () => {
     expect(actual.headers.get('access-control-allow-origin')).toBe(origin)
   })
 
+  test('observability settings and feature flags are per project', async () => {
+    const other = manager.get('project-b')!
+    const control = manager.defaultProject()
+    const controlBefore = control.services.observability.config
+    await other.services.observabilitySettings.save({
+      ...other.services.observabilitySettings.settings,
+      serviceName: 'project-b-observability',
+      sampleRate: 0.5,
+      localFlags: { 'project-b-flag': true },
+    })
+
+    expect(other.services.observability.config).toMatchObject({
+      serviceName: 'project-b-observability',
+      sampleRate: 0.5,
+      localFlags: { 'project-b-flag': true },
+    })
+    expect(control.services.observability.config.serviceName).toBe(controlBefore.serviceName)
+    expect(control.services.observability.config.localFlags).not.toHaveProperty('project-b-flag')
+
+    const projectFlags = await fetch(`${endpoint}/flags`, { headers: { 'x-appwrite-project': 'project-b' } })
+    expect(((await projectFlags.json()) as { flags: Record<string, unknown> }).flags).toMatchObject({ 'project-b-flag': true })
+    const controlFlags = await fetch(`${endpoint}/flags`, { headers: { 'x-appwrite-project': PROJECT } })
+    expect(((await controlFlags.json()) as { flags: Record<string, unknown> }).flags).not.toHaveProperty('project-b-flag')
+  })
+
   test('health checks credentials against the project in the header', async () => {
     for (const [project, key] of [
       [PROJECT, KEY],
@@ -266,6 +291,20 @@ describe('multiple projects', () => {
     expect(homeHtml).toContain('class="menu-root switcher"')
     expect(homeHtml).toContain('<input type="hidden" name="project" value="project-c">')
     expect(homeHtml).toContain('<input type="hidden" name="next" value="/console/overview">')
+
+    // Observability settings follow the selected project, not the control project.
+    const projectCookie = `${cookie}; console_project=project-b`
+    const settingsPage = await fetch(`${base}/console/observability/settings`, { headers: { cookie: projectCookie } })
+    expect(settingsPage.status).toBe(200)
+    const savedSettings = await fetch(`${base}/console/observability/settings/local`, {
+      method: 'POST',
+      headers: { cookie: projectCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ consoleSampleRate: '12', spanLimit: '500', eventLimit: '500', consoleRetentionDays: '3', flushMs: '1000' }),
+      redirect: 'manual',
+    })
+    expect(savedSettings.status).toBe(303)
+    expect(manager.get('project-b')!.services.observabilitySettings.settings.consoleSampleRate).toBeCloseTo(0.12)
+    expect(manager.defaultProject().services.observabilitySettings.settings.consoleSampleRate).not.toBeCloseTo(0.12)
 
     const edit = await fetch(`${base}/console/projects/project-c/edit`, {
       method: 'POST',

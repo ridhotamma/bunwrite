@@ -145,11 +145,12 @@ export class MetricRegistry {
 }
 
 /** Process-level gauges, refreshed right before each metrics export. */
-export function collectProcessMetrics(metrics: MetricRegistry): void {
+export function collectProcessMetrics(metrics: MetricRegistry, project = ''): void {
   const memory = process.memoryUsage()
-  metrics.gauge('bunwrite.process.memory.rss', memory.rss)
-  metrics.gauge('bunwrite.process.memory.heap_used', memory.heapUsed)
-  metrics.gauge('bunwrite.process.memory.heap_total', memory.heapTotal)
-  metrics.gauge('bunwrite.process.memory.external', memory.external)
-  metrics.gauge('bunwrite.process.uptime', process.uptime(), { unit: 's' })
+  const tags = project ? { project } : {}
+  metrics.gauge('bunwrite.process.memory.rss', memory.rss, tags)
+  metrics.gauge('bunwrite.process.memory.heap_used', memory.heapUsed, tags)
+  metrics.gauge('bunwrite.process.memory.heap_total', memory.heapTotal, tags)
+  metrics.gauge('bunwrite.process.memory.external', memory.external, tags)
+  metrics.gauge('bunwrite.process.uptime', process.uptime(), { ...tags, unit: 's' })
 }

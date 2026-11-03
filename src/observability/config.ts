@@ -1,9 +1,10 @@
 /**
- * Instance-wide observability settings.
+ * Observability settings and environment defaults.
  *
  * Everything here is optional and read from the environment, like the rest of
- * the server. With no provider configured the whole subsystem stays off and
- * the request path only pays a boolean check.
+ * the server. Each project can override the defaults from its own console.
+ * With no provider configured the whole subsystem stays off and the request
+ * path only pays a boolean check.
  *
  * Supported providers:
  *   - Any OTLP/HTTP collector (Grafana, Honeycomb, Datadog OTLP, an Agent).

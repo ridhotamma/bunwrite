@@ -1,10 +1,10 @@
 /**
- * Console-managed observability settings.
+ * Console-managed observability settings for one project.
  *
  * Environment variables remain the defaults. A single `_settings` row in the
- * control database overlays them, so an operator can configure OTLP, Datadog,
+ * project database overlays them, so an operator can configure OTLP, Datadog,
  * PostHog and feature flags without editing `.env` or restarting. Saving emits
- * to `Observability.reconfigure()` and to every project's local telemetry store.
+ * to that project's `Observability.reconfigure()` and local telemetry store.
  */
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'

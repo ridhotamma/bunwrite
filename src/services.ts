@@ -12,6 +12,7 @@ import { siteHost } from './lib/hosts'
 import { randomSecret, sha256 } from './lib/ids'
 import { RequestLogService } from './logs/service'
 import { DisabledMailer, SmtpMailer, type Mailer } from './mail/mailer'
+import { createObservability, type Observability } from './observability'
 import { ObservabilitySettingsStore, telemetryOptionsOf } from './observability/settings'
 import { TelemetryStore } from './observability/store'
 import { ProxyService } from './proxy/service'
@@ -67,8 +68,10 @@ export interface Services {
   requestLogs: RequestLogService
   /** Bounded local telemetry for the console's Observability pages. */
   telemetry: TelemetryStore
-  /** Instance-wide provider configuration edited in the console. */
+  /** Per-project provider configuration edited in the console. */
   observabilitySettings: ObservabilitySettingsStore
+  /** This project's exporters, sampling and feature flags. */
+  observability: Observability
   backups: BackupService
   render: RenderService
   /** Durable job queue for SDK workers (docs/QUEUE.md). */
@@ -118,8 +121,8 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   })
   const requestLogs = new RequestLogService(db, config)
   const observabilitySettings = new ObservabilitySettingsStore(db)
-  const observability = observabilitySettings.config
-  const telemetry = new TelemetryStore(db, telemetryOptionsOf(observability))
+  const telemetry = new TelemetryStore(db, telemetryOptionsOf(observabilitySettings.config))
+  const observability = createObservability(observabilitySettings.config, { projectId: config.projectId })
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
   const vectors = new VectorService(db, config.vectors)
@@ -155,6 +158,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     requestLogs,
     telemetry,
     observabilitySettings,
+    observability,
     backups,
     render,
     webhooks,
@@ -184,6 +188,13 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   // SQLite applies stored settings in the SettingsService constructor, which
   // runs after the vector service was built. Pick those values up on boot.
   services.vectors.reload(config.vectors)
+  // Each project's exporters and local telemetry limits follow its own
+  // observability settings, including changes made in another process.
+  observabilitySettings.subscribe(async () => {
+    const current = observabilitySettings.config
+    await observability.reconfigure(current)
+    telemetry.configure(telemetryOptionsOf(current))
+  })
   if (!overrides.mailer) services.mailer = makeMailer()
   if (!overrides.consoleMailer) services.consoleMailer = makeConsoleMailer()
   services.ready = async () => {

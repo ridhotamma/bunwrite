@@ -128,23 +128,23 @@ export function featureFlagsView(flags: Record<string, boolean | string>, action
     ${canManage ? entries.map(([key, value], index) => editFlagDialog(key, value, index, actions)) : ''}`
 }
 
-/** Instance-wide provider and sampling settings. Environment values are the defaults. */
+/** Per-project provider and sampling settings. Environment values are the defaults. */
 export function observabilitySettingsView(options: ObservabilitySettingsViewOptions): Html {
   const s = options.settings
   const hasOtlpHeaders = Boolean(s.otlp?.headers)
   const hasDatadogKey = Boolean(s.datadog?.apiKey)
   const hasPosthogKey = Boolean(s.posthog?.apiKey)
   const posthogFlags = s.posthog?.flags ?? true
-  const scope = options.overridden ? 'Console override' : 'Environment defaults'
+  const scope = options.overridden ? 'Project override' : 'Environment defaults'
   return html`${header('Observability settings', { back: OBS, actions: badge(scope, options.overridden ? 'success' : 'info') })}
     ${tabs(OBS_TABS, 'settings')}
     ${options.canManage
       ? ''
-      : alert('info', html`Only an organization owner can change instance-wide observability settings. You can still review the current configuration.`)}
+      : alert('info', html`Only an organization owner can change this project's observability settings. You can still review the current configuration.`)}
     ${options.error ? alert('critical', html`${options.error}`) : ''}
     ${settingsSection(
       'Local console',
-      'Bunwrite keeps a bounded local copy of request traces and document events so the Observability pages work without a provider.',
+      'This project keeps a bounded local copy of request traces and document events so its Observability pages work without a provider.',
       sectionForm(
         `${OBS_SETTINGS}/local`,
         html`<label class="check"><input type="checkbox" name="console" ${checked(s.console)}><span>Keep local telemetry in the console</span><small>Turning this off leaves external exporters running.</small></label>
@@ -164,7 +164,7 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
 
     ${settingsSection(
       'External exporters',
-      'These settings apply to every project on this instance. Leave providers empty to keep only the local console copy.',
+      'These settings apply to this project only. Leave providers empty to keep only the local console copy.',
       sectionForm(
         `${OBS_SETTINGS}/exporters`,
         html`<label class="check"><input type="checkbox" name="enabled" ${checked(s.enabled)}><span>Enable external exporters</span><small>When off, no traces, logs, metrics or analytics leave the server.</small></label>
@@ -252,5 +252,5 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
           html`<div class="foot" style="justify-content:flex-start">${destroy(`${OBS_SETTINGS}/reset`, 'Reset to environment defaults', 'Reset every observability setting to the environment defaults?')}</div>`,
         )
       : ''}
-    <p class="help">Console settings are stored in the control database and apply to every project. Environment variables remain the fallback.</p>`
+    <p class="help">Console settings are stored in this project's database. Each project has its own exporters, sampling and flags. Environment variables remain the fallback.</p>`
 }
