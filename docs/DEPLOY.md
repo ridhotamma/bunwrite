@@ -9,6 +9,101 @@ need `python3` on the host.
 
 Server settings are documented in [CONFIGURATION.md](CONFIGURATION.md).
 
+## One-command Docker installer
+
+The image doubles as its own installer, in the same shape as Appwrite's
+`--entrypoint=install` image. It writes a compose file and `.env` into a host
+directory, then starts the containers through the mounted Docker socket:
+
+```bash
+mkdir -p bunwrite
+docker run -it --rm \
+  --user 0 \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
+  --entrypoint=install \
+  ghcr.io/ridhotamma/bunwrite:latest
+```
+
+The command:
+
+1. reuses `bunwrite/.env` when it already exists (otherwise copies
+   `.env.example` and fills in the install settings);
+2. writes `docker-compose.yml`, `Caddyfile`, `Caddyfile.external`,
+   `Caddyfile.off` and `caddy-entrypoint.sh` next to it;
+3. generates a first console admin unless `--no-admin` is set;
+4. pulls the image, runs `docker compose up -d`, waits for the container health
+   check and prints the console URL and credentials.
+
+`--user 0` is needed only because the installer writes into the bind mount. The
+Bunwrite container itself still runs as the unprivileged `bunwrite` user. Create
+the directory on the host first (`mkdir -p bunwrite`) so the generated files
+are owned by you rather than root.
+
+Useful options:
+
+```bash
+# Do not prompt; install with a domain
+... --entrypoint=install ghcr.io/ridhotamma/bunwrite:latest \
+  --domain appwrite.example.com --non-interactive
+
+# Write the files but start later
+... --entrypoint=install ghcr.io/ridhotamma/bunwrite:latest --no-start
+
+# Bring your own reverse proxy (no Caddy, Bunwrite on 127.0.0.1:8080)
+... --entrypoint=install ghcr.io/ridhotamma/bunwrite:latest --no-caddy
+
+# Put Caddy on non-standard host ports and keep Bunwrite on 9090
+... --entrypoint=install ghcr.io/ridhotamma/bunwrite:latest \
+  --http-port 8080 --https-port 8443 --app-port 9090
+```
+
+`--help` lists every flag. The installer is also a normal command in the
+binary, so `bunwrite install --help` and `bunwrite upgrade --help` work
+anywhere Docker is available.
+
+### Upgrade an install
+
+Run a newer image with the same volume and `--entrypoint=upgrade`:
+
+```bash
+docker run -it --rm \
+  --user 0 \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
+  --entrypoint=upgrade \
+  ghcr.io/ridhotamma/bunwrite:0.2.0
+```
+
+The upgrade keeps `.env`, rewrites the compose file to the new image (the old
+one is kept as `docker-compose.yml.<timestamp>.backup`), pulls the image and
+restarts the stack. Drizzle migrations run automatically at startup.
+
+### Building or publishing your own installer image
+
+The image bakes its own reference for the generated compose file, so pass it at
+build time:
+
+```bash
+docker build \
+  --build-arg BUNWRITE_IMAGE=registry.example.com/me/bunwrite:0.1.0 \
+  --build-arg BUNWRITE_VERSION=0.1.0 \
+  -t registry.example.com/me/bunwrite:0.1.0 .
+docker push registry.example.com/me/bunwrite:0.1.0
+```
+
+A local `docker build -t bunwrite:latest .` keeps the default
+`BUNWRITE_IMAGE=bunwrite:latest`, which uses the image already on the host.
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) publishes
+`linux/amd64` and `linux/arm64` images to GHCR when a `v*` tag is pushed. GHCR
+packages are private by default. Either make the package public, pull the image
+on the host first (the installer falls back to a local image when the pull
+fails), or mount your Docker client config with
+`--volume "$HOME/.docker/config.json:/root/.docker/config.json:ro"`. The
+prebuilt image is the base build: for Python or Chromium support, build your own
+image with `WITH_PYTHON=true` or `WITH_CHROMIUM=true`, push it, and pass it with
+`--image`.
+
 ## Option A: Manual install
 
 Build on the target OS and architecture so native dependencies such as `sharp`
@@ -384,8 +479,9 @@ Notes:
 - HTML to PDF and images need Chromium in the image: set
   `BUNWRITE_WITH_CHROMIUM=true` in `.env` and run
   `docker compose up -d --build`, then turn it on in **Console → Settings →
-  HTML rendering**. This makes the image about 960 MB on disk (230 MB without
-  it). See [RENDER.md](RENDER.md).
+  HTML rendering**. This makes the image about 960 MB on disk (roughly 350 MB
+  without it; the one-command installer's Docker CLI and compose plugin account
+  for about 120 MB). See [RENDER.md](RENDER.md).
 - Each function run is a separate process: about 10 MB for a trivial one, more
   with heavy dependencies. Many large functions running at once are what can
   push a small container to its limit.

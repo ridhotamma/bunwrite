@@ -966,6 +966,45 @@ and the 2 vCPU / 2 GB Docker recipe.
 
 ## Deploy
 
+### One-command install
+
+The published image can install itself into a directory on the host, like
+Appwrite's installer. It uses the host Docker socket to start sibling
+containers:
+
+```bash
+mkdir -p bunwrite
+docker run -it --rm \
+  --user 0 \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
+  --entrypoint=install \
+  ghcr.io/ridhotamma/bunwrite:latest
+```
+
+It writes `bunwrite/docker-compose.yml`, `.env`, the Caddyfiles and a console
+admin, then starts the stack. Open `https://<DOMAIN>/console` (or
+`https://localhost/console` when no domain was given).
+
+Upgrade the same directory with a newer image:
+
+```bash
+docker run -it --rm \
+  --user 0 \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
+  --entrypoint=upgrade \
+  ghcr.io/ridhotamma/bunwrite:latest
+```
+
+`--user 0` is only for writing into the mounted directory; the Bunwrite
+container itself runs as the unprivileged `bunwrite` user. Add `--no-start` to
+create the files without starting, and run the command with `--help` for the
+domain, ports, Caddy and admin options. The same commands are available as
+`bunwrite install` and `bunwrite upgrade`. If the GHCR package is private,
+make it public or pull the image on the host first; the installer falls back to
+a local image when the pull fails.
+
 For an Ubuntu + systemd setup with the standalone binary, see
 [docs/DEPLOY.md](docs/DEPLOY.md).
 
@@ -976,6 +1015,7 @@ cgroup limits in `docker-compose.yml` if you share the host with other services:
 cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy, TLS_MODE=acme|external|off, seeds
 docker compose up -d --build
 ```
+
 
 Before going live, enable **Organization → Backups**, keep the encryption key off
 the server, and back up uploaded files (`STORAGE_PATH` or the S3 bucket)

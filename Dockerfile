@@ -18,13 +18,14 @@ RUN bun run build && ./dist/bunwrite --help >/dev/null
 # wraps `serve` when LITESTREAM_REPLICA_URL is set.
 FROM debian:trixie-slim AS litestream
 ARG LITESTREAM_VERSION=0.5.17
+ARG TARGETARCH
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl; \
-    arch="$(uname -m)"; \
+    arch="${TARGETARCH:-$(uname -m)}"; \
     case "$arch" in \
-      x86_64) asset=x86_64 ;; \
-      aarch64|arm64) asset=arm64 ;; \
+      amd64|x86_64) asset=x86_64 ;; \
+      arm64|aarch64) asset=arm64 ;; \
       *) echo "Unsupported architecture for Litestream: $arch" >&2; exit 1 ;; \
     esac; \
     asset_name="litestream-${LITESTREAM_VERSION}-linux-${asset}.tar.gz"; \
@@ -38,9 +39,20 @@ RUN set -eux; \
     rm -f /tmp/${asset_name} /tmp/litestream-checksums.txt; \
     rm -rf /var/lib/apt/lists/*
 
+# ---- Docker CLI for the one-command installer ----
+# The installer enters the host daemon through the mounted socket, so the
+# runtime image needs `docker` and the compose plugin. Both are static Go
+# binaries and work on the Debian runtime below.
+FROM docker:27-cli AS dockercli
+
 # ---- Runtime ----
 # Same Debian release as the build stage.
 FROM debian:trixie-slim
+# The image name and version the one-command installer writes into the generated
+# compose file. Release builds pass the registry reference; a local build keeps
+# `bunwrite:latest` and uses the image that is already on the host.
+ARG BUNWRITE_IMAGE=bunwrite:latest
+ARG BUNWRITE_VERSION=dev
 # Optional extras, off by default to keep the image small:
 #   WITH_PYTHON=true    python3 and pip for python-* functions (~70 MB)
 #   WITH_CHROMIUM=true  Chromium + fonts for HTML to PDF and images (~730 MB more on disk)
@@ -65,9 +77,24 @@ RUN apt-get update \
 
 COPY --from=build /src/dist/bunwrite /usr/local/bin/bunwrite
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 COPY deploy/litestream.yml /app/litestream.yml
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+ && chmod 0755 /usr/local/bin/docker /usr/local/libexec/docker/cli-plugins/docker-compose \
+ && mkdir -p /usr/local/share/bunwrite \
+ && printf '%s\n' "$BUNWRITE_IMAGE" > /usr/local/share/bunwrite/image \
+ && printf '%s\n' "$BUNWRITE_VERSION" > /usr/local/share/bunwrite/version \
+ && chmod 0755 /usr/local/share/bunwrite \
+ && printf '#!/bin/sh\n[ "${1:-}" = "serve" ] && shift\nexec /usr/local/bin/bunwrite install "$@"\n' > /usr/local/bin/install \
+ && printf '#!/bin/sh\n[ "${1:-}" = "serve" ] && shift\nexec /usr/local/bin/bunwrite upgrade "$@"\n' > /usr/local/bin/upgrade \
+ && chmod 0755 /usr/local/bin/install /usr/local/bin/upgrade
+
+LABEL org.opencontainers.image.title="Bunwrite" \
+      org.opencontainers.image.description="A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle" \
+      org.opencontainers.image.source="https://github.com/ridhotamma/bunwrite" \
+      org.opencontainers.image.version="$BUNWRITE_VERSION"
 
 WORKDIR /app
 USER bunwrite

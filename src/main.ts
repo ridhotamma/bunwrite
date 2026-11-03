@@ -19,6 +19,8 @@ Usage:
   bunwrite restore <archive>   Restore every database from a backup archive
   bunwrite failover            Restore SQLite databases from Litestream
   bunwrite backup:open <file>  Unpack a downloaded backup (.dump.zst or legacy)
+  bunwrite install [options]   Write a Docker stack into a directory and start it
+  bunwrite upgrade [options]   Update an existing installation to this image
   bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
   bunwrite autotune [--json]   Show the auto-tuned resource limits
@@ -68,6 +70,12 @@ switch (command) {
     runCli(...args)
     await import('./cli/backup-open')
     break
+  case 'install':
+  case 'upgrade': {
+    const { runInstall } = await import('./cli/install')
+    process.exitCode = await runInstall(command, args)
+    break
+  }
   case 'schema:push':
     runCli(...args)
     await import('./cli/schema-push')
