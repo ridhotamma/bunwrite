@@ -27,7 +27,7 @@ export async function startServer(): Promise<void> {
   if (tuning && config.workerIndex === 0) console.log(`[autotune] ${tuning.summary}`)
 
   // `createServices` applies the default project's stored settings over
-  // `config`; keep the environment value as the default for other projects.
+  // `config`; keep the built-in value as the default for other projects.
   const sqliteSynchronous = config.sqliteSynchronous
   const databasePath = config.databasePath
 
@@ -65,7 +65,7 @@ export async function startServer(): Promise<void> {
   }
   if (instance.ignoredEnv.length) {
     console.warn(
-      `[bootstrap] ignoring ${instance.ignoredEnv.join(', ')} from the environment: project settings now live in the database. Remove them from .env and manage them in the console.`,
+      `[bootstrap] ignoring ${instance.ignoredEnv.join(', ')} from the environment: the stored instance identity wins. Remove them from .env.`,
     )
   }
 

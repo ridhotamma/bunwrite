@@ -24,7 +24,7 @@ Related documents:
 | --- | --- | --- |
 | High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
 | Database backends | SQLite and Postgres serve the API and console (Postgres per-project schemas) | **Medium** |
-| API key permissions | Console keys can be scoped per API group; env `API_KEYS` and old keys stay full access | **Low/Medium** |
+| API key permissions | Console keys can be scoped per API group; old keys without scopes stay full access | **Low/Medium** |
 | Backups | Off by default; whole-instance archives plus optional Litestream PITR | **High/Medium** |
 | Function isolation | Shared CPU/memory/network, no quotas | **High** |
 | Console authentication | Password plus optional email MFA; no hardware keys or admin audit trail | **Medium** |
@@ -70,7 +70,7 @@ archive/Litestream snapshot flow stay SQLite-only by design; Postgres uses
 periodic `pg_dump` backups from the Backups page, or managed PITR. See
 [DATABASE.md](DATABASE.md) for the current state and the migration order.
 
-### 2. API key scopes are available, but environment keys bypass them
+### 2. API key scopes are available, but legacy full-access keys bypass them
 
 Console-created keys carry scopes such as `documents.read`, `users.write` or
 `files.write`, and `requireKey()` / `requireScope()` refuse anything outside
@@ -79,8 +79,7 @@ so older keys keep working.
 
 - Keys made from the console offer a full-access checkbox; most keys should be
   scoped instead.
-- Environment `API_KEYS` and the functions' internal key are always full access.
-  They cannot be scoped.
+- The functions' internal key is always full access and cannot be scoped.
 - A scoped key is still a server credential: it is not tied to a user, an IP or
   a session, and cannot be limited to one collection or bucket (only to the API
   group).
@@ -88,7 +87,7 @@ so older keys keep working.
   per-request approval.
 
 Legacy full-access keys are the remaining reason this is not fully closed.
-Create scoped keys for new integrations and remove unused environment keys.
+Create scoped keys for new integrations and remove unused full-access keys.
 
 ### 3. Backups are off by default and are not point-in-time recovery
 
@@ -206,7 +205,7 @@ was written against.
 
 ### 8. Public HTTP caching has a multi-project caveat
 
-`CACHE_PUBLIC_MAX_AGE` is `0` by default, so every document response is private.
+The console's **Public document responses** cache setting is `0` by default, so every document response is private.
 When set above zero, guest requests to collections readable by `any` receive:
 
 ```http
@@ -220,7 +219,7 @@ host.
 
 Mitigations:
 
-- Keep `CACHE_PUBLIC_MAX_AGE=0` unless you need public caching.
+- Keep the console's **Public document responses** cache at `0` unless you need public caching.
 - Use one hostname per project.
 - Or add `Vary: X-Appwrite-Project, X-Bunwrite-Project, Origin` and configure
   the shared cache's key to include the project header.
@@ -406,8 +405,8 @@ Not a safe drop-in for:
 ## Suggested order of work
 
 1. **Scoped API keys and console MFA.** Console keys can be scoped and admins
-   can opt into email MFA. Remaining work: scope environment keys or retire
-   them, add TOTP/recovery codes, and an admin audit log.
+   can opt into email MFA. Remaining work: add TOTP/recovery codes and an admin
+   audit log.
 2. **Backups: PITR, restore drills, storage backup guidance.** Make data loss
    recoverable before scaling traffic.
 3. **Function resource isolation.** Per-function CPU/memory/network limits, or

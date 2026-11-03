@@ -136,7 +136,7 @@ through another.
 | `src/platform/` | What the Appwrite CLI needs beyond the client APIs: the console-project API (`appwrite login`, organizations, projects) and the Project API (`pull/push settings`) |
 | `src/system/` | Query views and resource auto-tuning (`autotune.ts`) |
 | `src/settings/` | Console-edited project settings and API keys; `access.ts` holds services, protocols, sign-in methods, policies and mock phones |
-| `src/instance/` | First-run organization/project IDs, signing secret, initial API key and one-time env seed |
+| `src/instance/` | First-run organization/project IDs, signing secret, bootstrap API key and one-time identity seed |
 | `src/projects/` | `_projects` registry and one cached `Services` set per project database |
 | `src/logs/` | Batched request-log storage for the console, retention pruning |
 | `src/backups/` | Whole-instance SQLite archives or Postgres `pg_dump` backups, local/S3 storage, cron schedules, offline SQLite restore |
@@ -169,12 +169,13 @@ The console keeps the same boundaries as the API:
 - Page and view modules do not run SQL. Queries live with the service that owns
   the data (`DocumentStore`, `AuthService`, `TeamService`, `StorageService`,
   `FunctionService`, `RequestLogService`), and the page calls that service.
-- `instance/bootstrap.ts` runs at startup. Stored values win; environment
-  values only seed an empty (or legacy partial) instance, and are imported once
-  into `_settings` / `_api_keys` behind an `env_seed` marker. After that,
-  project identity, API keys and application settings live in the database and
-  are managed in the console. The generated API key is shown once on
-  `/console/setup` and kept hashed in `_api_keys`.
+- `instance/bootstrap.ts` runs at startup. Stored values win; only the instance
+  identity (organization/project ID and signing secret) can be seeded from the
+  environment, once, behind an `env_seed` marker. Project settings, API keys,
+  SMTP and OAuth live in the console. The generated bootstrap API key is shown
+  once on `/console/setup` and kept hashed in `_api_keys`; it is revoked when the
+  first console admin is created. Create project API keys in the console
+  afterwards.
 - `projects/manager.ts` owns `_projects` in the control database and a cached
   `Services` set per project. The control database is the default project's
   database, so an existing single-project install keeps its data. Additional
@@ -242,7 +243,7 @@ The console keeps the same boundaries as the API:
    batched into `_request_logs` for the console's Request logs page. The page
    stores referer and user agent too, and has a detail view. Static assets and
    successful Request logs page requests are skipped; rows older than the
-   configured retention (env or Console Settings) are pruned. The Home page
+   configured retention (Console Settings) are pruned. The Home page
    charts hourly inbound/outbound bytes and lists the top paths.
 
 ## Caching
@@ -262,7 +263,7 @@ workers:
 Document writes bump a per-collection counter in `_meta` through triggers on the
 document table. Document GET responses carry a weak `ETag` built from that
 version, the caller's roles and the query, so `If-None-Match` returns 304
-without a SQLite read. `CACHE_PUBLIC_MAX_AGE` allows shared caching only for
+without a SQLite read. The **Public document responses** cache setting allows shared caching only for
 collections readable by `any`; everything else is private.
 
 ## Transactions
@@ -392,7 +393,7 @@ created with, so the execution returned to the caller is the one that runs.
   bcrypt/sha/md5/scrypt hashes still verify.
 - Console API keys carry scopes (`documents.read`, `users.write`, `files.write`,
   …). A key with no stored scopes is full access, which covers keys created
-  before scopes and environment `API_KEYS`.
+  before scopes and console API keys.
 - Console admins can turn on email MFA on **Security**. The password step then
   creates a single-use, 10-minute challenge and emails a six-digit code; only
   hashes of the challenge and code are stored. SMTP is required.

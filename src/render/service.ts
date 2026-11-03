@@ -12,7 +12,7 @@
  * it when the line is free and saves it to a bucket. Jobs survive a restart
  * and are retried when Chromium fails.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 import { keyCaller } from '~/auth/caller'
 import { isLeader } from '~/cluster/role'
@@ -149,13 +149,55 @@ export function findChrome(): string | null {
   return null
 }
 
-function chromeArgs(): string[] {
+/**
+ * True inside Docker, Podman, Kubernetes or LXC. Chromium's namespace sandbox
+ * usually cannot start there: containers do not grant the user namespaces it
+ * needs, and the published image removes setuid helpers on purpose. The
+ * container itself is the isolation boundary in that case.
+ */
+export function inContainer(): boolean {
+  if (process.env.KUBERNETES_SERVICE_HOST || process.env.container) return true
+  if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) return true
+  try {
+    return /(?:docker|kubepods|containerd|lxc|podman|libpod)/i.test(readFileSync('/proc/1/cgroup', 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+export interface ChromeContext {
+  env?: Record<string, string | undefined>
+  uid?: number
+  container?: boolean
+}
+
+/**
+ * `CHROME_NO_SANDBOX=true` forces `--no-sandbox`; `false` forces the sandbox.
+ * Unset (or `auto`) follows the host: root and containers need
+ * `--no-sandbox` because Chromium cannot start its sandbox there.
+ */
+export function chromeSandboxDisabled({ env = process.env, uid = process.getuid?.(), container = inContainer() }: ChromeContext = {}): boolean {
+  const setting = (env.CHROME_NO_SANDBOX ?? '').trim().toLowerCase()
+  if (setting === 'true' || setting === '1' || setting === 'yes') return true
+  if (setting === 'false' || setting === '0' || setting === 'no') return false
+  return uid === 0 || container
+}
+
+/** Chromium flags, including `--no-sandbox` when the host cannot sandbox it. */
+export function chromeArgs(context: ChromeContext = {}): string[] {
+  const env = context.env ?? process.env
   const args = [...CHROME_ARGS]
-  // Containers usually lack the user namespaces Chromium's sandbox needs; root cannot use it at all.
-  if (process.env.CHROME_NO_SANDBOX === 'true' || process.getuid?.() === 0) args.push('--no-sandbox')
+  if (chromeSandboxDisabled(context)) args.push('--no-sandbox')
   // Extra flags, space-separated (CHROME_ARGS).
-  args.push(...(process.env.CHROME_ARGS ?? '').split(/\s+/).filter(Boolean))
+  args.push(...(env.CHROME_ARGS ?? '').split(/\s+/).filter(Boolean))
   return args
+}
+
+/** Bun's message when Chromium exits before the DevTools pipe is established. */
+const CHROME_LAUNCH_FAILURE = /Chrome process closed the pipe|Failed to spawn Chrome|Chrome killed by signal|Chrome exited/i
+
+function isChromeLaunchFailure(error: unknown): boolean {
+  return CHROME_LAUNCH_FAILURE.test(error instanceof Error ? error.message : String(error))
 }
 
 const inches = (mm: number) => mm / 25.4
@@ -246,8 +288,8 @@ export class RenderService {
     private jobs?: { queue: QueueService; storage: StorageService },
   ) {}
 
-  status(): { enabled: boolean; chrome: string | null; running: boolean } {
-    return { enabled: this.config.render.enabled, chrome: findChrome(), running: shared.running }
+  status(): { enabled: boolean; chrome: string | null; running: boolean; noSandbox: boolean } {
+    return { enabled: this.config.render.enabled, chrome: findChrome(), running: shared.running, noSandbox: chromeSandboxDisabled() }
   }
 
   /** Render HTML to PDF bytes. */
@@ -505,7 +547,14 @@ export class RenderService {
     const attempt = (): Promise<T> => {
       const chrome = findChrome()
       if (!chrome) throw err('general_service_disabled', 'HTML rendering needs Chromium. Install it or set CHROME_PATH.')
-      return this.withTimeout(this.withPage(chrome, html, setup, work))
+      return this.withTimeout(this.withPage(chrome, html, setup, work)).catch((error) => {
+        if (!isChromeLaunchFailure(error) || chromeSandboxDisabled()) throw error
+        const message = error instanceof Error ? error.message : String(error)
+        throw err(
+          'general_server_error',
+          `Chromium could not start: ${message}. Containers usually cannot start Chromium's sandbox; set CHROME_NO_SANDBOX=true to run the browser without it inside the container.`,
+        )
+      })
     }
     const job = shared.line.then(async () => {
       try {

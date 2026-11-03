@@ -154,8 +154,10 @@ sudo -u bunwrite vi /opt/bunwrite/.env
 ```
 
 The first start generates (or imports from the optional seed values) the
-organization ID, project ID, signing secret and an initial API key, then stores
-them in the database. `.env` is for server and deployment settings:
+organization ID, project ID, signing secret and an initial bootstrap API key,
+then stores them in the database. The bootstrap key is revoked when the first
+console admin is created; create a fresh project API key in **Console → API**
+after signing in. `.env` is for server and deployment settings:
 
 - `DOMAIN` — the public hostname (for example `appwrite.example.com`). When set,
   `PUBLIC_ENDPOINT` defaults to `https://<DOMAIN>/v1`; the Docker Compose setup
@@ -170,22 +172,16 @@ them in the database. `.env` is for server and deployment settings:
   server creates it once at startup.
 
 The optional **First start only** values at the end of `.env.example` can seed
-an empty database — useful when reusing an existing Appwrite project ID and API
-key. They are imported once into the database and then ignored:
+the instance identity when reusing an existing Appwrite project ID. They are
+imported once into the database and then ignored:
 
-- `ORG_ID`, `PROJECT_ID`, `PROJECT_NAME`
-- `API_KEYS` (imported hashed into **Console → API**)
+- `ORG_ID`, `PROJECT_ID`
 - `SECRET` (at least 32 random characters, `openssl rand -hex 32`)
-- `ALLOWED_ORIGINS`, `SESSION_DURATION`, `SESSIONS_LIMIT`
-- `SMTP_*`, `GOOGLE_*`, `FUNCTIONS_SKIP_SCHEDULES`
 
-After the first start, manage the mutable settings (API keys, origins,
-sessions, SMTP, Google and function schedules) in the console; the project ID
-is fixed for the life of the project. Confirm the project ID and API key, then
-remove the seed values from `.env`; keeping them only produces a warning that
-they are ignored. Keep the API key somewhere safe (or create a fresh key in
-**Console → API**) before deleting `API_KEYS` from `.env`, because the
-console only stores its hash and cannot show it again.
+After the first start, manage API keys, origins, sessions, SMTP, OAuth, project
+name and function schedules in the console; the project ID is fixed for the life
+of the project. Remove the seed values from `.env` after the first start;
+keeping them only produces a warning that they are ignored.
 
 Create or reset the first console admin:
 
@@ -196,10 +192,11 @@ sudo -u bunwrite /usr/local/bin/bunwrite console:admin you@example.com
 
 Alternatively, start the service first and open `/console/setup` from the
 server (or through an SSH tunnel). That page creates the admin and shows the
-generated organization ID, project ID and API key. The same values are printed
-in the startup log until the first admin exists. If you create the admin with
-the command above before the first start, create an API key later in
-**Console → API**.
+generated organization ID, project ID and bootstrap API key. The bootstrap key
+is revoked as soon as the admin exists, so create a project API key in
+**Console → API** after signing in. The same values are printed in the startup
+log until the first admin exists. If you create the admin with the command above
+before the first start, create an API key later in **Console → API**.
 
 Email, OAuth sign-in, storage, backups, functions and request-log settings can
 be changed later in the console.
@@ -462,11 +459,13 @@ Create the first console admin:
 docker compose exec bunwrite bunwrite console:admin you@example.com
 ```
 
-The first start prints the generated organization ID, project ID and API key to
-`docker compose logs bunwrite`. The signing secret is stored in the database
-volume. Optional first-start seed values in `.env` (organization/project ID,
-API keys, secret and application settings) are imported once and then ignored;
-manage them in the console afterwards.
+The first start prints the generated organization ID, project ID and bootstrap
+API key to `docker compose logs bunwrite`. The bootstrap key is revoked when the
+first console admin is created; create a project API key in **Console → API**
+after signing in. The signing secret is stored in the database volume. Optional
+first-start identity values in `.env` (organization/project ID and secret) are
+imported once and then ignored; manage project settings in the console
+afterwards.
 
 Notes:
 

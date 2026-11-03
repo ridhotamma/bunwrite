@@ -259,7 +259,12 @@ export function settingsPages(router: ConsoleRouter): void {
     }
     const days = Number(f.previewRetentionDays)
     if (!Number.isFinite(days) || days < 0 || days > 3650) throw err('general_argument_invalid', 'Keep previews between 0 and 3650 days.')
-    await ctx.services.settings.set('cache', { fileMaxAge: seconds('fileMaxAge'), previewMaxAge: seconds('previewMaxAge'), previewRetentionDays: Math.round(days) })
+    await ctx.services.settings.set('cache', {
+      fileMaxAge: seconds('fileMaxAge'),
+      previewMaxAge: seconds('previewMaxAge'),
+      publicMaxAge: f.publicMaxAge === undefined ? ctx.services.config.cache.publicMaxAge : seconds('publicMaxAge'),
+      previewRetentionDays: Math.round(days),
+    })
     ctx.services.storage.prunePreviews(true)
     return ctx.go(tabPath('cache'), { tone: 'success', text: 'Cache settings saved' })
   })

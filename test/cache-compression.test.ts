@@ -186,9 +186,14 @@ describe('file cache', () => {
     expect(page).toContain('Generated previews')
     expect(page).toContain('Brotli, else gzip')
 
-    const saved = await form('/console/settings/cache', { fileMaxAge: '0', previewMaxAge: '86400', previewRetentionDays: '7' })
+    const saved = await form('/console/settings/cache', {
+      fileMaxAge: '0',
+      previewMaxAge: '86400',
+      publicMaxAge: '600',
+      previewRetentionDays: '7',
+    })
     expect(saved.status).toBe(303)
-    expect(server.config.cache).toEqual({ fileMaxAge: 0, previewMaxAge: 86400, previewRetentionDays: 7, publicMaxAge: 0 })
+    expect(server.config.cache).toEqual({ fileMaxAge: 0, previewMaxAge: 86400, previewRetentionDays: 7, publicMaxAge: 600 })
     expect((await api('/storage/buckets/cache/files/notes/view')).headers.get('cache-control')).toBe('private, no-cache')
     expect((await api('/storage/buckets/cache/files/logo/preview?width=16')).headers.get('cache-control')).toBe('private, max-age=86400')
 

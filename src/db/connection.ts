@@ -4,14 +4,7 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator'
 import { existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import {
-  configuredBusyTimeout,
-  configuredSqliteCacheMb,
-  configuredSqliteMmapMb,
-  configuredSqliteSynchronous,
-  configuredWalAutocheckpoint,
-  type SqliteSynchronous,
-} from '~/system/autotune'
+import { configuredBusyTimeout, configuredSqliteCacheMb, configuredSqliteMmapMb, configuredWalAutocheckpoint, type SqliteSynchronous } from '~/system/autotune'
 import { ensureClusterSchema } from './cluster-schema'
 import type { DriverCapabilities, SqlDatabase } from './driver'
 import { withBusyRetry } from './errors'
@@ -128,7 +121,7 @@ export function openDb(
   mmapMb = configuredSqliteMmapMb(),
   walPages = configuredWalAutocheckpoint(),
   busyTimeoutMs = configuredBusyTimeout(),
-  synchronous: SqliteSynchronous = configuredSqliteSynchronous(),
+  synchronous: SqliteSynchronous = 'NORMAL',
 ): Db {
   if (path !== ':memory:' && !path.startsWith('file::memory:')) {
     mkdirSync(dirname(path), { recursive: true })

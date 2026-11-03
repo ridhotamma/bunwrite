@@ -177,7 +177,8 @@ describe('writer role', () => {
     expect(configFromEnv({ SQLITE_BUSY_TIMEOUT_MS: '1500' }).busyTimeoutMs).toBe(1500)
     expect(configFromEnv({ SQLITE_READER_BUSY_TIMEOUT_MS: '250' }).readerBusyTimeoutMs).toBe(250)
     expect(configFromEnv({}).sqliteSynchronous).toBe('NORMAL')
-    expect(configFromEnv({ SQLITE_SYNCHRONOUS: 'FULL' }).sqliteSynchronous).toBe('FULL')
+    // The per-project value is a console setting, not an environment default.
+    expect(configFromEnv({ SQLITE_SYNCHRONOUS: 'FULL' }).sqliteSynchronous).toBe('NORMAL')
   })
 
   test('per-worker ports move the writer out of the public range', () => {

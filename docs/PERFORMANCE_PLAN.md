@@ -50,7 +50,7 @@ Docker networking or the network.
   per `Database` (LRU). `prepare()` remains only for explicit batch work; a
   test guards the assumption.
 - [x] **Opt-in public HTTP caching.** Guest document GETs may send a plain
-  `public, max-age` when `CACHE_PUBLIC_MAX_AGE` is set; ETag/304 handling is
+  `public, max-age` when the console's **Public document responses** cache is set; ETag/304 handling is
   unchanged, and session/API-key responses stay private.
 - [x] **SQLite mmap** (`SQLITE_MMAP_MB`, default 256 MB, `0` disables it).
 - [x] **WAL tuning.** `SQLITE_WAL_AUTOCHECKPOINT` (default 10000 pages) is set
@@ -156,7 +156,7 @@ compiled-query, list-result and session caches.
 | 4b | [x] **Parsed-query cache:** query string → compiled SQL in a `WeakMap` keyed by `Collection`, so a registry reload drops it. | [src/documents/query.ts](../src/documents/query.ts) |
 | 4c | [x] **Session cache:** session hash → user and roles for 30 s, cleared on logout, user block or update, label and membership changes through `_meta.auth` in every worker. | [src/auth/caller.ts](../src/auth/caller.ts) |
 | 4d | [x] **List result cache:** size-limited, keyed by collection, version, the caller's roles and the query string. Views are never cached. | [src/documents/store.ts](../src/documents/store.ts) |
-| 4e | [x] **HTTP caching:** ETag/304 on document GETs. `CACHE_PUBLIC_MAX_AGE` allows public caching only when the collection's read permission is `any`; a per-collection override is still open. | [src/documents/routes.ts](../src/documents/routes.ts) |
+| 4e | [x] **HTTP caching:** ETag/304 on document GETs. The console's **Public document responses** cache allows public caching only when the collection's read permission is `any`; a per-collection override is still open. | [src/documents/routes.ts](../src/documents/routes.ts) |
 
 The cross-worker tests in [test/caching.test.ts](../test/caching.test.ts) cover
 "write on worker A, read on worker B" and session revocation. New caches should

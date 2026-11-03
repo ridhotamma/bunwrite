@@ -23,20 +23,11 @@ text, extracts words and word bigrams, hashes them into signed buckets and
 normalises the result. It is lexical rather than semantic, but it needs no API
 key, no model download and no network, and it keeps the feature lightweight.
 
-Set an embedding endpoint to use a model instead. Any OpenAI-compatible
-`/embeddings` API works (OpenAI, a gateway, Ollama, LocalAI, ...):
-
-```env
-VECTORS_EMBEDDER=http
-EMBEDDING_URL=https://api.openai.com/v1
-EMBEDDING_API_KEY=sk-...
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSION=1536
-```
-
-`OPENAI_API_KEY` is a shortcut: it enables the OpenAI embeddings endpoint and
-the chat endpoint below. `EMBEDDING_URL` may be a base URL (`.../v1`) or the
-complete endpoint (`.../v1/embeddings`).
+Set an embedding endpoint in **Console → Settings → Vectors & RAG** to use a
+model instead. Any OpenAI-compatible `/embeddings` API works (OpenAI, a
+gateway, Ollama, LocalAI, ...). The URL may be a base URL (`.../v1`) or the
+complete endpoint (`.../v1/embeddings`). The API key is stored with the project
+settings, not in `.env`.
 
 A collection records the embedder name that created it. If you change the model
 or dimension later, **re-index the collection**; Bunwrite refuses to mix vectors
@@ -63,35 +54,28 @@ database.
 
 ## Configuration
 
-These environment variables are defaults. The same values can be changed while
-the server runs in **Console → Settings → Vectors & RAG**; saved values live in
-the project database and win over the environment. Reset the setting there to
-return to these defaults.
+Everything is edited in **Console → Settings → Vectors & RAG** and stored in
+the project database. There are no environment variables for these settings.
+The built-in defaults are:
 
-| Variable | Default | Meaning |
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `VECTORS_EMBEDDER` | `local`, or `http` when an embeddings URL/key is set | Embedding provider. |
-| `EMBEDDING_URL` | unset | OpenAI-compatible embeddings base URL or full endpoint. |
-| `EMBEDDING_API_KEY` | unset | Bearer token for embeddings. |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name sent to the provider. |
-| `EMBEDDING_DIMENSION` | `384` local, `1536` HTTP | Vector width. Must match the model. |
-| `EMBEDDING_SEND_DIMENSIONS` | `false` | Send `dimensions` in the request (OpenAI v3 models). Leave off for gateways that reject unknown fields. |
-| `EMBEDDING_BATCH_SIZE` | `64` | Texts per embeddings request (1–256). |
-| `VECTORS_TIMEOUT_MS` | `30000` | Outbound embeddings/chat timeout. |
-| `VECTORS_MAX_POINTS` | `50000` | Maximum points per collection. |
-| `RAG_CHAT_URL` | unset | OpenAI-compatible chat completions endpoint. Empty: no generated answer. |
-| `RAG_CHAT_API_KEY` | `OPENAI_API_KEY` | Bearer token for chat. |
-| `RAG_CHAT_MODEL` | `gpt-4o-mini` | Chat model name. |
-| `RAG_SYSTEM_PROMPT` | built in | System prompt for generated answers. |
-| `RAG_TEMPERATURE` | `0.2` | Chat temperature (0–2). |
-| `RAG_MAX_TOKENS` | `800` | Maximum generated answer length. |
-| `RAG_CONTEXT_CHARS` | `12000` | Retrieved context sent to the chat model. |
-| `RAG_CHUNK_SIZE` | `1000` | Default characters per ingested chunk (64–8000). |
-| `RAG_CHUNK_OVERLAP` | `200` | Default overlap between chunks. |
-
-`OPENAI_API_KEY` also sets the default chat URL to
-`https://api.openai.com/v1/chat/completions`. `OPENAI_CHAT_MODEL` and
-`OPENAI_CHAT_URL` are accepted as aliases for the chat settings.
+| Embedder | `local` | Local deterministic embeddings; switch to `http` for an OpenAI-compatible endpoint. |
+| Embedding URL | unset | OpenAI-compatible base URL or full endpoint. |
+| Embedding model | `text-embedding-3-small` | Model name sent to the provider. |
+| Dimension | `384` local, `1536` HTTP | Vector width. Must match the model. |
+| Send dimensions | off | Send `dimensions` in the request (OpenAI v3 models); leave off for gateways that reject unknown fields. |
+| Embedding batch size | `64` | Texts per embeddings request (1–256). |
+| Request timeout | `30000` ms | Outbound embeddings/chat timeout. |
+| Maximum points | `50000` | Maximum points per collection. |
+| Chat URL | unset | OpenAI-compatible chat completions endpoint; empty means no generated answer. |
+| Chat model | `gpt-4o-mini` | Chat model name. |
+| System prompt | built in | System prompt for generated answers. |
+| Temperature | `0.2` | Chat temperature (0–2). |
+| Maximum answer tokens | `800` | Maximum generated answer length. |
+| Context characters | `12000` | Retrieved context sent to the chat model. |
+| Chunk size | `1000` | Default characters per ingested chunk (64–8000). |
+| Chunk overlap | `200` | Default overlap between chunks. |
 
 ## HTTP API
 
@@ -101,7 +85,7 @@ Postgres. Scopes:
 - `vectorsdb.collections.read` / `vectorsdb.collections.write`
 - `vectorsdb.documents.read` / `vectorsdb.documents.write`
 
-A key without scopes (the environment key, legacy keys) has full access.
+A key without scopes (legacy keys) has full access.
 
 ### Collections
 
@@ -178,8 +162,8 @@ Response: `{ "collectionId", "documentId", "chunks", "$createdAt" }`.
 
 ### RAG query
 
-`POST /rag/query` retrieves the top chunks. If `RAG_CHAT_URL` (or
-`OPENAI_API_KEY`) is configured, it also asks the model to answer with the
+`POST /rag/query` retrieves the top chunks. If a chat URL is configured in the
+console, it also asks the model to answer with the
 context. Without a chat provider, `answer` is `null`; use `context` and `sources`
 with your own model.
 

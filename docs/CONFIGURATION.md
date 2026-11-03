@@ -17,6 +17,8 @@ docker compose up -d --build
 ```
 
 The only value most deployments need is `DOMAIN`. Everything else has a default.
+Project settings (SMTP, OAuth, origins, sessions, API keys, render, cache,
+vectors/RAG, logs and observability) are configured in the console, not here.
 
 ## Server
 
@@ -354,8 +356,8 @@ curl -s https://your-host/v1/flags \
 | `FUNCTIONS_BUILD_COMMANDS` | `true` | Run a function's `commands` during deployment. |
 | `FUNCTIONS_SANDBOX` | `auto` (`on` in Docker Compose) | `on` builds and runs each function as its own user and refuses to start when the helper cannot switch users; `auto` warns and runs code as the server's user instead; `off` never isolates. |
 | `PYTHON_BIN` | `python3` | Python executable for `python-*` runtimes. |
-| `FUNCTIONS_SKIP_SCHEDULES` | unset | Comma-separated function IDs whose schedules should be ignored. |
 
+Paused schedules are a project setting in **Console → Settings → Functions**.
 Function-specific variables can also be set in the console; they win over the
 env file. Variables for every function and site are edited in
 **Settings → Variables**, and a function's own variable wins over a global one.
@@ -424,38 +426,29 @@ Explicit values always win.
 | `SQLITE_CACHE_MB` | auto, 8–64 | SQLite page cache in MB. |
 | `SQLITE_MMAP_MB` | `256` | Memory-mapped database window per connection in MB; `0` disables mmap. |
 | `SQLITE_WAL_AUTOCHECKPOINT` | `10000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. A larger WAL means fewer synchronous checkpoints on the writer. |
-| `SQLITE_SYNCHRONOUS` | `NORMAL` | Default durability for project databases. `NORMAL` skips an fsync per commit; `FULL` fsyncs every commit. Each project can override it in Console → Settings → Database. See the durability note below. |
 | `SQLITE_BUSY_TIMEOUT_MS` | `5000` | How long the writer waits for SQLite's lock before failing. |
 | `SQLITE_READER_BUSY_TIMEOUT_MS` | `500` | How long a public worker waits for a lock before failing fast. Keep this short: a synchronous wait blocks that process's event loop. |
 | `MAX_REQUEST_BODY_MB` | auto, 16–256 | Largest accepted HTTP request body. |
 | `BUN_JSC_forceRAMSize` | unset | JS heap size in bytes. Startup-only; the Docker entrypoint and systemd wrapper set it. |
 | `MALLOC_ARENA_MAX` | unset | glibc malloc arena count. Startup-only; set by the deployment wrapper. |
 
-`SQLITE_SYNCHRONOUS` is case-insensitive and accepts only `NORMAL` or `FULL`;
-any other value stops startup so a typo cannot silently weaken durability.
-`NORMAL` uses WAL and skips the fsync on each commit: an application crash is
-safe, but a power loss or OS crash can roll back transactions committed since
-the last checkpoint. The database stays consistent either way. Use `FULL` for
-payments, accounting ledgers, or any write that must be on disk before the
-response is returned; it adds one fsync per commit.
-
-The environment value is the default for every project. A project can override
-it in Console → Settings → Database; the stored value wins until it is reset,
-and other worker processes pick it up on the next settings refresh.
+SQLite commit durability is a per-project setting in **Console → Settings →
+Database**. `NORMAL` (the default) skips the fsync on each commit: an
+application crash is safe, but a power loss or OS crash can roll back
+transactions committed since the last checkpoint. The database stays consistent
+either way. Use `FULL` for payments, accounting ledgers, or any write that must
+be on disk before the response is returned; it adds one fsync per commit.
 
 ## Caching and compression
 
+Cache lifetimes (file views, image previews, generated previews and public
+document responses) are project settings in **Console → Settings → Cache**.
+There are no environment variables for them.
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `CACHE_FILES_MAX_AGE` | `3888000` | Browser cache lifetime for file views/downloads, in seconds. |
-| `CACHE_PREVIEWS_MAX_AGE` | `2592000` | Browser cache lifetime for image previews, in seconds. |
-| `PREVIEW_CACHE_DAYS` | `30` | Days a generated preview stays on disk; `0` keeps it until the file changes. |
 | `COMPRESSION` | `true` | Compress HTTP responses (Brotli, else gzip). Turn it off when Caddy or another proxy compresses at the edge; `docker-compose.yml` does. |
 | `WEBSOCKET_COMPRESSION` | `true` | Compress realtime WebSocket messages (perMessageDeflate); independent of HTTP compression. |
-| `CACHE_PUBLIC_MAX_AGE` | `0` | Seconds a guest's browser or a shared cache may keep a document GET whose collection is readable by `any`; `0` keeps every response private. Session and API-key responses stay private regardless. |
-
-`CACHE_FILES_MAX_AGE`, `CACHE_PREVIEWS_MAX_AGE` and `PREVIEW_CACHE_DAYS` can
-also be changed in **Console → Settings → Caching**.
 
 ## Image previews
 
@@ -471,44 +464,20 @@ also be changed in **Console → Settings → Caching**.
 The built-in vector store and retrieval-augmented generation endpoints. Local
 embeddings are the default and need no network; any OpenAI-compatible endpoint
 can be used instead. Embeddings, answer generation, chunking and limits are
-editable at **Console → Settings → Vectors & RAG**; the variables below are the
-defaults. See [VECTORS.md](VECTORS.md) for the API and limits.
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `VECTORS_EMBEDDER` | `local`, or `http` when a URL/key is set | Embedding provider. |
-| `EMBEDDING_URL` | unset | OpenAI-compatible embeddings base URL or full endpoint. |
-| `EMBEDDING_API_KEY` | unset | Bearer token for embeddings. |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | Model name. |
-| `EMBEDDING_DIMENSION` | `384` local, `1536` HTTP | Vector width; must match the model. |
-| `EMBEDDING_SEND_DIMENSIONS` | `false` | Send `dimensions` in the request; some gateways reject it. |
-| `EMBEDDING_BATCH_SIZE` | `64` | Texts per embeddings request. |
-| `VECTORS_TIMEOUT_MS` | `30000` | Outbound embeddings/chat timeout. |
-| `VECTORS_MAX_POINTS` | `50000` | Maximum points per collection. |
-| `RAG_CHAT_URL` | unset | OpenAI-compatible chat endpoint; empty means no generated answer. |
-| `RAG_CHAT_API_KEY` | `OPENAI_API_KEY` | Bearer token for chat. |
-| `RAG_CHAT_MODEL` | `gpt-4o-mini` | Chat model name. |
-| `RAG_SYSTEM_PROMPT` | built in | System prompt for answers. |
-| `RAG_TEMPERATURE` | `0.2` | Chat temperature. |
-| `RAG_MAX_TOKENS` | `800` | Maximum answer length. |
-| `RAG_CONTEXT_CHARS` | `12000` | Retrieved context sent to the chat model. |
-| `RAG_CHUNK_SIZE` | `1000` | Default chunk size for ingest. |
-| `RAG_CHUNK_OVERLAP` | `200` | Default chunk overlap. |
-| `OPENAI_API_KEY` | unset | Shortcut that enables the OpenAI embeddings and chat endpoints. |
+edited at **Console → Settings → Vectors & RAG**. There are no environment
+variables for them. See [VECTORS.md](VECTORS.md) for the API and limits.
 
 ## HTML rendering
 
-Used by `POST /v1/pdf` and `POST /v1/image`. Also switchable in
-**Console → Settings → HTML rendering**.
+Used by `POST /v1/pdf` and `POST /v1/image`. Enable it and allow remote assets
+in **Console → Settings → HTML rendering**. Needs Chromium on the host.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RENDER_ENABLED` | `false` | Turn rendering on. Needs Chromium on the host. |
-| `RENDER_ALLOW_REMOTE` | `false` | Allow pages to load public remote images, fonts and stylesheets. Off blocks all remote requests. |
 | `RENDER_ALLOW_PRIVATE` | `false` | Explicitly allow loopback/private destinations while remote loading is on (local asset servers). |
 | `CHROME_PATH` | found on PATH | Chrome/Chromium executable. |
 | `CHROME_ARGS` | unset | Extra Chromium flags, space-separated. |
-| `CHROME_NO_SANDBOX` | unset | `true` only when the host cannot provide user namespaces. The compose file leaves the sandbox on. |
+| `CHROME_NO_SANDBOX` | `auto` | `true` forces `--no-sandbox`; `false` forces the sandbox. `auto` turns it off for root and containers, where user namespaces are usually unavailable. The Docker image and compose default to `true`; the container is the isolation boundary. |
 | `RENDER_MAX_MEGAPIXELS` | auto, 4–30 | Largest image `/v1/image` may produce. |
 
 Rendering is serialized and adds Chromium's memory cost. See
@@ -536,19 +505,17 @@ to local images built with `docker compose`.
 
 ## First-start seeds
 
-These values seed an **empty** database once. After the instance exists they are
-ignored; change the project, keys and settings in the console.
+These identity values seed an **empty** database once. After the instance
+exists they are ignored; change the project name and settings in the console.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ORG_ID` | generated | Organization ID shown in the console. |
 | `PROJECT_ID` | generated | Project ID apps send in `X-Bunwrite-Project` / `X-Appwrite-Project`. Reuse an Appwrite project ID when migrating. |
-| `PROJECT_NAME` | `Bunwrite` | Console and email name. |
-| `API_KEYS` | generated | Comma-separated keys, imported hashed and revocable like console keys. |
 | `SECRET` | generated | Signs JWTs and OAuth state. At least 32 random characters when set. |
-| `ALLOWED_ORIGINS` | `localhost` | Comma-separated browser origins for CORS and redirects. `*.example.com` matches subdomains. |
-| `SESSION_DURATION` | `31536000` | Session lifetime in seconds. |
-| `SESSIONS_LIMIT` | `10` | Sessions kept per user. |
+
+API keys, allowed origins, session lifetime and session limits are project
+settings in the console; they are never read from `.env`.
 
 Generate a secret with:
 
@@ -561,24 +528,14 @@ openssl rand -hex 32
 Console sign-in codes, MFA and organization invitations use the SMTP configured
 in **Organization → Settings → Email delivery**. Each project sets its own SMTP
 in **Project Settings → Email & sign-in**, and projects never inherit the
-console SMTP. The `SMTP_*` variables seed both on first start; change either one
-in the console afterwards.
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SMTP_HOST` | unset | SMTP server. Without it email is disabled. |
-| `SMTP_PORT` | `587` | SMTP port. |
-| `SMTP_USERNAME` | unset | SMTP user. |
-| `SMTP_PASSWORD` | unset | SMTP password. |
-| `SMTP_SECURE` | empty | `tls` for implicit TLS on 465; empty uses STARTTLS when offered. |
-| `SMTP_SENDER_EMAIL` | `no-reply@example.com` | From address. |
-| `SMTP_SENDER_NAME` | `<PROJECT_NAME> Team` | From name. |
+console SMTP. SMTP is console-only; there are no `SMTP_*` environment
+variables. Non-secure connections require STARTTLS (TLS 1.2+).
 
 ### OAuth sign-in
 
-Google, Facebook, GitHub and Apple can each be configured in the console
-(**Settings → Email & sign-in**) or seeded from the environment. Register this
-redirect URI with the provider:
+Google, Facebook, GitHub and Apple are configured in the console
+(**Settings → Email & sign-in**); there are no OAuth environment variables.
+Register this redirect URI with the provider:
 
 ```
 <PUBLIC_ENDPOINT>/account/sessions/oauth2/callback/<provider>/<PROJECT_ID>
@@ -586,23 +543,6 @@ redirect URI with the provider:
 
 Apple uses `response_mode=form_post`, so its callback arrives as a POST. Its
 client secret is an ES256 JWT signed with the `.p8` key on each token exchange.
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `GOOGLE_CLIENT_ID` | unset | Google OAuth client ID. |
-| `GOOGLE_CLIENT_SECRET` | unset | Google OAuth client secret. |
-| `FACEBOOK_CLIENT_ID` | unset | Facebook app ID. |
-| `FACEBOOK_CLIENT_SECRET` | unset | Facebook app secret. |
-| `GITHUB_CLIENT_ID` | unset | GitHub OAuth App client ID. |
-| `GITHUB_CLIENT_SECRET` | unset | GitHub OAuth App client secret. |
-| `APPLE_CLIENT_ID` | unset | Apple service ID (the OAuth client ID). |
-| `APPLE_TEAM_ID` | unset | Apple developer team ID. |
-| `APPLE_KEY_ID` | unset | ID of the Sign in with Apple key. |
-| `APPLE_PRIVATE_KEY` | unset | The key's `.p8` contents, base64, or with `\n` escapes. |
-
-Each provider also accepts `<NAME>_AUTH_URL`, `<NAME>_TOKEN_URL` and
-(`GOOGLE`, `FACEBOOK`, `GITHUB` only) `<NAME>_USERINFO_URL` to point at a
-compatible endpoint.
 
 ### OAuth endpoints
 

@@ -294,22 +294,6 @@ export function configuredWalAutocheckpoint(env: Env = process.env): number {
 }
 
 /**
- * `SQLITE_SYNCHRONOUS`: NORMAL (the default) skips an fsync on every commit;
- * a power loss or OS crash may roll back recent transactions. FULL fsyncs each
- * commit, so an acknowledged write is on disk before the response is sent.
- * Use FULL for payments, ledgers and other financial records.
- */
-export function configuredSqliteSynchronous(env: Env = process.env): SqliteSynchronous {
-  const raw = env.SQLITE_SYNCHRONOUS?.trim()
-  if (!raw) return 'NORMAL'
-  const value = raw.toUpperCase()
-  if (value === 'NORMAL' || value === 'FULL') return value
-  // Silently falling back would tell an operator they have FULL durability
-  // when they do not, so a typo stops startup instead.
-  throw new Error(`SQLITE_SYNCHRONOUS must be NORMAL or FULL, got "${raw}".`)
-}
-
-/**
  * `SQLITE_BUSY_TIMEOUT_MS`: how long a write waits for SQLite's lock. The
  * writer owns that lock, so it can afford to wait; readers must fail fast
  * instead of blocking a public worker's event loop for seconds.

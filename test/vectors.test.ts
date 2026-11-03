@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { postgresSystemIndexStatements, postgresSystemStatements } from '~/db/postgres-schema'
 import { chunkText } from '~/vectors/chunk'
-import { vectorConfigFromEnv } from '~/vectors/config'
+import { defaultVectorsConfig } from '~/vectors/config'
 import { localVector } from '~/vectors/embedder'
 import { TopK } from '~/vectors/rank'
 import { KEY, PROJECT, startServer, type TestServer } from './helpers'
@@ -52,14 +52,19 @@ describe('vector helpers', () => {
     expect(top.values().map((entry) => entry.item)).toEqual([9, 7, 5])
   })
 
-  test('config switches to an OpenAI-compatible embedder only when configured', () => {
-    const local = vectorConfigFromEnv({})
+  test('the default config is local, and the console can override it', () => {
+    const local = defaultVectorsConfig()
     expect(local).toMatchObject({ embedder: 'local', dimension: 384, chatUrl: '' })
-    const remote = vectorConfigFromEnv({ OPENAI_API_KEY: 'sk-test' })
+    const remote = defaultVectorsConfig({
+      embedder: 'http',
+      dimension: 1536,
+      embeddingUrl: 'https://api.openai.com/v1',
+      chatUrl: 'https://api.openai.com/v1/chat/completions',
+    })
     expect(remote).toMatchObject({ embedder: 'http', dimension: 1536 })
     expect(remote.embeddingUrl).toContain('/v1')
     expect(remote.chatUrl).toContain('/chat/completions')
-    expect(vectorConfigFromEnv({ EMBEDDING_URL: 'http://127.0.0.1:11434', EMBEDDING_DIMENSION: '768' })).toMatchObject({
+    expect(defaultVectorsConfig({ embedder: 'http', dimension: 768, embeddingUrl: 'http://127.0.0.1:11434' })).toMatchObject({
       embedder: 'http',
       dimension: 768,
       embeddingUrl: 'http://127.0.0.1:11434',

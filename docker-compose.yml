@@ -91,11 +91,12 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
       # Chromium for HTML rendering (only present when built with WITH_CHROMIUM=true).
-      # The sandbox stays on by default. Set CHROME_NO_SANDBOX=true only when
-      # the host cannot provide user namespaces; rendering untrusted HTML then
-      # turns a renderer bug into a server compromise.
+      # Containers usually cannot start Chromium's sandbox, and the image
+      # removes setuid helpers, so the browser runs without it and the
+      # container is the isolation boundary. Set CHROME_NO_SANDBOX=false only
+      # when this container can provide user namespaces.
       CHROME_PATH: /usr/bin/chromium
-      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-false}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-true}
     ports:
       # Only on loopback: Caddy below is the public entry point. Set
       # BUNWRITE_BIND=0.0.0.0 to expose the app directly instead. With

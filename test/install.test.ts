@@ -67,6 +67,9 @@ describe('compose rendering', () => {
     const compose = renderCompose(composeTemplate, '/srv/bunwrite', 'ghcr.io/example/bunwrite:1.2.3')
     expect(compose).toContain('image: "ghcr.io/example/bunwrite:1.2.3"')
     expect(compose).toContain("'/srv/bunwrite/Caddyfile:/etc/caddy/Caddyfile:ro'")
+    // Chromium cannot start its sandbox in the default container; the image
+    // and installer must keep rendering working out of the box.
+    expect(compose).toContain('CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-true}')
     expect(compose).not.toContain('__BUNWRITE_')
     expect(compose).not.toContain('build:')
   })

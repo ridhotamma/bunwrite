@@ -207,10 +207,9 @@ export class ProjectManager implements ProjectResolver {
         {
           ORG_ID: info.orgId,
           PROJECT_ID: info.id,
-          PROJECT_NAME: info.name,
           SECRET: randomSecret(32),
         },
-        { generateApiKey: false, seedConsoleSmtp: false },
+        { generateApiKey: false, seedConsoleSmtp: false, projectName: info.name },
       )
 
       if (info.orgId !== instance.orgId) {
@@ -243,8 +242,8 @@ export class ProjectManager implements ProjectResolver {
 
   private openProjectDatabase(id: string): Promise<Database> {
     if (this.databaseOptions.backend === 'sqlite') {
-      // Keep the environment's durability default for a new project database;
-      // the default project's console setting must not leak into other projects.
+      // Use the server default for a new project database; the control
+      // project's console setting must not leak into other projects.
       const db = openDb(this.paths(id).database, undefined, undefined, undefined, undefined, this.sqliteSynchronous)
       return Promise.resolve(sqliteDatabase(db))
     }
@@ -336,8 +335,8 @@ export class ProjectManager implements ProjectResolver {
 
       const instance = await this.bootstrap(
         db,
-        { ORG_ID: input.orgId, PROJECT_ID: id, PROJECT_NAME: name, SECRET: randomSecret(32) },
-        { generateApiKey: true, seedConsoleSmtp: false },
+        { ORG_ID: input.orgId, PROJECT_ID: id, SECRET: randomSecret(32) },
+        { generateApiKey: true, seedConsoleSmtp: false, projectName: name },
       )
       const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now() }
       const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, id, this.databaseOptions.backend))

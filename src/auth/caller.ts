@@ -39,7 +39,7 @@ export interface Caller {
   user: UserRow | null
   sessionId: string | null
   roles: Set<string>
-  /** API-key scopes; null means every scope (env keys, console admins, internal calls). */
+  /** API-key scopes; null means every scope (legacy keys, console admins, internal calls). */
   scopes: Set<string> | null
 }
 

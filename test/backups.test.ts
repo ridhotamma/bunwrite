@@ -150,12 +150,15 @@ function makeInstance(root: string) {
 
 function bootstrapDb(path: string, projectId: string): Db {
   const db = openDb(path)
-  bootstrapInstance(db, {
-    ORG_ID: 'org_test',
-    PROJECT_ID: projectId,
-    PROJECT_NAME: `Project ${projectId}`,
-    SECRET: 's'.repeat(40),
-  })
+  bootstrapInstance(
+    db,
+    {
+      ORG_ID: 'org_test',
+      PROJECT_ID: projectId,
+      SECRET: 's'.repeat(40),
+    },
+    { projectName: `Project ${projectId}` },
+  )
   return db
 }
 

@@ -5,7 +5,7 @@ import { Account, Client, Databases, Functions, Storage, Teams, Users } from 'no
 import { createApp, createServices, type Services } from '~/app'
 import { MemoryMailer } from '~/mail/mailer'
 import { vcsGithubFromEnv, type Config } from '~/config'
-import { vectorConfigFromEnv } from '~/vectors/config'
+import { defaultVectorsConfig } from '~/vectors/config'
 import { openDb, type Db } from '~/db/connection'
 import { now } from '~/lib/datetime'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
@@ -158,7 +158,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     instanceBackups: true,
     render: { enabled: false, allowRemote: false },
     cache: { fileMaxAge: 3888000, previewMaxAge: 2592000, previewRetentionDays: 30, publicMaxAge: 0 },
-    vectors: vectorConfigFromEnv({ VECTORS_EMBEDDER: 'local', EMBEDDING_DIMENSION: '64' }),
+    vectors: defaultVectorsConfig({ dimension: 64 }),
     compression: true,
     websocketCompression: true,
     ...over,

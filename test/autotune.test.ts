@@ -7,7 +7,6 @@ import {
   configuredReaderBusyTimeout,
   configuredSqliteCacheMb,
   configuredSqliteMmapMb,
-  configuredSqliteSynchronous,
   configuredWalAutocheckpoint,
   detectResources,
   MB,
@@ -314,14 +313,6 @@ describe('fallback limits', () => {
     expect(configuredWalAutocheckpoint({})).toBe(10000)
     expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '500' })).toBe(500)
     expect(configuredWalAutocheckpoint({ SQLITE_WAL_AUTOCHECKPOINT: '0' })).toBe(0)
-  })
-
-  test('configuredSqliteSynchronous defaults to NORMAL and accepts FULL', () => {
-    expect(configuredSqliteSynchronous({})).toBe('NORMAL')
-    expect(configuredSqliteSynchronous({ SQLITE_SYNCHRONOUS: 'NORMAL' })).toBe('NORMAL')
-    expect(configuredSqliteSynchronous({ SQLITE_SYNCHRONOUS: 'full' })).toBe('FULL')
-    expect(configuredSqliteSynchronous({ SQLITE_SYNCHRONOUS: ' FULL ' })).toBe('FULL')
-    expect(() => configuredSqliteSynchronous({ SQLITE_SYNCHRONOUS: 'OFF' })).toThrow('SQLITE_SYNCHRONOUS must be NORMAL or FULL')
   })
 
   test('busy timeouts are separate for the writer and readers', () => {

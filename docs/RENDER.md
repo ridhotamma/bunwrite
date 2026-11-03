@@ -16,13 +16,15 @@ same thing Puppeteer and Playwright do, without either dependency.
 1. Install Chromium:
    - Docker: the published image includes it. For a local build, set
      `BUNWRITE_WITH_CHROMIUM=true` in `.env`, then
-     `docker compose up -d --build`.
+     `docker compose up -d --build`. The image runs Chromium with
+     `--no-sandbox` by default because the container cannot start its sandbox;
+     the container itself is the isolation boundary.
    - Ubuntu/Debian: `sudo apt install chromium fonts-liberation`
    - Elsewhere: install Chrome or Chromium, or set `CHROME_PATH`.
 2. Open **Console → Settings → HTML rendering**, tick **Enable HTML
-   rendering** and save. `RENDER_ENABLED=true` in `.env` does the same. The
-   page shows whether Chromium was found and has a **Try it** form that renders
-   a sample invoice as PDF, PNG, JPG or WebP.
+   rendering** and save. Rendering is console-only; there is no `.env` switch.
+   The page shows whether Chromium was found and has a **Try it** form that
+   renders a sample invoice as PDF, PNG, JPG or WebP.
 
 One switch covers both endpoints. Turning it off stops Chromium right away.
 
@@ -194,5 +196,7 @@ it cannot reach the network while remote assets are blocked.
   30 bytes per pixel, so a 15 MP AVIF takes about 460 MB on its own.
 - Larger requests get a 400 error before anything is rendered.
 - `CHROME_ARGS` adds Chromium flags. `CHROME_NO_SANDBOX=true` disables
-  Chromium's sandbox; only use it when the host cannot provide user namespaces
-  (the compose file leaves the sandbox on by default).
+  Chromium's sandbox and `false` keeps it. Unset (`auto`) turns it off for root
+  and containers, where user namespaces are usually unavailable. The Docker
+  image and compose default to `true`, because Chromium's sandbox cannot start
+  in a default container; the container is the isolation boundary there.

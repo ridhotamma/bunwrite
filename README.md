@@ -146,8 +146,10 @@ bun run demo            # http://localhost:8790/console
 ### 2. Create the first admin
 
 On a fresh database, open `/console/setup` to create the first admin. The page
-also shows the generated organization ID, project ID, signing secret and initial
-API key; save the project ID and API key for your app.
+also shows the generated organization ID, project ID and initial bootstrap API
+key; save the project ID. The bootstrap key is revoked when you create the
+admin, so after signing in create a project API key in **Console → API** for
+your app.
 
 You can create the admin from the command line instead:
 
@@ -157,7 +159,7 @@ bun run console:admin you@example.com
 
 After the first start, the database is the source of truth. Manage the project,
 API keys, allowed origins, email, OAuth sign-in and other application settings
-in the console. The optional "First start only" values at the end of
+in the console. The optional "First start only" identity values at the end of
 `.env.example` can seed an empty database, then are ignored.
 
 API keys on the **API** page are scoped to the operations an app needs
@@ -165,7 +167,8 @@ API keys on the **API** page are scoped to the operations an app needs
 trusted integration that genuinely needs every API. Console admins can turn on
 **email MFA** on **Security**: sign-in then emails a single-use six-digit code.
 If an admin loses that mailbox, run `bun run console:admin <email> --no-mfa` on
-the server. Environment `API_KEYS` remain full access.
+the server. Project settings, API keys, SMTP and OAuth are managed in the
+console; `.env` is for deployment and infrastructure only.
 
 ### 3. Install the Bunwrite CLI
 
@@ -560,8 +563,9 @@ phone.
 
 Settings live in the database and take effect immediately when saved in the
 console. Each setting shows whether it is customised or still at its default and
-can be reset. The optional first-start values in `.env` are imported once into
-the database; later environment changes are ignored.
+can be reset. The optional first-start identity values in `.env` are imported
+once into the database; later environment changes are ignored. Project settings
+are console-only.
 
 The console index is the organization page: it lists your projects, with tabs
 for the organization members and its settings. Open a project to enter its
@@ -716,9 +720,12 @@ Appwrite's API.
 
 1. The published Docker image includes Chromium. When running from source,
    install Chrome or Chromium, or set `CHROME_PATH`. A local Docker build needs
-   `BUNWRITE_WITH_CHROMIUM=true` in `.env`.
-2. Open **Console → Settings → HTML rendering** and enable it, or set
-   `RENDER_ENABLED=true`.
+   `BUNWRITE_WITH_CHROMIUM=true` in `.env`. Docker runs Chromium with
+   `--no-sandbox` because the container cannot start its sandbox; the
+   container is the isolation boundary. Bare metal keeps the sandbox unless the
+   host cannot provide user namespaces.
+2. Open **Console → Settings → HTML rendering** and enable it. Rendering is a
+   console setting; there is no `.env` switch.
 3. Call the endpoints with an API key from a server or function. Never put the
    key in a browser.
 

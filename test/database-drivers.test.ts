@@ -409,12 +409,15 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
       secret: 'p'.repeat(40),
       instanceKey: `pg-${suffix}`,
     })
-    const instance = await bootstrapInstanceAsync(handle, {
-      ORG_ID: config.orgId,
-      PROJECT_ID: config.projectId,
-      PROJECT_NAME: config.projectName,
-      SECRET: config.secret,
-    })
+    const instance = await bootstrapInstanceAsync(
+      handle,
+      {
+        ORG_ID: config.orgId,
+        PROJECT_ID: config.projectId,
+        SECRET: config.secret,
+      },
+      { projectName: config.projectName },
+    )
     config.projectId = instance.projectId
     config.orgId = instance.orgId
     config.projectName = instance.projectName

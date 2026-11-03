@@ -45,8 +45,12 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-}
+      # Containers usually cannot start Chromium's sandbox, and the image
+      # removes setuid helpers, so the browser runs without it and the
+      # container is the isolation boundary. Set CHROME_NO_SANDBOX=false only
+      # when this container can provide user namespaces.
       CHROME_PATH: /usr/bin/chromium
-      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-false}
+      CHROME_NO_SANDBOX: ${CHROME_NO_SANDBOX:-true}
     ports:
       # Only on loopback by default: Caddy is the public entry point. Set
       # BUNWRITE_BIND=0.0.0.0 to expose Bunwrite directly.

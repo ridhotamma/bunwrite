@@ -101,12 +101,17 @@ WORKDIR /app
 USER bunwrite
 # One HTTP process per CPU, sharing the port with SO_REUSEPORT.
 # Set WORKERS=1 to run a single process.
+# Chromium cannot start its sandbox in a default container (no user
+# namespaces, and the setuid helpers are removed above), so the browser runs
+# with --no-sandbox and the container is the isolation boundary. Set
+# CHROME_NO_SANDBOX=false only when the container can provide user namespaces.
 ENV HOST=0.0.0.0 \
     PORT=8080 \
     DATABASE_PATH=/app/data/bunwrite.sqlite \
     STORAGE_PATH=/app/data/storage \
     BACKUPS_PATH=/app/data/backups \
     CHROME_PATH=/usr/bin/chromium \
+    CHROME_NO_SANDBOX=true \
     WORKERS=auto
 VOLUME ["/app/data"]
 EXPOSE 8080

@@ -45,6 +45,10 @@ Only the latest release and the `main` branch are supported with security fixes.
   private, link-local and metadata destinations are still checked and blocked
   at request time. `RENDER_ALLOW_PRIVATE=true` is the explicit opt-in for a
   local asset server. Header/footer templates may not load remote resources.
-  Run Chromium with its sandbox and without server credentials on the host.
+  On a host, run Chromium with its sandbox and without server credentials. The
+  published Docker image sets `CHROME_NO_SANDBOX=true` because Chromium's
+  sandbox cannot start in a default container; there the container is the
+  isolation boundary. Set `CHROME_NO_SANDBOX=false` only when the container can
+  provide user namespaces.
 - Set `BACKUP_ENCRYPTION_KEY` for backups; without it every archived secret is
   readable by anyone who obtains the file.

@@ -9,15 +9,15 @@ import { parseApiCompat, type ApiCompat } from './lib/compat'
 import type { LogFormat } from './lib/log'
 import type { RenderConfig } from './render/service'
 import { DEFAULT_RUNTIMES, type RuntimesConfig } from './runtimes/install'
-import { configuredBusyTimeout, configuredReaderBusyTimeout, configuredSqliteSynchronous, type SqliteSynchronous } from './system/autotune'
-import { vectorConfigFromEnv, type VectorsConfig } from './vectors/config'
+import { configuredBusyTimeout, configuredReaderBusyTimeout, type SqliteSynchronous } from './system/autotune'
+import { defaultVectorsConfig, type VectorsConfig } from './vectors/config'
 
 export interface SmtpConfig {
   host: string
   port: number
   user?: string
   password?: string
-  /** 'tls' for implicit TLS (port 465); otherwise STARTTLS when offered. */
+  /** `true` for implicit TLS (port 465); otherwise STARTTLS is required. */
   secure: boolean
   senderEmail: string
   senderName: string
@@ -283,9 +283,9 @@ export interface Config {
   databaseSsl?: boolean
   /** Organization grouping for this instance; stored in the database on first start. */
   orgId: string
-  /** Project ID stored in the database; environment values only seed an empty instance. */
+  /** Project ID stored in the database; PROJECT_ID only seeds an empty instance. */
   projectId: string
-  /** Shown in emails as {{project}}; stored in the database. */
+  /** Shown in emails as {{project}}; managed in the console. */
   projectName: string
   /** Programmatic keys (tests); project keys live hashed in `_api_keys`. */
   apiKeys: string[]
@@ -421,56 +421,6 @@ const dnsName = (value: string) =>
     .replace(/[/:].*$/, '')
     .replace(/\.$/, '')
 
-/** SMTP settings from the environment. Used once to seed a new instance. */
-export function smtpFromEnv(env: Record<string, string | undefined>): SmtpConfig | null {
-  if (!env.SMTP_HOST) return null
-  return {
-    host: env.SMTP_HOST,
-    port: Number(env.SMTP_PORT ?? 587),
-    user: env.SMTP_USERNAME || undefined,
-    password: env.SMTP_PASSWORD || undefined,
-    // Accept the spellings operators actually use; anything else is STARTTLS.
-    secure: ['tls', 'ssl', 'smtps', 'true', '1'].includes((env.SMTP_SECURE ?? '').trim().toLowerCase()),
-    senderEmail: env.SMTP_SENDER_EMAIL ?? 'no-reply@example.com',
-    senderName: env.SMTP_SENDER_NAME ?? `${env.PROJECT_NAME ?? 'Bunwrite'} Team`,
-  }
-}
-
-/**
- * OAuth clients from the environment, by provider. Used once to seed a new
- * instance. Apple needs the team, key and .p8 that sign its client secret.
- * Every provider also accepts <NAME>_AUTH_URL, <NAME>_TOKEN_URL and (except
- * Apple) <NAME>_USERINFO_URL overrides, mostly for tests.
- */
-export function oauthFromEnv(env: Record<string, string | undefined>): Partial<Record<OAuthProviderId, OAuthConfig>> {
-  const urls = (prefix: string, userinfo = true) => ({
-    ...(env[`${prefix}_AUTH_URL`] ? { authUrl: env[`${prefix}_AUTH_URL`] } : {}),
-    ...(env[`${prefix}_TOKEN_URL`] ? { tokenUrl: env[`${prefix}_TOKEN_URL`] } : {}),
-    ...(userinfo && env[`${prefix}_USERINFO_URL`] ? { userinfoUrl: env[`${prefix}_USERINFO_URL`] } : {}),
-  })
-  const providers: Partial<Record<OAuthProviderId, OAuthConfig>> = {}
-  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-    providers.google = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, ...urls('GOOGLE') }
-  }
-  if (env.FACEBOOK_CLIENT_ID && env.FACEBOOK_CLIENT_SECRET) {
-    providers.facebook = { clientId: env.FACEBOOK_CLIENT_ID, clientSecret: env.FACEBOOK_CLIENT_SECRET, ...urls('FACEBOOK') }
-  }
-  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
-    providers.github = { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET, ...urls('GITHUB') }
-  }
-  if (env.APPLE_CLIENT_ID && env.APPLE_TEAM_ID && env.APPLE_KEY_ID && env.APPLE_PRIVATE_KEY) {
-    providers.apple = {
-      clientId: env.APPLE_CLIENT_ID,
-      clientSecret: '',
-      teamId: env.APPLE_TEAM_ID,
-      keyId: env.APPLE_KEY_ID,
-      privateKey: pemFrom(env.APPLE_PRIVATE_KEY),
-      ...urls('APPLE', false),
-    }
-  }
-  return providers
-}
-
 /** `DB_DRIVER`/`DATABASE_URL` and the network-backend options. */
 function databaseConfig(
   env: Record<string, string | undefined>,
@@ -489,9 +439,10 @@ function databaseConfig(
 }
 
 /**
- * Server configuration. Project identity and settings are not read from the
- * environment here: `bootstrapInstance` seeds them into the database once, and
- * `index.ts` fills the project fields before services are created.
+ * Server configuration. Project settings are not read from the environment:
+ * the console stores them in the database. Only the instance identity
+ * (ORG_ID, PROJECT_ID, SECRET) is seeded once by `bootstrapInstance`, and
+ * `index.ts` fills those fields before services are created.
  */
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080)
@@ -531,7 +482,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     httpIdleTimeout: Math.min(255, Math.max(0, idleTimeout)),
     busyTimeoutMs: configuredBusyTimeout(env),
     readerBusyTimeoutMs: configuredReaderBusyTimeout(env),
-    sqliteSynchronous: configuredSqliteSynchronous(env),
+    // Default for new projects; each project can override it in the console.
+    sqliteSynchronous: 'NORMAL',
     cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
     apiCompat: parseApiCompat(env.API_COMPAT),
@@ -590,14 +542,10 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     backupsPath: env.BACKUPS_PATH ?? './data/backups',
     instanceBackups: true,
     backupEncryptionKey: env.BACKUP_ENCRYPTION_KEY || undefined,
-    render: { enabled: env.RENDER_ENABLED === 'true', allowRemote: env.RENDER_ALLOW_REMOTE === 'true' },
-    cache: {
-      fileMaxAge: wholeNumber(env.CACHE_FILES_MAX_AGE, DEFAULT_CACHE.fileMaxAge),
-      previewMaxAge: wholeNumber(env.CACHE_PREVIEWS_MAX_AGE, DEFAULT_CACHE.previewMaxAge),
-      previewRetentionDays: wholeNumber(env.PREVIEW_CACHE_DAYS, DEFAULT_CACHE.previewRetentionDays),
-      publicMaxAge: wholeNumber(env.CACHE_PUBLIC_MAX_AGE, DEFAULT_CACHE.publicMaxAge),
-    },
-    vectors: vectorConfigFromEnv(env),
+    // Console-managed defaults; there are no environment variables for these.
+    render: { enabled: false, allowRemote: false },
+    cache: { ...DEFAULT_CACHE },
+    vectors: defaultVectorsConfig(),
     compression: env.COMPRESSION !== 'false',
     websocketCompression: env.WEBSOCKET_COMPRESSION !== 'false',
     trustedProxies: env.TRUSTED_PROXIES || undefined,

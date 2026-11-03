@@ -1,7 +1,7 @@
 /**
- * Scopes an API key may carry. A key without scopes (legacy console keys and
- * env `API_KEYS`) keeps full access; a scoped key may only call the operations
- * whose scope it holds. Names follow the `requireKey()` calls in the routes.
+ * Scopes an API key may carry. A key without scopes (legacy console keys)
+ * keeps full access; a scoped key may only call the operations whose scope it
+ * holds. Names follow the `requireKey()` calls in the routes.
  */
 import { err } from '~/lib/errors'
 

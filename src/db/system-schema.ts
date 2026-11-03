@@ -681,14 +681,14 @@ export const consoleSessions = sqliteTable('_console_sessions', {
   createdAt: text('created_at').notNull(),
 })
 
-/** Settings edited in the console; they override the matching env vars. */
+/** Settings edited in the console; they override the built-in defaults. */
 export const settings = sqliteTable('_settings', {
   key: text('key').primaryKey(),
   value: json<unknown>('value').notNull(),
   updatedAt: text('updated_at').notNull(),
 })
 
-/** API keys made in the console (env API_KEYS keep working too). Only the sha256 is stored. */
+/** API keys made in the console. Only the sha256 is stored. */
 export const apiKeys = sqliteTable('_api_keys', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),
   id: text('id').notNull().unique(),
@@ -696,7 +696,7 @@ export const apiKeys = sqliteTable('_api_keys', {
   secretHash: text('secret_hash').notNull().unique(),
   /** First characters, so a key can be recognised in the list. */
   hint: text('hint').notNull(),
-  /** Allowed scopes; null means full access (legacy keys and env API_KEYS). */
+  /** Allowed scopes; null means full access (legacy keys). */
   scopes: json<string[]>('scopes'),
   expire: text('expire'),
   accessedAt: text('accessed_at'),

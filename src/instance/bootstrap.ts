@@ -3,10 +3,10 @@
  * signing secret and an initial API key when they are not supplied, and stores
  * them in `_settings` so backups include them.
  *
- * Precedence: stored value > environment seed > generated value. Environment
- * project settings are imported once into `_settings` / `_api_keys` (the
- * "env_seed" marker records that), then ignored: the database is the source of
- * truth and later changes belong in the console.
+ * Precedence: stored value > environment seed > generated value. Only the
+ * instance identity (organisation ID, project ID and signing secret) can be
+ * seeded from the environment. Project settings, API keys, SMTP and OAuth live
+ * in the console and are never read from `.env`.
  *
  * The decision logic is shared by both entries at the bottom: `bootstrapInstance`
  * keeps the synchronous SQLite boot path, `bootstrapInstanceAsync` runs the same
@@ -15,7 +15,6 @@
 import type { Database } from 'bun:sqlite'
 
 import type { Config } from '~/config'
-import { list, OAUTH_PROVIDER_IDS, oauthFromEnv, smtpFromEnv } from '~/config'
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { randomSecret, sha256, uniqueId } from '~/lib/ids'
@@ -24,7 +23,6 @@ const INSTANCE_KEY = 'instance'
 const SEED_KEY = 'env_seed'
 const SEED_VERSION = 1
 const DEFAULT_KEY_NAME = 'Default key'
-const SEEDED_KEY_NAME = 'Imported from env'
 const DEFAULT_PROJECT_NAME = 'Bunwrite'
 
 export interface InstanceInfo {
@@ -57,6 +55,8 @@ export interface BootstrapOptions {
   generateApiKey?: boolean
   /** Set false for project databases: the console SMTP belongs to the control instance. */
   seedConsoleSmtp?: boolean
+  /** Name for a newly created instance; the console can change it later. */
+  projectName?: string
 }
 
 interface SeedInfo {
@@ -66,9 +66,6 @@ interface SeedInfo {
 
 interface ProjectSettingsSeed {
   projectName?: string
-  allowedOrigins?: string[]
-  sessionDuration?: number
-  sessionsLimit?: number
 }
 
 interface Snapshot {
@@ -153,37 +150,12 @@ function instanceOf(raw: string | undefined): InstanceInfo | null {
   }
 }
 
-function validPositive(value: number | undefined): value is number {
-  return value !== undefined && Number.isFinite(value) && value > 0
-}
-
-function validNonNegative(value: number | undefined): value is number {
-  return value !== undefined && Number.isFinite(value) && value >= 0
-}
-
-/** Project env values that are set after the initial seed but no longer apply. */
-function ignoredEnvironment(
-  env: Record<string, string | undefined>,
-  info: InstanceInfo,
-  projectName: string,
-): string[] {
+/** Identity env values that are set after the initial seed but no longer apply. */
+function ignoredEnvironment(env: Record<string, string | undefined>, info: InstanceInfo): string[] {
   const ignored: string[] = []
   if (env.ORG_ID?.trim() && env.ORG_ID.trim() !== info.orgId) ignored.push('ORG_ID')
   if (env.PROJECT_ID?.trim() && env.PROJECT_ID.trim() !== info.projectId) ignored.push('PROJECT_ID')
   if (env.SECRET?.trim() && env.SECRET.trim() !== info.secret) ignored.push('SECRET')
-  if (env.PROJECT_NAME?.trim() && env.PROJECT_NAME.trim() !== projectName) ignored.push('PROJECT_NAME')
-  if (list(env.API_KEYS).length) ignored.push('API_KEYS')
-  if (env.ALLOWED_ORIGINS !== undefined && list(env.ALLOWED_ORIGINS).length) ignored.push('ALLOWED_ORIGINS')
-  if (env.SESSION_DURATION?.trim()) ignored.push('SESSION_DURATION')
-  if (env.SESSIONS_LIMIT?.trim()) ignored.push('SESSIONS_LIMIT')
-  if (env.SMTP_HOST) ignored.push('SMTP_*')
-  for (const id of OAUTH_PROVIDER_IDS) {
-    const prefix = id.toUpperCase()
-    const names = [`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`, `${prefix}_AUTH_URL`, `${prefix}_TOKEN_URL`, `${prefix}_USERINFO_URL`]
-    if (id === 'apple') names.push('APPLE_TEAM_ID', 'APPLE_KEY_ID', 'APPLE_PRIVATE_KEY')
-    if (names.some((name) => env[name])) ignored.push(`${prefix}_*`)
-  }
-  if (env.FUNCTIONS_SKIP_SCHEDULES !== undefined && list(env.FUNCTIONS_SKIP_SCHEDULES).length) ignored.push('FUNCTIONS_SKIP_SCHEDULES')
   return ignored
 }
 
@@ -222,47 +194,12 @@ function planBootstrap(
     apiKeys.push({ hash, name, hint: key.slice(0, 16) })
   }
 
-  /** Import old env API keys once, so they appear in the console and can be revoked. */
-  const importEnvApiKeys = (keys: string[]): void => {
-    for (const key of keys) ensureApiKeyRow(key, SEEDED_KEY_NAME)
-  }
-
   /**
-   * Copy project settings from the environment into `_settings` the first time
-   * this code sees the database. Values already set in the console win, so an
-   * upgrade does not overwrite them.
+   * Mark that the one-time environment seeding was considered. Project
+   * settings are console-only; the marker lets a later boot report identity
+   * variables that no longer apply.
    */
-  const seedProjectSettings = (projectName: string): void => {
-    const project = readSetting<ProjectSettingsSeed>('project')
-    const origins = env.ALLOWED_ORIGINS !== undefined ? list(env.ALLOWED_ORIGINS) : undefined
-    const duration = env.SESSION_DURATION !== undefined ? Number(env.SESSION_DURATION) : undefined
-    const limit = env.SESSIONS_LIMIT !== undefined ? Number(env.SESSIONS_LIMIT) : undefined
-    if (origins !== undefined || validPositive(duration) || validNonNegative(limit)) {
-      writeSetting('project', {
-        projectName: project?.projectName || projectName,
-        allowedOrigins: project?.allowedOrigins ?? origins ?? [],
-        sessionDuration: project?.sessionDuration ?? (validPositive(duration) ? duration : 31536000),
-        sessionsLimit: project?.sessionsLimit ?? (validNonNegative(limit) ? limit : 10),
-      } satisfies ProjectSettingsSeed)
-    }
-
-    const smtp = smtpFromEnv(env)
-    if (smtp && !readSetting<Config['smtp']>('smtp')) writeSetting('smtp', smtp)
-    if (smtp && options.seedConsoleSmtp !== false && !readSetting<Config['consoleSmtp']>('consoleSmtp')) writeSetting('consoleSmtp', smtp)
-
-    const providers = oauthFromEnv(env)
-    for (const id of OAUTH_PROVIDER_IDS) {
-      const provider = providers[id]
-      if (provider && !readSetting(id)) writeSetting(id, provider)
-    }
-
-    if (env.FUNCTIONS_SKIP_SCHEDULES !== undefined) {
-      const functions = readSetting<{ skipSchedules?: string[]; functionsDir?: string }>('functions')
-      if (!functions?.skipSchedules) writeSetting('functions', { ...functions, skipSchedules: list(env.FUNCTIONS_SKIP_SCHEDULES) })
-    }
-
-    if (env.API_KEYS !== undefined) importEnvApiKeys(list(env.API_KEYS))
-
+  const seedProjectSettings = (): void => {
     writeSetting(SEED_KEY, { version: SEED_VERSION, at: now() } satisfies SeedInfo)
   }
 
@@ -275,7 +212,7 @@ function planBootstrap(
   const envOrg = env.ORG_ID?.trim()
   const envProject = env.PROJECT_ID?.trim()
   const envSecret = env.SECRET?.trim()
-  const envName = env.PROJECT_NAME?.trim()
+  const nameHint = options.projectName?.trim()
 
   // Stored values win. The environment only fills fields that are missing,
   // which is how a new database (and a legacy partial record) gets seeded.
@@ -297,12 +234,12 @@ function planBootstrap(
   if (info.secret.length < 32) throw new Error('SECRET must be at least 32 characters')
 
   if (!info.projectName) {
-    info.projectName = storedProjectName(info.projectId) || envName || DEFAULT_PROJECT_NAME
+    info.projectName = storedProjectName(info.projectId) || nameHint || DEFAULT_PROJECT_NAME
     created = true
   }
 
   const seeded = readSetting<SeedInfo>(SEED_KEY) !== null
-  if (!seeded) seedProjectSettings(info.projectName)
+  if (!seeded) seedProjectSettings()
   // Before the console SMTP was split from project SMTP, both used the `smtp`
   // setting. Copy the old value once so existing MFA and sign-in codes keep
   // working while the default project can now change its own SMTP.
@@ -318,9 +255,8 @@ function planBootstrap(
   }
 
   const setupComplete = snapshot.adminCount > 0
-  const envKeysSeeded = !seeded && env.API_KEYS !== undefined && list(env.API_KEYS).length > 0
   let apiKey: string | undefined
-  if (!envKeysSeeded && !setupComplete && generateApiKey) {
+  if (!setupComplete && generateApiKey) {
     apiKey = info.apiKey || generateApiKeyValue()
     if (!info.apiKey) {
       info.apiKey = apiKey
@@ -346,7 +282,7 @@ function planBootstrap(
       apiKey,
       generated,
       created,
-      ignoredEnv: seeded ? ignoredEnvironment(env, info, configuredName) : [],
+      ignoredEnv: seeded ? ignoredEnvironment(env, info) : [],
     },
     settings: new Map([...dirty].map((key) => [key, settings.get(key)!])),
     apiKeys,

@@ -59,17 +59,17 @@ export async function signInPage(auth: ConsoleAuth, options: SignInOptions): Pro
                 ${
                   options.instance.apiKey
                     ? html`<label
-                          >API key<input
+                          >Bootstrap API key<input
                             id="instance-api-key"
                             class="mono"
                             readonly
                             autocomplete="off"
                             spellcheck="false"
                             value="${options.instance.apiKey}"
-                          /><small>Copy it now; it is not shown after you create the admin.</small></label
+                          /><small>Shown once. It is revoked when you create the admin; create a project API key in Console → API after signing in.</small></label
                         >
                         <button type="button" data-copy-target="#instance-api-key">Copy API key</button>`
-                    : html`<p class="hint" style="margin:0">API keys were imported from the environment and are managed on the API page.</p>`
+                    : html`<p class="hint" style="margin:0">API keys are managed on the API page.</p>`
                 }
               </div>`
             : ''

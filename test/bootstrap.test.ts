@@ -32,6 +32,13 @@ describe('instance bootstrap', () => {
       GOOGLE_CLIENT_ID: 'google-id',
       GOOGLE_CLIENT_SECRET: 'google-secret',
       FUNCTIONS_SKIP_SCHEDULES: 'cron',
+      RENDER_ENABLED: 'true',
+      RENDER_ALLOW_REMOTE: 'true',
+      CACHE_FILES_MAX_AGE: '60',
+      CACHE_PUBLIC_MAX_AGE: '60',
+      SQLITE_SYNCHRONOUS: 'FULL',
+      VECTORS_EMBEDDER: 'http',
+      OPENAI_API_KEY: 'sk-test',
     })
     expect([config.projectId, config.orgId, config.projectName, config.apiKeys, config.secret]).toEqual(['', '', 'Bunwrite', [], ''])
     expect([config.allowedOrigins, config.sessionDuration, config.sessionsLimit, config.smtp, config.consoleSmtp, config.oauth, config.skipSchedules]).toEqual([
@@ -43,6 +50,11 @@ describe('instance bootstrap', () => {
       {},
       [],
     ])
+    // Console-managed settings have no environment defaults.
+    expect(config.render).toEqual({ enabled: false, allowRemote: false })
+    expect(config.cache).toMatchObject({ fileMaxAge: 3888000, publicMaxAge: 0 })
+    expect(config.sqliteSynchronous).toBe('NORMAL')
+    expect(config.vectors).toMatchObject({ embedder: 'local', dimension: 384 })
   })
 
   test('DOMAIN supplies the public endpoint unless PUBLIC_ENDPOINT is set', () => {
@@ -122,7 +134,7 @@ describe('instance bootstrap', () => {
     }
   })
 
-  test('seeds a new record from the environment, importing API keys once', () => {
+  test('seeds only the instance identity from the environment', () => {
     const db = openDb(':memory:')
     try {
       const result = bootstrapInstance(db, {
@@ -134,22 +146,21 @@ describe('instance bootstrap', () => {
       })
       expect(result.orgId).toBe('org_custom')
       expect(result.projectId).toBe('env-project')
-      expect(result.projectName).toBe('Env Project')
+      expect(result.projectName).toBe('Bunwrite')
       expect(result.secret).toBe('z'.repeat(40))
-      expect(result.apiKey).toBeUndefined()
-      expect(result.generated).toBe(false)
+      expect(result.apiKey).toStartWith('standard_')
+      // The API key is generated because API_KEYS is no longer an env seed.
+      expect(result.generated).toBe(true)
       expect(result.created).toBe(true)
       expect(result.ignoredEnv).toEqual([])
       expect(instanceRecord(db)).toMatchObject({
         orgId: 'org_custom',
         projectId: 'env-project',
-        projectName: 'Env Project',
+        projectName: 'Bunwrite',
         secret: 'z'.repeat(40),
       })
-      expect(db.sqlite.query('SELECT name, hint FROM _api_keys WHERE secret_hash = ?').get(sha256('standard_env'))).toEqual({
-        name: 'Imported from env',
-        hint: 'standard_env'.slice(0, 16),
-      })
+      // API_KEYS is a console setting now, not an environment import.
+      expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256('standard_env'))).toBeNull()
 
       // Once stored, a bad env value is ignored rather than validated.
       const ignored = bootstrapInstance(db, { SECRET: 'too-short' })
@@ -184,7 +195,7 @@ describe('instance bootstrap', () => {
         first.secret,
         first.apiKey,
       ])
-      expect(override.ignoredEnv).toEqual(expect.arrayContaining(['ORG_ID', 'PROJECT_ID', 'SECRET', 'API_KEYS']))
+      expect(override.ignoredEnv).toEqual(expect.arrayContaining(['ORG_ID', 'PROJECT_ID', 'SECRET']))
       expect(instanceRecord(db)).toMatchObject({ orgId: first.orgId, projectId: first.projectId, secret: first.secret })
       expect(db.sqlite.query('SELECT id FROM _api_keys WHERE secret_hash = ?').get(sha256('standard_custom'))).toBeNull()
 
@@ -196,10 +207,10 @@ describe('instance bootstrap', () => {
     }
   })
 
-  test('imports project settings from the environment once', () => {
+  test('project settings stay console-only', () => {
     const db = openDb(':memory:')
     try {
-      const first = bootstrapInstance(db, {
+      const result = bootstrapInstance(db, {
         PROJECT_NAME: 'Toko Saya',
         ALLOWED_ORIGINS: 'shop.example.com, localhost',
         SESSION_DURATION: '2592000',
@@ -222,58 +233,15 @@ describe('instance bootstrap', () => {
         APPLE_PRIVATE_KEY: 'p8-key',
         FUNCTIONS_SKIP_SCHEDULES: 'cron,digest',
       })
-      expect(first.projectName).toBe('Toko Saya')
-      expect(setting(db, 'project')).toEqual({
-        projectName: 'Toko Saya',
-        allowedOrigins: ['shop.example.com', 'localhost'],
-        sessionDuration: 2592000,
-        sessionsLimit: 3,
-      })
-      expect(setting<Record<string, unknown>>(db, 'smtp')).toMatchObject({
-        host: 'smtp.example.com',
-        port: 465,
-        user: 'mailer',
-        password: 'secret',
-        secure: true,
-        senderEmail: 'shop@example.com',
-      })
-      expect(setting<Record<string, unknown>>(db, 'consoleSmtp')).toMatchObject({ host: 'smtp.example.com' })
-      expect(setting<Record<string, unknown>>(db, 'google')).toMatchObject({ clientId: 'google-id', clientSecret: 'google-secret' })
-      expect(setting<Record<string, unknown>>(db, 'facebook')).toMatchObject({ clientId: 'facebook-id', clientSecret: 'facebook-secret' })
-      expect(setting<Record<string, unknown>>(db, 'github')).toMatchObject({ clientId: 'github-id', clientSecret: 'github-secret' })
-      expect(setting<Record<string, unknown>>(db, 'apple')).toMatchObject({
-        clientId: 'apple-id',
-        teamId: 'team-id',
-        keyId: 'key-id',
-        privateKey: 'p8-key',
-      })
-      expect(setting(db, 'functions')).toEqual({ skipSchedules: ['cron', 'digest'] })
-
-      // A later environment change does not rewrite console-managed settings.
-      const again = bootstrapInstance(db, {
-        PROJECT_NAME: 'Another name',
-        ALLOWED_ORIGINS: 'other.example.com',
-        SESSION_DURATION: '60',
-        SESSIONS_LIMIT: '1',
-        SMTP_HOST: 'other.example.com',
-        GOOGLE_CLIENT_ID: 'other-id',
-        GOOGLE_CLIENT_SECRET: 'other-secret',
-        FACEBOOK_CLIENT_ID: 'other-facebook',
-        FACEBOOK_CLIENT_SECRET: 'other-facebook-secret',
-        GITHUB_CLIENT_ID: 'other-github',
-        GITHUB_CLIENT_SECRET: 'other-github-secret',
-        APPLE_CLIENT_ID: 'other-apple',
-        APPLE_TEAM_ID: 'other-team',
-        APPLE_KEY_ID: 'other-key',
-        APPLE_PRIVATE_KEY: 'other-p8',
-      })
-      expect(again.projectName).toBe('Toko Saya')
-      expect(again.ignoredEnv).toEqual(
-        expect.arrayContaining(['PROJECT_NAME', 'ALLOWED_ORIGINS', 'SESSION_DURATION', 'SESSIONS_LIMIT', 'SMTP_*', 'GOOGLE_*', 'FACEBOOK_*', 'GITHUB_*', 'APPLE_*']),
-      )
-      expect(setting<Record<string, unknown>>(db, 'project')).toMatchObject({ projectName: 'Toko Saya', allowedOrigins: ['shop.example.com', 'localhost'] })
-      expect(setting<Record<string, unknown>>(db, 'smtp')).toMatchObject({ host: 'smtp.example.com' })
-      expect(setting<Record<string, unknown>>(db, 'github')).toMatchObject({ clientId: 'github-id' })
+      expect(result.projectName).toBe('Bunwrite')
+      expect(setting(db, 'project')).toBeNull()
+      expect(setting(db, 'smtp')).toBeNull()
+      expect(setting(db, 'consoleSmtp')).toBeNull()
+      expect(setting(db, 'google')).toBeNull()
+      expect(setting(db, 'facebook')).toBeNull()
+      expect(setting(db, 'github')).toBeNull()
+      expect(setting(db, 'apple')).toBeNull()
+      expect(setting(db, 'functions')).toBeNull()
     } finally {
       db.sqlite.close()
     }
@@ -321,7 +289,8 @@ describe('instance bootstrap', () => {
       expect(page).toContain('org_setup')
       expect(page).toContain(PROJECT)
       expect(page).toContain('standard_setup')
-      expect(page).toContain('not shown after you create the admin')
+      expect(page).toContain('It is revoked when you create the admin')
+      expect(page).toContain('create a project API key in Console → API')
     } finally {
       server.stop()
     }

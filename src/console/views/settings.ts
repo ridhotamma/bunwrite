@@ -326,7 +326,7 @@ function vectorsCards(ctx: ConsoleContext): Html {
   )}`
 }
 
-/** Browser cache choices; a value set in env that is not listed shows as its own option. */
+/** Browser cache choices; a saved value that is not listed shows as its own option. */
 export const CACHE_CHOICES: [number, string][] = [
   [0, 'Off, check every time'],
   [3600, '1 hour'],
@@ -355,12 +355,17 @@ function cacheCards(ctx: ConsoleContext): Html {
     'cache',
     'Cache lifetimes',
     'cache',
-    'How long browsers reuse files and image previews before asking again, and how long generated previews stay on disk.',
+    'How long browsers and shared caches reuse files, image previews and public document responses, and how long generated previews stay on disk.',
     html` <form method="post" action="${SETTINGS}/cache">
       <div class="fields">
         <label>File views and downloads${cacheSelect('fileMaxAge', c.fileMaxAge)}</label>
         <label>Image previews${cacheSelect('previewMaxAge', c.previewMaxAge)}</label>
       </div>
+      <label
+        >Public document responses${cacheSelect('publicMaxAge', c.publicMaxAge)}<small
+          >Only for collections readable by anyone. 0 keeps every document response private.</small
+        ></label
+      >
       <label
         >Keep generated previews (days)<input name="previewRetentionDays" type="number" min="0" max="3650" value="${c.previewRetentionDays}" /><small
           >Older previews are deleted and made again on the next request. 0 keeps them until the file is deleted.</small
@@ -478,7 +483,7 @@ function renderCards(ctx: ConsoleContext): Html {
         ><input type="checkbox" name="allowRemote" ${c.allowRemote ? 'checked' : ''} /><span>Allow remote images, fonts and stylesheets</span
         ><small>Off blocks every http(s) request; embed assets as data: URLs instead.</small></label
       >
-      <p class="help">${chrome}</p>
+      <p class="help">${chrome}${status.noSandbox ? ' · sandbox off' : ''}</p>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`,
   )}

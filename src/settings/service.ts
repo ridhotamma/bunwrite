@@ -1,7 +1,7 @@
 /**
  * Project settings edited in the console. Stored in `_settings` and applied
  * over the Config in place, so the next request sees them. Values left unset
- * use the defaults captured when the service starts; API keys live in
+ * use the built-in defaults captured when the service starts; API keys live in
  * `_api_keys`.
  */
 import type { BackupsConfig, CacheConfig, Config, OAuthConfig, OAuthProviderId, S3Config, SmtpConfig } from '~/config'
@@ -74,7 +74,7 @@ export interface ApiKeyRow {
 }
 
 export class SettingsService {
-  /** Env values, kept so a console setting can be cleared back to them. */
+  /** Built-in defaults, kept so a console setting can be cleared back to them. */
   private readonly defaults: Pick<
     Config,
     | 'projectName'
@@ -145,7 +145,7 @@ export class SettingsService {
       try {
         this.stored.set(row.key as SettingKey, JSON.parse(row.value))
       } catch {
-        // A corrupt row falls back to the environment default.
+        // A corrupt row falls back to the built-in default.
       }
     }
   }
@@ -161,7 +161,7 @@ export class SettingsService {
     this.refreshAll()
   }
 
-  /** Whether a setting comes from the console rather than env. */
+  /** Whether a setting comes from the console rather than the built-in default. */
   overridden(key: SettingKey): boolean {
     return this.stored.has(key)
   }
@@ -250,7 +250,7 @@ export class SettingsService {
 
   /**
    * OAuth provider credentials: stored values win, provider defaults fill
-   * URLs, and a `disabled` marker turns the provider off even if env set it.
+   * URLs, and a `disabled` marker turns the provider off.
    */
   private applyOAuth(id: OAuthProviderId): void {
     const meta = OAUTH_PROVIDERS[id]
@@ -287,7 +287,7 @@ export class SettingsService {
     this.emit(key)
   }
 
-  /** Forget the console value and go back to env. */
+  /** Forget the console value and go back to the built-in default. */
   async reset(key: SettingKey): Promise<void> {
     await this.db.driver.run('DELETE FROM _settings WHERE key = ?', [key])
     this.stored.delete(key)
