@@ -14,7 +14,10 @@ import { tmpdir } from 'node:os'
 import { dataDirOf, projectFolder, projectPaths } from '~/projects/paths'
 
 export interface FailoverOptions {
+  /** The control database path. */
   databasePath: string
+  /** DATABASE_PATH, where the original first project still lives. */
+  legacyDatabasePath?: string
   /** Base replica URL, for example s3://bucket/bunwrite. */
   replicaUrl: string
   /** Litestream executable; defaults to `litestream`. */
@@ -48,21 +51,41 @@ export interface FailoverResult {
 
 const trimSlash = (value: string) => value.replace(/\/+$/, '')
 
-export const remoteControlUrl = (replicaUrl: string, databasePath: string): string =>
-  `${trimSlash(replicaUrl)}/${basename(databasePath)}`
+export const remoteControlUrl = (replicaUrl: string, databasePath: string): string => `${trimSlash(replicaUrl)}/${basename(databasePath)}`
 
-export const remoteProjectUrl = (replicaUrl: string, id: string): string =>
-  `${trimSlash(replicaUrl)}/projects/${projectFolder(id)}/bunwrite.sqlite`
+export const remoteProjectUrl = (replicaUrl: string, id: string): string => `${trimSlash(replicaUrl)}/projects/${projectFolder(id)}/bunwrite.sqlite`
 
-function projectIds(databasePath: string, log: (line: string) => void): string[] {
+interface RestorableProject {
+  id: string
+  legacy: boolean
+}
+
+function projectRows(databasePath: string, log: (line: string) => void): RestorableProject[] {
   if (!existsSync(databasePath)) return []
   try {
     // Open read-write: a WAL database needs a writable -shm file even for a
     // read-only query, and Litestream restores the database in WAL mode.
     const db = new Database(databasePath)
     try {
-      const rows = db.query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq').all()
-      return rows.map((row) => row.id)
+      const columns = new Set(
+        db
+          .query<{ name: string }, []>('PRAGMA table_info(`_projects`)')
+          .all()
+          .map((row) => row.name),
+      )
+      const legacy = columns.has('legacy') ? 'legacy' : '0 AS legacy'
+      let controlId = ''
+      try {
+        const instance = db.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'instance'").get()
+        controlId = instance ? ((JSON.parse(instance.value) as { projectId?: string }).projectId ?? '') : ''
+      } catch {
+        /* an older control fixture may not have _settings yet */
+      }
+      return db
+        .query<{ id: string; legacy: number }, []>(`SELECT id, ${legacy} FROM _projects ORDER BY seq`)
+        .all()
+        .filter((row) => controlId === 'console' || row.id !== controlId)
+        .map((row) => ({ id: row.id, legacy: Boolean(row.legacy) }))
     } finally {
       db.close()
     }
@@ -81,15 +104,7 @@ let restoreConfigCounter = 0
  * not need to exist in the main replication config (project DBs are discovered
  * by directory there).
  */
-function spawnRestore(
-  bin: string,
-  output: string,
-  localPath: string,
-  remote: string,
-  endpoint?: string,
-  region?: string,
-  forcePathStyle?: boolean,
-): void {
+function spawnRestore(bin: string, output: string, localPath: string, remote: string, endpoint?: string, region?: string, forcePathStyle?: boolean): void {
   let tempConfig: string | undefined
   let args: string[]
   if (endpoint) {
@@ -169,16 +184,13 @@ function restoreOne(
   } catch (error) {
     rmSync(temp, { force: true })
     if (options.allowEmpty) {
-      options.log(
-        `failover: no restore point for ${target}${id ? ` ${id}` : ''} (${remote}); continuing because allowEmpty is set`,
-      )
+      options.log(`failover: no restore point for ${target}${id ? ` ${id}` : ''} (${remote}); continuing because allowEmpty is set`)
       outcome.result = 'missing'
       return outcome
     }
-    throw new Error(
-      `failover: could not restore ${target}${id ? ` ${id}` : ''} from ${remote}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    )
+    throw new Error(`failover: could not restore ${target}${id ? ` ${id}` : ''} from ${remote}: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error,
+    })
   }
 }
 
@@ -197,14 +209,13 @@ export function runFailover(options: FailoverOptions): FailoverResult {
   const bin = options.litestreamBin ?? process.env.LITESTREAM_BIN ?? 'litestream'
   const endpoint = options.endpoint ?? (process.env.LITESTREAM_S3_ENDPOINT || undefined)
   const region = options.region ?? (process.env.LITESTREAM_S3_REGION || undefined)
-  const forcePathStyle =
-    options.forcePathStyle ?? ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_S3_FORCE_PATH_STYLE ?? '').toLowerCase())
+  const forcePathStyle = options.forcePathStyle ?? ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_S3_FORCE_PATH_STYLE ?? '').toLowerCase())
   const allowEmpty = options.allowEmpty ?? false
   const force = options.force ?? false
   const dryRun = options.dryRun ?? false
-  const dataDir = dataDirOf(options.databasePath)
+  const dataDir = dataDirOf(options.legacyDatabasePath ?? options.databasePath)
   const outcomes: RestoreOutcome[] = []
-  const before = projectIds(options.databasePath, log)
+  const before = projectRows(options.databasePath, log)
 
   const control = restoreOne(
     { allowEmpty, force, dryRun, bin, endpoint, region, forcePathStyle, log },
@@ -219,10 +230,12 @@ export function runFailover(options: FailoverOptions): FailoverResult {
     return { outcomes, projects: [] }
   }
 
-  const after = projectIds(options.databasePath, log)
-  const projects = [...new Set([...before, ...after])]
-  for (const id of projects) {
-    const path = projectPaths(dataDir, id).database
+  const after = projectRows(options.databasePath, log)
+  const merged = new Map<string, RestorableProject>()
+  for (const row of [...before, ...after]) merged.set(row.id, row)
+  const projects = [...merged.values()]
+  for (const project of projects) {
+    const path = project.legacy && options.legacyDatabasePath ? options.legacyDatabasePath : projectPaths(dataDir, project.id).database
     outcomes.push(
       restoreOne(
         // A project listed by a restored control database should have a
@@ -231,10 +244,10 @@ export function runFailover(options: FailoverOptions): FailoverResult {
         { allowEmpty: false, force, dryRun, bin, endpoint, region, forcePathStyle, log },
         'project',
         path,
-        remoteProjectUrl(options.replicaUrl, id),
-        id,
+        remoteProjectUrl(options.replicaUrl, project.id),
+        project.id,
       ),
     )
   }
-  return { outcomes, projects }
+  return { outcomes, projects: projects.map((project) => project.id) }
 }

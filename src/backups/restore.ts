@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import type { Config } from '~/config'
+import { CONTROL_PROJECT_ID } from '~/projects/control'
 import { dataDirOf, projectFolder, projectPaths } from '~/projects/paths'
 import { readArchive, type ArchiveManifest } from './archive'
 
@@ -22,14 +23,28 @@ export function databaseFile(config: Config): string | null {
   return resolve(config.databasePath)
 }
 
+export interface DatabaseInfo {
+  projectId: string
+  projects: string[]
+  /** Projects kept at DATABASE_PATH in the decoupled layout. */
+  legacy: string[]
+  /** True when this file is a control store rather than the old combined database. */
+  decoupled: boolean
+}
+
 /** Integrity and shape only; use `inspectBackup` when the project must match too. */
-export function inspectDatabase(path: string): { projectId: string; projects: string[] } {
+export function inspectDatabase(path: string): DatabaseInfo {
   const db = new Database(path, { readonly: true })
   try {
     const check = db.query<{ integrity_check: string }, []>('PRAGMA integrity_check').get()
     const result = check?.integrity_check ?? 'no result'
     if (result !== 'ok') throw new Error(`The database is damaged: ${result}.`)
-    const tables = new Set(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name))
+    const tables = new Set(
+      db
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => row.name),
+    )
     for (const table of ['_settings', '_projects']) {
       if (!tables.has(table)) throw new Error('The file is not a Bunwrite database.')
     }
@@ -43,8 +58,20 @@ export function inspectDatabase(path: string): { projectId: string; projects: st
     }
     const projectId = typeof stored.projectId === 'string' ? stored.projectId : ''
     if (!projectId) throw new Error('The database has no project ID.')
-    const projects = db.query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq').all().map((entry) => entry.id)
-    return { projectId, projects }
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(`_projects`)')
+        .all()
+        .map((entry) => entry.name),
+    )
+    const legacyColumn = columns.has('legacy') ? 'legacy' : '0 AS legacy'
+    const rows = db.query<{ id: string; legacy: number }, []>(`SELECT id, ${legacyColumn} FROM _projects ORDER BY seq`).all()
+    return {
+      projectId,
+      projects: rows.map((entry) => entry.id),
+      legacy: rows.filter((entry) => entry.legacy).map((entry) => entry.id),
+      decoupled: projectId === CONTROL_PROJECT_ID,
+    }
   } finally {
     db.close()
   }
@@ -63,7 +90,12 @@ export function inspectBackup(path: string, projectId: string): string {
 }
 
 export interface InstanceRestoreOptions {
+  /** The control database to replace. */
   databasePath: string
+  /** DATABASE_PATH, kept as the first project's location in the new layout. */
+  legacyDatabasePath?: string
+  /** Folder that holds `projects/<id>/`; defaults to the legacy database's folder. */
+  dataDir?: string
   archive: string
   key?: string
   dryRun?: boolean
@@ -113,6 +145,16 @@ function replaceDatabase(target: string, source: string, stamp: string): Swapped
   return { target, old }
 }
 
+/** Move a database aside without putting anything in its place. */
+function stashDatabase(target: string, stamp: string): Swapped {
+  if (!existsSync(target)) return { target }
+  const old = `${target}.before-restore-${stamp}`
+  rmSync(old, { force: true })
+  renameSync(target, old)
+  for (const suffix of ['-wal', '-shm', '-journal']) rmSync(`${target}${suffix}`, { force: true })
+  return { target, old }
+}
+
 function rollback(swapped: Swapped[]): void {
   for (const { target, old } of [...swapped].reverse()) {
     try {
@@ -138,8 +180,8 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
   if (databasePath === ':memory:' || databasePath.startsWith('file::memory:')) {
     throw new Error('Cannot restore an in-memory database.')
   }
-
-  const dataDir = dataDirOf(databasePath)
+  const legacyPath = options.legacyDatabasePath ? resolve(options.legacyDatabasePath) : databasePath
+  const dataDir = options.dataDir ? resolve(options.dataDir) : dataDirOf(legacyPath)
   const stagingParent = options.dryRun ? tmpdir() : dataDir
   mkdirSync(stagingParent, { recursive: true })
   const staging = mkdtempSync(join(stagingParent, '.restore-'))
@@ -152,7 +194,7 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
     if (!existsSync(controlSource)) throw new Error(`Backup archive is missing ${manifest.control}.`)
     const control = inspectDatabase(controlSource)
     const listed = [...manifest.projects].sort()
-    const stored = [...control.projects].filter((id) => id !== control.projectId).sort()
+    const stored = (control.decoupled ? control.projects : control.projects.filter((id) => id !== control.projectId)).sort()
     if (listed.length !== stored.length || listed.some((id, index) => id !== stored[index])) {
       throw new Error('Backup archive project list does not match its control database.')
     }
@@ -166,11 +208,14 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
       } catch (error) {
         throw new Error(`Backup for project "${id}" is invalid: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
       }
-      return { id, source, target: projectPaths(dataDir, id).database }
+      const target = control.decoupled && control.legacy.includes(id) ? legacyPath : projectPaths(dataDir, id).database
+      return { id, source, target }
     })
 
+    const controlTarget = control.decoupled ? databasePath : legacyPath
+    const staleControl = !control.decoupled && databasePath !== legacyPath && existsSync(databasePath)
     const targets: RestoreOutcome[] = [
-      { target: 'control', path: databasePath, result: options.dryRun ? 'planned' : 'restored' },
+      { target: 'control', path: controlTarget, result: options.dryRun ? 'planned' : 'restored' },
       ...projects.map((project) => ({
         target: 'project' as const,
         id: project.id,
@@ -189,12 +234,17 @@ export async function restoreInstance(options: InstanceRestoreOptions): Promise<
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     const swapped: Swapped[] = []
     try {
-      log(`restore: replacing control database ${databasePath}`)
-      swapped.push(replaceDatabase(databasePath, controlSource, stamp))
+      log(`restore: replacing control database ${controlTarget}`)
+      swapped.push(replaceDatabase(controlTarget, controlSource, stamp))
       for (const project of projects) {
         log(`restore: replacing project ${project.id}`)
         mkdirSync(dirname(project.target), { recursive: true })
         swapped.push(replaceDatabase(project.target, project.source, stamp))
+      }
+      if (staleControl) {
+        // The archive predates the separate control store. Drop the current
+        // one so the next boot migrates the restored legacy database again.
+        swapped.push(stashDatabase(databasePath, stamp))
       }
     } catch (error) {
       rollback(swapped)

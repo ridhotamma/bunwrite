@@ -40,6 +40,13 @@ export const projects = sqliteTable('_projects', {
   id: text('id').notNull().unique(),
   name: text('name').notNull(),
   orgId: text('org_id').notNull(),
+  /** The project used when a request names no project and by the console fallback. */
+  isDefault: integer('is_default', { mode: 'boolean' }).notNull().default(false),
+  /**
+   * The install's original project. It keeps the data paths from DATABASE_PATH
+   * for backwards compatibility; every other project lives under projects/<id>.
+   */
+  legacy: integer('legacy', { mode: 'boolean' }).notNull().default(false),
   ...timestamps,
 })
 

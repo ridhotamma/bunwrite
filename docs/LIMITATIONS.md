@@ -269,8 +269,8 @@ all projects share the same host and the same console.
   has one writer. Postgres does not use writer shards or forwarding.
 - Console forms follow the selected project to its shard. Project-list,
   organization and other control-database pages use the writer that owns the
-  default project, because the console reads `_projects`, console sessions and
-  organization data there.
+  synthetic `console` identity, because the console reads `_projects`, console
+  sessions and organization data from the separate control database.
 - Console admins can access every project on the instance.
 - File permissions are enforced by the sandbox/user model, not by separate
   containers.

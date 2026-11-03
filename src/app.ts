@@ -539,7 +539,9 @@ export function createApp(source: Services | ProjectResolver) {
       startObservation(control)
       return control.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(control.config.projectName)
     }
-    let runtime = projects.defaultProject()
+    let runtime: ProjectRuntime = projects.list().length
+      ? projects.defaultProject()
+      : { info: { id: '', name: control.config.projectName, orgId: control.config.orgId, createdAt: '', updatedAt: '' }, services: control }
     let response: Response | undefined
     try {
       // The Appwrite CLI's console calls (login, organizations, projects).
@@ -668,7 +670,7 @@ export function createApp(source: Services | ProjectResolver) {
 
   return {
     hub,
-    /** The control project's facade; per-project requests use their own runtime. */
+    /** The control store's facade; per-project requests use their own runtime. */
     observability: control.observability,
     fetch,
     fetchLocal: (request: Request, server?: Server<SocketData>) => fetch(request, server, false),

@@ -1,6 +1,6 @@
 /** Console-managed Litestream settings: files, quoting, validation and reset. */
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -89,6 +89,32 @@ describe('litestream console settings', () => {
         secretAccessKey: "secret'value",
         endpoint: 'https://account.r2.cloudflarestorage.com',
       })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('writes the control database and the first project when they live apart', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-litestream-split-'))
+    const legacy = join(root, 'bunwrite.sqlite')
+    const control = join(root, 'control', 'bunwrite.sqlite')
+    try {
+      mkdirSync(join(root, 'control'), { recursive: true })
+      writeFileSync(legacy, '')
+      writeLitestreamSettings(control, settings, {
+        settingsPath: legacy,
+        projectsDir: join(root, 'projects'),
+        legacyDatabasePath: legacy,
+        legacyProjectId: 'first-project',
+      })
+      expect(existsSync(litestreamConfigPath(legacy))).toBe(true)
+      expect(existsSync(litestreamConfigPath(control))).toBe(false)
+      const yaml = readFileSync(litestreamConfigPath(legacy), 'utf8')
+      expect(yaml).toContain(`path: ${JSON.stringify(control)}`)
+      expect(yaml).toContain(`path: ${JSON.stringify(legacy)}`)
+      expect(yaml).toContain('url: "s3://my-bucket/bunwrite/projects/first-project/bunwrite.sqlite"')
+      expect(yaml).toContain(`dir: ${JSON.stringify(join(root, 'projects'))}`)
+      expect(readFileSync(litestreamEnvPath(legacy), 'utf8')).toContain(`LITESTREAM_CONFIG='${litestreamConfigPath(legacy)}'`)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

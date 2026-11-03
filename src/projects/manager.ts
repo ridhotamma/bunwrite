@@ -1,13 +1,16 @@
 /**
- * Project registry and per-project runtime cache. The control database (the
- * default project's database) holds `_projects` and console admins. Every
- * additional project has its own database, storage, backups and functions
- * folder, so the existing single-project services stay unchanged.
+ * Project registry and per-project runtime cache. The control database holds
+ * `_projects`, console admins and the organization; it is separate from every
+ * project database, so a project can be deleted without taking the console
+ * with it.
  *
- * On SQLite a project database is a file. On Postgres it is a schema in the
- * same server; the project ID decides the schema name.
+ * The first project created by an older install is kept at the original
+ * DATABASE_PATH (`legacy`) so existing files, deployments and backups keep
+ * working. Every project created afterwards lives under
+ * `projects/<id>/bunwrite.sqlite`.
  */
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 import type { Config } from '~/config'
 import { databaseOptionsOf, dropDatabase, openDatabase, sqlDatabaseOf, sqliteDatabase, type Database, type DatabaseOptions } from '~/db'
@@ -40,6 +43,8 @@ interface ProjectRow {
   id: string
   name: string
   org_id: string
+  is_default: number
+  legacy: number
   created_at: string
   updated_at: string
 }
@@ -47,8 +52,9 @@ interface ProjectRow {
 export interface ProjectManagerOptions {
   config: Config
   db: SqlDatabase
+  /** The console/control services, built on the separate control database. */
   services: Services
-  /** Root for `projects/<id>/...`; defaults to the control database's folder. */
+  /** Root for `projects/<id>/...`; defaults to DATABASE_PATH's folder. */
   dataDir?: string
   /**
    * Environment default for new project databases. The default project's
@@ -65,9 +71,10 @@ const infoOf = (row: ProjectRow): ProjectInfo => ({
   orgId: row.org_id,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  isDefault: Boolean(row.is_default),
 })
 
-const PROJECT_COLUMNS = 'id, name, org_id, created_at, updated_at'
+const PROJECT_COLUMNS = 'id, name, org_id, is_default, legacy, created_at, updated_at'
 
 export class ProjectManager implements ProjectResolver {
   readonly control: Services
@@ -78,6 +85,8 @@ export class ProjectManager implements ProjectResolver {
   /** Env default for project databases, before a project's console override. */
   private readonly sqliteSynchronous: SqliteSynchronous
   private readonly runtimes = new Map<string, ProjectRuntime>()
+  private readonly legacy = new Set<string>()
+  private defaultId = ''
   private readyOnce: Promise<void> | null = null
 
   constructor(options: ProjectManagerOptions) {
@@ -90,7 +99,7 @@ export class ProjectManager implements ProjectResolver {
   }
 
   /**
-   * Load the control project and every project runtime. SQLite used to do this
+   * Load the control caches and every project runtime. SQLite used to do this
    * synchronously in the constructor; the network backends need the driver, so
    * the server awaits this before it starts listening.
    */
@@ -103,41 +112,43 @@ export class ProjectManager implements ProjectResolver {
     // Load the control caches first: bootstrap and the project list read the
     // settings overlay (project name, SMTP) they produce.
     await this.control.ready()
-    await this.ensureDefault()
     await this.load()
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
     // The rows this process just wrote are already reflected in memory.
     await this.control.versions.resetAsync()
-  }
-
-  private async ensureDefault(): Promise<void> {
-    if (!this.config.projectId) throw new Error('The default project ID is missing; run bootstrap before opening projects.')
-    const stamp = now()
-    await this.db.driver.run(
-      `INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET name = excluded.name, org_id = excluded.org_id, updated_at = excluded.updated_at`,
-      [this.config.projectId, this.config.projectName, this.config.orgId, stamp, stamp],
-    )
+    this.control.backups.start()
   }
 
   private async load(): Promise<void> {
     const rows = await this.db.driver.all<ProjectRow>(`SELECT ${PROJECT_COLUMNS} FROM _projects ORDER BY seq`)
+    let defaultId = ''
     for (const row of rows) {
       const info = infoOf(row)
-      if (info.id === this.config.projectId) {
-        this.runtimes.set(info.id, { info, services: this.control })
-        continue
-      }
       try {
-        this.runtimes.set(info.id, await this.open(info))
+        const runtime = await this.open(info, Boolean(row.legacy))
+        this.runtimes.set(info.id, runtime)
+        if (row.legacy) this.legacy.add(info.id)
+        if (row.is_default) defaultId = info.id
       } catch (error) {
         console.error(`[projects] could not open ${info.id}:`, error)
       }
     }
+    if (!defaultId) {
+      defaultId = rows.find((row) => this.runtimes.has(row.id))?.id ?? ''
+      if (defaultId) await this.setDefault(defaultId)
+    }
+    this.defaultId = defaultId
   }
 
-  private paths(id: string): ProjectPaths {
-    return projectPaths(this.dataDir, id)
+  private paths(id: string, legacy = false): ProjectPaths {
+    if (!legacy) return projectPaths(this.dataDir, id)
+    return {
+      dir: this.dataDir,
+      database: this.config.databasePath,
+      storage: this.config.storagePath,
+      backups: this.config.backupsPath,
+      functions: this.config.functionsDir,
+    }
   }
 
   /** The network namespace a project owns, or the SQLite file's base namespace. */
@@ -150,7 +161,7 @@ export class ProjectManager implements ProjectResolver {
     }
   }
 
-  private configFor(info: ProjectInfo, paths: ProjectPaths, instance: BootstrapResult, namespace: string | undefined): Config {
+  private configFor(info: ProjectInfo, paths: ProjectPaths, instance: BootstrapResult, namespace: string | undefined, legacy: boolean): Config {
     const base = this.config
     return {
       ...base,
@@ -168,13 +179,13 @@ export class ProjectManager implements ProjectResolver {
       backupsPath: paths.backups,
       instanceBackups: false,
       functionsDir: paths.functions,
-      functionsEnvFile: undefined,
-      schemaPath: undefined,
+      functionsEnvFile: legacy ? base.functionsEnvFile : undefined,
+      schemaPath: legacy ? base.schemaPath : undefined,
       schemaSyncOnStart: false,
-      apiKeys: [],
+      apiKeys: legacy ? [...base.apiKeys] : [],
       secret: instance.secret,
       internalKey: undefined,
-      skipSchedules: [],
+      skipSchedules: legacy ? [...base.skipSchedules] : [],
       bootstrap: { orgId: info.orgId, projectId: info.id, apiKey: instance.apiKey, generated: instance.generated },
       s3: { ...base.s3 },
       storagePrefix: info.id,
@@ -186,19 +197,26 @@ export class ProjectManager implements ProjectResolver {
       consoleSmtp: null,
       oauth: Object.fromEntries(Object.entries(base.oauth).map(([id, config]) => [id, config ? { ...config } : config])),
       allowedOrigins: [...base.allowedOrigins],
+      legacyDatabasePath: undefined,
+      controlDatabasePath: undefined,
+      controlDatabaseNamespace: undefined,
     }
   }
 
-  private async open(info: ProjectInfo): Promise<ProjectRuntime> {
-    const paths = this.paths(info.id)
-    mkdirSync(paths.storage, { recursive: true })
-    mkdirSync(paths.backups, { recursive: true })
-    mkdirSync(paths.functions, { recursive: true })
+  private async open(info: ProjectInfo, legacy: boolean): Promise<ProjectRuntime> {
+    const paths = this.paths(info.id, legacy)
+    if (!legacy) {
+      mkdirSync(paths.storage, { recursive: true })
+      mkdirSync(paths.backups, { recursive: true })
+      mkdirSync(paths.functions, { recursive: true })
+    } else if (paths.storage) {
+      mkdirSync(paths.storage, { recursive: true })
+    }
     if (this.databaseOptions.backend === 'sqlite' && !existsSync(paths.database)) {
       console.warn(`[projects] database missing for ${info.id}; creating a new empty project`)
     }
 
-    const database = await this.openProjectDatabase(info.id)
+    const database = legacy ? await this.openLegacyDatabase() : await this.openProjectDatabase(info.id)
     const db = sqlDatabaseOf(database)
 
     try {
@@ -217,7 +235,8 @@ export class ProjectManager implements ProjectResolver {
         info.updatedAt = now()
         await this.db.driver.run('UPDATE _projects SET org_id = ?, updated_at = ? WHERE id = ?', [info.orgId, info.updatedAt, info.id])
       }
-      const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, info.id, this.databaseOptions.backend))
+      const namespace = legacy ? this.databaseOptions.namespace : projectNamespaceOf(this.databaseOptions.namespace, info.id, this.databaseOptions.backend)
+      const config = this.configFor(info, paths, instance, namespace, legacy)
       const services = createServices(config, db)
       // A network backend starts empty; load settings, registry and the other
       // caches before the runtime can receive traffic.
@@ -238,6 +257,14 @@ export class ProjectManager implements ProjectResolver {
       await database.close().catch(() => {})
       throw error
     }
+  }
+
+  private openLegacyDatabase(): Promise<Database> {
+    if (this.databaseOptions.backend === 'sqlite') {
+      const db = openDb(this.config.databasePath, undefined, undefined, undefined, undefined, this.sqliteSynchronous)
+      return Promise.resolve(sqliteDatabase(db))
+    }
+    return openDatabase(this.databaseOptions)
   }
 
   private openProjectDatabase(id: string): Promise<Database> {
@@ -263,8 +290,21 @@ export class ProjectManager implements ProjectResolver {
     await clearInstanceApiKeyAsync(db, false)
   }
 
+  async clearDefaultApiKey(revoke = true): Promise<void> {
+    const runtime = this.defaultProject()
+    if (runtime.services.db.dialect === 'sqlite') clearInstanceApiKey(runtime.services.db, revoke)
+    else await clearInstanceApiKeyAsync(runtime.services.db, revoke)
+    if (runtime.services.config.bootstrap) runtime.services.config.bootstrap.apiKey = undefined
+  }
+
   defaultProject(): ProjectRuntime {
-    return this.runtimes.get(this.config.projectId)!
+    const runtime = this.runtimes.get(this.defaultId) ?? this.runtimes.values().next().value
+    if (!runtime) throw err('project_not_found')
+    return runtime
+  }
+
+  defaultProjectId(): string {
+    return this.defaultProject().info.id
   }
 
   get(id: string): ProjectRuntime | null {
@@ -312,6 +352,11 @@ export class ProjectManager implements ProjectResolver {
       ])
   }
 
+  private async setDefault(id: string): Promise<void> {
+    await this.db.driver.run('UPDATE _projects SET is_default = CASE WHEN id = ? THEN 1 ELSE 0 END', [id])
+    this.defaultId = id
+  }
+
   async create(input: ProjectCreateInput): Promise<{ project: ProjectRuntime; apiKey?: string }> {
     const id = resolveId(input.id, 'Project ID')
     // `console` is how the Appwrite CLI addresses the console API.
@@ -326,6 +371,7 @@ export class ProjectManager implements ProjectResolver {
     let database: Database | undefined
     let services: Services | undefined
     let inserted = false
+    const isDefault = !(await this.db.driver.get<{ id: string }>('SELECT id FROM _projects LIMIT 1'))
     try {
       mkdirSync(paths.storage, { recursive: true })
       mkdirSync(paths.backups, { recursive: true })
@@ -338,14 +384,15 @@ export class ProjectManager implements ProjectResolver {
         { ORG_ID: input.orgId, PROJECT_ID: id, SECRET: randomSecret(32) },
         { generateApiKey: true, seedConsoleSmtp: false, projectName: name },
       )
-      const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now() }
-      const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, id, this.databaseOptions.backend))
+      const info: ProjectInfo = { id, name, orgId: instance.orgId, createdAt: now(), updatedAt: now(), isDefault }
+      const config = this.configFor(info, paths, instance, projectNamespaceOf(this.databaseOptions.namespace, id, this.databaseOptions.backend), false)
       services = createServices(config, db)
       await services.ready()
-      await this.db.driver.run('INSERT INTO _projects (id, name, org_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)', [
+      await this.db.driver.run('INSERT INTO _projects (id, name, org_id, is_default, legacy, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)', [
         info.id,
         info.name,
         info.orgId,
+        isDefault ? 1 : 0,
         info.createdAt,
         info.updatedAt,
       ])
@@ -356,6 +403,7 @@ export class ProjectManager implements ProjectResolver {
       if (config.bootstrap) config.bootstrap.apiKey = undefined
       const runtime: ProjectRuntime = { info, services }
       this.runtimes.set(id, runtime)
+      if (isDefault) this.defaultId = id
       this.linkServices(services)
       services.functions.start()
       services.backups.start()
@@ -402,16 +450,21 @@ export class ProjectManager implements ProjectResolver {
   private async reloadProjects(): Promise<void> {
     const rows = await this.db.driver.all<ProjectRow>(`SELECT ${PROJECT_COLUMNS} FROM _projects ORDER BY seq`)
     const seen = new Set<string>()
+    let defaultId = ''
     for (const row of rows) {
       seen.add(row.id)
+      if (row.is_default) defaultId = row.id
       const existing = this.runtimes.get(row.id)
       if (existing) {
         Object.assign(existing.info, infoOf(row))
+        if (row.legacy) this.legacy.add(row.id)
+        else this.legacy.delete(row.id)
         continue
       }
       try {
-        const runtime = await this.open(infoOf(row))
+        const runtime = await this.open(infoOf(row), Boolean(row.legacy))
         this.runtimes.set(row.id, runtime)
+        if (row.legacy) this.legacy.add(row.id)
         this.linkServices(runtime.services)
         runtime.services.functions.start()
         runtime.services.backups.start()
@@ -422,7 +475,7 @@ export class ProjectManager implements ProjectResolver {
       }
     }
     for (const [id, runtime] of [...this.runtimes]) {
-      if (seen.has(id) || runtime.services === this.control) continue
+      if (seen.has(id)) continue
       runtime.services.functions.stop()
       runtime.services.sites.stop()
       runtime.services.backups.stop()
@@ -435,16 +488,22 @@ export class ProjectManager implements ProjectResolver {
       await runtime.services.observability.close()
       await runtime.services.db.driver.close()
       this.runtimes.delete(id)
+      this.legacy.delete(id)
     }
+    if (!defaultId) defaultId = rows.find((row) => this.runtimes.has(row.id))?.id ?? ''
+    this.defaultId = defaultId
     for (const runtime of this.runtimes.values()) this.linkServices(runtime.services)
   }
 
+  /** Remove one project's database, uploads and backups, keeping the console. */
   async delete(id: string): Promise<void> {
-    if (id === this.config.projectId) throw err('general_argument_invalid', 'The default project cannot be deleted.')
     const runtime = this.runtimes.get(id)
     if (!runtime) throw err('general_argument_invalid', 'Unknown project.')
+    const legacy = this.legacy.has(id)
+    const replacement = [...this.runtimes.values()].find((entry) => entry.info.id !== id)
     // Stop routing new requests to it before the asynchronous cleanup.
     this.runtimes.delete(id)
+    this.legacy.delete(id)
 
     runtime.services.functions.stop()
     runtime.services.sites.stop()
@@ -467,20 +526,47 @@ export class ProjectManager implements ProjectResolver {
     await runtime.services.observability.close()
     await this.db.driver.run('DELETE FROM _projects WHERE id = ?', [id])
     await runtime.services.db.driver.close()
-    if (this.databaseOptions.backend !== 'sqlite') {
-      try {
-        await dropDatabase(this.projectOptions(id))
-      } catch (error) {
-        console.error(`[projects] could not remove the ${this.databaseOptions.backend} namespace for ${id}:`, error)
+
+    const paths = this.paths(id, legacy)
+    if (legacy) {
+      // The original project shares the data folder with the control store.
+      // Never remove the folder itself, the instance backups or the external
+      // functions folder; only this project's database, uploads and builds.
+      if (this.databaseOptions.backend === 'sqlite') {
+        for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(`${paths.database}${suffix}`, { force: true })
+      } else {
+        try {
+          await dropDatabase({ ...this.databaseOptions, namespace: this.databaseOptions.namespace })
+        } catch (error) {
+          console.error(`[projects] could not remove the ${this.databaseOptions.backend} namespace for ${id}:`, error)
+        }
       }
+      if (this.config.storagePath) rmSync(this.config.storagePath, { recursive: true, force: true })
+      const base = dirname(resolve(this.config.databasePath))
+      rmSync(resolve(base, 'sites'), { recursive: true, force: true })
+      rmSync(resolve(base, 'deployments'), { recursive: true, force: true })
+    } else {
+      if (this.databaseOptions.backend !== 'sqlite') {
+        try {
+          await dropDatabase(this.projectOptions(id))
+        } catch (error) {
+          console.error(`[projects] could not remove the ${this.databaseOptions.backend} namespace for ${id}:`, error)
+        }
+      }
+      // Isolated functions own their folders, so the sandbox deletes them.
+      removeTree(this.config.functionsSandbox, paths.dir)
+    }
+
+    if (this.defaultId === id) {
+      if (replacement) await this.setDefault(replacement.info.id)
+      else this.defaultId = ''
     }
     await this.control.versions.resetAsync()
-    // Isolated functions own their folders, so the sandbox deletes them.
-    removeTree(this.config.functionsSandbox, this.paths(id).dir)
   }
 
-  /** Start schedulers for every project. Idempotent. */
+  /** Start schedulers for every project and the instance backup timer. */
   start(): void {
+    this.control.backups.start()
     for (const runtime of this.runtimes.values()) {
       runtime.services.functions.start()
       runtime.services.backups.start()
@@ -511,6 +597,8 @@ export class ProjectManager implements ProjectResolver {
 
   /** Run the periodic cleanup for every project. */
   async prune(): Promise<void> {
+    await this.control.requestLogs.prune()
+    await pruneRateLimits(this.control.db)
     for (const runtime of this.runtimes.values()) {
       await runtime.services.transactions.prune()
       await runtime.services.auth.pruneExpired()
@@ -519,13 +607,14 @@ export class ProjectManager implements ProjectResolver {
       await runtime.services.sites.pruneDeployments()
       runtime.services.queue.prune()
       await runtime.services.requestLogs.prune()
-      runtime.services.storage.prunePreviews()
+      await runtime.services.storage.prunePreviews()
       runtime.services.realtime.pruneBus()
       await pruneRateLimits(runtime.services.db)
     }
   }
 
   async close(): Promise<void> {
+    this.control.backups.stop()
     const closing = [...this.runtimes]
     for (const [, runtime] of closing) {
       // Schedulers would otherwise tick on into a closed database.
@@ -540,9 +629,7 @@ export class ProjectManager implements ProjectResolver {
     await flushBackgroundMail()
     await Promise.all(closing.map(([, runtime]) => runtime.services.observability.close()))
     await Promise.all(closing.map(([, runtime]) => runtime.services.telemetry.close()))
-    for (const [id, runtime] of closing) {
-      if (id !== this.config.projectId) await runtime.services.db.driver.close()
-    }
+    for (const [, runtime] of closing) await runtime.services.db.driver.close()
   }
 }
 

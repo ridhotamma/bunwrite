@@ -6,7 +6,6 @@
 import type { Server } from 'bun'
 
 import { parseCookies } from '~/auth/caller'
-import { clearInstanceApiKey, clearInstanceApiKeyAsync } from '~/instance/bootstrap'
 import { clientIpOf } from '~/lib/client-ip'
 import { BunwriteError } from '~/lib/errors'
 import { sendMailLater } from '~/mail/mailer'
@@ -210,8 +209,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
               instance: control.config.bootstrap,
             })
           }
-          if (control.db.dialect === 'sqlite') clearInstanceApiKey(control.db)
-          else await clearInstanceApiKeyAsync(control.db)
+          await projects.clearDefaultApiKey()
           if (control.config.bootstrap) control.config.bootstrap.apiKey = undefined
           const secret = (await auth.login(String(form.email), String(form.password)))!
           return new Response(null, { status: 303, headers: { location: '/console', 'set-cookie': auth.cookie(secret, secure()) } })
@@ -299,8 +297,17 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
       if (projectRoute && !selected) return go(request, '/console')
 
       const organization = await organizations.get(control.config.orgId)
-      const current = selected ?? projects.defaultProject()
-      const services = current.services
+      // With no projects the console still works: the project list shows its
+      // empty state, and project pages redirect above.
+      const current = selected ?? (projects.list().length ? projects.defaultProject() : null)
+      const services = current?.services ?? control
+      const currentProject = current?.info ?? {
+        id: '',
+        name: control.config.projectName,
+        orgId: control.config.orgId,
+        createdAt: '',
+        updatedAt: '',
+      }
       const schema = new SchemaAdmin(services.db, services.registry)
       const ctx: ConsoleContext = {
         services,
@@ -316,7 +323,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         organizations,
         hub,
         observability: services.observability,
-        currentProject: current.info,
+        currentProject: currentProject,
         selectedProjectId: selected?.info.id ?? null,
         render: (title, section, body) =>
           page(
@@ -330,7 +337,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
                     projectName: services.config.projectName,
                     orgName: organization?.name ?? control.config.projectName,
                     projects: projects.list().map((project) => project.info),
-                    currentProject: selected?.info.id ?? current.info.id,
+                    currentProject: selected?.info.id ?? currentProject.id,
                     canManageProjects,
                   },
                   body,

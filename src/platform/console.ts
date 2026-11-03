@@ -271,7 +271,6 @@ function routes(): Router<ConsoleApiContext> {
       throw err('general_argument_invalid', 'Only an organization owner can delete a project.')
     }
     const target = orgProject(ctx, path.projectId!)
-    if (target.info.id === ctx.projects.defaultProject().info.id) throw err('general_argument_invalid', 'The default project cannot be deleted.')
 
     // A session alone is not enough when the admin has email MFA on: require a fresh code.
     if (session.admin.mfa) {

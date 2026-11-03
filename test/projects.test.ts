@@ -9,6 +9,7 @@ import { ConsoleAuth } from '~/console/auth'
 import { openDb, type Db } from '~/db/connection'
 import { MemoryMailer } from '~/mail/mailer'
 import { OrganizationService } from '~/organizations/service'
+import { initialiseControlStore } from '~/projects/control'
 import { createProjectManager, type ProjectManager } from '~/projects/manager'
 import { pushConfig } from '~/schema/push'
 import { KEY, PROJECT, testConfig, testSchema } from './helpers'
@@ -23,24 +24,49 @@ describe('multiple projects', () => {
   let app: ReturnType<typeof createApp>
   let projectKey = ''
 
-  const client = (projectId: string, key: string) =>
-    new Client().setEndpoint(endpoint).setProject(projectId).setKey(key)
+  const client = (projectId: string, key: string) => new Client().setEndpoint(endpoint).setProject(projectId).setKey(key)
 
   beforeAll(async () => {
-    db = openDb(join(dir, 'control.sqlite'))
-    pushConfig(db, testSchema, { baseDir: dir })
-    const config = testConfig({ databasePath: join(dir, 'control.sqlite'), logRequests: true })
-    const services = createServices(config, db)
-    manager = createProjectManager({ config, db, services, dataDir: dir })
+    const legacyPath = join(dir, 'bunwrite.sqlite')
+    const controlPath = join(dir, 'control', 'bunwrite.sqlite')
+    db = openDb(controlPath)
+    const config = testConfig({ databasePath: legacyPath, controlDatabasePath: controlPath, logRequests: true })
+    await initialiseControlStore({
+      config,
+      databaseOptions: { backend: 'sqlite', path: legacyPath },
+      control: db,
+      env: { ORG_ID: 'org_test', PROJECT_ID: PROJECT, SECRET: config.secret },
+      log: () => {},
+    })
+    const controlConfig = {
+      ...config,
+      databasePath: controlPath,
+      legacyDatabasePath: legacyPath,
+      projectId: 'console',
+      orgId: 'org_test',
+      projectName: 'Test Project',
+      secret: config.secret,
+    }
+    const services = createServices(controlConfig, db)
+    manager = createProjectManager({
+      config,
+      db,
+      services,
+      dataDir: dir,
+      database: { backend: 'sqlite', path: legacyPath },
+    })
     await manager.ready()
+    const first = manager.defaultProject()
+    pushConfig(first.services.db as Db, testSchema, { baseDir: dir })
+    first.services.registry.reload()
     const created = await manager.create({ id: 'project-b', name: 'Project B', orgId: 'org_test' })
     projectKey = created.apiKey!
     pushConfig(created.project.services.db as Db, testSchema, { baseDir: dir })
     created.project.services.registry.reload()
     // An installation from before installations moved to the control database.
     const stamp = new Date().toISOString()
-    created.project.services.db.sqlite!
-      .query(
+    created.project.services.db
+      .sqlite!.query(
         `INSERT INTO _vcs_installations (id, provider, provider_installation_id, organization, account_type, created_at, updated_at)
          VALUES ('legacy-installation', 'github', '999', 'legacy-org', 'Organization', ?, ?)`,
       )
@@ -204,9 +230,7 @@ describe('multiple projects', () => {
     // in the control database, under one ID both projects can use.
     const adopted = await app.hub.installations.byProvider('999')
     expect(adopted).toMatchObject({ organization: 'legacy-org', account_type: 'Organization' })
-    const count = db.sqlite
-      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _vcs_installations WHERE provider_installation_id = '999'")
-      .get()!
+    const count = db.sqlite.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM _vcs_installations WHERE provider_installation_id = '999'").get()!
     expect(count.n).toBe(1)
 
     for (const [project, key] of [
@@ -341,7 +365,6 @@ describe('multiple projects', () => {
     })
     expect(remove.status).toBe(303)
     expect(manager.get('project-c')).toBeNull()
-    await expect(manager.delete(PROJECT)).rejects.toThrow('default project')
   })
 
   test('only an organization owner can create, edit or delete a project', async () => {
@@ -397,7 +420,7 @@ describe('multiple projects', () => {
   })
 
   test('deleting a project asks for an emailed code when MFA is on', async () => {
-    const control = manager.defaultProject().services
+    const control = manager.control
     const original = control.consoleMailer
     const mailer = new MemoryMailer()
     control.consoleMailer = mailer
@@ -448,6 +471,7 @@ describe('multiple projects', () => {
   })
 
   test('projects do not inherit the console SMTP, and keep their own', async () => {
+    const control = manager.control
     const server = manager.defaultProject().services
     const other = manager.get('project-b')!.services
     const smtp = (host: string) => ({
@@ -463,31 +487,34 @@ describe('multiple projects', () => {
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
 
-    await server.settings.set('smtp', smtp('smtp.server.test'))
-    expect(server.config.smtp).toMatchObject({ host: 'smtp.server.test' })
+    await control.settings.set('smtp', smtp('smtp.server.test'))
+    expect(control.config.smtp).toMatchObject({ host: 'smtp.server.test' })
+    expect(server.config.smtp).toBeNull()
     expect(other.config.smtp).toBeNull()
     expect(other.mailer.enabled).toBe(false)
 
-    await other.settings.set('smtp', smtp('smtp.project.test'))
-    await server.settings.set('smtp', smtp('smtp.server2.test'))
-    expect(other.config.smtp).toMatchObject({ host: 'smtp.project.test' })
+    await server.settings.set('smtp', smtp('smtp.project.test'))
+    await other.settings.set('smtp', smtp('smtp.project2.test'))
+    expect(server.config.smtp).toMatchObject({ host: 'smtp.project.test' })
+    expect(other.config.smtp).toMatchObject({ host: 'smtp.project2.test' })
 
-    await other.settings.reset('smtp')
-    expect(other.config.smtp).toBeNull()
-    expect(other.mailer.enabled).toBe(false)
+    await server.settings.reset('smtp')
+    expect(server.config.smtp).toBeNull()
+    expect(server.mailer.enabled).toBe(false)
   })
 
   test('each project keeps its own database durability setting', async () => {
-    const control = manager.defaultProject().services
+    const control = manager.control
+    const project = manager.defaultProject().services
     const other = manager.get('project-b')!.services
     const synchronous = (db: { sqlite?: Db['sqlite'] }) => (db.sqlite!.query('PRAGMA synchronous').get() as { synchronous: number }).synchronous
 
-    expect(synchronous(control.db)).toBe(1)
+    expect(synchronous(project.db)).toBe(1)
     expect(synchronous(other.db)).toBe(1)
 
-    await control.settings.set('database', { synchronous: 'FULL' })
-    expect(control.config.sqliteSynchronous).toBe('FULL')
-    expect(synchronous(control.db)).toBe(2)
+    await project.settings.set('database', { synchronous: 'FULL' })
+    expect(project.config.sqliteSynchronous).toBe('FULL')
+    expect(synchronous(project.db)).toBe(2)
     // The default project's setting must not leak into another project.
     expect(other.config.sqliteSynchronous).toBe('NORMAL')
     expect(synchronous(other.db)).toBe(1)
@@ -503,9 +530,36 @@ describe('multiple projects', () => {
     expect(other.config.sqliteSynchronous).toBe('FULL')
     expect(synchronous(other.db)).toBe(2)
 
-    await control.settings.reset('database')
+    await project.settings.reset('database')
     await other.settings.reset('database')
-    expect(synchronous(control.db)).toBe(1)
+    expect(synchronous(project.db)).toBe(1)
     expect(synchronous(other.db)).toBe(1)
+    expect(control.config.sqliteSynchronous).toBe('NORMAL')
+  })
+
+  test('the first project can be deleted like any other project', async () => {
+    const auth = new ConsoleAuth(db)
+    await auth.upsert('delete-default@example.com', 'delete-password')
+    const secret = (await auth.login('delete-default@example.com', 'delete-password'))!
+    const cookie = `bunwrite_console=${secret}`
+
+    // The console offers Delete for the default project when another one exists.
+    const list = await (await fetch(`${base}/console`, { headers: { cookie } })).text()
+    expect(list).toContain(`/console/projects/${PROJECT}/delete`)
+
+    const removed = await fetch(`${base}/console/projects/${PROJECT}/delete`, { method: 'POST', headers: { cookie }, redirect: 'manual' })
+    expect(removed.status).toBe(303)
+    expect(manager.get(PROJECT)).toBeNull()
+    expect(manager.defaultProjectId()).toBe('project-b')
+    const row = db.sqlite.query<{ is_default: number }, [string]>('SELECT is_default FROM _projects WHERE id = ?').get('project-b')!
+    expect(row.is_default).toBe(1)
+
+    // The console keeps working with an empty project list.
+    const removedLast = await fetch(`${base}/console/projects/project-b/delete`, { method: 'POST', headers: { cookie }, redirect: 'manual' })
+    expect(removedLast.status).toBe(303)
+    expect(manager.list()).toEqual([])
+    const empty = await (await fetch(`${base}/console`, { headers: { cookie } })).text()
+    expect(empty).toContain('No projects yet')
+    expect(empty).toContain('Create project')
   })
 })

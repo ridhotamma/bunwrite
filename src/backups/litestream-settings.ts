@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
-import { dataDirOf } from '~/projects/paths'
+import { dataDirOf, projectFolder } from '~/projects/paths'
 
 export interface LitestreamSettings {
   enabled: boolean
@@ -189,7 +189,11 @@ function replicaBlock(settings: LitestreamSettings, url: string, indent: string)
   return lines
 }
 
-function configFile(settings: LitestreamSettings, databasePath: string): string {
+function configFile(
+  settings: LitestreamSettings,
+  databasePath: string,
+  layout: { projectsDir?: string; legacyDatabasePath?: string; legacyProjectId?: string } = {},
+): string {
   const database = resolve(databasePath)
   const dataDir = dataDirOf(databasePath)
   const base = trimSlash(settings.replicaUrl)
@@ -200,7 +204,20 @@ function configFile(settings: LitestreamSettings, databasePath: string): string 
     '    restore-if-db-not-exists: true',
     ...replicaBlock(settings, `${base}/${basename(database)}`, '    '),
     '',
-    `  - dir: ${yaml(join(dataDir, 'projects'))}`,
+  ]
+  // The install's first project may still live at DATABASE_PATH rather than
+  // under projects/. Replicate it explicitly so an upgrade does not silently
+  // stop backing it up.
+  if (layout.legacyDatabasePath && layout.legacyProjectId && existsSync(layout.legacyDatabasePath)) {
+    lines.push(
+      `  - path: ${yaml(resolve(layout.legacyDatabasePath))}`,
+      '    restore-if-db-not-exists: true',
+      ...replicaBlock(settings, `${base}/projects/${projectFolder(layout.legacyProjectId)}/bunwrite.sqlite`, '    '),
+      '',
+    )
+  }
+  lines.push(
+    `  - dir: ${yaml(layout.projectsDir ?? join(dataDir, 'projects'))}`,
     '    pattern: "bunwrite.sqlite"',
     '    recursive: true',
     '    watch: true',
@@ -210,7 +227,7 @@ function configFile(settings: LitestreamSettings, databasePath: string): string 
     `  interval: ${yaml(settings.snapshotInterval)}`,
     `  retention: ${yaml(settings.snapshotRetention)}`,
     `l0-retention: ${yaml(settings.l0Retention)}`,
-  ]
+  )
   if (settings.heartbeatUrl) lines.push(`heartbeat-url: ${yaml(settings.heartbeatUrl)}`, 'heartbeat-interval: 5m')
   return `${lines.join('\n')}\n`
 }
@@ -223,14 +240,19 @@ function writePrivate(path: string, content: string): void {
 }
 
 /** Persist console settings and the files the entrypoint/Litestream read at boot. */
-export function writeLitestreamSettings(databasePath: string, value: LitestreamSettings): LitestreamSettings {
+export function writeLitestreamSettings(
+  databasePath: string,
+  value: LitestreamSettings,
+  layout: { settingsPath?: string; projectsDir?: string; legacyDatabasePath?: string; legacyProjectId?: string } = {},
+): LitestreamSettings {
   const settings = validateLitestreamSettings(value)
-  const dataDir = dataDirOf(databasePath)
+  const settingsPath = layout.settingsPath ?? databasePath
+  const dataDir = dataDirOf(settingsPath)
   mkdirSync(dataDir, { recursive: true })
-  writePrivate(litestreamSettingsPath(databasePath), `${JSON.stringify(settings, null, 2)}\n`)
-  writePrivate(litestreamEnvPath(databasePath), envFile(settings, databasePath))
-  if (settings.enabled) writePrivate(litestreamConfigPath(databasePath), configFile(settings, databasePath))
-  else rmSync(litestreamConfigPath(databasePath), { force: true })
+  writePrivate(litestreamSettingsPath(settingsPath), `${JSON.stringify(settings, null, 2)}\n`)
+  writePrivate(litestreamEnvPath(settingsPath), envFile(settings, settingsPath))
+  if (settings.enabled) writePrivate(litestreamConfigPath(settingsPath), configFile(settings, databasePath, layout))
+  else rmSync(litestreamConfigPath(settingsPath), { force: true })
   return settings
 }
 

@@ -268,6 +268,18 @@ export interface Config {
   /** SQLite file path. */
   databasePath: string
   /**
+   * SQLite file for console admins, the organization and the project registry.
+   * Defaults to `control/bunwrite.sqlite` next to DATABASE_PATH.
+   */
+  controlDatabasePath?: string
+  /** Postgres schema for the control store; defaults to a sibling of DATABASE_SCHEMA. */
+  controlDatabaseNamespace?: string
+  /**
+   * The first project's database when the control store is separate. Set on the
+   * control config so backups can find a legacy project that lives at DATABASE_PATH.
+   */
+  legacyDatabasePath?: string
+  /**
    * Storage backend selected by `DB_DRIVER`/`DATABASE_DRIVER`. `sqlite` (the
    * default) keeps the zero-config SQLite path; Postgres is opt-in. See
    * docs/DATABASE.md.
@@ -490,6 +502,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     oauthStateBinding: env.OAUTH_STATE_BINDING !== 'false',
     hostname: env.HOST || '0.0.0.0',
     databasePath: env.DATABASE_PATH ?? './data/bunwrite.sqlite',
+    controlDatabasePath: env.CONTROL_DATABASE_PATH || undefined,
+    controlDatabaseNamespace: env.CONTROL_DATABASE_SCHEMA || undefined,
     ...databaseConfig(env),
     orgId: '',
     projectId: '',

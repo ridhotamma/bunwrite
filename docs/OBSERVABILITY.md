@@ -12,7 +12,7 @@ feature flags. There are no observability environment variables: a project
 without saved settings uses the built-in defaults, and saving applies them
 without a restart.
 
-Projects that have never saved settings may inherit the control project's saved
+Projects that have never saved settings may inherit the control store's saved
 configuration once after upgrading from the old instance-wide setting; after
 that each project has its own copy and can be changed independently.
 

@@ -15,6 +15,8 @@ import { ARCHIVE_COMPRESSED_EXT, ARCHIVE_ENCRYPTED_EXT, checkKey } from './forma
 
 export interface CreateInstanceBackupOptions {
   databasePath: string
+  /** The first project's database when the control store is separate. */
+  legacyDatabasePath?: string
   /** Folder that receives the archive. Created when missing. */
   outputDir: string
   /** File-name prefix, for example `backup-`, `auto-` or `snapshot-`. */
@@ -30,11 +32,16 @@ export interface InstanceBackup {
   manifest: ArchiveManifest
 }
 
-function projectIds(databasePath: string): string[] {
+interface BackupProject {
+  id: string
+  source: string
+}
+
+function projectEntries(databasePath: string, legacyDatabasePath: string | undefined): BackupProject[] {
   const db = new Database(databasePath, { readonly: true })
   try {
-    // The control project's database is the control database itself; it must
-    // not be archived a second time as `projects/<id>/bunwrite.sqlite`.
+    // The control project's database is the control database itself in the
+    // pre-decoupling layout; it must not be archived a second time.
     const row = db.query<{ value: string }, []>("SELECT value FROM _settings WHERE key = 'instance'").get()
     let controlId = ''
     if (row) {
@@ -45,11 +52,21 @@ function projectIds(databasePath: string): string[] {
         /* inspectDatabase reports a broken instance record later */
       }
     }
-    return db
-      .query<{ id: string }, []>('SELECT id FROM _projects ORDER BY seq')
-      .all()
-      .map((entry) => entry.id)
-      .filter((id) => id !== controlId)
+    const columns = new Set(
+      db
+        .query<{ name: string }, []>('PRAGMA table_info(`_projects`)')
+        .all()
+        .map((entry) => entry.name),
+    )
+    const legacyColumn = columns.has('legacy') ? 'legacy' : '0 AS legacy'
+    const rows = db.query<{ id: string; legacy: number }, []>(`SELECT id, ${legacyColumn} FROM _projects ORDER BY seq`).all()
+    const dataDir = dataDirOf(legacyDatabasePath ?? databasePath)
+    return rows
+      .filter((entry) => controlId === 'console' || entry.id !== controlId)
+      .map((entry) => ({
+        id: entry.id,
+        source: entry.legacy && legacyDatabasePath ? legacyDatabasePath : projectPaths(dataDir, entry.id).database,
+      }))
   } finally {
     db.close()
   }
@@ -72,8 +89,7 @@ export async function createInstanceBackup(options: CreateInstanceBackupOptions)
   if (!existsSync(databasePath)) throw new Error(`The control database does not exist: ${databasePath}`)
   if (options.secret) checkKey(options.secret)
 
-  const dataDir = dataDirOf(databasePath)
-  const ids = projectIds(databasePath)
+  const projectsToCopy = projectEntries(databasePath, options.legacyDatabasePath ? resolve(options.legacyDatabasePath) : undefined)
   mkdirSync(options.outputDir, { recursive: true })
   // Keep the snapshots next to the archive, not in a small /tmp filesystem.
   const snapshotDir = mkdtempSync(join(options.outputDir, '.snapshot-'))
@@ -88,20 +104,20 @@ export async function createInstanceBackup(options: CreateInstanceBackupOptions)
     entries.push({ path: control, source: controlSnapshot })
 
     const projects: string[] = []
-    for (const id of ids) {
-      const source = projectPaths(dataDir, id).database
+    for (const project of projectsToCopy) {
+      const source = project.source
       if (!existsSync(source)) {
         // A whole-instance archive that silently omits a listed project is not
         // restorable; fail so the operator sees it instead.
-        throw new Error(`Project ${id} has no database at ${source}. Delete the project or restore its database, then back up again.`)
+        throw new Error(`Project ${project.id} has no database at ${source}. Delete the project or restore its database, then back up again.`)
       }
-      const path = `projects/${projectFolder(id)}/bunwrite.sqlite`
+      const path = `projects/${projectFolder(project.id)}/bunwrite.sqlite`
       const target = join(snapshotDir, path)
       mkdirSync(dirname(target), { recursive: true })
-      options.log?.(`backup: snapshotting project ${id}`)
+      options.log?.(`backup: snapshotting project ${project.id}`)
       snapshot(source, target)
       entries.push({ path, source: target })
-      projects.push(id)
+      projects.push(project.id)
     }
 
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')

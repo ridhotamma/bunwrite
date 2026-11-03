@@ -34,9 +34,9 @@ async function projectsPage(ctx: ConsoleContext, url: URL, created?: CreatedProj
   const org = await ctx.organizations.ensure(ctx.projects.control.config.orgId, ctx.projects.control.config.projectName)
   const members = (await ctx.organizations.members(org.id)).filter((member) => member.status === 'active').length
   const manager = (await ctx.organizations.roleOf(org.id, ctx.admin.email)) === 'owner'
-  const defaultId = ctx.projects.defaultProject().info.id
+  const defaultId = ctx.projects.list().length ? ctx.projects.defaultProject().info.id : ''
   const deleteId = (url.searchParams.get('delete') ?? '').trim()
-  const deleteTarget = manager && ctx.admin.mfa ? all.find((project) => project.info.id === deleteId && project.info.id !== defaultId)?.info : undefined
+  const deleteTarget = manager && ctx.admin.mfa ? all.find((project) => project.info.id === deleteId)?.info : undefined
   const create = manager ? html`<button class="primary" type="button" data-dialog-open="#create-project">${icon('plus')}<span>Create project</span></button>` : undefined
   return ctx.render(
     org.name,
@@ -118,7 +118,6 @@ export function projectPages(router: ConsoleRouter): void {
     if (!(await isOwner(ctx))) throw err('general_argument_invalid', 'Only an organization owner can delete a project.')
     const project = ctx.projects.get(id)
     if (!project) throw err('general_argument_invalid', 'Unknown project.')
-    if (id === ctx.projects.defaultProject().info.id) throw err('general_argument_invalid', 'The default project cannot be deleted.')
 
     // With email MFA on, a project deletion needs a fresh code, not just the session cookie.
     const confirmLocation = `/console?delete=${encodeURIComponent(id)}`

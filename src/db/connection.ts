@@ -156,8 +156,25 @@ export function openDb(
     if (walPages >= 0) sqlite.run(`PRAGMA wal_autocheckpoint = ${Math.round(walPages)}`)
     migrate(orm, { migrationsFolder: migrationsFolder() })
     ensureClusterSchema(sqlite)
+    ensureProjectColumns(sqlite)
   })
   return { sqlite, orm, driver, dialect: 'sqlite', capabilities: driver.capabilities }
+}
+
+/**
+ * Columns introduced after the project registry shipped. Adding them in code
+ * keeps older SQLite files working without a new Drizzle migration; Postgres
+ * gets the same columns from `migratePostgresColumns`.
+ */
+function ensureProjectColumns(sqlite: Database): void {
+  const columns = new Set(
+    sqlite
+      .query<{ name: string }, []>('PRAGMA table_info(`_projects`)')
+      .all()
+      .map((row) => row.name),
+  )
+  if (!columns.has('is_default')) sqlite.run('ALTER TABLE `_projects` ADD COLUMN `is_default` integer NOT NULL DEFAULT 0')
+  if (!columns.has('legacy')) sqlite.run('ALTER TABLE `_projects` ADD COLUMN `legacy` integer NOT NULL DEFAULT 0')
 }
 
 /** Quote an SQL identifier. */

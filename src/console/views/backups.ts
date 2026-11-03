@@ -61,9 +61,10 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
   } catch (problem) {
     error = problem instanceof Error ? problem.message : String(problem)
   }
-  const pending = readPendingRestore(c.databasePath)
+  const basePath = c.legacyDatabasePath ?? c.databasePath
+  const pending = readPendingRestore(basePath)
   const litestream = litestreamStatus()
-  const storedLitestream = readLitestreamSettings(c.databasePath)
+  const storedLitestream = readLitestreamSettings(basePath)
   const litestreamSettings = storedLitestream ?? litestreamSettingsFromEnv()
   const preset = schedulePreset(c.backups.schedule)
   const nextBackup = c.backups.enabled ? nextRun(c.backups.schedule) : 'Paused'

@@ -150,10 +150,12 @@ terminator per host.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the default project. |
+| `DATABASE_PATH` | `./data/bunwrite.sqlite` | SQLite file for the first project. |
+| `CONTROL_DATABASE_PATH` | `./data/control/bunwrite.sqlite` | SQLite file for console admins, the organization and the project registry. |
+| `CONTROL_DATABASE_SCHEMA` | `<DATABASE_SCHEMA>_console` | Postgres schema for the control store. |
 | `DB_DRIVER` | `sqlite` | Storage backend: `sqlite` or `postgres`. This is the switch; a `DATABASE_URL` alone does not move the server off SQLite. See [DATABASE.md](DATABASE.md). |
 | `DATABASE_URL` | unset | Postgres connection URL for `DB_DRIVER`. |
-| `DATABASE_SCHEMA` | `public` | Postgres control schema. Additional projects use `<schema>_<project-id>`; see [DATABASE.md](DATABASE.md#boot-path). |
+| `DATABASE_SCHEMA` | `public` | Postgres schema for the first project. Additional projects use `<schema>_<project-id>`; see [DATABASE.md](DATABASE.md#boot-path). |
 | `DATABASE_POOL_MAX` | `10` | Connection-pool size for Postgres. |
 | `DATABASE_SSL` | `false` | Require TLS for Postgres. |
 | `STORAGE_PATH` | `./data/storage` | Uploaded files when S3 storage is off. |

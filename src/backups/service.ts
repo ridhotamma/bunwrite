@@ -121,6 +121,7 @@ export class BackupService {
       const created = this.localFile
         ? await createInstanceBackup({
             databasePath: this.config.databasePath,
+            legacyDatabasePath: this.config.legacyDatabasePath,
             outputDir: dir,
             prefix: kind === 'auto' ? AUTO_PREFIX : 'backup-',
             secret: key || undefined,
@@ -135,7 +136,9 @@ export class BackupService {
           })
       if (remote) {
         await s3Call(this.s3, () =>
-          s3Client(this.s3).file(this.s3Key(created.name)).write(Bun.file(created.path), { type: contentType(created.name) }),
+          s3Client(this.s3)
+            .file(this.s3Key(created.name))
+            .write(Bun.file(created.path), { type: contentType(created.name) }),
         )
       }
       if (kind === 'auto') {

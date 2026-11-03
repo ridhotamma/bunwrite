@@ -267,7 +267,7 @@ function vectorsCards(ctx: ConsoleContext): Html {
         <label>Model<input name="embeddingModel" class="mono" value="${c.embeddingModel}" placeholder="text-embedding-3-small" /></label>
         <label>API key<input name="embeddingApiKey" type="password" placeholder="${c.embeddingApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small>Leave blank to keep the saved key.</small></label>
       </div>
-      <div class="fields">
+      <div class="fields center">
         <label>Request timeout (ms)<input name="timeoutMs" type="number" min="1000" max="120000" value="${c.timeoutMs}" required /><small>Applies to embedding and chat requests.</small></label>
         <label class="check"
           ><input type="checkbox" name="sendDimensions" ${c.sendDimensions ? 'checked' : ''} /><span>Send the dimensions field</span

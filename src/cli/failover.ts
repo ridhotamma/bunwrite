@@ -9,6 +9,8 @@
  */
 import { resolve } from 'node:path'
 
+import { configFromEnv } from '~/config'
+import { controlDatabasePath } from '~/projects/control'
 import { runFailover } from '~/failover/restore'
 import { requireSqliteCommand } from './sqlite-only'
 
@@ -41,7 +43,9 @@ function flag(name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined
 }
 
-const databasePath = resolve(flag('--database') ?? process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+const legacyDatabasePath = resolve(flag('--database') ?? process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+const config = configFromEnv()
+const databasePath = controlDatabasePath({ ...config, databasePath: legacyDatabasePath })
 const replicaUrl = flag('--from') ?? process.env.LITESTREAM_REPLICA_URL ?? ''
 const allowEmpty = args.includes('--allow-empty') || ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_ALLOW_EMPTY ?? '').toLowerCase())
 const force = args.includes('--force') || ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_FORCE_RESTORE ?? '').toLowerCase())
@@ -50,11 +54,13 @@ const dryRun = args.includes('--dry-run')
 try {
   const result = runFailover({
     databasePath,
+    legacyDatabasePath,
     replicaUrl,
     litestreamBin: flag('--bin') ?? process.env.LITESTREAM_BIN,
     endpoint: flag('--endpoint'),
     region: flag('--region'),
-    forcePathStyle: args.includes('--force-path-style') || ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_S3_FORCE_PATH_STYLE ?? '').toLowerCase()),
+    forcePathStyle:
+      args.includes('--force-path-style') || ['1', 'true', 'yes', 'on'].includes((process.env.LITESTREAM_S3_FORCE_PATH_STYLE ?? '').toLowerCase()),
     allowEmpty,
     force,
     dryRun,

@@ -135,8 +135,7 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
   const hasDatadogKey = Boolean(s.datadog?.apiKey)
   const hasPosthogKey = Boolean(s.posthog?.apiKey)
   const posthogFlags = s.posthog?.flags ?? true
-  const scope = options.overridden ? 'Project override' : 'Built-in defaults'
-  return html`${header('Observability settings', { back: OBS, actions: badge(scope, options.overridden ? 'success' : 'info') })}
+  return html`${header('Observability settings')}
     ${tabs(OBS_TABS, 'settings')}
     ${options.canManage
       ? ''

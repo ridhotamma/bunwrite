@@ -15,6 +15,7 @@ import { openDb, type Db } from '~/db/connection'
 import { bootstrapInstance } from '~/instance/bootstrap'
 import { now } from '~/lib/datetime'
 import { PRIVATE_ENV } from '~/lib/private-env'
+import { initialiseControlStore } from '~/projects/control'
 import { PROJECT, testConfig } from './helpers'
 
 const KEY = 'correct horse battery staple'
@@ -328,6 +329,57 @@ describe('restoring whole-instance archives', () => {
       await expect(restoreInstance({ databasePath: controlPath, archive, key: 'wrong key, long enough!!!!' })).rejects.toThrow(/Cannot decrypt/)
       expect(readMarker(controlPath)).toBe('control-after')
     } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('backs up and restores a decoupled control store and its first project', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'bunwrite-instance-split-'))
+    const legacyPath = join(root, 'bunwrite.sqlite')
+    const controlPath = join(root, 'control', 'bunwrite.sqlite')
+    const legacy = bootstrapDb(legacyPath, PROJECT)
+    const control = openDb(controlPath)
+    try {
+      await initialiseControlStore({
+        config: testConfig({ databasePath: legacyPath, controlDatabasePath: controlPath }),
+        databaseOptions: { backend: 'sqlite', path: legacyPath },
+        control,
+        env: {},
+        log: () => {},
+      }).then((migrated) => migrated.legacy?.close())
+      marker(legacy, 'legacy-before')
+
+      const otherPath = join(root, 'projects', 'other', 'bunwrite.sqlite')
+      mkdirSync(join(root, 'projects', 'other'), { recursive: true })
+      const other = bootstrapDb(otherPath, 'other')
+      marker(other, 'other-before')
+      control.sqlite
+        .query('INSERT INTO _projects (id, name, org_id, is_default, legacy, created_at, updated_at) VALUES (?, ?, ?, 0, 0, ?, ?)')
+        .run('other', 'Other', 'org_test', now(), now())
+      other.sqlite.close()
+
+      const outputDir = join(root, 'backups')
+      const created = await createInstanceBackup({ databasePath: controlPath, legacyDatabasePath: legacyPath, outputDir })
+      expect([...created.manifest.projects].sort()).toEqual(['other', PROJECT])
+
+      control.sqlite.close()
+      legacy.sqlite.close()
+      const restored = await restoreInstance({
+        databasePath: controlPath,
+        legacyDatabasePath: legacyPath,
+        dataDir: root,
+        archive: join(outputDir, created.name),
+      })
+      expect(restored.outcomes).toHaveLength(3)
+      expect(readMarker(legacyPath)).toBe('legacy-before')
+      expect(readMarker(otherPath)).toBe('other-before')
+    } finally {
+      try {
+        control.sqlite.close()
+      } catch {}
+      try {
+        legacy.sqlite.close()
+      } catch {}
       rmSync(root, { recursive: true, force: true })
     }
   })

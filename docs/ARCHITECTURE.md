@@ -5,8 +5,9 @@ One Bun process serves the Appwrite-compatible API (`/v1`), realtime
 admin console (`/console`); on Linux, `WORKERS=auto` starts one such process per
 CPU less one for the proxy, behind a shared port, plus a pool of writer
 processes (see
-[Multiple processes](#multiple-processes)). The
-default project uses the main SQLite file; additional projects each use their
+[Multiple processes](#multiple-processes)). The console, organization and
+project registry live in their own control database (`data/control/`). The first
+project keeps the original `DATABASE_PATH`; additional projects each use their
 own database under `data/projects/<id>/`, plus their own storage, backups and
 function folder.
 
@@ -20,13 +21,14 @@ function folder.
  │ /v1/realtime  WebSocket hub ◄── document events                   │
  │ /console/*  htmx pages → the selected project's services         │
  │                                                                   │
- │ ProjectManager: control project + one Services set per project   │
+ │ ProjectManager: control store + one Services set per project      │
  │ services: DocumentStore · Transactions · Auth · Teams · Storage   │
  │           Functions (+cron) · Settings · Registry (schema)        │
  └───────────┬─────────────────────────────┬─────────────────────────┘
              ▼                             ▼
-   default: data/bunwrite.sqlite       data/storage/<bucket>/<file>
-   others:  data/projects/<id>/        data/projects/<id>/storage/...
+   control: data/control/bunwrite.sqlite  data/storage/<bucket>/<file>
+   first:   data/bunwrite.sqlite          data/projects/<id>/storage/...
+   others:  data/projects/<id>/
              ▲
    child processes: one per function run (bun runner / python3 runner)
 ```
@@ -85,7 +87,8 @@ function and WebSocket traffic does not use this path.
   size), not only document writes: auth, teams, storage metadata, schema,
   variables, proxy rules, queues and settings all share that project's writer.
   Console forms follow the selected project; project-list, organization and
-  other control-database pages use the writer that owns the default project.
+  other control-database pages use the writer that owns the synthetic
+  `console` identity.
   Short console forms take the same hop; their uploads, builds,
   backups and outbound tests stay local. Requests that spend their time outside
   SQLite stay on the worker that accepted them — storage uploads, function
@@ -176,11 +179,12 @@ The console keeps the same boundaries as the API:
   once on `/console/setup` and kept hashed in `_api_keys`; it is revoked when the
   first console admin is created. Create project API keys in the console
   afterwards.
-- `projects/manager.ts` owns `_projects` in the control database and a cached
-  `Services` set per project. The control database is the default project's
-  database, so an existing single-project install keeps its data. Additional
-  projects get `data/projects/<id>/` and their own signing secret, API keys,
-  storage prefix and backups prefix.
+- `projects/manager.ts` owns `_projects` in the separate control database and a
+  cached `Services` set per project. The first project keeps the original
+  `DATABASE_PATH`, so an existing single-project install keeps its data; every
+  later project gets `data/projects/<id>/` and its own signing secret, API keys,
+  storage prefix and backups prefix. Because the console store is independent,
+  any project, including the first, can be deleted.
 - The console index (`/console`) lists projects, like Appwrite's organization
   page; opening one goes to `/console/overview`. The selected project is kept in
   the `console_project` cookie, and the project switcher changes which project's
@@ -356,7 +360,8 @@ created with, so the execution returned to the caller is the one that runs.
   existing files; that is a manual step.
 - A SQLite backup is one archive of every database Bunwrite owns, laid out like
   the Litestream replica: the control database and
-  `projects/<id>/bunwrite.sqlite` for each project. Databases are copied with
+  `projects/<id>/bunwrite.sqlite` for each project (including the first project
+  when it still lives at `DATABASE_PATH`). Databases are copied with
   `VACUUM INTO`, compressed with zstd, and encrypted when
   `BACKUP_ENCRYPTION_KEY` is set. A Postgres backup is one `pg_dump`. Manual
   backups can be created, downloaded and deleted in **Organization → Backups**

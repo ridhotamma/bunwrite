@@ -1,4 +1,6 @@
 import type { Services } from '~/services'
+import { clearInstanceApiKey, clearInstanceApiKeyAsync } from '~/instance/bootstrap'
+import { err } from '~/lib/errors'
 import type { FunctionRow } from '~/functions/service'
 import type { SiteRow } from '~/sites/service'
 
@@ -8,6 +10,8 @@ export interface ProjectInfo {
   orgId: string
   createdAt: string
   updatedAt: string
+  /** True for the project used when a request does not name one. */
+  isDefault?: boolean
 }
 
 export interface ProjectRuntime {
@@ -39,8 +43,10 @@ export interface ProjectResolver {
   create(input: ProjectCreateInput): Promise<{ project: ProjectRuntime; apiKey?: string }>
   /** Keep the registry in step with a project's Settings page. */
   update(id: string, fields: { name?: string; orgId?: string }): Promise<ProjectInfo>
-  /** Delete a non-default project and its database, uploads and backups. */
+  /** Delete a project and its database, uploads and backups. */
   delete(id: string): Promise<void>
+  /** Revoke the setup API key from the default project, once an admin exists. */
+  clearDefaultApiKey(revoke?: boolean): Promise<void>
 }
 
 export function singleProjectResolver(services: Services): ProjectResolver {
@@ -82,7 +88,12 @@ export function singleProjectResolver(services: Services): ProjectResolver {
       return info
     },
     delete: async () => {
-      throw new Error('The default project cannot be deleted.')
+      throw err('general_argument_invalid', 'Create another project before deleting the last one.')
+    },
+    clearDefaultApiKey: async (revoke = true) => {
+      if (services.db.dialect === 'sqlite') clearInstanceApiKey(services.db, revoke)
+      else await clearInstanceApiKeyAsync(services.db, revoke)
+      if (services.config.bootstrap) services.config.bootstrap.apiKey = undefined
     },
   }
 }

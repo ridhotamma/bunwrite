@@ -68,9 +68,7 @@ function projectActions(project: ProjectInfo, index: number, options: ProjectsVi
   if (!options.canManage) return html``
   return menu(
     html`<button type="button" class="menu-item" data-dialog-open="#${renameId(index)}">Rename</button>
-      ${project.id !== options.defaultId
-        ? html`<hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`
-        : ''}`,
+      <hr>${destroy(`/console/projects/${id}/delete`, 'Delete project', `Delete ${project.name}? This removes its database, files and backups.`)}`,
     { label: `Actions for ${project.name}` },
   )
 }

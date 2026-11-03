@@ -43,7 +43,11 @@ describe('observability settings console', () => {
     const body = await res.text()
     expect(body).toContain('Observability settings')
     expect(body).toContain('href="/console/observability/settings" class="on"')
-    expect(body).toContain('Built-in defaults')
+    // Top-level pages use the same header as the rest of the console: no back
+    // link and no scope badge.
+    expect(body).not.toContain('class="back"')
+    expect(body).not.toContain('Built-in defaults')
+    expect(body).not.toContain('Project override')
     expect(body).toContain('Local console')
     expect(body).toContain('External exporters')
     expect(body).toContain('OTLP/HTTP')
@@ -130,7 +134,9 @@ describe('observability settings console', () => {
     })
 
     const page = await (await get('/console/observability/settings')).text()
-    expect(page).toContain('Project override')
+    expect(page).toContain('Reset to defaults')
+    expect(page).not.toContain('Project override')
+    expect(page).not.toContain('Built-in defaults')
     expect(page).toContain('value="1234"')
     expect(page).toContain('value="https://otlp.example.com"')
     expect(page).toContain('Configured; leave blank to keep')
@@ -186,7 +192,8 @@ describe('observability settings console', () => {
     expect(server.observability.config.datadog).toBeNull()
 
     const page = await (await get('/console/observability/settings')).text()
-    expect(page).toContain('Built-in defaults')
+    expect(page).not.toContain('Reset to defaults')
     expect(page).not.toContain('Project override')
+    expect(page).not.toContain('Built-in defaults')
   })
 })

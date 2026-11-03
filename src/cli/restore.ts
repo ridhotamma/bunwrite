@@ -10,11 +10,12 @@
  * it. Each database is checked before any live file is touched, and a failure
  * while swapping puts the previous files back.
  */
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import { applyPendingRestore } from '~/backups/pending'
 import { restoreInstance } from '~/backups/restore'
 import { configFromEnv } from '~/config'
+import { controlDatabasePath } from '~/projects/control'
 import { requireSqliteCommand } from './sqlite-only'
 
 const USAGE = `Usage: bunwrite restore <archive> [options]
@@ -66,12 +67,16 @@ if (!archive) {
 }
 
 const databasePath = resolve(flag('--database') ?? process.env.DATABASE_PATH ?? './data/bunwrite.sqlite')
+const config = configFromEnv()
+const controlPath = controlDatabasePath({ ...config, databasePath })
 const key = flag('--key') ?? process.env.BACKUP_ENCRYPTION_KEY
 const dryRun = args.includes('--dry-run')
 
 try {
   const result = await restoreInstance({
-    databasePath,
+    databasePath: controlPath,
+    legacyDatabasePath: databasePath,
+    dataDir: dirname(databasePath),
     archive,
     key: key || undefined,
     dryRun,

@@ -2,7 +2,7 @@
  * Organization-level backups. Whole-instance archives cover every project, so
  * they live in the organization shell rather than inside a project's Settings.
  */
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { rmSync } from 'node:fs'
 
 import { litestreamSettingsFromEnv, readLitestreamSettings, resetLitestreamSettings, writeLitestreamSettings, type LitestreamSettings } from '~/backups/litestream-settings'
@@ -109,9 +109,18 @@ export function backupPages(router: ConsoleRouter): void {
     await requireOwner(ctx)
     requireSqliteBackups(ctx)
     const config = ctx.projects.control.config
-    const current = readLitestreamSettings(config.databasePath) ?? litestreamSettingsFromEnv()
+    const basePath = config.legacyDatabasePath ?? config.databasePath
+    const legacy = config.legacyDatabasePath
+      ? await ctx.projects.control.db.driver.get<{ id: string }>('SELECT id FROM _projects WHERE legacy = 1 LIMIT 1')
+      : null
+    const current = readLitestreamSettings(basePath) ?? litestreamSettingsFromEnv()
     try {
-      writeLitestreamSettings(config.databasePath, litestreamFromForm(ctx, current))
+      writeLitestreamSettings(config.databasePath, litestreamFromForm(ctx, current), {
+        settingsPath: basePath,
+        projectsDir: join(dirname(resolve(basePath)), 'projects'),
+        legacyDatabasePath: config.legacyDatabasePath,
+        legacyProjectId: legacy?.id,
+      })
     } catch (error) {
       throw err('general_argument_invalid', error instanceof Error ? error.message : String(error))
     }
@@ -121,7 +130,8 @@ export function backupPages(router: ConsoleRouter): void {
   router.post(`${BACKUPS}/litestream/reset`, async ({ ctx }) => {
     await requireOwner(ctx)
     requireSqliteBackups(ctx)
-    resetLitestreamSettings(ctx.projects.control.config.databasePath)
+    const config = ctx.projects.control.config
+    resetLitestreamSettings(config.legacyDatabasePath ?? config.databasePath)
     return ctx.go(BACKUPS, { tone: 'success', text: 'Litestream console settings removed. Restart Bunwrite to use the environment again.' })
   })
 
@@ -142,23 +152,26 @@ export function backupPages(router: ConsoleRouter): void {
     const file = ctx.form.backup
     if (!(file instanceof Blob) || file.size === 0) throw err('general_argument_invalid', 'Choose a backup archive to restore.')
     const config = ctx.projects.control.config
-    if (readPendingRestore(config.databasePath)) {
+    const pendingPath = config.legacyDatabasePath ?? config.databasePath
+    if (readPendingRestore(pendingPath)) {
       throw err('general_argument_invalid', 'A restore is already staged. Restart Bunwrite to apply it, or cancel it first.')
     }
     const key = value(ctx.form, 'backupKey') || undefined
-    const upload = join(dirname(pendingRestoreDir(config.databasePath)), `.restore-upload-${uniqueId()}`)
+    const upload = join(dirname(pendingRestoreDir(pendingPath)), `.restore-upload-${uniqueId()}`)
     try {
       if (!(await Bun.write(upload, file))) throw new Error('The backup archive is empty.')
       // Validate every database before anything is staged.
       await restoreInstance({
         databasePath: config.databasePath,
+        legacyDatabasePath: config.legacyDatabasePath,
+        dataDir: dirname(pendingPath),
         archive: upload,
         key: key ?? config.backupEncryptionKey,
         dryRun: true,
         log: () => {},
       })
       stagePendingRestore({
-        databasePath: config.databasePath,
+        databasePath: pendingPath,
         archive: upload,
         name: basename(String((file as File).name || 'backup archive')),
         key,
@@ -173,7 +186,8 @@ export function backupPages(router: ConsoleRouter): void {
   router.post(`${BACKUPS}/restore/cancel`, async ({ ctx }) => {
     await requireOwner(ctx)
     requireSqliteBackups(ctx)
-    const removed = cancelPendingRestore(ctx.projects.control.config.databasePath)
+    const config = ctx.projects.control.config
+    const removed = cancelPendingRestore(config.legacyDatabasePath ?? config.databasePath)
     return ctx.go(BACKUPS, {
       tone: 'info',
       text: removed ? 'Staged restore cancelled' : 'There is no staged restore to cancel',
