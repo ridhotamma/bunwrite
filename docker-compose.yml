@@ -13,10 +13,12 @@ services:
     build:
       context: .
       args:
-        # Set to true if you run python-* functions.
+        # Local build: set to true if you run python-* functions.
+        # The published GHCR image already includes python3.
         WITH_PYTHON: ${BUNWRITE_WITH_PYTHON:-false}
-        # Set to true for HTML to PDF and images (adds Chromium).
-        # Then enable it in Console > Settings > HTML rendering.
+        # Local build: set to true for HTML to PDF and images (adds Chromium).
+        # The published GHCR image already includes it; then enable rendering in
+        # Console > Settings > HTML rendering.
         WITH_CHROMIUM: ${BUNWRITE_WITH_CHROMIUM:-false}
         LITESTREAM_VERSION: ${LITESTREAM_VERSION:-0.5.17}
     image: bunwrite:latest

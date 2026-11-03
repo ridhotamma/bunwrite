@@ -100,9 +100,9 @@ packages are private by default. Either make the package public, pull the image
 on the host first (the installer falls back to a local image when the pull
 fails), or mount your Docker client config with
 `--volume "$HOME/.docker/config.json:/root/.docker/config.json:ro"`. The
-prebuilt image is the base build: for Python or Chromium support, build your own
-image with `WITH_PYTHON=true` or `WITH_CHROMIUM=true`, push it, and pass it with
-`--image`.
+published image includes Python and Chromium. A local image is the base build by
+default: add `WITH_PYTHON=true` or `WITH_CHROMIUM=true`, push it, and pass it
+with `--image` when you need a custom build.
 
 ## Option A: Manual install
 
@@ -473,11 +473,12 @@ Notes:
   `/app/functions` (see the commented volume) and set
   `SCHEMA_PATH=/app/functions/bunwrite.config.json`. Function variables are
   read from `/app/functions/functions.env`.
-- Python functions need the image built with `WITH_PYTHON=true`: set
-  `BUNWRITE_WITH_PYTHON=true` in `.env`, then `docker compose up -d --build`.
-  (Build args are baked in, so rebuild after changing it.)
-- HTML to PDF and images need Chromium in the image: set
-  `BUNWRITE_WITH_CHROMIUM=true` in `.env` and run
+- Python functions: the published image includes `python3`. A local image needs
+  `WITH_PYTHON=true`: set `BUNWRITE_WITH_PYTHON=true` in `.env`, then
+  `docker compose up -d --build`. (Build args are baked in, so rebuild after
+  changing it.)
+- HTML to PDF and images: the published image includes Chromium. A local image
+  needs `WITH_CHROMIUM=true`: set `BUNWRITE_WITH_CHROMIUM=true` in `.env` and run
   `docker compose up -d --build`, then turn it on in **Console → Settings →
   HTML rendering**. This makes the image about 960 MB on disk (roughly 350 MB
   without it; the one-command installer's Docker CLI and compose plugin account

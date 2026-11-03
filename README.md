@@ -99,8 +99,8 @@ incremental instead of a rewrite. See
 
 - **Bun 1.4+** for the source install. The standalone binary needs no runtime.
 - **Node.js 20+** if you install `@bunwrite/cli` globally; Bun works too.
-- **Optional:** Chrome or Chromium for HTML rendering, `python3` for Python
-  functions, and Docker if you prefer the Compose deployment.
+- **Optional:** Chrome or Chromium for HTML rendering and `python3` for Python
+  functions when running from source. The published Docker image includes both.
 - No MariaDB, Redis or Docker is required for the single-process install.
 
 ### 1. Install and start
@@ -253,12 +253,14 @@ See [Connect an app](#connect-an-app).
 
 - **Backups:** open **Organization → Backups** in the console and create a manual
   archive or enable daily automatic backups. See [Backups](#backups).
-- **HTML rendering:** install Chromium, then enable it under **Settings → HTML
-  rendering**. See [HTML rendering for invoices](#html-rendering-for-invoices).
+- **HTML rendering:** the published Docker image includes Chromium; when running
+  from source, install it. Then enable it under **Settings → HTML rendering**.
+  See [HTML rendering for invoices](#html-rendering-for-invoices).
 - **S3 storage:** configure the bucket under **Settings → File storage**, or in
   the environment for backups.
-- **Python functions:** set `BUNWRITE_WITH_PYTHON=true` in the Docker image, or
-  install `python3` on the host.
+- **Python functions:** the published Docker image includes `python3`; when
+  running from source, install it. A local Docker build needs
+  `BUNWRITE_WITH_PYTHON=true`.
 
 ## Site and function domains
 
@@ -710,8 +712,9 @@ Appwrite's API.
 
 ### Turn it on
 
-1. Install Chrome or Chromium, or set `CHROME_PATH`. In Docker, set
-   `BUNWRITE_WITH_CHROMIUM=true` in `.env` and rebuild.
+1. The published Docker image includes Chromium. When running from source,
+   install Chrome or Chromium, or set `CHROME_PATH`. A local Docker build needs
+   `BUNWRITE_WITH_CHROMIUM=true` in `.env`.
 2. Open **Console → Settings → HTML rendering** and enable it, or set
    `RENDER_ENABLED=true`.
 3. Call the endpoints with an API key from a server or function. Never put the
@@ -782,7 +785,7 @@ assets, saving to S3 and the HTTP examples.
 | Teams | teams, prefs, memberships, invites and accept-invite |
 | Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
 | HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` with streamed responses (`res.start`/`res.write*`/`res.end`, for LLM tokens and SSE); deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python needs `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
+| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` with streamed responses (`res.start`/`res.write*`/`res.end`, for LLM tokens and SSE); deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python is included in the published image; a local build sets `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
 | Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files, or `adapter: ssr` built and run on this server, see [docs/SITES.md](docs/SITES.md) |
 | Git deployments | GitHub App (one-click setup or `VCS_GITHUB_*`), one server-wide installation shared by every project, repository browsing and detection, `createVcsDeployment`; pushes deploy sites and functions, other branches get preview URLs, commit statuses and one PR comment, fork PRs need approval. See [docs/GIT.md](docs/GIT.md) |
 | Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |

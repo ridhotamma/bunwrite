@@ -63,5 +63,23 @@ jobs:
           build-args: |
             BUNWRITE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
             BUNWRITE_VERSION=${{ steps.meta.outputs.version }}
+            # Released images are feature-complete: Python functions and HTML rendering.
+            WITH_PYTHON=true
+            WITH_CHROMIUM=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Fail the release if the published image is missing an optional feature.
+      - name: Smoke test the published image
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
+          docker pull "$image"
+          docker run --rm --entrypoint sh "$image" -c '
+            set -e
+            bunwrite --help >/dev/null
+            chromium --version
+            python3 --version
+            litestream version
+            docker --version
+            docker compose version
+          '

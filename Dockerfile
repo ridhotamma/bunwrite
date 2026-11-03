@@ -53,7 +53,8 @@ FROM debian:trixie-slim
 # `bunwrite:latest` and uses the image that is already on the host.
 ARG BUNWRITE_IMAGE=bunwrite:latest
 ARG BUNWRITE_VERSION=dev
-# Optional extras, off by default to keep the image small:
+# Optional extras, off by default to keep local images small. Release builds pass
+# both as true so the published GHCR image is feature-complete:
 #   WITH_PYTHON=true    python3 and pip for python-* functions (~70 MB)
 #   WITH_CHROMIUM=true  Chromium + fonts for HTML to PDF and images (~730 MB more on disk)
 ARG WITH_PYTHON=false

@@ -461,8 +461,8 @@ function renderCards(ctx: ConsoleContext): Html {
   const status = ctx.services.render.status()
   const chrome = status.chrome
     ? html`Chromium: <code>${status.chrome}</code>${status.running ? ' · running' : ' · starts on the first render, stops after a minute idle'}`
-    : html`<b style="color:var(--critical)">Chromium not found.</b> Install <code>chromium</code> (Docker: build with <code>BUNWRITE_WITH_CHROMIUM=true</code>)
-        or set <code>CHROME_PATH</code>.`
+    : html`<b style="color:var(--critical)">Chromium not found.</b> Install <code>chromium</code>, set <code>CHROME_PATH</code>,
+        or use the published Docker image. A local image needs <code>BUNWRITE_WITH_CHROMIUM=true</code>.`
   return html`${card(
     ctx,
     'render',

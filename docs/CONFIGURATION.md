@@ -521,6 +521,9 @@ Change them, then rebuild with `docker compose up -d --build`.
 | `BUNWRITE_WITH_PYTHON` | `false` | Include python3 for `python-*` functions (~50 MB). |
 | `BUNWRITE_WITH_CHROMIUM` | `false` | Include Chromium and fonts for HTML rendering (~730 MB more on disk). |
 
+The published GHCR image is built with both set to `true`. These defaults apply
+to local images built with `docker compose`.
+
 ## Project schema
 
 | Variable | Default | Meaning |
