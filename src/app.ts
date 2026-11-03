@@ -122,7 +122,7 @@ export function createApp(source: Services | ProjectResolver) {
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
-  // Server-side feature flags: local FEATURE_FLAGS overrides plus PostHog.
+  // Server-side feature flags: local overrides plus PostHog.
   router.get('/flags', async ({ ctx }) => {
     const distinctId = ctx.caller.user?.id ?? `project:${ctx.config.projectId}`
     return json({ flags: await ctx.observability.flags.evaluate(distinctId, { project: ctx.config.projectId }) })

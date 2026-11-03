@@ -1,14 +1,16 @@
 /**
  * Console-managed observability settings for one project.
  *
- * Environment variables remain the defaults. A single `_settings` row in the
- * project database overlays them, so an operator can configure OTLP, Datadog,
- * PostHog and feature flags without editing `.env` or restarting. Saving emits
- * to that project's `Observability.reconfigure()` and local telemetry store.
+ * A single `_settings` row in the project database holds the project's
+ * providers, sampling, limits and local feature flags, so an operator can
+ * configure OTLP, Datadog and PostHog without editing `.env` or restarting.
+ * Saving emits to that project's `Observability.reconfigure()` and local
+ * telemetry store. A project without a row uses the built-in defaults; there
+ * is no environment fallback.
  */
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
-import { observabilityConfig, parseHeaders, type ObservabilityConfig, type OtlpSignal } from './config'
+import { defaultObservabilityConfig, parseHeaders, type ObservabilityConfig, type OtlpSignal } from './config'
 import type { TelemetryOptions } from './store'
 
 export const OBSERVABILITY_SETTING = 'observability'
@@ -205,7 +207,7 @@ function normalizePosthog(value: unknown, fallback: PosthogSettings | null): Pos
   }
 }
 
-/** Validate a stored or submitted value, filling gaps from the environment defaults. */
+/** Validate a stored or submitted value, filling gaps from the defaults. */
 export function normalizeSettings(value: unknown, defaults: ObservabilitySettings): ObservabilitySettings {
   const object = objectOf(value) ?? {}
   return {
@@ -239,11 +241,8 @@ export class ObservabilitySettingsStore {
   private stored = false
   private readonly listeners = new Set<Listener>()
 
-  constructor(
-    private readonly db: SqlDatabase,
-    env: Record<string, string | undefined> = process.env,
-  ) {
-    this.base = observabilityConfig(env)
+  constructor(private readonly db: SqlDatabase) {
+    this.base = defaultObservabilityConfig()
     this.defaults = settingsFromConfig(this.base)
     this.current = this.defaults
     if (db.dialect === 'sqlite') this.loadSync()
@@ -257,13 +256,9 @@ export class ObservabilitySettingsStore {
     return configFromSettings(this.current, this.base)
   }
 
-  /** True when the value comes from the console rather than `.env`. */
+  /** True when the value comes from the console rather than the defaults. */
   get overridden(): boolean {
     return this.stored
-  }
-
-  get environmentDefaults(): ObservabilitySettings {
-    return this.defaults
   }
 
   /** Returns true when the effective value changed. */
@@ -305,7 +300,7 @@ export class ObservabilitySettingsStore {
     await this.emit()
   }
 
-  /** Delete the console override and go back to the environment values. */
+  /** Delete the console override and go back to the built-in defaults. */
   async reset(): Promise<void> {
     await this.db.driver.run('DELETE FROM _settings WHERE key = ?', [OBSERVABILITY_SETTING])
     this.current = this.defaults

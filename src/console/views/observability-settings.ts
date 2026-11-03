@@ -128,14 +128,14 @@ export function featureFlagsView(flags: Record<string, boolean | string>, action
     ${canManage ? entries.map(([key, value], index) => editFlagDialog(key, value, index, actions)) : ''}`
 }
 
-/** Per-project provider and sampling settings. Environment values are the defaults. */
+/** Per-project provider and sampling settings. Unset fields use the built-in defaults. */
 export function observabilitySettingsView(options: ObservabilitySettingsViewOptions): Html {
   const s = options.settings
   const hasOtlpHeaders = Boolean(s.otlp?.headers)
   const hasDatadogKey = Boolean(s.datadog?.apiKey)
   const hasPosthogKey = Boolean(s.posthog?.apiKey)
   const posthogFlags = s.posthog?.flags ?? true
-  const scope = options.overridden ? 'Project override' : 'Environment defaults'
+  const scope = options.overridden ? 'Project override' : 'Built-in defaults'
   return html`${header('Observability settings', { back: OBS, actions: badge(scope, options.overridden ? 'success' : 'info') })}
     ${tabs(OBS_TABS, 'settings')}
     ${options.canManage
@@ -247,10 +247,9 @@ export function observabilitySettingsView(options: ObservabilitySettingsViewOpti
 
     ${options.overridden && options.canManage
       ? settingsSection(
-          'Environment defaults',
-          'Remove the console override and return to the values captured from the server environment at boot.',
-          html`<div class="foot" style="justify-content:flex-start">${destroy(`${OBS_SETTINGS}/reset`, 'Reset to environment defaults', 'Reset every observability setting to the environment defaults?')}</div>`,
+          'Reset',
+          'Delete this project’s saved observability settings and return to the built-in defaults.',
+          html`<div class="foot" style="justify-content:flex-start">${destroy(`${OBS_SETTINGS}/reset`, 'Reset to defaults', 'Reset every observability setting for this project to the built-in defaults?')}</div>`,
         )
-      : ''}
-    <p class="help">Console settings are stored in this project's database. Each project has its own exporters, sampling and flags. Environment variables remain the fallback.</p>`
+      : ''}`
 }

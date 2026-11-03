@@ -5,14 +5,16 @@ flags to a third party, and keeps a local copy for the console's Observability
 pages. Everything is optional and implemented as plain HTTPS calls: there is no
 vendor SDK and no sidecar.
 
-Providers and sampling can be configured per project in **Console →
-Observability → Settings** without editing `.env` or restarting. Environment
-variables remain the defaults; a saved console value overrides them for that
-project. The settings are stored in the project's database, so each project has
-its own exporter credentials, sampling, limits and local feature flags. On the
-first start after upgrading from the old instance-wide setting, a project
-without its own configuration inherits the control database's values once; after
-that it has its own copy and can be changed independently.
+Providers and sampling are configured per project in **Console →
+Observability → Settings**. The settings are stored in the project's database,
+so each project has its own exporter credentials, sampling, limits and local
+feature flags. There are no observability environment variables: a project
+without saved settings uses the built-in defaults, and saving applies them
+without a restart.
+
+Projects that have never saved settings may inherit the control project's saved
+configuration once after upgrading from the old instance-wide setting; after
+that each project has its own copy and can be changed independently.
 
 The local console copy is on by default; external export is off until a provider
 is configured. The request path only pays for a minute counter and, when the
@@ -33,7 +35,7 @@ SQLite/stdout request log does not stop the exporters, and vice versa.
 
 ## Console pages
 
-The console has an **Observability** section with four tabs:
+The console has an **Observability** section with five tabs:
 
 | Page | What it shows |
 | --- | --- |
@@ -48,14 +50,15 @@ This copy is local and works without a provider:
 - **Metrics** are counted for every request and upserted once per minute per
   project (`_telemetry_minutes`), so the chart is accurate and costs one write
   per minute instead of one per request.
-- **Traces** are sampled at `OBSERVABILITY_CONSOLE_SAMPLE_RATE` (default `0.01`)
-  into `_telemetry_spans`, capped at `OBSERVABILITY_CONSOLE_SPANS`.
-- **Analytics** stores document metadata in `_telemetry_events`, capped at
-  `OBSERVABILITY_CONSOLE_EVENTS`.
-- Everything is pruned after `OBSERVABILITY_CONSOLE_RETENTION_DAYS` (default 7).
+- **Traces** are sampled at the project's console sample rate (default `1%`)
+  into `_telemetry_spans`, capped at the configured span limit (default
+  `2000`).
+- **Analytics** stores document metadata in `_telemetry_events`, capped at the
+  configured event limit (default `5000`).
+- Everything is pruned after the configured retention (default 7 days).
 
-Set `OBSERVABILITY_CONSOLE=false` to turn the local copy off. Metrics and traces
-still export to a configured provider.
+Turn **Keep local telemetry in the console** off in Settings to stop the local
+copy. Metrics and traces still export to a configured provider.
 
 ## Server and frontend responsibilities
 
@@ -104,34 +107,28 @@ immediately and win over PostHog.
 Saving applies the new configuration immediately: the project's exporters are
 rebuilt and its local telemetry limits are updated. Stored API keys and headers
 are never rendered back into the page; leave a secret blank to keep it, or use
-its **remove** checkbox. **Reset to environment defaults** deletes the override
-and restores the values captured from `.env` at boot.
+its **remove** checkbox. **Reset to defaults** deletes the project's saved
+settings and restores the built-in defaults.
 
 The page is visible to every console admin, but only an organization owner can
 save or reset it.
 
-## Enable it with environment variables
+## Enable it in the console
 
-Environment variables are still supported and are the defaults when no console
-override exists. Add the provider settings to `.env` and restart:
+Open **Observability → Settings** for the project, turn on **Enable external
+exporters**, fill in the provider you use and save. Changes take effect
+immediately; no restart is needed.
 
-```bash
-docker compose up -d --force-recreate
-```
-
-`OBSERVABILITY_ENABLED=false` disables every external exporter. It does not stop
-the local console copy; use `OBSERVABILITY_CONSOLE=false` for that.
+Turning **Enable external exporters** off stops every outbound exporter. It does
+not stop the local console copy; use **Keep local telemetry in the console** for
+that.
 
 ## Datadog
 
 ### Logs and metrics (no Agent)
 
-```env
-DD_API_KEY=...
-DD_SITE=datadoghq.com
-DD_LOGS_ENABLED=true
-DD_METRICS_ENABLED=true
-```
+In **Observability → Settings → Datadog**, enter the API key, choose the site,
+and enable **Send logs** and **Send metrics**.
 
 This posts to `https://http-intake.logs.<site>/api/v2/logs` and
 `https://api.<site>/api/v1/series`. Logs carry `service`, `env`, `project`,
@@ -140,33 +137,28 @@ route labels.
 
 ### Traces (OTLP intake)
 
-```env
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.datadoghq.com
-OTEL_EXPORTER_OTLP_HEADERS=dd-api-key=...
-OTEL_EXPORTER_OTLP_SIGNALS=traces
-```
+In **Observability → Settings → OTLP/HTTP**, set the base endpoint to
+`https://otlp.datadoghq.com`, add `dd-api-key=...` to the headers, and select
+only **Traces**.
 
-Use the regional endpoint that matches `DD_SITE` (`otlp.datadoghq.eu`,
-`otlp.us3.datadoghq.com`, `otlp.us5.datadoghq.com`, `otlp.ap1.datadoghq.com`).
-Keeping `OTEL_EXPORTER_OTLP_SIGNALS=traces` avoids sending logs and metrics
-twice, once through the Datadog intake and once through OTLP.
+Use the regional endpoint that matches the Datadog site (`otlp.datadoghq.eu`,
+`otlp.us3.datadoghq.com`, `otlp.us5.datadoghq.com`,
+`otlp.ap1.datadoghq.com`). Selecting only **Traces** avoids sending logs and
+metrics twice, once through the Datadog intake and once through OTLP.
 
 ### Local Datadog Agent
 
-If the Agent runs beside Bunwrite, skip the Datadog key and point OTLP at it:
+If the Agent runs beside Bunwrite, skip the Datadog key and point the OTLP/HTTP
+base endpoint at it:
 
-```env
-OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318
+```text
+http://host.docker.internal:4318
 ```
 
 ## PostHog
 
-```env
-POSTHOG_API_KEY=phc_...
-POSTHOG_HOST=https://us.i.posthog.com
-POSTHOG_ANALYTICS=true
-POSTHOG_FLAGS=true
-```
+In **Observability → Settings → PostHog**, enter the project API key, choose the
+host, and enable **Send document analytics** and/or **Evaluate feature flags**.
 
 Product analytics events are named `document.created`, `document.updated` and
 `document.deleted`. They carry `project`, `database`, `collection`,
@@ -175,11 +167,8 @@ sent**. The distinct ID is the signed-in user's ID, or `project:<id>` for
 server-side/API-key writes.
 
 Feature flags are evaluated server-side through `POST /flags?v=2` and cached for
-`POSTHOG_FLAGS_TTL_MS`. Local overrides always win:
-
-```env
-FEATURE_FLAGS={"new-checkout":true,"theme":"dark"}
-```
+the configured **Flag cache** duration. Local overrides always win and are
+managed in **Observability → Feature flags**.
 
 Read them from your frontend or function through the API:
 
@@ -200,23 +189,13 @@ request.
 ## Generic OTLP
 
 Any OTLP/HTTP collector works (Grafana Alloy, Honeycomb, Tempo, Jaeger, a
-Collector in a sidecar):
+Collector in a sidecar). In **Observability → Settings → OTLP/HTTP**, set the
+base endpoint, add any headers, and select the signals to export. Service
+metadata and trace sampling live in **External exporters**.
 
-```env
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.com
-OTEL_EXPORTER_OTLP_HEADERS=api-key=...
-OTEL_EXPORTER_OTLP_SIGNALS=traces,metrics,logs
-OTEL_SERVICE_NAME=booking-api
-DEPLOYMENT_ENVIRONMENT=production
-```
-
-Per-signal endpoints are available when a collector expects different hosts:
-
-```env
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://tempo.example.com/v1/traces
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://mimir.example.com/otlp/v1/metrics
-OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://loki.example.com/otlp/v1/logs
-```
+Per-signal endpoints are available when a collector expects different hosts.
+Enter them under **Traces endpoint**, **Metrics endpoint** and **Logs
+endpoint**; they override the base.
 
 ## Metrics reference
 
@@ -249,26 +228,21 @@ An incoming W3C `traceparent` header is honoured, so a trace started by your
 gateway continues through Bunwrite. Every response carries `X-Request-Id` and,
 when observability is on, `X-Trace-Id`.
 
-Sampling is head-based:
-
-```env
-OBSERVABILITY_SAMPLE_RATE=0.1
-```
-
-Metrics and shipped logs are not sampled by this setting. To reduce log volume,
-lower `LOG_SAMPLE_RATE` (which also reduces SQLite request-log rows) or turn off
-`DD_LOGS_ENABLED`.
+Sampling is head-based. Set **Trace sampling** under **External exporters**;
+the default is 100%. Metrics and shipped logs are not sampled by this setting.
+To reduce log volume, lower `LOG_SAMPLE_RATE` (which also reduces SQLite
+request-log rows) or turn off **Send logs** in the Datadog section.
 
 ## Behaviour under failure
 
-- Every exporter has a bounded queue (`OBSERVABILITY_QUEUE_LIMIT`) and drops the
-  oldest events when a provider is slow.
+- Every exporter has a bounded queue (default 5000 events per signal) and drops
+  the oldest events when a provider is slow.
 - Sends run off the request path; a request never waits for a provider.
 - A failed batch is retried on the next flush, up to the queue limit.
-- Failures are logged once a minute, or on every failure with
-  `OBSERVABILITY_DEBUG=true`.
-- `SIGTERM` flushes all queues before exit (bounded by
-  `OBSERVABILITY_TIMEOUT_MS`).
+- Failures are logged once a minute, or on every failure when **Log every
+  exporter failure** is enabled.
+- `SIGTERM` flushes all queues before exit (bounded by the configured timeout,
+  default 5000 ms).
 
 ## Multi-process deployments
 
@@ -284,8 +258,8 @@ is a per-process gauge, not a cluster total.
 - The auth label is a category or user ID (`user:<id>`, `key`, `guest`,
   `console:<email>`), not a token.
 - Product analytics sends document metadata, never document data.
-- Provider keys are read from the environment and never written to the
-  database or logs.
+- Provider keys are stored in the project's database and never rendered back
+  into the console pages or logged.
 
 ## Not included yet
 

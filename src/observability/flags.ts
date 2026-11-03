@@ -1,10 +1,10 @@
 /**
  * Server-side feature flags.
  *
- * Local operators can force values with `FEATURE_FLAGS={"key":true}`, and
- * PostHog evaluates the rest per user/project. Results are cached for
- * `POSTHOG_FLAGS_TTL_MS` so a page that reads several flags does not call the
- * provider once per flag. A provider outage degrades to the local values.
+ * Local overrides saved in the console win over PostHog, and PostHog evaluates
+ * the rest per user/project. Results are cached for the project's configured
+ * flag TTL so a page that reads several flags does not call the provider once
+ * per flag. A provider outage degrades to the local values.
  */
 import type { ObservabilityConfig } from './config'
 import { fetchPosthogFlags } from './providers'

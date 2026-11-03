@@ -356,8 +356,9 @@ messages is not implemented.
 
 Bunwrite records API request logs, one request span per call, per-minute request
 metrics and document write events. **Console → Observability** shows them, and
-the same signals can be exported to OTLP, Datadog or PostHog. Feature flags are
-read from `GET /v1/flags`.
+each project can export its own signals to OTLP, Datadog or PostHog from
+**Observability → Settings**. Feature flags are read from `GET /v1/flags` and
+configured per project under **Observability → Feature flags**.
 
 Client-only activity is not automatic: page views, clicks, form steps, browser
 errors and session replay need the PostHog browser SDK or a call to your own
@@ -397,7 +398,7 @@ MCP server: a compact operator surface over the same API, over stdio or HTTP.
 | `too many connections` | Lower `DATABASE_POOL_MAX`, or lower `WORKERS` on Postgres. |
 | `permission denied for schema` | The Postgres role needs `CREATE` on the database (for per-project schemas) and rights on the schema. |
 | Data missing after `DB_DRIVER=postgres` | SQLite and Postgres are separate stores. `DB_DRIVER` switches the server; it does not copy existing data. |
-| Observability pages are empty | Check `CONSOLE_ENABLED` and `OBSERVABILITY_CONSOLE`; metrics count every request, but detailed traces are sampled. |
+| Observability pages are empty | Check **Observability → Settings** for this project: local telemetry may be off, and detailed traces are sampled. |
 
 ## Security checklist
 

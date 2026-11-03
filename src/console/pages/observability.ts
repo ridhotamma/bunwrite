@@ -229,7 +229,7 @@ export function observabilityPages(router: ConsoleRouter): void {
           actions: menu(destroy(`${TRACES}/delete`, 'Clear traces', 'Delete every console trace for this project?'), { label: 'More actions' }),
         })}
         ${tabs(OBS_TABS, 'traces')}
-        ${!ctx.observability.config.console ? alert('info', html`The local trace store is off (<code>OBSERVABILITY_CONSOLE=false</code>).`) : ''} ${bodyCard}
+        ${!ctx.observability.config.console ? alert('info', html`The local trace store is off for this project. Turn it on in <a href="${OBS_SETTINGS}">Observability settings</a>.`) : ''} ${bodyCard}
         <p class="help">
           Console traces are sampled at ${(ctx.observability.config.consoleSampleRate * 100).toFixed(1)}% and capped at
           ${ctx.observability.config.spanLimit.toLocaleString('en-US')} spans. Configure an OTLP or Datadog exporter for the complete stream.
@@ -329,7 +329,7 @@ export function observabilityPages(router: ConsoleRouter): void {
         actions: menu(destroy(`${ANALYTICS}/delete`, 'Clear analytics', 'Delete every product analytics event for this project?'), { label: 'More actions' }),
       })}
       ${tabs(OBS_TABS, 'analytics')}
-      ${!ctx.observability.config.console ? alert('info', html`Local analytics is off (<code>OBSERVABILITY_CONSOLE=false</code>).`) : ''}
+      ${!ctx.observability.config.console ? alert('info', html`Local analytics is off for this project. Turn it on in <a href="${OBS_SETTINGS}">Observability settings</a>.`) : ''}
       <div class="stats" style="margin:16px 0">
         ${stat('Events, 24h', total.toLocaleString('en-US'))} ${stat('Distinct subjects', distinct.toLocaleString('en-US'))}
         ${stat('Event types', summary.length.toLocaleString('en-US'))}
@@ -541,6 +541,6 @@ export function observabilityPages(router: ConsoleRouter): void {
   router.post(`${OBS_SETTINGS}/reset`, async ({ ctx }) => {
     if (!(await canManage(ctx))) throw err('general_argument_invalid', "Only an organization owner can reset this project's observability settings.")
     await ctx.services.observabilitySettings.reset()
-    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings reset to environment defaults' })
+    return ctx.go(OBS_SETTINGS, { tone: 'success', text: 'Observability settings reset to defaults' })
   })
 }

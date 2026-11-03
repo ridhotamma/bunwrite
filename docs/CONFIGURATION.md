@@ -308,45 +308,28 @@ Request logs, traces, metrics and product analytics are kept locally for the
 console's **Observability** pages, and can also be exported to a third party
 without an SDK. External export is off until a provider is configured; the
 local console copy is on by default. See
-[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples. Providers, sampling
-and limits can also be edited in **Console → Observability → Settings**, and
-local feature flags in **Console → Observability → Feature flags**. A saved
-console value overrides the environment for that project, and the settings
-apply without a restart. Each project has its own settings.
+[OBSERVABILITY.md](OBSERVABILITY.md) for setup examples.
 
-| Variable | Default | Meaning |
+Everything is configured per project in **Console → Observability → Settings**,
+and local feature flags in **Console → Observability → Feature flags**. The
+values are stored in that project's database and apply without a restart. There
+are no observability environment variables: the old `OBSERVABILITY_*`, `OTEL_*`,
+`DD_*`, `POSTHOG_*` and `FEATURE_FLAGS` variables are no longer read.
+
+| Setting | Default | Meaning |
 | --- | --- | --- |
-| `OBSERVABILITY_ENABLED` | auto | `false` disables every external exporter even when a provider is configured. `true` enables it explicitly. The local console copy is controlled by `OBSERVABILITY_CONSOLE`. |
-| `OBSERVABILITY_CONSOLE` | `true` (`CONSOLE_ENABLED`) | Keep sampled traces, per-minute metrics and document events for the console's Observability pages. |
-| `OBSERVABILITY_CONSOLE_SAMPLE_RATE` | `0.01` | Fraction of requests kept as detailed traces for the console (0–1). Metrics are counted for every request. |
-| `OBSERVABILITY_CONSOLE_SPANS` | `2000` | Most recent sampled spans kept in total; older spans are trimmed. |
-| `OBSERVABILITY_CONSOLE_EVENTS` | `5000` | Most recent analytics events kept in total. |
-| `OBSERVABILITY_CONSOLE_RETENTION_DAYS` | `7` | How long local console telemetry is kept. |
-| `OBSERVABILITY_SAMPLE_RATE` | `1` | Head-based trace sampling (0–1). Logs and metrics are not sampled here. |
-| `OBSERVABILITY_FLUSH_MS` | `5000` | How often batched traces, logs, metrics and analytics are sent. |
-| `OBSERVABILITY_TIMEOUT_MS` | `5000` | Per-request timeout for a provider. |
-| `OBSERVABILITY_QUEUE_LIMIT` | `5000` | Events kept per signal while a provider is slow; the oldest are dropped first. |
-| `OBSERVABILITY_INSTANCE_ID` | `<host>:<worker>` | Distinguishes workers in traces and metrics. |
-| `OBSERVABILITY_DEBUG` | `false` | Log every exporter failure instead of once a minute. |
-| `OTEL_SERVICE_NAME` | `bunwrite` | `service.name` resource attribute. |
-| `OTEL_SERVICE_VERSION` | `1.8.0` | `service.version` resource attribute. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Base OTLP/HTTP endpoint; `/v1/traces`, `/v1/metrics` and `/v1/logs` are appended. |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | derived | Full traces endpoint, overriding the base. |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | derived | Full metrics endpoint, overriding the base. |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | derived | Full logs endpoint, overriding the base. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | unset | Comma-separated `key=value` headers, for example `dd-api-key=...`. |
-| `OTEL_EXPORTER_OTLP_SIGNALS` | `traces,metrics,logs` | Signals to export. `OTEL_METRICS_EXPORTER=none` also turns one off. |
-| `DD_API_KEY` | unset | Datadog API key for the logs and metrics intake. |
-| `DD_SITE` | `datadoghq.com` | Datadog site, for example `datadoghq.eu` or `us3.datadoghq.com`. |
-| `DD_LOGS_ENABLED` | `true` | Ship request logs to Datadog. |
-| `DD_METRICS_ENABLED` | `true` | Ship request metrics to Datadog. |
-| `POSTHOG_API_KEY` | unset | PostHog project API key (`phc_...`). |
-| `POSTHOG_HOST` | `https://us.i.posthog.com` | PostHog ingestion host (`https://eu.i.posthog.com` for the EU cloud). |
-| `POSTHOG_ANALYTICS` | `true` | Capture document create/update/delete events. |
-| `POSTHOG_FLAGS` | `true` | Evaluate feature flags server-side. |
-| `POSTHOG_FLAGS_TTL_MS` | `30000` | How long a user's evaluated flags are cached. |
-| `FEATURE_FLAGS` | `{}` | JSON object of local flag overrides. They win over PostHog. |
-| `DEPLOYMENT_ENVIRONMENT` | `NODE_ENV` or `production` | `deployment.environment` resource attribute and Datadog `env` tag. |
+| Local console | on | Keep sampled traces, per-minute metrics and document events for the console's Observability pages. |
+| Console trace sampling | `1%` | Fraction of requests kept as detailed traces. Metrics are counted for every request. |
+| Spans kept | `2000` | Most recent sampled spans kept per project; older spans are trimmed. |
+| Events kept | `5000` | Most recent analytics events kept per project. |
+| Retention | `7 days` | How long local console telemetry is kept. |
+| External exporters | off | Master switch for every outbound exporter. |
+| Trace sampling | `100%` | Head-based trace sampling. Logs and metrics are not sampled here. |
+| Flush interval / timeout / queue limit | `5000 ms` / `5000 ms` / `5000` | Batching, per-request provider timeout and the bounded queue size per signal. |
+| OTLP/HTTP | unset | Base and per-signal endpoints, comma-separated headers and enabled signals. |
+| Datadog | unset | API key, site, and whether logs and metrics are sent. |
+| PostHog | unset | Project API key, host, analytics, feature flags and flag cache TTL. |
+| Local feature flags | `{}` | Boolean or text overrides. They win over PostHog. |
 
 Every response carries `X-Request-Id`; when observability is enabled it also
 carries `X-Trace-Id`. Incoming W3C `traceparent` headers are honoured, so a

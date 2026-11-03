@@ -10,7 +10,7 @@
 import type { Caller } from '~/auth/caller'
 import type { DocEvent } from '~/documents/store'
 
-import { hasAnySink, observabilityConfig, type ObservabilityConfig } from './config'
+import { defaultObservabilityConfig, hasAnySink, type ObservabilityConfig } from './config'
 import { FlagService } from './flags'
 import { MetricRegistry, collectProcessMetrics } from './metrics'
 import { logsPayload, metricsPayload, tracesPayload, type LogData, type SpanData } from './otlp'
@@ -73,12 +73,6 @@ function randomHex(bytes: number): string {
 
 const unixNano = (milliseconds: number): string => String(BigInt(Math.max(0, Math.round(milliseconds))) * 1_000_000n)
 
-/** A parsed config has numbers and a localFlags object; an environment map has strings. */
-const isObservabilityConfig = (value: Record<string, string | undefined> | ObservabilityConfig): value is ObservabilityConfig => {
-  const candidate = value as ObservabilityConfig
-  return typeof candidate.serviceName === 'string' && typeof candidate.sampleRate === 'number' && typeof candidate.localFlags === 'object'
-}
-
 const severityOf = (status: number, error?: string): { number: number; text: string } => {
   if (status >= 500 || error) return { number: 17, text: 'ERROR' }
   if (status >= 400) return { number: 13, text: 'WARN' }
@@ -107,8 +101,8 @@ export class Observability {
   private closed = false
   private lastWarning = 0
 
-  constructor(source: Record<string, string | undefined> | ObservabilityConfig = process.env, options: ObservabilityOptions = {}) {
-    this.config = isObservabilityConfig(source) ? source : observabilityConfig(source)
+  constructor(config: ObservabilityConfig = defaultObservabilityConfig(), options: ObservabilityOptions = {}) {
+    this.config = config
     this.flags = new FlagService(this.config)
     this.enabled = false
     this.console = false
@@ -421,10 +415,10 @@ export class Observability {
   }
 }
 
-/** Create the facade from the environment or an already-parsed config. */
+/** Create the facade from a project's settings. */
 export function createObservability(
-  source: Record<string, string | undefined> | ObservabilityConfig = process.env,
+  config: ObservabilityConfig = defaultObservabilityConfig(),
   options: ObservabilityOptions = {},
 ): Observability {
-  return new Observability(source, options)
+  return new Observability(config, options)
 }

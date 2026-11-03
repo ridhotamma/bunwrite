@@ -4,7 +4,7 @@ import type { Caller } from '~/auth/caller'
 import type { Collection } from '~/schema/types'
 import type { DocEvent } from '~/documents/store'
 import { openDb } from '~/db/connection'
-import { observabilityConfig, parseHeaders, parseLocalFlags } from '~/observability/config'
+import { defaultObservabilityConfig, parseHeaders, type ObservabilityConfig, type OtlpConfig } from '~/observability/config'
 import { normalizePath, Observability, parseTraceparent } from '~/observability'
 import { MetricRegistry } from '~/observability/metrics'
 import { configFromSettings, ObservabilitySettingsStore, settingsFromConfig } from '~/observability/settings'
@@ -54,65 +54,56 @@ const event = {
   document: { $id: 'doc-1' },
 } as DocEvent
 
+function runtimeConfig(over: Partial<ObservabilityConfig> = {}): ObservabilityConfig {
+  return { ...defaultObservabilityConfig(), ...over }
+}
+
+function otlpConfig(endpoint: string): OtlpConfig {
+  const base = endpoint.replace(/\/+$/, '')
+  return {
+    endpoint: base,
+    traces: `${base}/v1/traces`,
+    metrics: `${base}/v1/metrics`,
+    logs: `${base}/v1/logs`,
+    headers: {},
+    signals: new Set(['traces', 'metrics', 'logs']),
+  }
+}
+
 describe('observability config', () => {
-  test('is off with no provider', () => {
-    const config = observabilityConfig({})
+  test('starts with built-in defaults and no providers', () => {
+    const config = defaultObservabilityConfig()
     expect(config.enabled).toBe(false)
+    expect(config.console).toBe(true)
     expect(config.otlp).toBeNull()
     expect(config.datadog).toBeNull()
     expect(config.posthog).toBeNull()
+    expect(config.sampleRate).toBe(1)
+    expect(config.consoleSampleRate).toBe(0.01)
+    expect(config.spanLimit).toBe(2_000)
+    expect(config.localFlags).toEqual({})
   })
 
-  test('reads OTLP, headers and per-signal overrides', () => {
-    const config = observabilityConfig({
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otlp.example.com/',
-      OTEL_EXPORTER_OTLP_HEADERS: 'api-key=abc,x-tenant=one',
-      OTEL_METRICS_EXPORTER: 'none',
-    })
-    expect(config.enabled).toBe(true)
-    expect(config.otlp?.traces).toBe('https://otlp.example.com/v1/traces')
-    expect(config.otlp?.headers).toEqual({ 'api-key': 'abc', 'x-tenant': 'one' })
-    expect([...(config.otlp?.signals ?? [])].sort()).toEqual(['logs', 'traces'])
-  })
-
-  test('reads Datadog and PostHog, and lets local flags win later', () => {
-    const config = observabilityConfig({
-      DD_API_KEY: 'dd-key',
-      DD_SITE: 'datadoghq.eu',
-      POSTHOG_API_KEY: 'ph-key',
-      POSTHOG_HOST: 'https://eu.i.posthog.com/',
-      FEATURE_FLAGS: '{"beta":true,"theme":"dark","ignored":1}',
-      OBSERVABILITY_SAMPLE_RATE: '0.25',
-    })
-    expect(config.datadog).toMatchObject({ apiKey: 'dd-key', site: 'datadoghq.eu', logs: true, metrics: true })
-    expect(config.posthog).toMatchObject({ apiKey: 'ph-key', host: 'https://eu.i.posthog.com', flags: true })
-    expect(config.localFlags).toEqual({ beta: true, theme: 'dark' })
-    expect(config.sampleRate).toBe(0.25)
-  })
-
-  test('explicit switches disable the subsystem and individual providers', () => {
-    expect(observabilityConfig({ OBSERVABILITY_ENABLED: 'false', POSTHOG_API_KEY: 'x' }).enabled).toBe(false)
-    expect(observabilityConfig({ DD_API_KEY: 'x', DD_LOGS_ENABLED: 'false' }).datadog?.logs).toBe(false)
-    expect(observabilityConfig({ POSTHOG_API_KEY: 'x', POSTHOG_ANALYTICS: 'false' }).posthog?.analytics).toBe(false)
-  })
-
-  test('parsers tolerate malformed input', () => {
+  test('parses header input and tolerates malformed pairs', () => {
     expect(parseHeaders('a=1,b=2=3,c')).toEqual({ a: '1', b: '2=3' })
     expect(parseHeaders(undefined)).toEqual({})
-    expect(parseLocalFlags('not json')).toEqual({})
-    expect(parseLocalFlags('[1,2]')).toEqual({})
-    expect(parseLocalFlags('{"ok":true,"n":2}')).toEqual({ ok: true })
   })
 
   test('console settings round-trip through the runtime config', () => {
-    const base = observabilityConfig({
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otlp.example.com',
-      OTEL_EXPORTER_OTLP_HEADERS: 'api-key=abc',
-      DD_API_KEY: 'dd-key',
-      POSTHOG_API_KEY: 'ph-key',
-      FEATURE_FLAGS: '{"beta":true}',
-    })
+    const base = defaultObservabilityConfig()
     const settings = settingsFromConfig(base)
+    settings.otlp = {
+      endpoint: 'https://otlp.example.com',
+      traces: '',
+      metrics: '',
+      logs: '',
+      headers: 'api-key=abc',
+      signals: ['traces', 'metrics', 'logs'],
+    }
+    settings.datadog = { apiKey: 'dd-key', site: 'datadoghq.com', logs: true, metrics: true }
+    settings.posthog = { apiKey: 'ph-key', host: 'https://us.i.posthog.com', analytics: true, flags: true, flagsTtlMs: 30_000 }
+    settings.localFlags = { beta: true }
+
     settings.otlp!.signals = ['traces', 'logs']
     settings.otlp!.headers = 'api-key=changed\nx-tenant=one'
     settings.datadog!.site = 'datadoghq.eu'
@@ -126,34 +117,35 @@ describe('observability config', () => {
     expect(config.localFlags).toEqual({ beta: true })
   })
 
-  test('the control-database override persists and can be reset', async () => {
+  test('the project settings override persists and can be reset', async () => {
     const db = openDb(':memory:')
-    const env = { POSTHOG_API_KEY: 'env-key', OBSERVABILITY_CONSOLE: 'true', FEATURE_FLAGS: '{"fromEnv":true}' }
     try {
-      const store = new ObservabilitySettingsStore(db, env)
+      const store = new ObservabilitySettingsStore(db)
       expect(store.overridden).toBe(false)
-      expect(store.config.posthog?.apiKey).toBe('env-key')
+      expect(store.config.posthog).toBeNull()
+      expect(store.settings.console).toBe(true)
 
       const next = {
         ...store.settings,
         console: false,
         spanLimit: 1_234,
-        posthog: { ...store.settings.posthog!, apiKey: 'console-key', flags: false },
+        posthog: { apiKey: 'console-key', host: 'https://us.i.posthog.com', analytics: true, flags: false, flagsTtlMs: 30_000 },
         localFlags: { fromConsole: true },
       }
       await store.save(next)
       expect(store.overridden).toBe(true)
 
       // A fresh store reads the row synchronously on SQLite.
-      const reloaded = new ObservabilitySettingsStore(db, env)
+      const reloaded = new ObservabilitySettingsStore(db)
       expect(reloaded.settings).toMatchObject({ console: false, spanLimit: 1_234, localFlags: { fromConsole: true } })
       expect(reloaded.config.posthog?.apiKey).toBe('console-key')
       expect(reloaded.config.posthog?.flags).toBe(false)
 
       await reloaded.reset()
       expect(reloaded.overridden).toBe(false)
-      expect(reloaded.config.posthog?.apiKey).toBe('env-key')
-      expect(reloaded.settings.localFlags).toEqual({ fromEnv: true })
+      expect(reloaded.config.posthog).toBeNull()
+      expect(reloaded.settings.localFlags).toEqual({})
+      expect(reloaded.settings.console).toBe(true)
     } finally {
       db.sqlite.close()
     }
@@ -206,7 +198,7 @@ describe('metrics', () => {
   })
 
   test('builds OTLP metric, trace and log payloads', () => {
-    const config = observabilityConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318' })
+    const config = runtimeConfig({ otlp: otlpConfig('http://localhost:4318') })
     const metrics = new MetricRegistry()
     metrics.counter('requests', 1, { route: '/a' })
     const metricBody = metricsPayload(metrics.snapshot(), config, { startMs: 1_000, endMs: 2_000 }) as any
@@ -262,12 +254,12 @@ describe('Observability facade', () => {
   test('ships traces, logs, metrics and analytics without blocking', async () => {
     const captureServer = capture()
     const observability = new Observability(
-      {
-        OTEL_EXPORTER_OTLP_ENDPOINT: captureServer.url,
-        POSTHOG_API_KEY: 'ph-key',
-        POSTHOG_HOST: captureServer.url,
-        FEATURE_FLAGS: '{"beta":true,"theme":"dark"}',
-      },
+      runtimeConfig({
+        enabled: true,
+        otlp: otlpConfig(captureServer.url),
+        posthog: { apiKey: 'ph-key', host: captureServer.url, analytics: true, flags: true, flagsTtlMs: 30_000 },
+        localFlags: { beta: true, theme: 'dark' },
+      }),
       { timers: false },
     )
 
@@ -322,11 +314,10 @@ describe('Observability facade', () => {
   test('local feature flags win over PostHog and are cached', async () => {
     const captureServer = capture()
     const observability = new Observability(
-      {
-        POSTHOG_API_KEY: 'ph-key',
-        POSTHOG_HOST: captureServer.url,
-        FEATURE_FLAGS: '{"beta":true,"theme":"dark"}',
-      },
+      runtimeConfig({
+        posthog: { apiKey: 'ph-key', host: captureServer.url, analytics: true, flags: true, flagsTtlMs: 30_000 },
+        localFlags: { beta: true, theme: 'dark' },
+      }),
       { timers: false },
     )
     const flags = await observability.flags.evaluate('user-1', { project: 'booking-app' })
@@ -338,19 +329,16 @@ describe('Observability facade', () => {
   })
 
   test('stays inert when the console and every provider are off', () => {
-    const observability = new Observability({ OBSERVABILITY_CONSOLE: 'false' }, { timers: false })
+    const observability = new Observability(runtimeConfig({ console: false }), { timers: false })
     expect(observability.enabled).toBe(false)
     expect(observability.begin(new Request('http://localhost/'))).toBeNull()
     expect(observability.flags.enabled).toBe(false)
   })
 
   test('can be reconfigured in place without a restart', async () => {
-    const observability = new Observability({ OBSERVABILITY_CONSOLE: 'false' }, { timers: false })
+    const observability = new Observability(runtimeConfig({ console: false }), { timers: false })
     expect(observability.enabled).toBe(false)
-    await observability.reconfigure(
-      observabilityConfig({ OBSERVABILITY_CONSOLE: 'true', OBSERVABILITY_CONSOLE_SAMPLE_RATE: '1', FEATURE_FLAGS: '{"beta":true}' }),
-      { timers: false },
-    )
+    await observability.reconfigure(runtimeConfig({ console: true, consoleSampleRate: 1, localFlags: { beta: true } }), { timers: false })
     expect(observability.enabled).toBe(true)
     expect(observability.console).toBe(true)
     expect(observability.flags.enabled).toBe(true)
@@ -362,7 +350,7 @@ describe('Observability facade', () => {
   })
 
   test('keeps a local trace when the console is on and no provider is configured', async () => {
-    const observability = new Observability({ OBSERVABILITY_CONSOLE_SAMPLE_RATE: '1' }, { timers: false })
+    const observability = new Observability(runtimeConfig({ consoleSampleRate: 1 }), { timers: false })
     const spans: Array<{ route: string; status: number }> = []
     const observation = observability.begin(new Request('https://api.example.com/v1/health'))!
     expect(observation).not.toBeNull()

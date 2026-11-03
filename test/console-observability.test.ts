@@ -37,13 +37,13 @@ beforeAll(async () => {
 afterAll(() => server.stop())
 
 describe('observability settings console', () => {
-  test('the settings tab renders the current environment defaults', async () => {
+  test('the settings tab renders the built-in defaults', async () => {
     const res = await get('/console/observability/settings')
     expect(res.status).toBe(200)
     const body = await res.text()
     expect(body).toContain('Observability settings')
     expect(body).toContain('href="/console/observability/settings" class="on"')
-    expect(body).toContain('Environment defaults')
+    expect(body).toContain('Built-in defaults')
     expect(body).toContain('Local console')
     expect(body).toContain('External exporters')
     expect(body).toContain('OTLP/HTTP')
@@ -176,7 +176,7 @@ describe('observability settings console', () => {
     expect(page).toContain('No local overrides')
   })
 
-  test('reset removes the override and returns to the environment', async () => {
+  test('reset removes the override and returns to the built-in defaults', async () => {
     expect(server.services.observabilitySettings.overridden).toBe(true)
     const reset = await form('/console/observability/settings/reset', {})
     expect(reset.status).toBe(303)
@@ -186,7 +186,7 @@ describe('observability settings console', () => {
     expect(server.observability.config.datadog).toBeNull()
 
     const page = await (await get('/console/observability/settings')).text()
-    expect(page).toContain('Environment defaults')
+    expect(page).toContain('Built-in defaults')
     expect(page).not.toContain('Project override')
   })
 })

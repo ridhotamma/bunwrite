@@ -3,9 +3,9 @@
  *
  * Exporters are the system of record; this store exists so the Observability
  * pages work without a provider and without querying a vendor. Spans are
- * sampled (`OBSERVABILITY_CONSOLE_SAMPLE_RATE` in the facade), events are
- * low-volume document writes, and both are capped and pruned. Writes are
- * buffered so the request path never waits on SQLite.
+ * sampled at the project's console sample rate, events are low-volume document
+ * writes, and both are capped and pruned. Writes are buffered so the request
+ * path never waits on SQLite.
  */
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'

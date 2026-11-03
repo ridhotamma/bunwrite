@@ -21,7 +21,7 @@ frontend sends those.
 | Traces | One server span per API request | W3C `traceparent` is honoured. The console keeps a sample; exporters get the full stream. |
 | Metrics | Every request | Per-minute requests/errors/latency rolled up for the console, plus counters, histograms and process gauges for exporters. |
 | Product analytics | Document `create`, `update` and `delete` | Metadata only: project, database, collection, document ID and action. Never the document body. |
-| Feature flags | Evaluation, when asked | `GET /v1/flags` returns local `FEATURE_FLAGS` overrides merged with PostHog. |
+| Feature flags | Evaluation, when asked | `GET /v1/flags` returns local overrides (managed in the console) merged with PostHog. |
 
 Every response carries `X-Request-Id`; when observability is on it also carries
 `X-Trace-Id`.
@@ -37,7 +37,7 @@ form steps. Those need a client call or a client SDK:
 | Page views, autocapture, session replay, heatmaps | PostHog browser SDK or Datadog RUM. These are browser features; the server cannot provide them. |
 | Browser errors | PostHog error tracking, Datadog RUM or Sentry. Bunwrite captures server request errors, not client exceptions. |
 | Frontend-to-backend trace correlation | Send a W3C `traceparent` header from the browser or gateway. Bunwrite continues the trace and returns `X-Trace-Id`. |
-| Feature flags in the UI | Call `GET /v1/flags` (project header + user session or API key). Server-side `FEATURE_FLAGS` wins over PostHog. |
+| Feature flags in the UI | Call `GET /v1/flags` (project header + user session or API key). Local console overrides win over PostHog. |
 
 The PostHog project API key (`phc_...`) is a public ingestion key and is safe in
 a browser. A Bunwrite API key (`X-Bunwrite-Key`) is not.
@@ -65,41 +65,29 @@ server-side `document.*` events.
   a filterable list.
 - **Feature flags**: evaluate a user or project, see local overrides and the
   PostHog source.
+- **Settings**: this project's exporters, sampling, limits and local flags.
 
-The local copy is on when the console is on. It is independent of external
-exporters:
-
-```env
-OBSERVABILITY_CONSOLE=true                 # defaults to CONSOLE_ENABLED
-OBSERVABILITY_CONSOLE_SAMPLE_RATE=0.01     # detailed traces; metrics count every request
-OBSERVABILITY_CONSOLE_SPANS=2000
-OBSERVABILITY_CONSOLE_EVENTS=5000
-OBSERVABILITY_CONSOLE_RETENTION_DAYS=7
-```
+The local copy is on by default. It is independent of external exporters.
+Configure it in **Observability → Settings → Local console**: keep local
+telemetry, trace sample rate (default 1%), spans kept (2000), events kept
+(5000), retention (7 days) and flush interval.
 
 ## Export
 
 With no provider configured, the console pages still work and nothing leaves
-the server. Add one of these to `.env` and restart:
+the server. Configure exporters per project in **Observability → Settings**;
+saved values take effect immediately and each project has its own credentials
+and flags.
 
-```env
-# Any OTLP/HTTP collector, including Datadog's OTLP intake
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.com
-OTEL_EXPORTER_OTLP_HEADERS=api-key=...
-OTEL_EXPORTER_OTLP_SIGNALS=traces,metrics,logs
+- **External exporters**: master switch, service name/version/environment,
+  trace sampling and queue settings.
+- **OTLP/HTTP**: base and per-signal endpoints, headers and signals. Works with
+  any collector, including Datadog's OTLP intake.
+- **Datadog**: API key, site, logs and metrics.
+- **PostHog**: project API key, host, document analytics and server-side flags.
 
-# Datadog logs + metrics without an Agent
-DD_API_KEY=...
-DD_SITE=datadoghq.com
-
-# PostHog analytics + server-side flags
-POSTHOG_API_KEY=phc_...
-POSTHOG_HOST=https://us.i.posthog.com
-FEATURE_FLAGS={"new-checkout":true}
-```
-
-When Datadog handles logs and metrics, keep `OTEL_EXPORTER_OTLP_SIGNALS=traces`
-so nothing is sent twice.
+When Datadog handles logs and metrics, select only **Traces** under OTLP/HTTP so
+nothing is sent twice.
 
 ## Reading flags
 
@@ -116,8 +104,9 @@ const { flags } = await res.json()
 // e.g. { "new-checkout": true, "theme": "dark" }
 ```
 
-The server caches PostHog evaluations for `POSTHOG_FLAGS_TTL_MS` (default 30s).
-A PostHog outage falls back to `FEATURE_FLAGS`; it never fails the request.
+The server caches PostHog evaluations for the project's configured **Flag
+cache** duration (default 30s). A PostHog outage falls back to the local
+overrides; it never fails the request.
 
 ## Privacy
 
@@ -125,8 +114,8 @@ A PostHog outage falls back to `FEATURE_FLAGS`; it never fails the request.
 - `LOG_IP=true` (default) includes the client IP in request telemetry; set it to
   `false` to omit it.
 - Product analytics stores document metadata, not document data.
-- Use `OBSERVABILITY_CONSOLE=false` to stop the local copy, and
-  `OBSERVABILITY_ENABLED=false` to stop external export.
+- Turn off **Keep local telemetry in the console** to stop the local copy, and
+  **Enable external exporters** to stop external export.
 
 ## Common mistakes
 
@@ -137,15 +126,15 @@ A PostHog outage falls back to `FEATURE_FLAGS`; it never fails the request.
 | Sending `X-Bunwrite-Key` to a browser | Use an account session; keep API keys server-side. |
 | Expecting database query spans or a Prometheus endpoint | Traces are request-level; export to OTLP/Datadog. No scrape endpoint or DB span exists yet. |
 | Turning `LOG_REQUESTS=false` and expecting an empty Observability overview | Request logs and the Observability metrics are separate; metrics still count. The Request logs page is what goes empty. |
-| Setting `CONSOLE_ENABLED=false` and looking for local traces | Local telemetry defaults to `CONSOLE_ENABLED`; set `OBSERVABILITY_CONSOLE=true` to keep it. |
+| Setting `CONSOLE_ENABLED=false` and looking for local traces | Turn **Keep local telemetry in the console** back on in **Observability → Settings**. |
 
 ## Verify
 
 1. Send a few API requests and open **Console → Observability**.
 2. Check `X-Request-Id` and `X-Trace-Id` on a response.
 3. `curl -s <endpoint>/flags -H "X-Bunwrite-Project: <id>" -H "X-Bunwrite-Key: <key>"`.
-4. For an exporter, check the provider for the service name (`OTEL_SERVICE_NAME`,
-   default `bunwrite`) and `deployment.environment`.
+4. For an exporter, check the provider for the configured service name (default
+   `bunwrite`) and environment.
 
 ## Reference
 

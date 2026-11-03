@@ -774,8 +774,8 @@ export const requestLogs = sqliteTable(
 
 /**
  * Sampled request spans kept for the console's trace explorer. The exporters
- * are the system of record; this is a bounded local window (see
- * OBSERVABILITY_CONSOLE_SPANS) so the UI works without a provider.
+ * are the system of record; this is a bounded local window (configured per
+ * project in the console) so the UI works without a provider.
  */
 export const telemetrySpans = sqliteTable(
   '_telemetry_spans',

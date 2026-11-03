@@ -548,7 +548,7 @@ phone.
 | Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs; deployment retention and bulk delete |
 | Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
 | Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
-| Observability | Per-project console pages for traffic, traces, product analytics and feature flags; per-project OTLP/HTTP, Datadog, PostHog and local flag settings (environment remains the fallback); `GET /v1/flags` |
+| Observability | Per-project console pages for traffic, traces, product analytics and feature flags; per-project OTLP/HTTP, Datadog, PostHog and local flag settings; `GET /v1/flags` |
 | Backups | Whole-instance SQLite archives or Postgres dumps; automatic cron backups; optional S3 destination |
 | Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
 | Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |
