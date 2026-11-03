@@ -22,8 +22,10 @@ services:
     image: bunwrite:latest
     restart: unless-stopped
     init: true
-    security_opt:
-      - no-new-privileges:true
+    # Do not add no-new-privileges to this service: it makes the kernel ignore
+    # the file capabilities on the function-sandbox helper, so FUNCTIONS_SANDBOX=on
+    # cannot switch users and the container refuses to start. Function processes
+    # get --no-new-privs themselves; Caddy keeps no-new-privileges below.
     # Realtime keeps one descriptor per WebSocket, and Caddy keeps one for each
     # client plus one upstream. The default 1024 lands at ~300 sockets and then
     # even REST requests starve, so give both containers room for 10k+ clients.
