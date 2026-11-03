@@ -306,6 +306,24 @@ describe('multiple projects', () => {
     expect(manager.get('project-b')!.services.observabilitySettings.settings.consoleSampleRate).toBeCloseTo(0.12)
     expect(manager.defaultProject().services.observabilitySettings.settings.consoleSampleRate).not.toBeCloseTo(0.12)
 
+    // Request log settings are per project too.
+    const savedLogs = await fetch(`${base}/console/settings/logs`, {
+      method: 'POST',
+      headers: { cookie: projectCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ logRequests: 'on', retentionDays: '3', logSampleRate: '25', logFormat: 'json', logIp: 'on' }),
+      redirect: 'manual',
+    })
+    expect(savedLogs.status).toBe(303)
+    expect(manager.get('project-b')!.services.config).toMatchObject({
+      logRequests: true,
+      logRetentionDays: 3,
+      logSampleRate: 0.25,
+      logFormat: 'json',
+      logIp: true,
+    })
+    expect(manager.defaultProject().services.config.logRetentionDays).not.toBe(3)
+    expect(manager.defaultProject().services.config.logFormat).not.toBe('json')
+
     const edit = await fetch(`${base}/console/projects/project-c/edit`, {
       method: 'POST',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },

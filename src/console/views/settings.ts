@@ -426,7 +426,7 @@ function logsCard(ctx: ConsoleContext): Html {
         ><input type="checkbox" name="logRequests" ${c.logRequests ? 'checked' : ''} /><span>Record requests</span
         ><small>Writes one line per request to the server output and this project's request log. Only successful requests are sampled; errors are always recorded.</small></label
       >
-      <div class="fields">
+      <div class="fields start">
         <label
           >Retention (days)<input name="retentionDays" type="number" min="0" value="${c.logRetentionDays}" /><small
             >0 keeps logs until you clear them.</small
@@ -438,7 +438,7 @@ function logsCard(ctx: ConsoleContext): Html {
           ></label
         >
       </div>
-      <div class="fields">
+      <div class="fields center">
         <label
           >Output format<select name="logFormat">
             <option value="text" ${c.logFormat === 'text' ? 'selected' : ''}>Text, for journald and terminal logs</option>

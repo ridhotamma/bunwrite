@@ -224,7 +224,7 @@ The console keeps the same boundaries as the API:
    write lock instead of failing when a read-then-write transaction upgrades.
 4. On success, the changed documents go to realtime subscribers who may read
    them. On failure, the events are dropped.
-5. Every response carries `X-Request-Id`. When `LOG_REQUESTS` is on, one line
+5. Every response carries `X-Request-Id`. When request logging is on, one line
    per request (method, path, status, duration, request/response bytes, auth,
    IP, project, error) goes to stdout as text or JSON, and the same entry is
    batched into `_request_logs` for the console's Request logs page. The page

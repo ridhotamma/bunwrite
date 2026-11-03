@@ -245,7 +245,7 @@ deployments.
 Request logs are stored in `_request_logs`, rate limits in `_rate_limits`, and
 the application data in the same database file.
 
-- `LOG_REQUESTS` defaults to `true`; at high traffic this adds stdout and
+- Request logging is on by default; at high traffic this adds stdout and
   batched SQLite writes.
 - Log retention adds pruning work and disk usage.
 - Login and token rate limits are database writes.
@@ -310,7 +310,7 @@ same database.
   stalls, public workers retry and then fall back to local writes.
 - `WORKERS=auto` on 4 vCPU starts 3 public workers plus 1 writer; the
   supervisor and Caddy add two more processes on the same cores.
-- Defaults that commonly need tuning: `LOG_REQUESTS=true`, `CACHE_CHECK_MS=0`,
+- Defaults that commonly need tuning: `CACHE_CHECK_MS=0`,
   `MAX_INFLIGHT=200`, `COMPRESSION` depending on the proxy.
 
 See [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md) for the measurement plan and

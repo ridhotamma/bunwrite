@@ -30,8 +30,8 @@ console is disabled, a single boolean check.
 | Product analytics | PostHog | Document create/update/delete events, metadata only. |
 | Feature flags | PostHog, local overrides | Evaluated per user or project and cached. |
 
-Request logs shipped this way are independent of `LOG_REQUESTS`: turning off the
-SQLite/stdout request log does not stop the exporters, and vice versa.
+Request logs shipped this way are independent of the project's **Request logs**
+settings: turning off recording does not stop the exporters, and vice versa.
 
 ## Console pages
 
@@ -230,8 +230,9 @@ when observability is on, `X-Trace-Id`.
 
 Sampling is head-based. Set **Trace sampling** under **External exporters**;
 the default is 100%. Metrics and shipped logs are not sampled by this setting.
-To reduce log volume, lower `LOG_SAMPLE_RATE` (which also reduces SQLite
-request-log rows) or turn off **Send logs** in the Datadog section.
+To reduce log volume, lower the sample rate in **Settings → Request logs** (which
+also reduces SQLite request-log rows) or turn off **Send logs** in the Datadog
+section.
 
 ## Behaviour under failure
 
@@ -254,7 +255,8 @@ is a per-process gauge, not a cluster total.
 ## Privacy
 
 - Request and response bodies are never exported.
-- Client IP is included only when `LOG_IP=true`, matching the request log.
+- Client IP is included only when **Store IP addresses** is on for the project,
+  matching the request log.
 - The auth label is a category or user ID (`user:<id>`, `key`, `guest`,
   `console:<email>`), not a token.
 - Product analytics sends document metadata, never document data.

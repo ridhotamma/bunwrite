@@ -17,7 +17,7 @@ frontend sends those.
 
 | Signal | Captured by Bunwrite | Notes |
 | --- | --- | --- |
-| Request logs | Every API request | Stored in `_request_logs` and shown under **Console → Request logs** when `LOG_REQUESTS=true`. |
+| Request logs | Every API request | Stored in `_request_logs` and shown under **Console → Request logs** when recording is on for that project. |
 | Traces | One server span per API request | W3C `traceparent` is honoured. The console keeps a sample; exporters get the full stream. |
 | Metrics | Every request | Per-minute requests/errors/latency rolled up for the console, plus counters, histograms and process gauges for exporters. |
 | Product analytics | Document `create`, `update` and `delete` | Metadata only: project, database, collection, document ID and action. Never the document body. |
@@ -111,8 +111,8 @@ overrides; it never fails the request.
 ## Privacy
 
 - Request and response bodies are never exported.
-- `LOG_IP=true` (default) includes the client IP in request telemetry; set it to
-  `false` to omit it.
+- **Store IP addresses** is on by default; turn it off in the project's
+  **Settings → Request logs** to omit the client IP from request telemetry.
 - Product analytics stores document metadata, not document data.
 - Turn off **Keep local telemetry in the console** to stop the local copy, and
   **Enable external exporters** to stop external export.
@@ -125,7 +125,7 @@ overrides; it never fails the request.
 | Expecting PostHog autocapture or session replay from the server | Install `posthog-js` in the browser; the server key only enables server-side capture. |
 | Sending `X-Bunwrite-Key` to a browser | Use an account session; keep API keys server-side. |
 | Expecting database query spans or a Prometheus endpoint | Traces are request-level; export to OTLP/Datadog. No scrape endpoint or DB span exists yet. |
-| Turning `LOG_REQUESTS=false` and expecting an empty Observability overview | Request logs and the Observability metrics are separate; metrics still count. The Request logs page is what goes empty. |
+| Turning request recording off and expecting an empty Observability overview | Request logs and the Observability metrics are separate; metrics still count. The Request logs page is what goes empty. |
 | Setting `CONSOLE_ENABLED=false` and looking for local traces | Turn **Keep local telemetry in the console** back on in **Observability → Settings**. |
 
 ## Verify

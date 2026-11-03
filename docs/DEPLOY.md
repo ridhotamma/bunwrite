@@ -422,8 +422,8 @@ Upgrade with `git pull && docker compose up -d --build`.
   on the server, or set `PG_DUMP_BIN`. The archive upload/restore flow and
   Litestream stay SQLite-only; see
   [Restoring a Postgres backup](#restoring-a-postgres-backup).
-- Request logs are stored per project and go to stdout and the console. Set
-  `LOG_REQUESTS=false` to silence them, or `LOG_FORMAT=json` for a log collector.
+- Request logs are stored per project and go to stdout and the console. Turn
+  recording off, or choose JSON output, in **Settings → Request logs**.
 
 ### Continuous SQLite backup and failover (Litestream)
 

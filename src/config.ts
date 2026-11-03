@@ -347,9 +347,9 @@ export interface Config {
   consoleEnabled: boolean
   /** Apply SCHEMA_PATH on every start. Off by default so console edits are not overwritten. */
   schemaSyncOnStart: boolean
-  /** Write one line per HTTP request to stdout. */
+  /** Write one line per HTTP request to stdout. Saved per project in the console. */
   logRequests: boolean
-  /** Fraction of successful requests to log (LOG_SAMPLE_RATE); 1 logs all, errors are always logged. */
+  /** Fraction of successful requests to log; 1 logs all, errors are always logged. */
   logSampleRate: number
   /** `text` for journald, `json` for a log collector. */
   logFormat: LogFormat
@@ -486,7 +486,6 @@ function databaseConfig(
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080)
   const cluster = clusterConfig(env)
-  const sample = env.LOG_SAMPLE_RATE === undefined || env.LOG_SAMPLE_RATE === '' ? 1 : Number(env.LOG_SAMPLE_RATE)
   // DOMAIN is only a default for PUBLIC_ENDPOINT: whatever terminates TLS has
   // to be reachable at https://<domain>, and the container cannot know that on
   // its own. Strip a pasted scheme and path so https://x.example/ also works.
@@ -495,7 +494,6 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const functionsPrefix = dnsLabel(env.FUNCTIONS_PREFIX, 'functions')
   const sitesDomain = dnsName(env.SITES_DOMAIN || (domain ? `${sitesPrefix}.${domain}` : `${sitesPrefix}.localhost`))
   const functionsDomain = dnsName(env.FUNCTIONS_DOMAIN || (domain ? `${functionsPrefix}.${domain}` : `${functionsPrefix}.localhost`))
-  const retention = Number(env.LOG_RETENTION_DAYS ?? 7)
   const ssrIdle = wholeNumber(env.SITES_SSR_IDLE_MS, 5 * 60 * 1000)
   const ssrMax = wholeNumber(env.SITES_SSR_MAX_PROCESSES, 2)
   const ssrKeep = wholeNumber(env.SITES_SSR_KEEP_PREVIOUS, 2)
@@ -565,11 +563,11 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     },
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
-    logRequests: env.LOG_REQUESTS !== 'false',
-    logSampleRate: Number.isFinite(sample) ? Math.min(1, Math.max(0, sample)) : 1,
-    logFormat: env.LOG_FORMAT === 'json' ? 'json' : 'text',
-    logRetentionDays: Number.isFinite(retention) && retention >= 0 ? Math.round(retention) : 7,
-    logIp: env.LOG_IP !== 'false',
+    logRequests: true,
+    logSampleRate: 1,
+    logFormat: 'text',
+    logRetentionDays: 7,
+    logIp: true,
     s3: emptyS3(),
     storagePrefix: '',
     backups: { enabled: false, schedule: '0 2 * * *', keep: 7, s3: emptyS3(), prefix: '' },

@@ -251,7 +251,7 @@ select:not([multiple]):disabled,.combobox-input:disabled{color:var(--disabled);c
 .toolbar select{flex:0 0 auto;min-width:150px}
 textarea{min-height:80px;resize:vertical}textarea.tall{min-height:300px}
 label.check{display:flex;flex-wrap:wrap;gap:2px 8px;align-content:flex-start;align-items:flex-start;margin-bottom:12px;min-width:0}label.check input{width:16px;min-height:16px;margin:3px 0 0;flex:none}label.check>small{display:block;flex:0 0 calc(100% - 24px);margin:0 0 0 24px;color:var(--subdued);font-size:12px;line-height:16px;overflow-wrap:anywhere;min-width:0}
-.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px;align-items:center}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px}.fields.start{align-items:start}.fields.center{align-items:center}
 .event-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:0 12px;min-width:0}.event-grid label.check{min-width:0}
 button,.btn{font:inherit;font-weight:550;border:0;border-radius:8px;padding:6px 12px;min-height:28px;cursor:pointer;background:var(--surface);color:var(--text);box-shadow:var(--shadow);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;text-decoration:none}
 button:hover,.btn:hover{background:#f7f7f7;text-decoration:none}

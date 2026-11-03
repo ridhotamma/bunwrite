@@ -608,7 +608,7 @@ export function createApp(source: Services | ProjectResolver) {
           const logs = runtime?.services.requestLogs ?? control.requestLogs
           logs.record(entry)
         }
-        // Observability is independent of LOG_REQUESTS. Forwarded writes are
+        // Observability is independent of request logging. Forwarded writes are
         // recorded by the writer that actually handled them.
         if (meta.observation) {
           meta.observation.end({

@@ -742,7 +742,7 @@ export const functionVars = sqliteTable(
   (t) => [uniqueIndex('_function_vars_fn_key_context').on(t.functionId, t.key, t.context)],
 )
 
-/** HTTP requests shown on the console's Request logs page; pruned by LOG_RETENTION_DAYS. */
+/** HTTP requests shown on the console's Request logs page; pruned by the project's retention setting. */
 export const requestLogs = sqliteTable(
   '_request_logs',
   {

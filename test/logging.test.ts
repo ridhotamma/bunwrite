@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 
 import { ConsoleAuth } from '~/console/auth'
+import { configFromEnv } from '~/config'
 import { formatRequestLog } from '~/lib/log'
 import { PROJECT, startServer, type TestServer } from './helpers'
 
@@ -141,4 +142,15 @@ test('text format is one readable line', () => {
   )
   expect(line).toContain('INFO GET /v1/health 200 1.2ms')
   expect(line).toContain('req=req-1 ip=203.0.113.9 project=test-project auth=user:u1 error="boom"')
+})
+
+test('request log environment variables are ignored', () => {
+  const config = configFromEnv({
+    LOG_REQUESTS: 'false',
+    LOG_SAMPLE_RATE: '0.5',
+    LOG_FORMAT: 'json',
+    LOG_RETENTION_DAYS: '30',
+    LOG_IP: 'false',
+  })
+  expect(config).toMatchObject({ logRequests: true, logSampleRate: 1, logFormat: 'text', logRetentionDays: 7, logIp: true })
 })

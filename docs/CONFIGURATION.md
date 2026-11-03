@@ -278,17 +278,15 @@ bun run console:admin you@example.com
 
 ## Request logs and client IP
 
-These are the defaults. Recording, sampling, format, retention and IP storage
-can be changed while the server runs in **Console → Settings → Request logs**;
-the saved values live in the project database and win over the environment.
+Request log recording, sampling, output format, retention and IP storage are
+configured per project in **Console → Settings → Request logs**. The values are
+stored in that project's database and apply without a restart. There are no
+`LOG_*` environment variables.
+
+`TRUSTED_PROXIES` is server configuration for resolving client addresses:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `LOG_REQUESTS` | `true` | Write one line per HTTP request to stdout and the console's request log. |
-| `LOG_SAMPLE_RATE` | `1` | Fraction of successful requests to log (0–1), shown as a percentage in the console. When recording is on, errors bypass sampling. Lower it to keep visibility at a fraction of the cost. |
-| `LOG_FORMAT` | `text` | `text` for journald, `json` for a log collector. |
-| `LOG_RETENTION_DAYS` | `7` | Days to keep request logs; `0` keeps them until cleared. |
-| `LOG_IP` | `true` | Store client IP addresses in request logs. |
 | `TRUSTED_PROXIES` | `private` | Comma-separated proxy sources trusted for client IP headers. |
 
 `TRUSTED_PROXIES` values:

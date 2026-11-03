@@ -27,7 +27,7 @@ Docker networking or the network.
   Linux), with a leader for background work, cross-process cache reloads and a
   realtime event bus.
   Design: [ARCHITECTURE.md](ARCHITECTURE.md). Commit `0f2b650`.
-- [x] **Request log sampling** (`LOG_SAMPLE_RATE`); errors are always logged.
+- [x] **Request log sampling** in the console; errors are always logged.
 - [x] **Immediate write transactions.** Every write transaction now starts with
   `BEGIN IMMEDIATE` (`DocumentStore.tx()`, schema, settings, auth, teams,
   storage, sites, functions, variables, request logs, import and the leader
@@ -138,9 +138,9 @@ many workers, and for API-key and session users.
   containers with `network_mode: host` and points Caddy at `127.0.0.1:8080`.
 - [x] Add `PRAGMA mmap_size` (`SQLITE_MMAP_MB`, default 256 MB) in
   [src/db/connection.ts](../src/db/connection.ts).
-- [x] Set `LOG_SAMPLE_RATE` (for example 0.1) in production, or turn
-  `LOG_REQUESTS` off. Both are available in **Console → Settings → Request
-  logs**; choose the value per project.
+- [x] Lower the request-log sample rate (for example 10%) in production, or turn
+  recording off. Both are available in **Console → Settings → Request logs**;
+  choose the value per project.
 - [ ] If the profile shows CPU steal, move to a VPS with dedicated cores.
 
 Check: rerun step 1.
