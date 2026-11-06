@@ -10,6 +10,7 @@ import { checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, DOCUMENT_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
+import { fileField } from '~/console/upload'
 import {
   badge,
   destroy,
@@ -173,7 +174,13 @@ const bucketTabs = (b: BucketRow, on: 'files' | 'settings') =>
 async function uploadForm(ctx: ConsoleContext, b: BucketRow, id: string): Promise<Html> {
   const limits = [`Up to ${megabytes(b)} MB`, extensionsOf(b).join(', ') || 'any file type'].join(' · ')
   return html`<form id="${id}" method="post" action="${bucketUrl(b.id)}/files" enctype="multipart/form-data" hx-boost="false">
-    <label>File<input type="file" name="file" required /><small>${limits}</small></label>
+    ${fileField({
+      name: 'file',
+      label: 'File',
+      required: true,
+      title: 'Drag and drop a file here',
+      hint: limits,
+    })}
     ${
       b.file_security
         ? html`<details class="disclosure">

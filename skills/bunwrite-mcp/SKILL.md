@@ -108,7 +108,8 @@ Typical flow:
    `confirm_write: true`
 
 The catalog covers health, databases, collections, attributes, indexes,
-documents, users, teams, storage, functions, sites, topics and feature flags.
+documents, users, teams, storage, vector collections, points, similarity search,
+RAG ingest/query, functions, sites, topics and feature flags.
 
 ## Queries are JSON
 

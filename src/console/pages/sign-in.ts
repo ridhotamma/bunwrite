@@ -25,7 +25,7 @@ export async function signInPage(auth: ConsoleAuth, options: SignInOptions): Pro
     bare(
       setup ? 'Create admin' : mfa ? 'Verify sign-in' : 'Sign in',
       html`<div class="auth">
-        <div class="brand"><img src="/logo-dark.png" alt="" width="28" height="28" /><span>${options.projectName} console</span></div>
+        <div class="brand"><img src="/images/logo-dark.png" alt="" width="28" height="28" /><span>${options.projectName} console</span></div>
         <div class="card">
           <h2>${setup ? 'Create the first admin' : mfa ? 'Check your email' : 'Sign in'}</h2>
           ${setup ? html`<p class="hint">Only shown on this machine while no admin exists.</p>` : ''}

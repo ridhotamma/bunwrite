@@ -550,7 +550,7 @@ export function sitePages(router: ConsoleRouter): void {
         )}
         ${settingsSection(
           'Deployments',
-          'Old builds are deleted automatically to free disk space. The live deployment is always kept.',
+          'With retention above 0, old builds are deleted automatically to free disk space. The live deployment and previews still in use are always kept.',
           html`<form method="post" action="${siteUrl(site.id)}">
             <input type="hidden" name="section" value="deployments" />
             <label

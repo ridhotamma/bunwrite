@@ -6,6 +6,7 @@ import type { FunctionRow } from '~/functions/service'
 import { DEFAULT_RUNTIME, SERVER_BUN, SITE_RUNTIMES } from '~/runtimes/catalog'
 import { FRAMEWORKS, frameworkForSite, frameworkOf } from '~/sites/frameworks'
 import { runtimeSelect } from '~/console/views/runtimes'
+import { fileField } from '~/console/upload'
 import { SITE_IN_PROGRESS, type SiteDeploymentRow, type SiteRow } from '~/sites/service'
 
 export const SITES = '/console/sites'
@@ -76,8 +77,15 @@ function sourceFields(
         })
       : ''}
     <div data-show-for="upload" data-for-select="source" ${shown('upload')}>
-      <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
-        <small>For a static site, upload what the build made. For a server app, upload the source: it is installed, built and started here. For large sites use <code>bunwrite push sites</code>.</small></label>
+      ${fileField({
+        name: 'code',
+        label: 'Archive',
+        accept: '.zip,.tar.gz,.tgz,application/zip,application/gzip',
+        required: true,
+        title: 'Drag and drop a site archive here',
+        hint: '.zip, .tar.gz or .tgz',
+        help: html`For a static site, upload what the build made. For a server app, upload the source: it is installed, built and started here. For large sites use <code>bunwrite push sites</code>.`,
+      })}
     </div>
     <div data-show-for="paste" data-for-select="source" ${shown('paste')}>
       <label>index.html<textarea name="html" class="mono tall code-editor" spellcheck="false" required><!doctype html>

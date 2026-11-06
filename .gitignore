@@ -11,3 +11,6 @@ functions.env
 
 # TLS certificates for TLS_MODE=external
 /certs/
+
+# macOS metadata
+.DS_Store

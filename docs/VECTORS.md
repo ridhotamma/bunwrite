@@ -196,6 +196,34 @@ curl "$API/vectors/handbook/documents/guide" ...        # chunks of one document
 curl -X DELETE "$API/vectors/handbook/documents/guide" ...  # delete its chunks
 ```
 
+## SDK
+
+The Bunwrite SDK exposes the same API as `Vectors` and `RAG`:
+
+```ts
+import { Client, RAG, Vectors } from '@bunwrite/sdk'
+
+const client = new Client()
+  .setEndpoint('https://api.example.com/v1')
+  .setProject('my-project')
+  .setKey(process.env.BUNWRITE_KEY!)
+
+const vectors = new Vectors(client)
+await vectors.createCollection({ collectionId: 'handbook', name: 'Handbook', dimension: 384 })
+await vectors.upsertPoints({
+  collectionId: 'handbook',
+  points: [{ id: 'intro', content: 'Bunwrite runs on Bun.' }],
+})
+const matches = await vectors.search({ collectionId: 'handbook', text: 'what does it run on?', topK: 5 })
+
+const rag = new RAG(client)
+await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
+const result = await rag.query({ collectionId: 'handbook', query: 'What does it run on?', generate: false })
+```
+
+The `bunwrite vectors ...` and `bunwrite rag ...` CLI commands call the same
+methods. The MCP catalog includes `vectors_*` and `rag_*` operations.
+
 ## Limits and operations
 
 - Search scans every point in the collection in pages and keeps only the best
@@ -210,4 +238,5 @@ curl -X DELETE "$API/vectors/handbook/documents/guide" ...  # delete its chunks
 - There is no background re-index job. Change the embedder/model, then ingest
   the documents again.
 - The feature is deliberately not an Appwrite VectorsDB implementation. It is a
-  separate `/vectors` and `/rag` extension, like `/queue` and `/pdf`.
+  separate `/vectors` and `/rag` extension, like `/queue` and `/pdf`; the SDK
+  exposes it as `Vectors` and `RAG`.

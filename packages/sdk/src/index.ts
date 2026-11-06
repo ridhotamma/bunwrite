@@ -38,9 +38,27 @@ export type {
     RealtimeResponse,
     RealtimeResponseConnected,
 } from './services/realtime';
+export { RAG } from './services/rag';
+export type { RAGIngestParams, RAGIngestResult, RAGQueryParams, RAGQueryResult } from './services/rag';
 export { Render } from './services/render';
 export { Sites } from './services/sites';
 export type { RenderPdfParams, RenderImageParams, RenderMargin, RenderJob, RenderJobStatus } from './services/render';
+export { Vectors } from './services/vectors';
+export type {
+    CreateVectorCollectionParams,
+    UpsertVectorPointParams,
+    UpsertVectorPointsParams,
+    VectorCollection,
+    VectorCollectionList,
+    VectorListParams,
+    VectorMatch,
+    VectorMetric,
+    VectorPoint,
+    VectorPointInput,
+    VectorPointList,
+    VectorSearchParams,
+    VectorSearchResult,
+} from './services/vectors';
 export { Storage } from './services/storage';
 export { TablesDB } from './services/tables-db';
 export { Teams } from './services/teams';

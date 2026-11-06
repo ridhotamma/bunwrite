@@ -284,6 +284,8 @@ bunwrite databases create-document --database-id main --collection-id orders --d
 bunwrite storage create-file --bucket-id photos --file-id 'unique()' --file ./cat.png
 bunwrite storage get-file-download-bytes --bucket-id photos --file-id cat --output cat.png
 bunwrite functions create-execution --function-id hello --body '{"name":"Ada"}'
+bunwrite vectors create-collection --collection-id handbook --name Handbook --dimension 384
+bunwrite rag ingest --collection-id handbook --document-id guide --text 'Long document text...'
 bunwrite users --help
 ```
 

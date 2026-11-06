@@ -612,7 +612,9 @@ export class Deployments {
     await this.get(functionId, id)
     if ((await this.functions.fn(functionId)).deployment_id === id)
       throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
-    await this.removeStored(functionId, id)
+    if (!(await this.removeStored(functionId, id))) {
+      throw err('general_argument_invalid', 'The active deployment cannot be deleted. Activate another one first.')
+    }
   }
 
   /**
@@ -620,27 +622,36 @@ export class Deployments {
    * have not finished are kept. Returns what was removed and what was skipped.
    */
   async removeMany(functionId: string, ids: readonly string[]): Promise<{ removed: number; skipped: number }> {
-    const active = (await this.functions.fn(functionId)).deployment_id
     let removed = 0
     let skipped = 0
     for (const id of new Set(ids)) {
       const deployment = await this.db.driver.get<{ status: string }>('SELECT status FROM _deployments WHERE id = ? AND function_id = ?', [id, functionId])
-      if (!deployment || id === active || UNSETTLED.includes(deployment.status)) {
+      if (!deployment || UNSETTLED.includes(deployment.status)) {
         skipped++
         continue
       }
-      await this.removeStored(functionId, id)
-      removed++
+      if (await this.removeStored(functionId, id)) removed++
+      else skipped++
     }
     return { removed, skipped }
   }
 
-  /** Delete a deployment's row, code and source archive. Callers check that it may be deleted. */
-  private async removeStored(functionId: string, id: string): Promise<void> {
-    await this.db.driver.run('DELETE FROM _deployments WHERE id = ? AND function_id = ?', [id, functionId])
+  /**
+   * Delete a deployment's row, code and source archive. Returns false when the
+   * deployment is still active, so no caller can remove the code that runs.
+   * The liveness check is part of the DELETE, which closes the race between a
+   * check and another worker activating the deployment.
+   */
+  private async removeStored(functionId: string, id: string): Promise<boolean> {
+    const result = await this.db.driver.run(
+      "DELETE FROM _deployments WHERE id = ? AND function_id = ? AND id != COALESCE((SELECT deployment_id FROM _functions WHERE id = ?), '')",
+      [id, functionId, functionId],
+    )
+    if (!result.changes) return false
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     rmSync(this.archivePath(functionId, id), { force: true })
     rmSync(this.sourcePath(functionId, id), { force: true })
+    return true
   }
 
   /** Delete non-active deployments older than each function's retention setting. */
@@ -658,13 +669,16 @@ export class Deployments {
       "SELECT id FROM _deployments WHERE function_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
       [f.id, f.deployment_id, cutoff],
     )
-    for (const { id } of old) await this.removeStored(f.id, id)
-    return old.length
+    let removed = 0
+    for (const { id } of old) if (await this.removeStored(f.id, id)) removed++
+    return removed
   }
 
   /** Keep disk use flat: drop the code of all but the active and the last few ready deployments, then apply retention. */
   async prune(functionId: string): Promise<void> {
     const f = await this.functions.fn(functionId)
+    // 0 means keep every deployment: no automatic cleanup at all.
+    if (f.deployment_retention <= 0) return
     const active = f.deployment_id
     // Git builds of other branches (never made active) are pruned on their own, so they do not push out rollbacks.
     const preview = "type = 'vcs' AND activate = 0"

@@ -7,6 +7,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Query } from 'node-appwrite'
+import sharp from 'sharp'
 
 import { readPendingRestore } from '~/backups/pending'
 import { ConsoleAuth } from '~/console/auth'
@@ -994,6 +995,11 @@ describe('settings through the console', () => {
       const files = await (await get('/console/storage/page-bucket')).text()
       expect(files).toContain('hello.txt')
       expect(files).toContain('id="upload-file"')
+      // The upload form is a drop zone with a real file input inside it.
+      expect(files).toContain('data-upload-zone')
+      expect(files).toContain('data-upload-input')
+      expect(files).toContain('id="upload-input-file"')
+      expect(files).toContain('__bunwriteUploads')
       expect(files).toContain('Page 1 of 1 · 1 file')
       expect(files).not.toContain('Bucket permissions</h3>')
       // Private files get a signed API link that opens without a console session.
@@ -1148,27 +1154,102 @@ describe('pages outside the API', () => {
     expect(res.headers.get('location')).toBe('/console')
   })
 
-  test('serves the favicon', async () => {
-    const res = await fetch(`${base}/favicon.ico`)
-    expect(res.status).toBe(200)
-    expect(res.headers.get('content-type')).toContain('image/x-icon')
-    expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0)
+  test('serves the white favicon from /images and the root alias', async () => {
+    for (const path of ['/images/favicon.ico', '/favicon.ico']) {
+      const res = await fetch(`${base}${path}`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('image/x-icon')
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(bytes.byteLength).toBeGreaterThan(0)
+      // ICONDIR: reserved 0, type 1 (icon), then at least one entry.
+      expect(bytes.readUInt16LE(0)).toBe(0)
+      expect(bytes.readUInt16LE(2)).toBe(1)
+      expect(bytes.readUInt16LE(4)).toBeGreaterThanOrEqual(1)
+    }
+
+    // The largest ICO entry is a PNG. It is the white mark, not the old dark
+    // Antigravity icon: every visible pixel must be white.
+    const bytes = Buffer.from(await (await fetch(`${base}/images/favicon.ico`)).arrayBuffer())
+    const count = bytes.readUInt16LE(4)
+    let largest = { size: 0, png: Buffer.alloc(0) }
+    for (let index = 0; index < count; index++) {
+      const entry = 6 + index * 16
+      const size = bytes.readUInt32LE(entry + 8)
+      if (size > largest.size) largest = { size, png: bytes.subarray(bytes.readUInt32LE(entry + 12), bytes.readUInt32LE(entry + 12) + size) }
+    }
+    const raw = await sharp(largest.png).ensureAlpha().raw().toBuffer()
+    for (let i = 0; i < raw.length; i += 4) {
+      if (raw[i + 3] === 0) continue
+      expect([raw[i], raw[i + 1], raw[i + 2]]).toEqual([255, 255, 255])
+    }
   })
 
-  test('serves the dark, light and adaptive logos', async () => {
+  test('serves the dark, light and adaptive logos from /images', async () => {
+    const logos = new Map<string, Buffer>()
     for (const [path, type] of [
-      ['/logo-dark.png', 'image/png'],
-      ['/logo-light.png', 'image/png'],
-      ['/logo.svg', 'image/svg+xml'],
+      ['/images/logo-dark.png', 'image/png'],
+      ['/images/logo-light.png', 'image/png'],
+      ['/images/logo.svg', 'image/svg+xml'],
     ] as const) {
       const res = await fetch(`${base}${path}`)
       expect(res.status).toBe(200)
       expect(res.headers.get('content-type')).toContain(type)
-      expect((await res.arrayBuffer()).byteLength).toBeGreaterThan(0)
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(bytes.byteLength).toBeGreaterThan(0)
+      logos.set(path, bytes)
     }
+
+    for (const path of ['/images/logo-dark.png', '/images/logo-light.png']) {
+      const bytes = logos.get(path)!
+      const meta = await sharp(bytes).metadata()
+      expect(meta.format).toBe('png')
+      expect(meta.width).toBe(256)
+      expect(meta.height).toBe(256)
+      expect(meta.hasAlpha).toBe(true)
+      // The mark has a transparent background.
+      const corner = await sharp(bytes).extract({ left: 0, top: 0, width: 1, height: 1 }).ensureAlpha().raw().toBuffer()
+      expect(corner[3]).toBe(0)
+    }
+
+    // The tab icon is the Bunwrite mark itself, not a placeholder.
+    expect(logos.get('/images/logo.svg')!.toString()).toContain('M110 66H170C208')
+    // Render it to prove the SVG is valid outside a browser too.
+    const rendered = await sharp(logos.get('/images/logo.svg')!).resize(64, 64).png().toBuffer()
+    const meta = await sharp(rendered).metadata()
+    expect(meta.width).toBe(64)
+    expect(meta.height).toBe(64)
+    expect(meta.hasAlpha).toBe(true)
+
     const page = await (await fetch(`${base}/nope`, { headers: html })).text()
-    expect(page).toContain('<link rel="icon" type="image/svg+xml" href="/logo.svg">')
-    expect(page).toContain('src="/logo-dark.png"')
+    expect(page).toContain('<link rel="icon" type="image/svg+xml" href="/images/logo.svg">')
+    expect(page).toContain('href="/images/favicon.ico"')
+    expect(page).toContain('src="/images/logo-dark.png"')
+  })
+
+  test('serves the Neue Montreal font files and uses them in the console', async () => {
+    const fonts = [
+      'NeueMontreal-Light.otf',
+      'NeueMontreal-LightItalic.otf',
+      'NeueMontreal-Regular.otf',
+      'NeueMontreal-Italic.otf',
+      'NeueMontreal-Medium.otf',
+      'NeueMontreal-MediumItalic.otf',
+      'NeueMontreal-Bold.otf',
+      'NeueMontreal-BoldItalic.otf',
+    ]
+    for (const name of fonts) {
+      const res = await fetch(`${base}/fonts/${name}`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('font/otf')
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(bytes.byteLength).toBeGreaterThan(1000)
+      expect(bytes.subarray(0, 4).toString()).toBe('OTTO')
+    }
+
+    const page = await (await fetch(`${base}/nope`, { headers: html })).text()
+    expect(page).toContain('font-family:"Neue Montreal"')
+    expect(page).toContain('url("/fonts/NeueMontreal-Regular.otf")')
+    expect(page).toContain('font:13px/20px "Neue Montreal"')
   })
 
   test('a browser gets a 404 page; SDK calls and /v1 keep the JSON error', async () => {

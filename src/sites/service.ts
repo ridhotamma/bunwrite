@@ -316,12 +316,10 @@ export class SiteService {
 
   /** Delete a preview deployment that is not live and no branch shows. */
   private async dropPreview(site: SiteRow, deploymentId: string): Promise<boolean> {
-    if (this.site(site.id).deployment_id === deploymentId) return false
+    const live = await this.db.driver.get<{ deployment_id: string }>('SELECT deployment_id FROM _sites WHERE id = ?', [site.id])
+    if (live?.deployment_id === deploymentId) return false
     if (await this.db.driver.get('SELECT 1 FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [site.id, deploymentId])) return false
-    this.ssr.stopDeployment(site.id, deploymentId)
-    await this.db.driver.run('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?', [deploymentId, site.id])
-    removeTree(this.config.functionsSandbox, sitesDir(this.config, site.id, deploymentId))
-    return true
+    return this.removeStored(site.id, deploymentId)
   }
 
   /** `https://<id>.<SITES_DOMAIN>`, with the API's port when it has one (local development). */
@@ -1014,8 +1012,13 @@ export class SiteService {
 
   async removeDeployment(siteId: string, id: string): Promise<void> {
     await this.deployment(siteId, id)
-    if (this.site(siteId).deployment_id === id) throw err('general_argument_invalid', 'The live deployment cannot be deleted. Make another one live first.')
-    await this.removeStored(siteId, id)
+    // Check the database, not this worker's cached site: another worker may
+    // have made this deployment live since this process last reloaded.
+    const live = await this.db.driver.get<{ deployment_id: string }>('SELECT deployment_id FROM _sites WHERE id = ?', [siteId])
+    if (live?.deployment_id === id) throw err('general_argument_invalid', 'The live deployment cannot be deleted. Make another one live first.')
+    if (!(await this.removeStored(siteId, id))) {
+      throw err('general_argument_invalid', 'The live deployment cannot be deleted. Make another one live first.')
+    }
   }
 
   /**
@@ -1023,25 +1026,34 @@ export class SiteService {
    * have not finished are kept. Returns what was removed and what was skipped.
    */
   async removeDeployments(siteId: string, ids: readonly string[]): Promise<{ removed: number; skipped: number }> {
-    const site = this.site(siteId)
+    this.site(siteId)
     let removed = 0
     let skipped = 0
     for (const id of new Set(ids)) {
-      const deployment = await this.db.driver.get<{ status: string }>('SELECT status FROM _site_deployments WHERE id = ? AND site_id = ?', [id, site.id])
-      if (!deployment || id === site.deployment_id || SITE_IN_PROGRESS.includes(deployment.status)) {
+      const deployment = await this.db.driver.get<{ status: string }>('SELECT status FROM _site_deployments WHERE id = ? AND site_id = ?', [id, siteId])
+      if (!deployment || SITE_IN_PROGRESS.includes(deployment.status)) {
         skipped++
         continue
       }
-      await this.removeStored(siteId, id)
-      removed++
+      if (await this.removeStored(siteId, id)) removed++
+      else skipped++
     }
     return { removed, skipped }
   }
 
-  /** Delete a deployment's row, preview link and files. Callers check that it may be deleted. */
-  private async removeStored(siteId: string, id: string): Promise<void> {
+  /**
+   * Delete a deployment's row, preview link and files. Returns false when the
+   * deployment is still live, so no caller can remove the code a site serves.
+   * The liveness check is part of the DELETE, which closes the race between a
+   * check and another worker activating the deployment.
+   */
+  private async removeStored(siteId: string, id: string): Promise<boolean> {
+    const result = await this.db.driver.run(
+      "DELETE FROM _site_deployments WHERE id = ? AND site_id = ? AND id != COALESCE((SELECT deployment_id FROM _sites WHERE id = ?), '')",
+      [id, siteId, siteId],
+    )
+    if (!result.changes) return false
     this.ssr.stopDeployment(siteId, id)
-    await this.db.driver.run('DELETE FROM _site_deployments WHERE id = ? AND site_id = ?', [id, siteId])
     // A branch preview that pointed here has nothing left to serve.
     await this.db.driver.run('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [siteId, id])
     try {
@@ -1052,6 +1064,7 @@ export class SiteService {
       // current one. The row is already gone; keep serving and log the path.
       console.error(`[sites] ${siteId}: could not remove deployment ${id}:`, error)
     }
+    return true
   }
 
   /** The deployment's files as .tar.gz. For SSR sites these are the sources after the build. */
@@ -1077,8 +1090,13 @@ export class SiteService {
 
   /** Delete non-live deployments older than each site's retention setting. Returns how many were deleted. */
   async pruneDeployments(): Promise<number> {
+    // Read every site from the database, not the per-worker cache. A writer
+    // process or another HTTP worker can win the leader lease without ever
+    // having served a request for this project, so its cache may still name
+    // the deployment that was live before the latest activation.
+    const sites = await this.db.driver.all<SiteRow>('SELECT * FROM _sites ORDER BY seq')
     let removed = 0
-    for (const site of this.list()) removed += await this.pruneSiteRetention(site)
+    for (const site of sites) removed += await this.pruneSiteRetention(site)
     return removed
   }
 
@@ -1086,17 +1104,24 @@ export class SiteService {
   private async pruneSiteRetention(site: SiteRow): Promise<number> {
     if (site.deployment_retention <= 0) return 0
     const cutoff = addSeconds(-site.deployment_retention * 86400)
+    // A branch preview still points at its newest build; deleting it would
+    // leave the preview host with nothing to serve.
     const old = await this.db.driver.all<{ id: string }>(
-      "SELECT id FROM _site_deployments WHERE site_id = ? AND id != ? AND status IN ('ready', 'failed') AND created_at < ?",
+      `SELECT d.id FROM _site_deployments d
+       WHERE d.site_id = ? AND d.id != ? AND d.status IN ('ready', 'failed') AND d.created_at < ?
+         AND NOT EXISTS (SELECT 1 FROM _site_branches b WHERE b.site_id = d.site_id AND b.deployment_id = d.id)`,
       [site.id, site.deployment_id, cutoff],
     )
-    for (const { id } of old) await this.removeStored(site.id, id)
-    return old.length
+    let removed = 0
+    for (const { id } of old) if (await this.removeStored(site.id, id)) removed++
+    return removed
   }
 
   /** Keep disk use flat: the live deployment plus the last few ready ones, then apply retention. */
   private async prune(siteId: string): Promise<void> {
-    const site = this.site(siteId)
+    const site = await this.db.driver.get<SiteRow>('SELECT * FROM _sites WHERE id = ?', [siteId])
+    // 0 means keep every deployment: no automatic cleanup at all.
+    if (!site || site.deployment_retention <= 0) return
     const keep = site.adapter === 'ssr' ? this.config.sitesSsrKeepPrevious : KEEP_PREVIOUS
     const live = site.deployment_id
     // Branch previews (Git builds that were not made live) are kept by their branch, not here.

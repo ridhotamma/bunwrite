@@ -1,0 +1,240 @@
+import { BunwriteException, Client, type Payload } from '../client';
+
+export type VectorMetric = 'cosine' | 'dot' | 'euclidean';
+
+export interface VectorCollection {
+    $id: string;
+    name: string;
+    dimension: number;
+    metric: VectorMetric;
+    embedder: string;
+    points: number;
+    $createdAt: string;
+    $updatedAt: string;
+}
+
+export interface VectorPoint {
+    $id: string;
+    $createdAt: string;
+    $updatedAt: string;
+    documentId: string;
+    chunkIndex: number;
+    content: string;
+    metadata: Record<string, unknown>;
+}
+
+export interface VectorMatch extends VectorPoint {
+    /** Higher is better for every metric. */
+    score: number;
+}
+
+export interface VectorPointList {
+    total: number;
+    points: VectorPoint[];
+}
+
+export interface VectorSearchResult {
+    total: number;
+    points: VectorMatch[];
+}
+
+export interface VectorCollectionList {
+    total: number;
+    collections: VectorCollection[];
+}
+
+export interface CreateVectorCollectionParams {
+    collectionId: string;
+    name?: string;
+    /** Defaults to the project's configured embedding dimension. */
+    dimension?: number;
+    metric?: VectorMetric;
+}
+
+export interface VectorPointInput {
+    /** Point ID. Omit to generate one. */
+    id?: string;
+    /** Explicit vector. Omit when `content` should be embedded. */
+    vector?: number[];
+    /** Text to embed when `vector` is omitted. */
+    content?: string;
+    metadata?: Record<string, unknown>;
+    documentId?: string;
+    chunkIndex?: number;
+}
+
+export type UpsertVectorPointParams = Omit<VectorPointInput, 'id'> & {
+    collectionId: string;
+    /** Updating an existing point; omit to create one. */
+    pointId?: string;
+};
+
+export interface UpsertVectorPointsParams {
+    collectionId: string;
+    points: VectorPointInput[];
+}
+
+export interface VectorSearchParams {
+    collectionId: string;
+    /** Query text, embedded with the collection's embedder. */
+    text?: string;
+    /** Alias for `text`. */
+    query?: string;
+    /** Explicit query vector; use this or text/query. */
+    vector?: number[];
+    topK?: number;
+    /** Equality filter on metadata; values may be arrays or dotted paths. */
+    filter?: Record<string, unknown>;
+}
+
+export interface VectorListParams {
+    collectionId: string;
+    documentId?: string;
+    limit?: number;
+    offset?: number;
+}
+
+/**
+ * Bunwrite's built-in vector store. A Bunwrite extension: points live beside
+ * the project's SQLite or Postgres data, with local or OpenAI-compatible
+ * embeddings. Needs an API key with `vectorsdb.*` scopes.
+ */
+export class Vectors {
+    client: Client;
+
+    constructor(client: Client) {
+        this.client = client;
+    }
+
+    /** Create a vector collection. */
+    createCollection(params: CreateVectorCollectionParams): Promise<VectorCollection> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('post', '/vectors', clean({
+            collectionId: params.collectionId,
+            name: params.name,
+            dimension: params.dimension,
+            metric: params.metric,
+        }));
+    }
+
+    /** List every vector collection in the project. */
+    listCollections(): Promise<VectorCollectionList> {
+        return this._call('get', '/vectors');
+    }
+
+    /** Read one vector collection. */
+    getCollection(params: { collectionId: string }): Promise<VectorCollection> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}`);
+    }
+
+    /** Delete a collection and every point in it. */
+    deleteCollection(params: { collectionId: string }): Promise<void> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('delete', `/vectors/${encodeURIComponent(params.collectionId)}`).then(() => undefined);
+    }
+
+    /** List points, optionally only those belonging to one document. */
+    listPoints(params: VectorListParams): Promise<VectorPointList> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}/points`, clean({
+            documentId: params.documentId,
+            limit: params.limit,
+            offset: params.offset,
+        }));
+    }
+
+    /** Read one point. */
+    getPoint(params: { collectionId: string; pointId: string }): Promise<VectorPoint> {
+        requireString(params?.collectionId, 'collectionId');
+        requireString(params?.pointId, 'pointId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}/points/${encodeURIComponent(params.pointId)}`);
+    }
+
+    /** Create a point, or update it when `pointId` is set. */
+    upsertPoint(params: UpsertVectorPointParams): Promise<VectorPoint> {
+        requireString(params?.collectionId, 'collectionId');
+        const payload = clean({
+            id: params.pointId,
+            vector: params.vector,
+            content: params.content,
+            metadata: params.metadata,
+            documentId: params.documentId,
+            chunkIndex: params.chunkIndex,
+        });
+        if (typeof params.pointId === 'string' && params.pointId) {
+            return this._call('put', `/vectors/${encodeURIComponent(params.collectionId)}/points/${encodeURIComponent(params.pointId)}`, payload);
+        }
+        // The collection-style endpoint answers with a batch wrapper.
+        return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/points`, payload).then((result) => result.points?.[0]);
+    }
+
+    /** Upsert several points in one transaction. */
+    upsertPoints(params: UpsertVectorPointsParams): Promise<{ points: VectorPoint[] }> {
+        requireString(params?.collectionId, 'collectionId');
+        if (!Array.isArray(params.points)) throw new BunwriteException('Missing required parameter: "points"');
+        return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/points`, { points: params.points });
+    }
+
+    /** Delete one point. */
+    deletePoint(params: { collectionId: string; pointId: string }): Promise<void> {
+        requireString(params?.collectionId, 'collectionId');
+        requireString(params?.pointId, 'pointId');
+        return this._call('delete', `/vectors/${encodeURIComponent(params.collectionId)}/points/${encodeURIComponent(params.pointId)}`).then(() => undefined);
+    }
+
+    /** Similarity search. Higher scores are better for cosine, dot and euclidean. */
+    search(params: VectorSearchParams): Promise<VectorSearchResult> {
+        requireString(params?.collectionId, 'collectionId');
+        if (typeof params.text !== 'string' && typeof params.query !== 'string' && !Array.isArray(params.vector)) {
+            throw new BunwriteException('A search needs "text", "query" or "vector"');
+        }
+        return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/search`, clean({
+            text: params.text,
+            query: params.query,
+            vector: params.vector,
+            topK: params.topK,
+            filter: params.filter,
+        }));
+    }
+
+    /** Chunks of one ingested document. */
+    listDocumentPoints(params: VectorListParams & { documentId: string }): Promise<VectorPointList> {
+        requireString(params?.collectionId, 'collectionId');
+        requireString(params?.documentId, 'documentId');
+        return this._call(
+            'get',
+            `/vectors/${encodeURIComponent(params.collectionId)}/documents/${encodeURIComponent(params.documentId)}`,
+            clean({ limit: params.limit, offset: params.offset }),
+        );
+    }
+
+    /** Delete every chunk belonging to one document. */
+    deleteDocument(params: { collectionId: string; documentId: string }): Promise<{ deleted: number }> {
+        requireString(params?.collectionId, 'collectionId');
+        requireString(params?.documentId, 'documentId');
+        return this._call(
+            'delete',
+            `/vectors/${encodeURIComponent(params.collectionId)}/documents/${encodeURIComponent(params.documentId)}`,
+        );
+    }
+
+    private _call(method: string, path: string, params: Payload = {}): Promise<any> {
+        return this.client.call(
+            method,
+            new URL(this.client.config.endpoint + path),
+            { 'X-Bunwrite-Project': this.client.config.project, accept: 'application/json', 'content-type': 'application/json' },
+            params,
+        );
+    }
+}
+
+function requireString(value: unknown, name: string): void {
+    if (typeof value !== 'string' || !value) throw new BunwriteException(`Missing required parameter: "${name}"`);
+}
+
+function clean(params: Payload): Payload {
+    const out: Payload = {};
+    for (const [key, value] of Object.entries(params)) if (value !== undefined) out[key] = value;
+    return out;
+}

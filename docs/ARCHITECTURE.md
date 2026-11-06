@@ -341,9 +341,11 @@ with no-new-privs and no capabilities. The server creates files with umask 077
 and tightens the data folder at start, so only the folders on the way to code
 allow passing through. Function users own their files, so the server deletes,
 downloads and reads code for the console through the helper too. The
-active deployment runs; older ready ones are kept two deep, then deleted. A
-function's `deploymentRetention` setting also deletes non-active deployments
-older than that many days (0 keeps them). The same applies to sites.
+active deployment runs. With `deploymentRetention` above 0, older ready ones
+are kept two deep (five for sites) and non-active deployments older than that
+many days are deleted; the active deployment and deployments a branch preview
+still serves are never removed. The default, 0, keeps every deployment. The
+same applies to sites.
 Without one, the code is read from the function's `path` under the code
 folder, as `schema:push` sets it.
 

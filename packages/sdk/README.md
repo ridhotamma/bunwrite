@@ -69,6 +69,8 @@ deprecated.
 | `Databases` | Databases, collections, attributes, indexes, documents (one and bulk), increment/decrement, transactions |
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
+| `Vectors` | Bunwrite extension: vector collections, point upsert/list/get/delete, similarity search and document chunks |
+| `RAG` | Bunwrite extension: chunk/embed/ingest text, retrieve context and optionally generate answers |
 | `Functions` | Functions, deployments, executions, variables |
 | `Sites` | Static sites, deployments, custom domains and variables |
 | `Teams` | Teams, prefs, memberships and invitations |
@@ -84,6 +86,26 @@ deprecated.
 
 Helpers: `Query`, `ID`, `Permission`, `Role`, `Operator`, `Channel`,
 `InputFile`, the enums, and the `Models` types.
+
+### Vectors and RAG
+
+```ts
+import { Client, RAG, Vectors } from '@bunwrite/sdk'
+
+const client = new Client().setEndpoint('https://api.example.com/v1').setProject('my-project').setKey(process.env.BUNWRITE_KEY!)
+const vectors = new Vectors(client)
+const rag = new RAG(client)
+
+await vectors.createCollection({ collectionId: 'handbook', name: 'Handbook', dimension: 384 })
+await vectors.upsertPoints({
+    collectionId: 'handbook',
+    points: [{ id: 'intro', content: 'Bunwrite runs on Bun.' }],
+})
+const matches = await vectors.search({ collectionId: 'handbook', text: 'what does it run on?', topK: 5 })
+
+await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
+const result = await rag.query({ collectionId: 'handbook', query: 'What does it run on?', generate: false })
+```
 
 ## Differences from the Appwrite SDKs
 
@@ -123,8 +145,8 @@ devDependencies (it ships in their source maps), keeps each method whose HTTP
 method and path Bunwrite routes, and rewrites `src/services`, the helpers,
 `models.ts` and the enums. Upgrade those packages, or add routes to the
 server, then run it again. `client.ts`, `json.ts`, `inputFile.ts`,
-`index.ts`, `browser.ts`, `services/health.ts` and `services/render.ts` are
-written by hand.
+`index.ts`, `browser.ts`, `services/health.ts`, `services/render.ts`,
+`services/vectors.ts` and `services/rag.ts` are written by hand.
 
 ## Build
 

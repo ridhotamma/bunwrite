@@ -10,10 +10,12 @@ import {
   Functions,
   Health,
   Messaging,
+  RAG,
   Sites,
   Storage,
   Teams,
   Users,
+  Vectors,
 } from '@bunwrite/sdk'
 
 import type { McpConfig } from './config'
@@ -37,6 +39,8 @@ export interface Services {
   functions: Functions
   sites: Sites
   messaging: Messaging
+  vectors: Vectors
+  rag: RAG
   health: Health
 }
 
@@ -65,6 +69,8 @@ export function createServices(client: Client, config: McpConfig): Services {
     functions: new Functions(client),
     sites: new Sites(client),
     messaging: new Messaging(client),
+    vectors: new Vectors(client),
+    rag: new RAG(client),
     health: new Health(client),
   }
 }
@@ -81,11 +87,22 @@ const boolean = (description: string) => ({ type: 'boolean', description })
 const integer = (description: string) => ({ type: 'integer', description })
 const number = (description: string) => ({ type: 'number', description })
 const stringList = (description: string) => ({ type: 'array', description, items: { type: 'string' } })
+const numberList = (description: string) => ({ type: 'array', description, items: { type: 'number' } })
 const objectField = (description: string) => ({ type: 'object', description, additionalProperties: true })
 
 const DATABASE = string('Database ID.')
 const COLLECTION = string('Collection ID.')
 const DOCUMENT = string('Document ID.')
+const VECTOR_COLLECTION = string('Vector collection ID.')
+const VECTOR_POINT = string('Vector point ID.')
+const VECTOR_METRIC = { type: 'string', enum: ['cosine', 'dot', 'euclidean'], description: 'Similarity metric; cosine is the default.' }
+const VECTOR_FILTER = objectField('Equality filter on point metadata. Values may be arrays or dotted paths, for example {"topic":"storage"}.')
+const VECTOR_METADATA = objectField('Metadata stored with the point or document.')
+const VECTOR_INPUT = {
+  type: 'object',
+  description: 'One point: set "content" to embed it, or pass an explicit "vector".',
+  additionalProperties: true,
+}
 const QUERIES = stringList(
   'Appwrite query strings as JSON. Examples: ["{\\"method\\":\\"limit\\",\\"values\\":[25]}", "{\\"method\\":\\"orderDesc\\",\\"attribute\\":\\"$createdAt\\"}"].',
 )
@@ -751,6 +768,258 @@ export const CATALOG: Operation[] = [
       const metadata = await services.storage.getFile({ bucketId: args.bucketId, fileId: args.fileId })
       return { name: metadata.name, mimeType: metadata.mimeType, size: metadata.sizeOriginal, base64: Buffer.from(buffer).toString('base64') }
     },
+  }),
+
+  // --------------------------------------------------------------- vectors
+  op({
+    name: 'vectors_collections_list',
+    title: 'List vector collections',
+    description: 'List the project vector collections, including dimensions, metrics, embedder and point count.',
+    group: 'vectors',
+    input: object({}),
+    run: (services) => services.vectors.listCollections(),
+  }),
+  op({
+    name: 'vectors_collections_get',
+    title: 'Get a vector collection',
+    description: 'Read one vector collection.',
+    group: 'vectors',
+    input: object({ collectionId: VECTOR_COLLECTION }, ['collectionId']),
+    run: (services, args) => services.vectors.getCollection({ collectionId: args.collectionId }),
+  }),
+  op({
+    name: 'vectors_collections_create',
+    title: 'Create a vector collection',
+    description: 'Create a vector collection. The dimension defaults to the project embedding setting.',
+    group: 'vectors',
+    write: true,
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        name: string('Collection name. Defaults to the ID.'),
+        dimension: integer('Vector dimensions. Defaults to the project embedding dimension.'),
+        metric: VECTOR_METRIC,
+      },
+      ['collectionId'],
+    ),
+    run: (services, args) =>
+      services.vectors.createCollection({
+        collectionId: args.collectionId,
+        name: args.name,
+        dimension: args.dimension,
+        metric: args.metric,
+      }),
+  }),
+  op({
+    name: 'vectors_collections_delete',
+    title: 'Delete a vector collection',
+    description: 'Delete a vector collection and every point in it. This cannot be undone.',
+    group: 'vectors',
+    write: true,
+    destructive: true,
+    input: object({ collectionId: VECTOR_COLLECTION }, ['collectionId']),
+    run: async (services, args) => {
+      await services.vectors.deleteCollection({ collectionId: args.collectionId })
+      return { ok: true }
+    },
+  }),
+  op({
+    name: 'vectors_points_list',
+    title: 'List vector points',
+    description: 'List points in a collection, optionally only one document. Always pass a limit for large collections.',
+    group: 'vectors',
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        documentId: string('Optional document ID.'),
+        limit: integer('Maximum points to return.'),
+        offset: integer('Points to skip.'),
+      },
+      ['collectionId'],
+    ),
+    run: (services, args) =>
+      services.vectors.listPoints({
+        collectionId: args.collectionId,
+        documentId: args.documentId,
+        limit: args.limit,
+        offset: args.offset,
+      }),
+  }),
+  op({
+    name: 'vectors_points_get',
+    title: 'Get a vector point',
+    description: 'Read one vector point and its metadata.',
+    group: 'vectors',
+    input: object({ collectionId: VECTOR_COLLECTION, pointId: VECTOR_POINT }, ['collectionId', 'pointId']),
+    run: (services, args) => services.vectors.getPoint({ collectionId: args.collectionId, pointId: args.pointId }),
+  }),
+  op({
+    name: 'vectors_points_upsert',
+    title: 'Upsert a vector point',
+    description: 'Create a point, or update it when pointId is set. Pass content to embed it, or an explicit vector.',
+    group: 'vectors',
+    write: true,
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        pointId: string('Existing point ID; omit to create one.'),
+        content: string('Text to embed when vector is omitted.'),
+        vector: numberList('Explicit vector.'),
+        metadata: VECTOR_METADATA,
+        documentId: string('Optional document ID for grouping.'),
+        chunkIndex: integer('Optional chunk index inside the document.'),
+      },
+      ['collectionId'],
+    ),
+    run: (services, args) =>
+      services.vectors.upsertPoint({
+        collectionId: args.collectionId,
+        pointId: args.pointId,
+        content: args.content,
+        vector: args.vector,
+        metadata: args.metadata,
+        documentId: args.documentId,
+        chunkIndex: args.chunkIndex,
+      }),
+  }),
+  op({
+    name: 'vectors_points_upsert_batch',
+    title: 'Upsert vector points',
+    description: 'Upsert several points in one transaction. Each point needs content or an explicit vector.',
+    group: 'vectors',
+    write: true,
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        points: { type: 'array', description: 'Points to upsert.', items: VECTOR_INPUT },
+      },
+      ['collectionId', 'points'],
+    ),
+    run: (services, args) => services.vectors.upsertPoints({ collectionId: args.collectionId, points: args.points }),
+  }),
+  op({
+    name: 'vectors_points_delete',
+    title: 'Delete a vector point',
+    description: 'Delete one point. This cannot be undone.',
+    group: 'vectors',
+    write: true,
+    destructive: true,
+    input: object({ collectionId: VECTOR_COLLECTION, pointId: VECTOR_POINT }, ['collectionId', 'pointId']),
+    run: async (services, args) => {
+      await services.vectors.deletePoint({ collectionId: args.collectionId, pointId: args.pointId })
+      return { ok: true }
+    },
+  }),
+  op({
+    name: 'vectors_search',
+    title: 'Search vector points',
+    description: 'Similarity search with text, a query or an explicit vector. Higher scores are better.',
+    group: 'vectors',
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        text: string('Query text to embed.'),
+        query: string('Alias for text.'),
+        vector: numberList('Explicit query vector.'),
+        topK: integer('How many matches to return; default 5.'),
+        filter: VECTOR_FILTER,
+      },
+      ['collectionId'],
+    ),
+    run: (services, args) =>
+      services.vectors.search({
+        collectionId: args.collectionId,
+        text: args.text,
+        query: args.query,
+        vector: args.vector,
+        topK: args.topK,
+        filter: args.filter,
+      }),
+  }),
+  op({
+    name: 'vectors_documents_get',
+    title: 'Get ingestion document chunks',
+    description: 'List the stored chunks of one ingested document.',
+    group: 'vectors',
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        documentId: string('Ingested document ID.'),
+        limit: integer('Maximum points to return.'),
+        offset: integer('Points to skip.'),
+      },
+      ['collectionId', 'documentId'],
+    ),
+    run: (services, args) =>
+      services.vectors.listDocumentPoints({
+        collectionId: args.collectionId,
+        documentId: args.documentId,
+        limit: args.limit,
+        offset: args.offset,
+      }),
+  }),
+  op({
+    name: 'vectors_documents_delete',
+    title: 'Delete an ingested document',
+    description: 'Delete every chunk of one ingested document. This cannot be undone.',
+    group: 'vectors',
+    write: true,
+    destructive: true,
+    input: object({ collectionId: VECTOR_COLLECTION, documentId: string('Ingested document ID.') }, ['collectionId', 'documentId']),
+    run: (services, args) => services.vectors.deleteDocument({ collectionId: args.collectionId, documentId: args.documentId }),
+  }),
+
+  // ------------------------------------------------------------------- RAG
+  op({
+    name: 'rag_ingest',
+    title: 'Ingest a RAG document',
+    description: 'Chunk, embed and store text. Re-ingesting the same documentId replaces its chunks.',
+    group: 'rag',
+    write: true,
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        text: string('Document text to ingest.'),
+        documentId: string('Document ID; omit to generate one.'),
+        metadata: VECTOR_METADATA,
+        chunkSize: integer('Characters per chunk, 64 to 8000.'),
+        chunkOverlap: integer('Characters shared by adjacent chunks.'),
+      },
+      ['collectionId', 'text'],
+    ),
+    run: (services, args) =>
+      services.rag.ingest({
+        collectionId: args.collectionId,
+        text: args.text,
+        documentId: args.documentId,
+        metadata: args.metadata,
+        chunkSize: args.chunkSize,
+        chunkOverlap: args.chunkOverlap,
+      }),
+  }),
+  op({
+    name: 'rag_query',
+    title: 'Query RAG context',
+    description: 'Retrieve relevant chunks and, when a chat provider is configured, generate an answer.',
+    group: 'rag',
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        query: string('Question to answer.'),
+        topK: integer('How many chunks to retrieve; default 5.'),
+        filter: VECTOR_FILTER,
+        generate: boolean('Set false to return context and sources without calling the chat model.'),
+      },
+      ['collectionId', 'query'],
+    ),
+    run: (services, args) =>
+      services.rag.query({
+        collectionId: args.collectionId,
+        query: args.query,
+        topK: args.topK,
+        filter: args.filter,
+        generate: args.generate,
+      }),
   }),
 
   // ------------------------------------------------------------- functions

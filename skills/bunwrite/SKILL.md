@@ -16,7 +16,7 @@ Linux, and ships an admin console and observability pages.
 
 Existing apps can keep using `appwrite` or `node-appwrite`. They only need the
 endpoint pointed at Bunwrite. `@bunwrite/sdk` is the same API with Bunwrite's
-names and additions such as `Render`.
+names and additions such as `Render`, `Vectors` and `RAG`.
 
 ## Rules that prevent most mistakes
 

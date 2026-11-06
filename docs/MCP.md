@@ -142,6 +142,8 @@ The internal catalog covers:
 - **users** — users, sessions, email/name/status and deletion
 - **teams** — teams and memberships
 - **storage** — buckets, file metadata, upload, download (base64) and delete
+- **vectors** — collections, points, similarity search and document chunks
+- **rag** — ingest and retrieve context, with optional answer generation
 - **functions** — functions, executions and triggering a run
 - **sites** — sites and deployments
 - **messaging** — topics

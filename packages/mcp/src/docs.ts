@@ -95,6 +95,13 @@ const STATIC: DocPage[] = [
     keywords: 'render pdf image chromium screenshot html',
   },
   {
+    slug: 'vectors',
+    title: 'Vectors and RAG',
+    url: `${REPO}/docs/VECTORS.md`,
+    summary: 'Vector collections, points and similarity search, plus chunked RAG ingest and query with local or OpenAI-compatible embeddings.',
+    keywords: 'vectors rag vector collection point embedding similarity search knowledge base ingest query',
+  },
+  {
     slug: 'limitations',
     title: 'Limitations',
     url: `${REPO}/docs/LIMITATIONS.md`,

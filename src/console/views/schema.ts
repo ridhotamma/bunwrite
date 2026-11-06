@@ -1,6 +1,7 @@
 /** Schema page and panels markup. The page loads, validates and applies changes. */
 import { html, raw, type Html } from '~/console/html'
 import { alert, badge, emptyState, header, icon, settingsSection, tabs as tabList } from '~/console/ui'
+import { fileField } from '~/console/upload'
 import { SCHEMA } from '~/console/schema-meta'
 
 const SCHEMA_TABS = [
@@ -147,7 +148,14 @@ export function configurationView(options: { schemaPath?: string; fileName: stri
     'Import from a file',
     'Creates and alters the databases and collections the file describes. Functions, buckets and sites in the file are skipped. Preview first; nothing changes until you apply.',
     html`<form method="post" action="${SCHEMA}/preview" enctype="multipart/form-data" hx-boost="false">
-      <label>File<input type="file" name="file" accept=".json,application/json"><small>${path ? html`Leave empty to use <code>${path}</code>.` : html`${file}, bunwrite.json or appwrite.config.json`}</small></label>
+      ${fileField({
+        name: 'file',
+        label: 'File',
+        accept: '.json,application/json',
+        title: 'Drag and drop a schema file here',
+        hint: '.json',
+        help: path ? html`Leave empty to use <code>${path}</code>.` : html`${file}, bunwrite.json or appwrite.config.json`,
+      })}
       <label class="check"><input type="checkbox" name="prune">Also delete collections missing from the file</label>
       <div class="foot"><button class="primary">Preview changes</button></div>
     </form>`,
@@ -244,7 +252,13 @@ export function importView(values: { json?: string; error?: string; prune?: bool
     'Paste an array of collections exported from this console, or choose a JSON file. Target databases must already exist.',
     html`<form method="post" action="${SCHEMA}/import/preview" enctype="multipart/form-data" hx-boost="false">
       <label>Collections JSON<textarea name="json" class="mono tall" spellcheck="false" placeholder='[{"$id":"collection","databaseId":"main","name":"Collection","columns":[]}]'>${values.json ?? ''}</textarea><small>Files replace the pasted text when both are provided.</small></label>
-      <label>Load from JSON file<input type="file" name="file" accept=".json,application/json"></label>
+      ${fileField({
+        name: 'file',
+        label: 'Load from JSON file',
+        accept: '.json,application/json',
+        title: 'Drag and drop a collections file here',
+        hint: '.json',
+      })}
       <label class="check"><input type="checkbox" name="prune" ${prune ? 'checked' : ''}>Delete collections and fields missing from the import<small>&nbsp;· related document data is removed</small></label>
       <div class="foot"><button class="primary">Review changes</button></div>
     </form>`,

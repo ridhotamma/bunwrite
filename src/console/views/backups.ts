@@ -6,6 +6,7 @@ import { litestreamSettingsFromEnv, readLitestreamSettings } from '~/backups/lit
 import type { ConsoleContext } from '~/console/context'
 import { html, type Html } from '~/console/html'
 import { alert, badge, destroy, emptyState, formatBytes, icon, settingsSection, when } from '~/console/ui'
+import { fileField } from '~/console/upload'
 import { parseCron } from '~/functions/cron'
 import { s3Fields } from './settings'
 
@@ -239,8 +240,15 @@ export async function backupsView(ctx: ConsoleContext): Promise<Html> {
             'Upload an archive to validate it now. It is applied the next time Bunwrite starts.',
             html`<form method="post" action="${BACKUPS}/restore" enctype="multipart/form-data" hx-boost="false" class="stack-fields"
                 data-confirm="Stage this archive? The control database and every project database will be replaced when Bunwrite next starts." data-confirm-label="Stage restore" data-confirm-tone="critical">
-              <label>Backup archive<input type="file" name="backup" accept=".zst,.enc,application/x-bunwrite-archive" required>
-                <small>A <code>.archive.zst</code> or <code>.archive.zst.enc</code> file from this server.</small></label>
+              ${fileField({
+                name: 'backup',
+                label: 'Backup archive',
+                accept: '.zst,.enc,application/x-bunwrite-archive',
+                required: true,
+                title: 'Drag and drop a backup archive here',
+                hint: '.archive.zst or .archive.zst.enc',
+                help: html`A <code>.archive.zst</code> or <code>.archive.zst.enc</code> file from this server.`,
+              })}
               <label>Encryption key <span class="subdued">(only for encrypted archives)</span><input type="password" name="backupKey" autocomplete="off" placeholder="BACKUP_ENCRYPTION_KEY">
                 <small>Leave empty to use <code>BACKUP_ENCRYPTION_KEY</code> from the server environment.</small></label>
               <div class="foot"><button class="critical">Validate and stage</button></div>

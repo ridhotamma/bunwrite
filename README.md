@@ -2,987 +2,20 @@
 
 **A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle.**
 
-Bunwrite is a single-process, self-hosted backend that implements the slice of
-the Appwrite API most apps use. Existing apps keep using the official
-[`appwrite`](https://www.npmjs.com/package/appwrite) and
-[`node-appwrite`](https://www.npmjs.com/package/node-appwrite) SDKs unchanged.
+Bunwrite is a self-hosted backend for small products and small VPSes. One Bun
+server provides the API, console, realtime, functions, sites, storage and
+rendering. Existing [`appwrite`](https://www.npmjs.com/package/appwrite) and
+[`node-appwrite`](https://www.npmjs.com/package/node-appwrite) SDKs work by
+changing the endpoint.
 
 > Bunwrite is an independent open-source project. It is not affiliated with,
 > endorsed by, or sponsored by Appwrite.
 
 ![Bunwrite Console](assets/screenshots/screenshot-2.png)
 
-## Why Bunwrite exists
+## Quick start
 
-Bunwrite started from a simple frustration: running an Appwrite-compatible
-backend for a small product should not require a container stack, a database
-server and a machine bigger than the product itself.
-
-Appwrite's API is excellent, and its SDK ecosystem is the reason Bunwrite can be
-a drop-in replacement. Self-hosting Appwrite, however, is aimed at teams with
-more infrastructure: Docker and several services, a database server, Redis,
-workers, and CPU and memory headroom beyond a small VPS. It also has no switch
-for SQLite; its data layer is designed around a database server, not a file you
-can copy, inspect and restore.
-
-Bunwrite takes the other trade-off. One Bun server serves the API, realtime,
-functions, sites and console; function runs are short-lived child processes.
-SQLite is the source of truth. A backup is one consistent archive of every database.
-And because invoices are a common reason to reach for a backend, HTML-to-PDF and
-HTML-to-image rendering are built in instead of being another service or a
-Puppeteer dependency in your app.
-
-It is not a fork of Appwrite and is not affiliated with it. Bunwrite implements
-the endpoints most apps use and stays compatible with Appwrite's SDKs and CLI.
-If you need the complete Appwrite platform, use Appwrite. If you want the
-Appwrite API on a small VPS with a file you can back up, Bunwrite is for you.
-
-SQLite is still the default and the only backend that serves every feature
-today. Postgres now serves the API request path as well: the server boots on it,
-each project gets its own schema, and the same services run on either backend.
-A database port sits under the data layer with a working Postgres driver,
-schema bootstrap and a `db:check` CLI, so the move to a network database is
-incremental instead of a rewrite. See
-[docs/DATABASE.md](docs/DATABASE.md) for exactly what runs on each backend.
-
-## What you get
-
-- **One server, one file.** A single Bun server serves the API, realtime,
-  functions, sites and console; function runs are short-lived child processes,
-  and SQLite stores everything.
-- **Appwrite-compatible.** Point the Appwrite SDK or CLI at Bunwrite and keep
-  your existing code and workflow.
-- **SQLite-native, with a database port.** Drizzle migrations create the
-  schema, each project is its own database file, and you can inspect or copy the
-  data with standard SQLite tools. The same data layer can target Postgres
-  through `DB_DRIVER`/`DATABASE_URL`; Postgres serves API traffic and the
-  console/VCS screens.
-
-- **Environments.** Keep staging and production as separate projects, on one
-  server or several. The CLI's `bunwrite env` keeps each environment's
-  variables in `.env` files, and previews can have their own values.
-- **Backups as a feature.** Create, download and delete one consistent SQLite
-  archive or Postgres dump in the console; run automatic backups on a cron
-  schedule; keep them on local disk or in any S3-compatible bucket. No separate
-  backup service.
-- **Invoices and images built in.** Render HTML to PDF or PNG/JPG/WebP/AVIF/GIF
-  with headless Chromium, then return the file or save it to a bucket. No
-  Puppeteer or Playwright in your app.
-- **Multiple projects.** Each project has its own database, users, teams,
-  storage, functions and API keys; switch projects in the console.
-- **Admin console included.** Manage databases, users, teams, files, functions,
-  webhooks, schema, storage and logs without a separate dashboard.
-- **Functions without Docker.** Node and Python functions run in child
-  processes with Appwrite's `context` API. Each gets
-  `<function-id>.<FUNCTIONS_DOMAIN>` plus any number of custom domains. In the
-  Docker image each function builds and runs as its own Linux user, so it cannot
-  read the database, uploads or other functions.
-- **Sites, static or server-rendered.** Host plain HTML, htmx pages, a built
-  single-page app, or an SSR app (`adapter: ssr`) that Bunwrite builds and runs
-  on demand, on `<site-id>.<SITES_DOMAIN>` plus any number of custom domains.
-  `/api/*` on the site can run a function on the same origin. Project and
-  per-site variables apply at build and runtime. For stateful SSR apps
-  (in-memory sessions, SSE), `STICKY_SESSIONS=cookie` pins each client to one
-  worker; it works with `SO_REUSEPORT` and needs no proxy change. See
-  [docs/SITES.md](docs/SITES.md).
-- **S3-compatible storage.** Uploads and backups can live on local disk or any
-  S3-compatible bucket.
-- **Vectors and RAG, built in.** Store embeddings in SQLite or Postgres, search
-  with cosine, dot or euclidean similarity, and chunk/retrieve text for RAG,
-  with a search and RAG playground in the console. Local embeddings need no key;
-  an OpenAI-compatible endpoint is optional. See [docs/VECTORS.md](docs/VECTORS.md).
-- **Auto-tuned.** Sizes image/render/SQLite/upload limits and the JS heap to
-  the host's CPU and RAM, including cgroup limits.
-- **Small footprint.** Designed for a 1 vCPU / 1 GB VPS.
-
-## Setup from zero
-
-### Requirements
-
-- **Bun 1.4+** for the source install. The standalone binary needs no runtime.
-- **Node.js 20+** if you install `@bunwrite/cli` globally; Bun works too.
-- **Optional:** Chrome or Chromium for HTML rendering and `python3` for Python
-  functions when running from source. The published Docker image includes both.
-- No MariaDB, Redis or Docker is required for the single-process install.
-
-### 1. Install and start
-
-```bash
-git clone https://github.com/ridhotamma/bunwrite.git
-cd bunwrite
-bun install
-cp .env.example .env
-
-# set DOMAIN for a public server; leave it empty for localhost
-bun run dev
-```
-
-The example only shows the settings most deployments change. Every option,
-default and tuning knob is in
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-
-The API is at `http://localhost:8080/v1` and the console is at
-`http://localhost:8080/console`.
-
-For production, build the standalone binary with the migrations, console assets
-and function runners embedded:
-
-```bash
-bun run build             # dist/bunwrite
-./dist/bunwrite           # API at http://localhost:8080/v1
-```
-
-Build on the target OS and architecture so native dependencies match. The
-resulting binary needs no Bun at runtime. See [docs/DEPLOY.md](docs/DEPLOY.md)
-for Ubuntu, systemd and Docker Compose.
-
-Want a throwaway instance with sample data instead?
-
-```bash
-bun run demo            # http://localhost:8790/console
-                        # demo@bunwrite.test / demo-password
-```
-
-### 2. Create the first admin
-
-On a fresh database, open `/console/setup` to create the first admin. The page
-also shows the generated organization ID, project ID and initial bootstrap API
-key; save the project ID. The bootstrap key is revoked when you create the
-admin, so after signing in create a project API key in **Console → API** for
-your app.
-
-You can create the admin from the command line instead:
-
-```bash
-bun run console:admin you@example.com
-```
-
-After the first start, the database is the source of truth. Manage the project,
-API keys, allowed origins, email, OAuth sign-in and other application settings
-in the console. The optional "First start only" identity values at the end of
-`.env.example` can seed an empty database, then are ignored.
-
-API keys on the **API** page are scoped to the operations an app needs
-(`documents.read`, `users.write`, `files.write`, …); use full access only for a
-trusted integration that genuinely needs every API. Console admins can turn on
-**email MFA** on **Security**: sign-in then emails a single-use six-digit code.
-If an admin loses that mailbox, run `bun run console:admin <email> --no-mfa` on
-the server. Project settings, API keys, SMTP and OAuth are managed in the
-console; `.env` is for deployment and infrastructure only.
-
-### 3. Install the Bunwrite CLI
-
-```bash
-npm install -g @bunwrite/cli@latest
-bunwrite --version
-
-# Without a global install, from your app folder:
-npx @bunwrite/cli@latest --help
-```
-
-On a server, `bunwrite` may already be the standalone server binary. The npm
-package is the project CLI for your development machine. If the names collide,
-run the CLI as `npx @bunwrite/cli@latest ...`; the examples below use
-`bunwrite` after a normal global install.
-
-### 4. Link the folder with `init`
-
-```bash
-bunwrite login --endpoint http://localhost:8080/v1 --email you@example.com
-bunwrite init project --project-id <project-id>
-```
-
-Or use an API key:
-
-```bash
-bunwrite client --endpoint http://localhost:8080/v1 --project-id <project-id> --key <api-key>
-bunwrite init project --project-id <project-id>
-```
-
-`init project` writes `bunwrite.config.json` to the folder. It uses
-`bunwrite.json` when that exists, and keeps an existing `appwrite.config.json`
-when either is absent. `--create --project-name <name>` creates the project when
-you are signed in as a console admin.
-
-### 5. Add the agent skills
-
-Run this in the app folder you want your coding agent to work in:
-
-```bash
-npx skills add ridhotamma/bunwrite
-```
-
-Or let the Bunwrite CLI install them with the same Skills CLI:
-
-```bash
-bunwrite skills
-bunwrite init skill
-```
-
-`init project` offers to install the skills after linking; pass `--skills` to
-skip the question or `--no-skills` to skip the install. See [AI agents](#ai-agents)
-for the available skills and flags.
-
-### 6. Define and push resources
-
-Use the console, or keep the schema in the config:
-
-```bash
-bunwrite pull all
-# edit tables, functions and sites in bunwrite.config.json
-bunwrite push tables
-bunwrite push functions
-bunwrite push sites
-```
-
-The example schema can seed the default project:
-
-```bash
-bun run schema:push examples/appwrite.config.json
-```
-
-A pulled config pushes back with "no changes". Collection and function changes
-made in the console are live immediately; export them to the config to keep the
-repository in step.
-
-### 7. Connect the app
-
-```bash
-npm install @bunwrite/sdk
-```
-
-Or keep using `appwrite` / `node-appwrite` and point the endpoint at Bunwrite.
-See [Connect an app](#connect-an-app).
-
-### 8. Turn on optional features
-
-- **Backups:** open **Organization → Backups** in the console and create a manual
-  archive or enable daily automatic backups. See [Backups](#backups).
-- **HTML rendering:** the published Docker image includes Chromium; when running
-  from source, install it. Then enable it under **Settings → HTML rendering**.
-  See [HTML rendering for invoices](#html-rendering-for-invoices).
-- **S3 storage:** configure the bucket under **Settings → File storage**, or in
-  the environment for backups.
-- **Python functions:** the published Docker image includes `python3`; when
-  running from source, install it. A local Docker build needs
-  `BUNWRITE_WITH_PYTHON=true`.
-
-## Site and function domains
-
-Sites and functions have a default address plus any number of custom domains:
-
-- A site answers on `<site-id>.<SITES_DOMAIN>`.
-- A function answers on `<function-id>.<FUNCTIONS_DOMAIN>`.
-
-With `DOMAIN=example.com` the defaults are `sites.example.com` and
-`functions.example.com`, so `landing` is at
-`landing.sites.example.com` and `hello` is at
-`hello.functions.example.com`. The prefixes are configurable:
-
-```bash
-SITES_PREFIX=sites          # landing.sites.example.com
-FUNCTIONS_PREFIX=functions  # hello.functions.example.com
-
-# Or override the whole base domain:
-SITES_DOMAIN=web.example.com
-FUNCTIONS_DOMAIN=api.example.com
-```
-
-Without `DOMAIN`, development uses `sites.localhost` and
-`functions.localhost`.
-
-To attach custom domains, use **Console → Sites / Functions → Settings**, send
-a `domains` array when creating or updating a site/function, or use Appwrite's
-proxy API:
-
-```bash
-curl -X POST https://api.example.com/v1/proxy/rules/site \
-  -H "X-Bunwrite-Project: $PROJECT_ID" \
-  -H "X-Bunwrite-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"domain":"www.example.com","siteId":"landing"}'
-
-curl -X POST https://api.example.com/v1/proxy/rules/function \
-  -H "X-Bunwrite-Project: $PROJECT_ID" \
-  -H "X-Bunwrite-Key: $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"domain":"api.example.com","functionId":"hello"}'
-```
-
-Each resource keeps its default address, so removing a custom domain never
-takes the site or function offline. Point wildcard DNS records
-(`*.sites.example.com` and `*.functions.example.com`) and every custom domain
-at the server; the bundled Caddy obtains certificates on demand. The
-**Custom domains** card in Settings checks the records when it loads, and
-**Refresh status** re-checks them without leaving the page.
-
-## Appwrite CLI
-
-The [Appwrite CLI](https://appwrite.io/docs/tooling/command-line/installation)
-(tested with 28.10.2) works against Bunwrite. Either point it at a project with an
-API key:
-
-```bash
-appwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
-```
-
-or sign in with a console admin (`bun run console:admin you@example.com`) and
-link the folder to a project. Settings need the sign-in; everything else works
-with either:
-
-```bash
-appwrite login --endpoint http://localhost:8080/v1 --email you@example.com --password '...'
-appwrite init project --organization-id <org-id> --project-id <project-id> --project-name <name>
-```
-
-The organization ID is on the console's Organization page.
-
-| Command | Pull | Push |
-| --- | --- | --- |
-| `settings` | project name, services, protocols, sign-in methods, security policies, mock phone numbers | same |
-| `tables` / `collections` | databases, tables, columns, indexes | create and alter |
-| `functions` | settings and the source code of the latest deployment | settings, then deploy and activate the code |
-| `buckets` | bucket settings | create and update |
-| `teams` | teams | create and rename |
-| `webhooks` | webhooks | create and update |
-| `topics` | messaging topics | create and update |
-| `all` | all of the above | all of the above |
-
-`whoami` and `logout` work too. For scripts, add `--all --force` to push without
-questions, and answer the "pull the code?" question with `--no-code` or `y` on
-stdin.
-
-Notes for CLI 22:
-
-- Push functions one at a time (`--function-id <id>`): the CLI can mix up
-  archives when it packs several functions in the same millisecond.
-- `pull teams` saves whole team objects, which the CLI's own config check then
-  refuses on push. Keep only `$id` and `name` for each team in
-  `appwrite.config.json`. Appwrite behaves the same.
-- `init project` tries to clone Appwrite's agent skills from GitHub; without
-  network access it prints an error and links the project anyway.
-
-## Connect an app
-
-```ts
-import { Client, Databases } from 'node-appwrite'
-
-const client = new Client()
-  .setEndpoint('http://localhost:8080/v1')
-  .setProject('your-project-id')
-  .setKey('your-api-key')
-
-const databases = new Databases(client)
-```
-
-The same endpoint works with the browser `appwrite` SDK. `X-Appwrite-*`
-headers, sessions, cookies and error shapes follow Appwrite. See
-[Bunwrite or Appwrite naming](#bunwrite-or-appwrite-naming) for the webhook
-headers and function variables.
-
-## Bunwrite SDK, CLI and MCP
-
-Bunwrite also has its own SDK, CLI and MCP server in `packages/`, each a
-separate package with no runtime dependencies and no code shared with the
-server:
-
-- [`@bunwrite/sdk`](packages/sdk/README.md): one SDK for browsers, Bun,
-  Node.js and edge runtimes. Its services and methods are copied from
-  Appwrite's Web and Node.js SDKs, keeping only what Bunwrite serves, so
-  switching is usually a change of import. Adds `Render` for the HTML-to-PDF
-  and image endpoints.
-- [`@bunwrite/cli`](packages/cli/README.md): `bunwrite client`, `login`,
-  `init project`, `init skill` / `skills`, `pull`/`push` of
-  `bunwrite.config.json` (or `bunwrite.json`; Appwrite's
-  `appwrite.config.json` works too, same format), function deploys, and one
-  command per SDK method.
-- [`@bunwrite/mcp`](packages/mcp/README.md): a Model Context Protocol server
-  for Claude Code, Cursor, Codex, OpenCode and other agents. It exposes a
-  compact operator surface over the full Bunwrite API, over stdio or a
-  stateless HTTP endpoint, with a read-only mode.
-
-Both use Bunwrite's names (`X-Bunwrite-*` headers, `bw_session_*` cookies), so
-they need a server from this version on.
-
-```bash
-npm install -g @bunwrite/cli@latest
-# or: npx @bunwrite/cli@latest --help
-```
-
-```ts
-import { Client, Databases } from '@bunwrite/sdk'
-```
-
-```bash
-bunwrite client --endpoint http://localhost:8080/v1 --project-id your-project-id --key your-api-key
-bunwrite pull all
-```
-
-## AI agents
-
-Bunwrite ships [Agent Skills](https://agentskills.io) that teach Claude Code,
-Cursor, Codex, OpenCode, GitHub Copilot and other compatible tools how to use
-Bunwrite correctly:
-
-- `bunwrite` — endpoint and SDK setup, account sessions, databases and
-  documents, permissions, storage, realtime, functions, sites, SQLite/Postgres
-  and multi-worker deployments.
-- `bunwrite-cli` — `bunwrite init project`, `pull`/`push`, config files,
-  function and site deploys, and service commands.
-- `bunwrite-functions` — `context.req`/`res`, builds, environment variables,
-  executions, cron and debugging.
-- `bunwrite-sites` — static deploys, output folders, fallbacks, custom domains
-  and `/api/*` functions.
-- `bunwrite-observability` — request logs, traces, metrics, product analytics,
-  feature flags and the server/frontend split.
-- `bunwrite-mcp` — connect an AI agent to a project through the MCP server.
-
-For live project access, [`@bunwrite/mcp`](packages/mcp/README.md) exposes the
-API as MCP tools; see [docs/MCP.md](docs/MCP.md) for client configuration.
-
-Install them from the project folder with the
-[Skills CLI](https://github.com/vercel-labs/skills):
-
-```bash
-npx skills add ridhotamma/bunwrite
-
-# choose specific skills and agents without prompts:
-npx skills add ridhotamma/bunwrite --skill bunwrite --agent claude-code --yes
-npx skills add ridhotamma/bunwrite --list
-```
-
-The Bunwrite CLI wraps the same installer:
-
-```bash
-bunwrite skills
-bunwrite skills --list
-bunwrite init skill
-bunwrite skills --skill bunwrite --agent cursor
-```
-
-`bunwrite init project` offers to install the skills after linking a folder;
-`--skills` skips the question and `--no-skills` skips the install. The skills
-live in [`skills/`](skills/README.md) as plain Markdown and do not execute code.
-Update them with `npx skills update`. If `bunwrite` on your machine is the
-standalone server binary, use `npx @bunwrite/cli@latest skills` instead.
-
-## MCP server
-
-[`@bunwrite/mcp`](packages/mcp/README.md) connects Claude Code, Cursor, Codex,
-OpenCode, VS Code, Zed and other MCP clients to a project. It follows the same
-small-operator-surface design as Appwrite's MCP server: the model sees
-`bunwrite_get_context`, `bunwrite_search_tools`, `bunwrite_call_tool`,
-`bunwrite_call_write_tool` and `bunwrite_search_docs`, while the full catalog is
-searched at runtime.
-
-```json
-{
-  "mcpServers": {
-    "bunwrite": {
-      "command": "node",
-      "args": ["/absolute/path/to/packages/mcp/dist/mcp.js"],
-      "env": {
-        "BUNWRITE_ENDPOINT": "https://api.example.com/v1",
-        "BUNWRITE_PROJECT_ID": "booking-app",
-        "BUNWRITE_API_KEY": "standard_..."
-      }
-    }
-  }
-}
-```
-
-```bash
-npx -y @bunwrite/mcp --help
-bun run mcp:build
-node packages/mcp/dist/mcp.js --help
-```
-
-Writes require `confirm_write: true`; `--read-only` hides them entirely. See
-[docs/MCP.md](docs/MCP.md) for stdio and HTTP setup, the tool catalog, security
-and limits.
-
-## Bunwrite or Appwrite naming
-
-The server reads both naming families, so the Bunwrite SDK and CLI and the
-Appwrite SDKs and CLI all work whatever the setting: `X-Bunwrite-*` and
-`X-Appwrite-*` headers, `bw_session_<project>` and `a_session_<project>`
-cookies, and `bunwrite.config.json`, `bunwrite.json` or `appwrite.config.json`.
-A request may mix the families; the same header in both must carry the same
-value (different values are refused with a 400), and an empty header counts as
-absent.
-
-A session cookie follows the request: a sign-in made with `X-Appwrite-Project`
-(the Appwrite SDKs and CLI) gets `a_session_<project>`, one made with
-`X-Bunwrite-Project` gets `bw_session_<project>`. For what has no request to
-follow, `API_COMPAT` in `.env` decides:
-
-| | `API_COMPAT=bunwrite` (default) | `API_COMPAT=appwrite` |
-| --- | --- | --- |
-| Webhook headers | `X-Bunwrite-Webhook-Id`, `-Signature`, … | `X-Appwrite-Webhook-Id`, `-Signature`, … |
-| Function variables | `BUNWRITE_FUNCTION_ID`, `BUNWRITE_API_KEY`, `BUNWRITE_ENDPOINT`, … | the same plus `APPWRITE_FUNCTION_ID`, `APPWRITE_API_KEY`, … |
-| Session cookie without a project header (`?project=`) | `bw_session_<project>` | `a_session_<project>` |
-| Config file the console exports | `bunwrite.config.json` | `appwrite.config.json` |
-| User model | password hash fields omitted | legacy `password`, `hash`, `hashOptions` fields included only with the `users.secrets` scope |
-| Session/identity model | provider access and refresh tokens redacted | legacy provider tokens included only with `users.secrets` |
-| Webhook signature | HMAC-SHA256 + timestamp, legacy HMAC-SHA1 also sent | same headers for compatibility |
-
-Bunwrite's native model is the secure default. Appwrite mode exists to keep old
-SDK consumers and receivers working; it deliberately exposes the legacy fields
-they expect. OAuth callbacks are browser-bound in both modes by default; set
-`OAUTH_STATE_BINDING=false` only for a legacy server-side flow that cannot
-preserve the state cookie.
-
-Moving from Appwrite, set `API_COMPAT=appwrite` so webhook receivers and
-functions written for Appwrite keep working unchanged. Error bodies, paths,
-`$id`-style fields and the function `context` API are the same in both modes.
-
-## Console
-
-Server-rendered pages with htmx, styled after Shopify Polaris, and usable on a
-phone.
-
-![Bunwrite Projects Overview](assets/screenshots/screenshot-1.png)
-
-| Area | What you can do |
-| --- | --- |
-| Projects | Create projects, see their IDs and API keys, switch the active project |
-| Organization | Rename the organization, copy its ID, invite members by email and manage owner and developer roles |
-| Home | Counts, bandwidth chart with top consumers, failed function runs, memory and database size |
-| Databases | Create databases and collections; edit attributes, indexes and permissions; browse, filter, create, edit and delete documents |
-| Users | Search; edit profile, labels, verification and prefs; block; set a password; end sessions; delete |
-| Teams | Create teams; add members by email or ID; edit roles; prefs |
-| Storage | Buckets and their rules; upload, open and delete files; local or S3-compatible storage |
-| Functions | Schedule, timeout, who may run it, variables, custom domains; run now; run history with logs; deployment retention and bulk delete |
-| Sites | Create from an htmx starter, an upload, pasted HTML or a GitHub repository; deploy, make an older deployment live (rollback), download, bulk delete; deployment retention; output folder, single-page fallback, API function, multiple custom domains |
-| Request logs | Requests with status, duration, bytes, auth, IP, error, referer, user agent and request ID; details, search, filters, pagination, retention |
-| Observability | Per-project console pages for traffic, traces, product analytics and feature flags; per-project OTLP/HTTP, Datadog, PostHog and local flag settings; `GET /v1/flags` |
-| Backups | Whole-instance SQLite archives or Postgres dumps; automatic cron backups; optional S3 destination |
-| Schema | Export the full config or selected collections; paste/file import with review and delete-missing |
-| Settings | Project, email, sign-in, storage, caching, backups, functions, logs and HTML rendering |
-| API | Project endpoint, project ID and scoped server API keys |
-
-Settings live in the database and take effect immediately when saved in the
-console. Each setting shows whether it is customised or still at its default and
-can be reset. The optional first-start identity values in `.env` are imported
-once into the database; later environment changes are ignored. Project settings
-are console-only.
-
-The console index is the organization page: it lists your projects, with tabs
-for the organization members and its settings. Open a project to enter its
-dashboard. The project switcher in the sidebar changes which project every page
-edits. Apps select a project with the `X-Bunwrite-Project` (or `X-Appwrite-Project`) header. The first
-project is the existing database; additional projects live under
-`data/projects/<project-id>/`. Users, databases, storage, functions, request
-logs, settings and API keys are scoped to the selected project. Backups cover
-the whole instance and are managed by organization owners.
-
-Organization owners can invite teammates by email. The invitation creates the
-console account after it is accepted; until then the member is listed as
-invited. When SMTP is not configured the invite dialog shows the one-time links
-so they can be shared directly.
-
-## Backups
-
-A backup is one archive of every SQLite database Bunwrite owns: the control
-database and every project database, laid out like the Litestream replica.
-
-```
-backup-<timestamp>.archive.zst
-  manifest.json
-  bunwrite.sqlite
-  projects/<project-id>/bunwrite.sqlite
-```
-
-### From the console
-
-**Organization → Backups** (organization owners) lets you:
-
-- create a manual archive;
-- download it;
-- delete old archives;
-- upload an archive to validate and stage it for the next restart;
-- turn on daily automatic backups at 02:00 UTC and choose how many to keep
-  (1–100);
-- keep archives on local disk (`BACKUPS_PATH`) or in a separate S3-compatible
-  bucket;
-- configure continuous Litestream replication, including the replica URL, S3
-  credentials, endpoint, sync interval, heartbeat and retention. Changes apply
-  on the next restart; the `.env` values remain the fallback.
-
-Each database is copied with SQLite's `VACUUM INTO`, so the archive is
-consistent even while requests are being handled. One archive covers the whole
-instance; there is no per-project backup.
-
-With `DB_DRIVER=postgres`, the same page creates a logical `pg_dump` on the
-automatic schedule and uploads it to the backup S3 bucket. Install the
-PostgreSQL client tools on the server, or set `PG_DUMP_BIN`. The archive upload
-and Litestream flows are SQLite-only. Download a Postgres dump and restore it
-with `bunwrite backup:open` and `pg_restore`; see
-[Storage, backups and logs](docs/DEPLOY.md#storage-backups-and-logs).
-
-Archives are compressed with zstd (`.archive.zst`). They include every project's
-stored secrets, so set `BACKUP_ENCRYPTION_KEY` to encrypt them as well
-(`.archive.zst.enc`):
-
-```bash
-openssl rand -base64 32   # put the result in BACKUP_ENCRYPTION_KEY
-```
-
-Keep a copy of the key somewhere other than the server. Without it an encrypted
-archive cannot be opened, and anyone who has it can open every backup.
-
-The backup bucket can be the same bucket as the Litestream replica, provided the
-two use different prefixes. Set a **Key prefix** in Automatic backups (for example
-`backups`) and point `LITESTREAM_REPLICA_URL` at another prefix (for example
-`s3://my-bucket/litestream`). Scope each credential to its own prefix; the backup
-key should not be able to delete the replica.
-
-### From cron
-
-`bun run snapshot [dir]` writes one archive and keeps the newest `KEEP`
-`snapshot-*` archives (default 7). It reads `DATABASE_PATH` for the control
-database; project databases are found from `_projects` and `data/projects/`:
-
-```bash
-bun run snapshot /var/backups/bunwrite
-```
-
-### Restoring
-
-You can restore from the console: open **Organization → Backups → Restore archive**
-and upload a `.archive.zst` or `.archive.zst.enc` file. The server validates the
-whole archive (checksums, SQLite integrity, every project ID) and stages it;
-**restart Bunwrite** to apply it. The swap is still offline under the hood,
-because the archive replaces the control database, so the next start applies it
-before opening SQLite. A staged restore can be cancelled from the same page.
-
-Or run the CLI with the server stopped. It validates the archive, replaces every
-database, and keeps the previous files as `*.before-restore-<timestamp>`:
-
-```bash
-bun run restore backup-2026-10-31T02-00-00-000Z.archive.zst
-```
-
-Use `bunwrite restore <file>` with the compiled binary. Add `--dry-run` to check
-an archive without writing. Encrypted archives read `BACKUP_ENCRYPTION_KEY`
-from the environment or `.env`, or `--key`.
-
-A failure while swapping puts the previous files back. Uploaded files, function
-code and site builds are not in the archive; back up `STORAGE_PATH` or the
-uploads bucket separately. Test a restore before you need it.
-
-Older per-project backups (`.sqlite.zst`, `.sqlite.zst.enc`) can still be opened
-into a plain database with `bunwrite backup:open <file>`, then restored by hand.
-
-### Continuous SQLite replication and failover
-
-For PocketBase Cloud-style recovery, set `LITESTREAM_REPLICA_URL` to an
-S3-compatible bucket. The Docker entrypoint restores the control database and
-every project database on start, then streams WAL changes:
-
-```env
-LITESTREAM_REPLICA_URL=s3://my-bucket/bunwrite
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-```
-
-Restore manually on a replacement host:
-
-```bash
-bun run failover
-```
-
-That restores `<replica>/bunwrite.sqlite`, reads `_projects`, then restores
-`<replica>/projects/<id>/bunwrite.sqlite` for each project. Keep only one writer
-against a replica prefix at a time. See
-[Continuous SQLite backup and failover](docs/DEPLOY.md#continuous-sqlite-backup-and-failover-litestream).
-
-The organization **Backups** page shows whether Litestream is configured, the
-replica, sync interval and heartbeat, and warns when `LITESTREAM_ALLOW_EMPTY` or
-`LITESTREAM_FORCE_RESTORE` is set. It is read-only: starting, stopping and tuning
-the replicator is the container/systemd wrapper's job. Litestream is continuous
-replication (RPO in seconds); the archives above are periodic recovery points
-and the only defence against a logical mistake that replication would copy.
-
-## HTML rendering for invoices
-
-Bunwrite includes a rendering service for invoices, receipts, reports and social
-cards:
-
-- `POST /v1/pdf` turns HTML into a PDF.
-- `POST /v1/image` turns HTML into PNG, JPG, WebP, AVIF or GIF.
-
-Both use headless Chromium through `Bun.WebView`, so there is no Puppeteer or
-Playwright dependency in your app. They are Bunwrite extensions, not part of
-Appwrite's API.
-
-### Turn it on
-
-1. The published Docker image includes Chromium. When running from source,
-   install Chrome or Chromium, or set `CHROME_PATH`. A local Docker build needs
-   `BUNWRITE_WITH_CHROMIUM=true` in `.env`. Docker runs Chromium with
-   `--no-sandbox` because the container cannot start its sandbox; the
-   container is the isolation boundary. Bare metal keeps the sandbox unless the
-   host cannot provide user namespaces.
-2. Open **Console → Settings → HTML rendering** and enable it. Rendering is a
-   console setting; there is no `.env` switch.
-3. Call the endpoints with an API key from a server or function. Never put the
-   key in a browser.
-
-### Generate an invoice
-
-```ts
-import { Client, Render } from '@bunwrite/sdk'
-
-const render = new Render(
-  new Client()
-    .setEndpoint('https://api.example.com/v1')
-    .setProject('your-project-id')
-    .setKey(process.env.BUNWRITE_API_KEY!),
-)
-
-const pdf = await render.pdf({
-  html: `
-    <h1>Invoice INV-001</h1>
-    <p>Total: $42.00</p>
-  `,
-  fileName: 'INV-001',
-  format: 'A4',
-})
-
-await Bun.write('INV-001.pdf', pdf)
-```
-
-On Node.js, use `writeFile('INV-001.pdf', Buffer.from(pdf))`.
-
-Save the result directly to a bucket instead of returning the bytes:
-
-```ts
-const file = await render.pdf({
-  html,
-  bucketId: 'invoices',
-  fileName: 'INV-001',
-})
-```
-
-Images use the same options plus `output`, `width`, `height`, `selector`,
-`scale`, `quality` and `transparent`:
-
-```ts
-const card = await render.image({
-  html,
-  selector: '#receipt',
-  output: 'webp',
-  scale: 2,
-})
-```
-
-PDF options include `format`, `landscape`, `margin`, `scale`, `pageRanges`,
-`headerTemplate` and `footerTemplate`. Rendering is off by default because
-Chromium costs memory; it is serialized (one render at a time) and images are
-limited to 8 megapixels. See [docs/RENDER.md](docs/RENDER.md) for limits, remote
-assets, saving to S3 and the HTTP examples.
-
-## What the API covers
-
-| Area | Endpoints |
-| --- | --- |
-| Databases | document CRUD, bulk create/upsert/update/delete, increment/decrement, queries, row permissions, transactions with conflict detection, `If-Match`/`$revision` optimistic concurrency, database/collection metadata |
-| Vectors and RAG (extension) | `POST /v1/vectors` collections, point upsert/read/delete, similarity search with cosine/dot/euclidean, metadata filters, chunked `/v1/rag/ingest` and `/v1/rag/query`; a matching console section for collections, points, search and the RAG playground. Works on SQLite and Postgres; local embeddings or any OpenAI-compatible endpoint. See [docs/VECTORS.md](docs/VECTORS.md) |
-| Account | email + password, email OTP, token sessions, OAuth2 token flow (Google, Facebook, GitHub, Apple), recovery, email verification, JWT, sessions, prefs |
-| Users | list/search, create, get/delete, updates, labels, prefs, memberships, sessions, tokens, JWTs, identities |
-| Teams | teams, prefs, memberships, invites and accept-invite |
-| Storage | buckets (create, update, delete), uploads including chunked (`Content-Range`, `X-Bunwrite-ID` or `X-Appwrite-ID`), view/download with byte ranges, permissions, local disk or S3, and previews with every Appwrite option: width, height, gravity, quality, borderWidth, borderColor, borderRadius, opacity, rotation, background, output (jpg, png, webp, avif, gif) |
-| HTML rendering (extension) | `POST /v1/pdf` and `POST /v1/image`: HTML to PDF, or to png, jpg, webp, avif and gif, with headless Chromium. Returned or saved to a bucket. Off by default; see [docs/RENDER.md](docs/RENDER.md) |
-| Functions | executions (sync/async, and deferred with `scheduledAt`), list/get, in-process cron, one child process per run, `/v1/functions/<id>/http` with streamed responses (`res.start`/`res.write*`/`res.end`, for LLM tokens and SSE); deployments from the CLI and their source download; build commands such as `npm install`, `bun install` and `pip install -r requirements.txt`, also in the Docker image (Python is included in the published image; a local build sets `BUNWRITE_WITH_PYTHON=true`); default `<id>.<FUNCTIONS_DOMAIN>` and multiple custom domains |
-| Sites | create, list, get, update, delete; deployments (chunked upload, activate, download, delete); `appwrite push sites`; default `<id>.<SITES_DOMAIN>` and multiple custom domains as proxy rules. Static files, or `adapter: ssr` built and run on this server, see [docs/SITES.md](docs/SITES.md) |
-| Git deployments | GitHub App (one-click setup or `VCS_GITHUB_*`), one server-wide installation shared by every project, repository browsing and detection, `createVcsDeployment`; pushes deploy sites and functions, other branches get preview URLs, commit statuses and one PR comment, fork PRs need approval. See [docs/GIT.md](docs/GIT.md) |
-| Proxy | Appwrite's `/v1/proxy/rules` API: list, get, create and delete site/function custom domains; each resource keeps its default host and can have any number of rules |
-| Project | services, protocols and sign-in methods on/off; session duration and limit, user limit, password personal-data check and the other security policies; mock phone numbers |
-| Webhooks | CRUD and secret rotation; document create/update/delete events POSTed with Bunwrite's HMAC-SHA256 timestamp signature plus the legacy Appwrite HMAC-SHA1 header; ten failures in a row turn a webhook off |
-| Messaging | topics (create, list, update, delete) |
-| Realtime | WebSocket at `/v1/realtime`: document events to subscribers who may read them |
-| Email | SMTP via nodemailer, Appwrite's English templates |
-
-Abuse limits match Appwrite's: 10 tries an hour per IP and account on sign-in,
-codes and recovery for browsers (API keys are exempt), and ten wrong codes
-cancel the real one.
-
-## Optimistic concurrency
-
-Every document carries a `$revision`. It starts at `1` and increments on each
-write, so a client can say "only write if this is still the document I read".
-This is the cheapest way to prevent lost updates and double submits; it needs
-no locks and works across every worker.
-
-Send the revision a read returned in one of three ways:
-
-```ts
-// 1. Inside data — works with the Appwrite SDK unchanged.
-await databases.updateDocument({
-  databaseId, collectionId, documentId,
-  data: { ...changes, $revision: doc.$revision },
-})
-
-// 2. As a param, for a custom client.
-//    PATCH .../documents/doc-1?revision=3
-
-// 3. As the standard If-Match header (allowed by CORS for browser clients).
-//    If-Match: "3"   or   If-Match: 3
-```
-
-A stale revision returns **409 `document_update_conflict`** and writes nothing;
-fetch the document again, merge, retry. `If-Match: *` only requires the document
-to exist. The precondition applies to single-document update, upsert, delete and
-increment/decrement; a mismatch on an upsert never creates the document.
-Transactions already detect conflicts at commit, so `If-Match` is rejected when
-`transactionId` is also present.
-
-```ts
-try {
-  await databases.updateDocument({ databaseId, collectionId, documentId, data: { ...changes, $revision } })
-} catch (error) {
-  if (error.type === 'document_update_conflict') {
-    // Someone else wrote first: refetch, show the new value, or retry.
-  }
-}
-```
-
-For a booking slot, the revision is the guard against two people taking the same
-row. A unique index on the slot key is still worth adding as the hard guarantee:
-even a caller that ignores `$revision` cannot insert a duplicate.
-
-## Known differences from Appwrite
-
-The full production-gap list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
-
-- An accented first letter sorts after `Z` (`Éclair` after `Yogurt`);
-  PostgreSQL sorts it with `E`.
-- Search keeps English stop words ("the", "and") that PostgreSQL drops.
-- On the raw wire, some documents list `$id` before their attributes where live
-  lists it after; the SDKs parse both to the same object.
-- Every document includes a `$revision` field (see
-  [Optimistic concurrency](#optimistic-concurrency)); Appwrite has no equivalent
-  and its SDK types do not declare it, so TypeScript needs a cast to read it.
-- Not implemented: Appwrite's `regex`, geo, vector and `exists` query methods
-  and its VectorsDB API (Bunwrite has a separate `/vectors` extension); project-user MFA
-  (console admins have optional email MFA); phone/SMS login; magic URLs;
-  sending messages (topics are stored only); server-side rendered Sites and
-  site builds (sites are served as uploaded).
-- Switched-off services, protocols and sign-in methods stop clients; API keys
-  and console admins are exempt, as on Appwrite. The password dictionary and
-  history, session alert and invalidation, membership privacy and email-domain
-  policies, and mock phone numbers are stored and read back but not applied.
-- Bucket `encryption`, `antivirus` and `compression` are stored as set; files
-  are kept as uploaded.
-- Webhooks fire for document events only.
-- Function builds run on the host, not in Appwrite's runtime images. Where npm
-  is missing (as in the Docker image), only `npm install`, `npm ci`, `npm run`
-  and `npx` are available, through Bun. Libraries that compile native code
-  while installing need a compiler, which the Docker image does not have;
-  packages with prebuilt binaries work.
-- Functions share the container's CPU, memory and network; Appwrite gives each
-  its own container. In the Docker image each function runs as its own user
-  and can only read and write its own folder (`FUNCTIONS_SANDBOX`: `on` in
-  Docker Compose, `auto` by default elsewhere, `off`). Outside Docker without
-  the helper, or with `no-new-privileges` set, functions run as the server's
-  user, so run only code you trust there. Functions that run from the code
-  folder (`FUNCTIONS_DIR`) need it readable by other users.
-- Previews cannot output HEIC (sharp's prebuilt libvips has no HEVC encoder).
-- Appwrite's `studio-render` (Chromium) does not fit in 1 GB of memory.
-  Bunwrite's HTML rendering is opt-in and serialized, but Chromium still needs
-  memory beyond the base server on a small host.
-
-## Commands
-
-| Command | Does |
-| --- | --- |
-| `bun run dev` | Watch-mode API + console |
-| `bun run build` | Build the standalone `dist/bunwrite` executable |
-| `bun run demo` | Self-contained demo with sample data |
-| `bun run console:admin <email> [--no-mfa|--remove]` | Create, reset, clear email MFA for, or remove a console admin |
-| `bun run schema:push <bunwrite.config.json> [--prune]` | Create/alter the default project's tables, indexes, buckets and functions |
-| `bun run migrate --endpoint .. --project .. --key .. --verify` | Copy a live Appwrite project here |
-| `bun run snapshot [dir]` | One archive of every database while the server runs; keeps `KEEP` (default 7) |
-| `bun run restore <file>` | Restore every database from an archive; stop the server first |
-| `bun run autotune` | Show the resource limits detected from the host/cgroup |
-| `bun run stress` | Seed and load-test a running instance (see [scripts/stress/README.md](scripts/stress/README.md)) |
-| `bun run stress:booking` | Seed and load-test a booking-app read/write mix |
-| `bun run typecheck` | TypeScript check |
-| `bun test` | Contract tests through the real SDKs |
-| `bun run sdk:sync` | Copy the Appwrite SDK code Bunwrite serves into `packages/sdk` |
-| `bun run sdk:build` / `bun run cli:build` | Build the SDK and CLI packages into their `dist/` |
-
-## Stress testing
-
-`bun run stress` seeds a collection through the normal API and measures
-throughput and latency with `oha` (or a built-in Bun client). See
-[scripts/stress/README.md](scripts/stress/README.md) for the 2 vCPU / 2 GB
-Docker recipe and custom targets.
-
-For a booking-app workload, `bun run stress:booking` creates a disposable
-`booking_stress` database, seeds services, slots and bookings, and measures a
-concurrent read/write mix (browse, availability, my bookings, point read and
-create). See the same guide for the setup, mix and cleanup commands.
-
-### Booking-app workload
-
-The booking test creates its own database and collections through the normal
-API, so it does not touch application data. It needs an API key and a
-disposable project or database:
-
-```bash
-export STRESS_API_KEY=your-api-key
-
-# 1. Create the schema and seed services, slots and bookings.
-bun run stress:booking setup \
-  --base https://bunwrite.example.com/v1 \
-  --project booking-app \
-  --reset
-
-# 2. Measure each path separately.
-bun run stress:booking run \
-  --manifest data/stress/booking-bkg-202610301200.json \
-  --concurrency 1,10,50,100,200,400
-
-# 3. Measure a concurrent mix: 30% writes, 70% reads.
-bun run stress:booking mix \
-  --manifest data/stress/booking-bkg-202610301200.json \
-  --mix-concurrency 50,75,100,125,150 \
-  --mix-duration 30 --mix-warmup 3
-
-# 4. Remove the disposable database.
-bun run stress:booking cleanup --yes \
-  --base https://bunwrite.example.com/v1 \
-  --project booking-app
-```
-
-`setup` prints the manifest path and seeds before testing. The mix is 15%
-services, 35% availability, 15% bookings, 5% point read and 30% create. A
-report is written next to every raw result in `data/stress/`.
-
-On the tested **1 vCPU / 1 GB** staging host, the mix saturated at roughly
-**760–790 requests/second**. With **75–100 concurrent HTTP clients** it held
-**724–761 rps** at **p95 160–230 ms** and **99.1–99.7% success**. At 125
-clients success fell below 99%; at 400 clients p95 reached 1.4 seconds. Using
-the report's model of five API calls per active user per minute, that is about
-**8,700–9,100 active users** at the 99% SLO, so plan for roughly 5,000–6,000
-with headroom. These figures are host- and workload-specific; rerun the mix
-with your real calls-per-page and read/write ratio.
-
-The test deliberately writes more than most booking apps. It does not enforce
-seat inventory, and it excludes HTML rendering, WebSocket realtime, file
-uploads and function runs. HTML/PDF rendering is not a good fit for a 1 GB
-host. See [scripts/stress/README.md](scripts/stress/README.md) for every flag
-and the 2 vCPU / 2 GB Docker recipe.
-
-## Deploy
-
-### One-command install
-
-The published image can install itself into a directory on the host, like
-Appwrite's installer. It uses the host Docker socket to start sibling
-containers:
+### Docker
 
 ```bash
 mkdir -p bunwrite
@@ -994,73 +27,108 @@ docker run -it --rm \
   ghcr.io/ridhotamma/bunwrite:latest
 ```
 
-It writes `bunwrite/docker-compose.yml`, `.env`, the Caddyfiles and a console
-admin, then starts the stack. Open `https://<DOMAIN>/console` (or
-`https://localhost/console` when no domain was given).
-
-Upgrade the same directory with a newer image:
+### From source
 
 ```bash
-docker run -it --rm \
-  --user 0 \
-  --volume /var/run/docker.sock:/var/run/docker.sock \
-  --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
-  --entrypoint=upgrade \
-  ghcr.io/ridhotamma/bunwrite:latest
+git clone https://github.com/ridhotamma/bunwrite.git
+cd bunwrite
+bun install
+cp .env.example .env
+bun run dev
 ```
 
-`--user 0` is only for writing into the mounted directory; the Bunwrite
-container itself runs as the unprivileged `bunwrite` user. Add `--no-start` to
-create the files without starting, and run the command with `--help` for the
-domain, ports, Caddy and admin options. The same commands are available as
-`bunwrite install` and `bunwrite upgrade`. If the GHCR package is private,
-make it public or pull the image on the host first; the installer falls back to
-a local image when the pull fails.
+Open `http://localhost:8080/console/setup` to create the first admin. The API is
+at `http://localhost:8080/v1`.
 
-For an Ubuntu + systemd setup with the standalone binary, see
-[docs/DEPLOY.md](docs/DEPLOY.md).
-
-Or run it with Docker Compose. It auto-tunes to the host's CPU and RAM; set
-cgroup limits in `docker-compose.yml` if you share the host with other services:
+For a throwaway instance with sample data:
 
 ```bash
-cp .env.example .env   # set DOMAIN, COMPOSE_PROFILES=caddy, TLS_MODE=acme|external|off, seeds
-docker compose up -d --build
+bun run demo
+# http://localhost:8790/console
+# demo@bunwrite.test / demo-password
 ```
 
+Deployment, upgrade, backups, TLS and production tuning:
+[docs/DEPLOY.md](docs/DEPLOY.md). Every environment variable:
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
 
-Before going live, enable **Organization → Backups**, keep the encryption key off
-the server, and back up uploaded files (`STORAGE_PATH` or the S3 bucket)
-separately. Restore with `bunwrite restore` while the server is stopped. See
-[Backups](#backups).
-For continuous SQLite replication and restore onto a replacement host, set
-`LITESTREAM_REPLICA_URL`; see
-[Continuous SQLite backup and failover](docs/DEPLOY.md#continuous-sqlite-backup-and-failover-litestream).
+## Features
 
-## Database backends
+- **Appwrite-compatible API** for documents, users, teams, storage, functions,
+  sites, realtime, webhooks and the console.
+- **SQLite by default**, with Postgres supported through the same service layer.
+- **Functions** for Node.js and Python, with builds, schedules, executions and
+  custom domains.
+- **Sites**, static or server-rendered, with Git deployments, previews and custom
+  domains.
+- **Storage and backups** on local disk or any S3-compatible bucket.
+- **Vectors and RAG** with local or OpenAI-compatible embeddings.
+- **HTML to PDF or image** with headless Chromium.
+- **Console, queue, request logs, traces, metrics and feature flags** built in.
 
-SQLite is the default. Postgres also serves the API request path: set
-`DB_DRIVER=postgres` with `DATABASE_URL` and the server boots on it, giving each
-project its own schema. Under the data layer there is a driver port with a
-working Postgres implementation, runtime schema bootstrap and a CLI to verify a
-connection:
+## Documentation
+
+| Topic | Guide |
+| --- | --- |
+| Configuration and environment variables | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) |
+| Deployment, Docker, backups, Litestream and Postgres | [docs/DEPLOY.md](docs/DEPLOY.md) |
+| Architecture, request path and API coverage | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| SQLite and Postgres backends | [docs/DATABASE.md](docs/DATABASE.md) |
+| Sites, SSR and custom domains | [docs/SITES.md](docs/SITES.md) |
+| Git deployments and previews | [docs/GIT.md](docs/GIT.md) |
+| Queue and workers | [docs/QUEUE.md](docs/QUEUE.md) |
+| HTML rendering | [docs/RENDER.md](docs/RENDER.md) |
+| Vectors and RAG | [docs/VECTORS.md](docs/VECTORS.md) |
+| Observability | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) |
+| MCP server | [docs/MCP.md](docs/MCP.md) |
+| Limits and known differences | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) |
+| Performance notes | [docs/PERFORMANCE_PLAN.md](docs/PERFORMANCE_PLAN.md) |
+| Code conventions | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) |
+| Security policy | [SECURITY.md](SECURITY.md) |
+
+## SDK, CLI and MCP
+
+- [`@bunwrite/sdk`](packages/sdk/README.md) — typed client for browsers, Bun,
+  Node.js and edge runtimes, including `Vectors` and `RAG`.
+- [`@bunwrite/cli`](packages/cli/README.md) — project setup, config pull/push,
+  function and site deploys, and every SDK method as a command.
+- [`@bunwrite/mcp`](packages/mcp/README.md) — a compact MCP catalog for AI agents.
 
 ```bash
-bun run db:check --driver postgres --url postgres://localhost:5432/bunwrite
+npm install @bunwrite/sdk
+npm install -g @bunwrite/cli@latest
 ```
 
-[docs/DATABASE.md](docs/DATABASE.md) lists exactly what runs on each backend,
-the dialect translation, and the migration order.
+```ts
+import { Client, Databases } from '@bunwrite/sdk'
 
-## Architecture
+const client = new Client()
+  .setEndpoint('https://api.example.com/v1')
+  .setProject('your-project-id')
+  .setKey(process.env.BUNWRITE_API_KEY!)
+```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## AI agents
 
-## Contributing
+Bunwrite ships Agent Skills for Claude Code, Cursor, Codex, OpenCode and other
+compatible tools:
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
-development workflow, and [SECURITY.md](SECURITY.md) for reporting security
-issues.
+```bash
+npx skills add ridhotamma/bunwrite
+```
+
+See [skills/README.md](skills/README.md) for the available skills.
+
+## Development
+
+```bash
+bun install
+bun run dev
+bun test
+bun run build
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 

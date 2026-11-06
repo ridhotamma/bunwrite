@@ -1,7 +1,7 @@
 import type { Server } from 'bun'
 
 import { keyCaller, parseCookies, resolveCaller, type Caller } from './auth/caller'
-import { BRAND_FILES } from './console/assets'
+import { PUBLIC_FILES } from './console/assets'
 import { accountRoutes, userRoutes } from './auth/routes'
 import { forwardSticky, publicWorkerIndex, stickyHostOf, stickyTargetFor, withStickyCookie } from './cluster/sticky'
 import { forwardWrite, shouldForwardConsoleWrite, shouldForwardWrite } from './cluster/writer'
@@ -119,7 +119,7 @@ export function createApp(source: Services | ProjectResolver) {
   // feature flags and local telemetry limits. Console pages and requests use
   // the runtime resolved for the selected project.
   const shouldObserve = (url: URL): boolean =>
-    !(url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || url.pathname.startsWith('/console/observability'))
+    !(url.pathname in PUBLIC_FILES || url.pathname.startsWith('/console/assets/') || url.pathname.startsWith('/console/observability'))
   const router = new Router<AppContext>()
   router.get('/health', () => json({ name: 'http', ping: 0, status: 'pass' }))
   router.get('/health/version', () => json({ version: '1.8.0' }))
@@ -510,10 +510,10 @@ export function createApp(source: Services | ProjectResolver) {
       const domain = url.searchParams.get('domain') ?? ''
       return new Response(null, { status: domain && ((await projects.findSite(domain)) || (await projects.findFunctionByHost(domain))) ? 200 : 404 })
     }
-    const brand = BRAND_FILES[url.pathname]
-    if (brand && (request.method === 'GET' || request.method === 'HEAD')) {
-      const file = Bun.file(brand.path)
-      return new Response(file, { headers: { 'content-type': brand.type, 'content-length': String(file.size), 'cache-control': 'public, max-age=604800' } })
+    const asset = PUBLIC_FILES[url.pathname]
+    if (asset && (request.method === 'GET' || request.method === 'HEAD')) {
+      const file = Bun.file(asset.path)
+      return new Response(file, { headers: { 'content-type': asset.type, 'content-length': String(file.size), 'cache-control': 'public, max-age=604800' } })
     }
     // Console forms are short database writes too. Uploads, builds, backups
     // and outbound tests stay on this worker; the writer that owns the selected
@@ -620,7 +620,7 @@ export function createApp(source: Services | ProjectResolver) {
           ? new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
           : response
       } finally {
-        const skip = url.pathname in BRAND_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
+        const skip = url.pathname in PUBLIC_FILES || url.pathname.startsWith('/console/assets/') || (logsUi && status < 400)
         const runtime = meta.project ? projects.get(meta.project) : undefined
         const logConfig = runtime?.services.config ?? control.config
         // Sampling keeps the hot path cheap while errors are always recorded.

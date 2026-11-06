@@ -98,8 +98,11 @@ take any commands.
 connected to GitHub, the same button opens the Git deploy form instead: choose
 a branch and its newest commit or a specific one ([GIT.md](GIT.md)). The old
 version keeps serving until the new one is ready. **Make live** on an older
-deployment rolls back at once. The live deployment and the last five ready ones are kept (the last two
-for SSR sites, whose source trees may include installed packages).
+deployment rolls back at once. Automatic cleanup is off by default
+(`deploymentRetention` 0), so every deployment is kept. When retention is set,
+the live deployment and the last five ready ones are kept (the last two for
+SSR sites, whose source trees may include installed packages); older non-live
+builds are deleted.
 
 ### CLI
 
@@ -256,7 +259,7 @@ stops starting after `production`; move it to `dependencies`, or set
 build, so `SITES_BUILD_COMMANDS=false` leaves the upload as it is.
 
 `SITES_SSR_KEEP_PREVIOUS` (default `2`) sets how many earlier SSR deployments
-are kept for rollback.
+are kept for rollback when deployment retention is enabled.
 
 The console shows the app's recent output on the live deployment page. Builds
 run under the site's own user when `FUNCTIONS_SANDBOX` is on, with the same

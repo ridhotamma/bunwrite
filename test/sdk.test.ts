@@ -19,12 +19,14 @@ import {
   Messaging,
   Permission,
   Query,
+  RAG,
   Realtime,
   Role,
   Storage,
   TablesDB,
   Teams,
   Users,
+  Vectors,
   Webhooks,
   Channel,
 } from '../packages/sdk/src'
@@ -238,6 +240,62 @@ describe('functions, messaging and webhooks', () => {
     const hook = await webhooks.create({ webhookId: 'sdk-hook', url: 'https://example.com/hook', name: 'Hook', events: ['databases.*'] })
     expect(hook.name).toBe('Hook')
     expect((await webhooks.list()).webhooks.map((w) => w.$id)).toContain('sdk-hook')
+  })
+})
+
+describe('vectors and RAG', () => {
+  test('collections, points, search, ingest and query', async () => {
+    const vectors = new Vectors(admin())
+    const rag = new RAG(admin())
+
+    const collection = await vectors.createCollection({ collectionId: 'sdk-vectors', name: 'SDK knowledge', dimension: 64, metric: 'cosine' })
+    expect(collection).toMatchObject({ $id: 'sdk-vectors', name: 'SDK knowledge', dimension: 64, metric: 'cosine', points: 0 })
+    expect((await vectors.listCollections()).collections.map((c) => c.$id)).toContain('sdk-vectors')
+    expect((await vectors.getCollection({ collectionId: 'sdk-vectors' })).$id).toBe('sdk-vectors')
+
+    const batch = await vectors.upsertPoints({
+      collectionId: 'sdk-vectors',
+      points: [
+        { id: 'v1', content: 'SQLite stores the whole database in one local file.', metadata: { topic: 'storage' } },
+        { id: 'v2', content: 'Postgres stores each project in its own schema.', metadata: { topic: 'storage' } },
+      ],
+    })
+    expect(batch.points.map((p) => p.$id)).toEqual(['v1', 'v2'])
+
+    const single = await vectors.upsertPoint({ collectionId: 'sdk-vectors', content: 'Bunwrite runs on Bun and SQLite.' })
+    expect(single.$id).toBeTruthy()
+    const updated = await vectors.upsertPoint({ collectionId: 'sdk-vectors', pointId: single.$id, content: 'Bunwrite runs on Bun or Postgres.' })
+    expect(updated.$id).toBe(single.$id)
+    expect((await vectors.getPoint({ collectionId: 'sdk-vectors', pointId: 'v1' })).content).toContain('SQLite')
+
+    const listed = await vectors.listPoints({ collectionId: 'sdk-vectors' })
+    expect(listed.total).toBe(3)
+    const searched = await vectors.search({ collectionId: 'sdk-vectors', text: 'where is data stored?', topK: 2, filter: { topic: 'storage' } })
+    expect(searched.points).toHaveLength(2)
+    expect(typeof searched.points[0]!.score).toBe('number')
+
+    const ingested = await rag.ingest({
+      collectionId: 'sdk-vectors',
+      documentId: 'guide',
+      text: 'SQLite keeps data in one file. Postgres can store a project in its own schema.',
+      metadata: { source: 'guide.md' },
+    })
+    expect(ingested).toMatchObject({ collectionId: 'sdk-vectors', documentId: 'guide' })
+    expect(ingested.chunks).toBeGreaterThan(0)
+    const chunks = await vectors.listDocumentPoints({ collectionId: 'sdk-vectors', documentId: 'guide' })
+    expect(chunks.total).toBe(ingested.chunks)
+
+    const answer = await rag.query({ collectionId: 'sdk-vectors', query: 'Where is data stored?', topK: 2, generate: false })
+    expect(answer.query).toBe('Where is data stored?')
+    expect(answer.answer).toBeNull()
+    expect(answer.sources.length).toBeGreaterThan(0)
+    expect(answer.context).toContain('SQLite')
+
+    expect((await vectors.deleteDocument({ collectionId: 'sdk-vectors', documentId: 'guide' })).deleted).toBe(ingested.chunks)
+    expect((await vectors.listDocumentPoints({ collectionId: 'sdk-vectors', documentId: 'guide' })).total).toBe(0)
+    await vectors.deletePoint({ collectionId: 'sdk-vectors', pointId: 'v1' })
+    await vectors.deleteCollection({ collectionId: 'sdk-vectors' })
+    await expect(vectors.getCollection({ collectionId: 'sdk-vectors' })).rejects.toThrow()
   })
 })
 

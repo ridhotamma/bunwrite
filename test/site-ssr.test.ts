@@ -658,7 +658,7 @@ describe('SSR sites: cleanup after the build', () => {
 
   test('SITES_SSR_KEEP_PREVIOUS sets how many earlier SSR deployments stay', async () => {
     server.config.sitesSsrKeepPrevious = 0
-    await createSite('keep-none', { buildCommand: 'true' })
+    await createSite('keep-none', { buildCommand: 'true', deploymentRetention: 1 })
     try {
       const one = await deploy('keep-none', { 'server.js': APP })
       const two = await deploy('keep-none', { 'server.js': APP })

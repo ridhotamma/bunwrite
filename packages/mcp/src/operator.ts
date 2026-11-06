@@ -188,7 +188,7 @@ export function createOperator(options: { services: Services; config: McpConfig;
         (value) => value.total,
         () => undefined,
       )
-    const [version, databases, users, teams, buckets, functions, sites, topics] = await Promise.all([
+    const [version, databases, users, teams, buckets, functions, sites, topics, vectorCollections] = await Promise.all([
       services.health.getVersion().catch(() => undefined),
       list(services.databases.list({}) as Promise<{ total: number }>),
       list(services.users.list({}) as Promise<{ total: number }>),
@@ -197,6 +197,7 @@ export function createOperator(options: { services: Services; config: McpConfig;
       list(services.functions.list({}) as Promise<{ total: number }>),
       list(services.sites.list({}) as Promise<{ total: number }>),
       list(services.messaging.listTopics({}) as Promise<{ total: number }>),
+      list(services.vectors.listCollections() as Promise<{ total: number }>),
     ])
     return {
       endpoint: config.endpoint,
@@ -211,6 +212,7 @@ export function createOperator(options: { services: Services; config: McpConfig;
         functions,
         sites,
         topics,
+        vectorCollections,
       },
       catalog: { operations: catalog.length, groups: operationGroups() },
       hint: 'Use bunwrite_search_tools, then bunwrite_call_tool. Writes use bunwrite_call_write_tool with confirm_write: true.',

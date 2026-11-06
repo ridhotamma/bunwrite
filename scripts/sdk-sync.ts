@@ -10,7 +10,7 @@
  * or adding routes to the server.
  *
  * Hand-written files (client.ts, index.ts, inputFile.ts, services/health.ts,
- * services/render.ts) are not touched.
+ * services/render.ts, services/vectors.ts, services/rag.ts) are not touched.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, normalize, resolve } from 'node:path'

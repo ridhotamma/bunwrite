@@ -7,6 +7,7 @@ import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
 import { DEFAULT_RUNTIME, FUNCTION_RUNTIMES } from '~/runtimes/catalog'
 import { runtimeSelect } from '~/console/views/runtimes'
+import { fileField } from '~/console/upload'
 
 const FN = '/console/functions'
 
@@ -70,8 +71,15 @@ function codeFields(options: CodeFieldsOptions): Html {
       <div class="choice">${choices}</div>
     </fieldset>
     <div data-show-for="upload" data-for-select="source" ${shown('upload')}>
-      <label>Archive<input type="file" name="code" accept=".zip,.tar.gz,.tgz,application/zip,application/gzip" required>
-        <small>The entry file must be inside, either at the top or in one folder. For very large folders use <code>bunwrite push functions</code>.</small></label>
+      ${fileField({
+        name: 'code',
+        label: 'Archive',
+        accept: '.zip,.tar.gz,.tgz,application/zip,application/gzip',
+        required: true,
+        title: 'Drag and drop a function archive here',
+        hint: '.zip, .tar.gz or .tgz',
+        help: html`The entry file must be inside, either at the top or in one folder. For very large folders use <code>bunwrite push functions</code>.`,
+      })}
     </div>
     <div data-show-for="paste" data-for-select="source" ${shown('paste')}>
       <label>Entry file code<textarea name="code_text" class="mono tall code-editor" spellcheck="false" required ${followCode}>${pasteDefault}</textarea></label>

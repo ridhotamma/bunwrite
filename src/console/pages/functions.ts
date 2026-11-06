@@ -479,7 +479,7 @@ export function functionPages(router: ConsoleRouter): void {
             </div>
             <label
               >Keep non-live deployments for <input name="deployment_retention" type="number" min="0" step="1" value="${f.deployment_retention}" /><small
-                >Days. Older non-active deployments are deleted automatically; 0 keeps every deployment.</small
+                >Days. With a value above 0, older non-active deployments are deleted automatically; 0 keeps every deployment.</small
               ></label
             >
             <label class="check"><input type="checkbox" name="enabled" ${f.enabled ? 'checked' : ''} />Enabled</label>

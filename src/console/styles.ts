@@ -2,9 +2,17 @@ import { PROGRESS_CSS } from './progress'
 
 /** Console stylesheet, kept as a string so the console has no build step. */
 export const CONSOLE_CSS = `
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-Light.otf") format("opentype");font-weight:300;font-style:normal;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-LightItalic.otf") format("opentype");font-weight:300;font-style:italic;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-Regular.otf") format("opentype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-Italic.otf") format("opentype");font-weight:400;font-style:italic;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-Medium.otf") format("opentype");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-MediumItalic.otf") format("opentype");font-weight:500;font-style:italic;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-Bold.otf") format("opentype");font-weight:700;font-style:normal;font-display:swap}
+@font-face{font-family:"Neue Montreal";src:url("/fonts/NeueMontreal-BoldItalic.otf") format("opentype");font-weight:700;font-style:italic;font-display:swap}
 :root{--bg:#f1f1f1;--surface:#fff;--nav:#ebebeb;--nav-hover:#e3e3e3;--nav-on:#fafafa;--text:#303030;--subdued:#616161;--disabled:#b5b5b5;--border:#e3e3e3;--border-strong:#8a8a8a;--primary:#303030;--primary-hover:#1a1a1a;--critical:#8e1f0b;--critical-bg:#fedad9;--success:#2a6a45;--success-bg:#e6f3eb;--attention:#7a3a00;--attention-bg:#ffe7d1;--info:#00527c;--info-bg:#e0f0ff;--focus:#005bd3;--ring:#b5b5b5;--shadow:0 1px 0 rgba(26,26,26,.07),inset 0 -1px 0 rgba(0,0,0,.08),inset 0 0 0 1px rgba(0,0,0,.06)}
 *{box-sizing:border-box}html,body{margin:0}[hidden]{display:none!important}
-body{font:13px/20px "Inter",-apple-system,BlinkMacSystemFont,"San Francisco","Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+body{font:13px/20px "Neue Montreal",-apple-system,BlinkMacSystemFont,"San Francisco","Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
 a{color:var(--focus);text-decoration:none}a:hover{text-decoration:underline}
 .icon{display:inline-block;vertical-align:-.15em;flex:none}
 code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
@@ -118,7 +126,34 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .repo-select{display:block}.repo-select>select{display:block;width:100%;margin-top:4px}
 .code-source .choice label{align-items:flex-start}.code-source .choice div{min-width:0}.code-source .choice b{font-weight:600}.code-source .choice span{display:block;line-height:16px;margin-top:2px}
 textarea.code-editor{min-height:260px;max-height:50vh;tab-size:2;white-space:pre;overflow:auto;line-height:18px}
-input[type=file]{padding:5px 8px;background:var(--surface)}
+.upload-field{display:block;margin:0 0 12px;min-width:0}
+.upload-label{display:block;margin:0 0 6px;font-weight:450}
+.upload-zone{position:relative;display:flex;align-items:center;gap:12px;min-width:0;margin:0;padding:14px 16px;border:1px dashed var(--border-strong);border-radius:10px;background:#fafafa;cursor:pointer;font-weight:450;transition:border-color .15s ease,background .15s ease,box-shadow .15s ease}
+.upload-zone:hover{background:#f7f7f7;border-color:var(--text)}
+.upload-zone:has(.upload-input:focus-visible){outline:2px solid var(--ring);outline-offset:2px}
+.upload-zone.is-dragover{border-style:solid;border-color:var(--focus);background:var(--info-bg);box-shadow:inset 0 0 0 1px var(--focus)}
+.upload-zone.has-file{border-style:solid;border-color:var(--border)}
+.upload-zone:has(.upload-input:disabled){opacity:.6;cursor:not-allowed;background:var(--bg)}
+.upload-input{position:absolute;inset:0;z-index:1;width:100%;height:100%;margin:0;padding:0;min-height:0;border:0;border-radius:10px;background:transparent;opacity:0;cursor:pointer}
+.upload-input:disabled{cursor:not-allowed}
+.upload-icon{display:flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:10px;background:var(--surface);box-shadow:var(--shadow);color:var(--subdued);transition:color .15s ease,background .15s ease}
+.upload-zone.is-dragover .upload-icon{color:var(--focus);background:var(--surface)}
+.upload-zone.has-file .upload-icon{background:var(--success-bg);color:var(--success);box-shadow:none}
+.upload-copy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.upload-empty{display:block;min-width:0}
+.upload-title{display:block;font-weight:550;line-height:18px;overflow-wrap:anywhere}
+.upload-sub{display:block;color:var(--subdued);font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.upload-picked{display:flex;flex-direction:column;gap:1px;min-width:0}
+.upload-file-name{display:block;font-weight:550;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upload-file-meta{display:block;color:var(--subdued);font-size:12px;line-height:18px}
+.upload-browse{display:inline-flex;align-items:center;flex:none;min-height:28px;padding:2px 10px;border-radius:8px;background:var(--surface);box-shadow:var(--shadow);font-size:12px;font-weight:550}
+.upload-zone.has-file .upload-empty{display:none}
+.upload-foot{display:flex;align-items:flex-start;gap:12px;margin-top:6px}
+.upload-foot:empty{display:none}
+.upload-help{display:block;flex:1;min-width:0;margin:0;color:var(--subdued);font-size:12px;line-height:18px}
+.upload-clear{flex:none;min-height:0;margin:0 0 0 auto;padding:0 2px;background:none;box-shadow:none;color:var(--focus);font-size:12px;font-weight:450}
+.upload-clear:hover{background:none;text-decoration:underline}
+.upload-error{display:block;margin-top:6px;color:var(--critical);font-size:12px;line-height:18px}
 .invite-rows{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 .invite-row{display:grid;grid-template-columns:minmax(0,1fr) 130px 28px;gap:8px;align-items:center}.invite-row input,.invite-row select{min-width:0;margin:0}
 .nav-toggle{all:unset;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;cursor:pointer;color:var(--text);opacity:.6}
@@ -424,6 +459,8 @@ dialog.dialog-wide{max-width:min(760px,calc(100vw - 32px))}
   .org-mark{width:38px;height:38px;font-size:16px}
   .org-title h1{font-size:19px;line-height:26px}
   .settings-section{grid-template-columns:minmax(0,1fr);gap:10px}
+  .upload-zone{padding:12px;gap:10px}
+  .upload-browse{display:none}
   th.role-col,td.role-col{width:auto}
   .member-cell .avatar{display:none}
   .scope-list{grid-template-columns:1fr}

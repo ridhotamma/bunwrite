@@ -4,7 +4,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [Bunwrite](https://github.com/ridhotamma/bunwrite). Connect Claude Code, Cursor,
 Codex, OpenCode, VS Code, Zed and other MCP clients to a Bunwrite project.
 
-The server exposes five operator tools and keeps the full API catalog internal:
+The server exposes five operator tools and keeps the searchable operation catalog internal:
 
 ```
 bunwrite_get_context
@@ -15,7 +15,8 @@ bunwrite_search_docs
 ```
 
 That keeps the model's context small while covering databases, documents,
-users, teams, storage, functions, sites, topics and feature flags.
+users, teams, storage, functions, sites, vectors and RAG, topics and feature
+flags.
 
 ## Install
 

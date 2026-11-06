@@ -614,6 +614,23 @@ describe('service commands', () => {
     await ws.ok('storage', 'get-file-download-bytes', '--bucket-id', 'cli-files', '--file-id', 'note', '--output', 'back.txt')
     expect(readFileSync(join(ws.dir, 'back.txt'), 'utf8')).toBe('uploaded by the cli')
 
+    const collection = JSON.parse(await ws.ok('vectors', 'create-collection', '--collection-id', 'cli-vectors', '--name', 'CLI vectors', '--dimension', '64', '--json'))
+    expect(collection.$id).toBe('cli-vectors')
+    const points = JSON.parse(
+      await ws.ok('vectors', 'upsert-points', '--collection-id', 'cli-vectors', '--points', '[{"id":"cli-v1","content":"SQLite stores data in one file."}]', '--json'),
+    )
+    expect(points.points[0].$id).toBe('cli-v1')
+    const ingested = JSON.parse(
+      await ws.ok('rag', 'ingest', '--collection-id', 'cli-vectors', '--document-id', 'cli-guide', '--text', 'SQLite stores data in one file. Postgres uses schemas.', '--json'),
+    )
+    expect(ingested.chunks).toBeGreaterThan(0)
+    const answer = JSON.parse(
+      await ws.ok('rag', 'query', '--collection-id', 'cli-vectors', '--query', 'Where is data stored?', '--generate', 'false', '--json'),
+    )
+    expect(answer.answer).toBeNull()
+    expect(answer.sources.length).toBeGreaterThan(0)
+    await ws.ok('vectors', 'delete-collection', '--collection-id', 'cli-vectors')
+
     const unknown = await ws.run(['databases', 'nope'])
     expect(unknown.code).toBe(1)
     expect(unknown.out).toContain('has no command "nope"')

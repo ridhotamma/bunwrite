@@ -173,6 +173,84 @@ describe('operator tools', () => {
     const flags = await call('bunwrite_call_tool', { name: 'flags_get' })
     expect(flags.body).toHaveProperty('flags')
   })
+
+  test('manages vector collections, points and RAG', async () => {
+    const context = await call('bunwrite_get_context')
+    expect(context.body.catalog.groups).toContain('vectors')
+    expect(context.body.catalog.groups).toContain('rag')
+    expect(context.body.counts.vectorCollections).toBeGreaterThanOrEqual(0)
+
+    const created = await call('bunwrite_call_write_tool', {
+      name: 'vectors_collections_create',
+      arguments: { collectionId: 'mcp-vectors', name: 'MCP knowledge', dimension: 64 },
+      confirm_write: true,
+    })
+    expect(created.body.$id).toBe('mcp-vectors')
+
+    const points = await call('bunwrite_call_write_tool', {
+      name: 'vectors_points_upsert_batch',
+      arguments: {
+        collectionId: 'mcp-vectors',
+        points: [
+          { id: 'mcp-v1', content: 'SQLite keeps data in one file.', metadata: { topic: 'storage' } },
+          { id: 'mcp-v2', content: 'Postgres can use one schema per project.', metadata: { topic: 'storage' } },
+        ],
+      },
+      confirm_write: true,
+    })
+    expect(points.body.points).toHaveLength(2)
+
+    const search = await call('bunwrite_call_tool', {
+      name: 'vectors_search',
+      arguments: { collectionId: 'mcp-vectors', text: 'where is data stored?', topK: 2 },
+    })
+    expect(search.body.points.length).toBeGreaterThan(0)
+    expect(typeof search.body.points[0].score).toBe('number')
+
+    const ingested = await call('bunwrite_call_write_tool', {
+      name: 'rag_ingest',
+      arguments: {
+        collectionId: 'mcp-vectors',
+        documentId: 'mcp-guide',
+        text: 'SQLite stores the database in a local file. Postgres stores a project in a schema.',
+      },
+      confirm_write: true,
+    })
+    expect(ingested.body.documentId).toBe('mcp-guide')
+    expect(ingested.body.chunks).toBeGreaterThan(0)
+
+    const chunks = await call('bunwrite_call_tool', {
+      name: 'vectors_documents_get',
+      arguments: { collectionId: 'mcp-vectors', documentId: 'mcp-guide' },
+    })
+    expect(chunks.body.total).toBe(ingested.body.chunks)
+
+    const query = await call('bunwrite_call_tool', {
+      name: 'rag_query',
+      arguments: { collectionId: 'mcp-vectors', query: 'Where is data stored?', topK: 2, generate: false },
+    })
+    expect(query.body.answer).toBeNull()
+    expect(query.body.sources.length).toBeGreaterThan(0)
+
+    const removedDocument = await call('bunwrite_call_write_tool', {
+      name: 'vectors_documents_delete',
+      arguments: { collectionId: 'mcp-vectors', documentId: 'mcp-guide' },
+      confirm_write: true,
+    })
+    expect(removedDocument.body.deleted).toBe(ingested.body.chunks)
+    const removedPoint = await call('bunwrite_call_write_tool', {
+      name: 'vectors_points_delete',
+      arguments: { collectionId: 'mcp-vectors', pointId: 'mcp-v1' },
+      confirm_write: true,
+    })
+    expect(removedPoint.body.ok).toBe(true)
+    const removedCollection = await call('bunwrite_call_write_tool', {
+      name: 'vectors_collections_delete',
+      arguments: { collectionId: 'mcp-vectors' },
+      confirm_write: true,
+    })
+    expect(removedCollection.body.ok).toBe(true)
+  })
 })
 
 describe('configuration', () => {

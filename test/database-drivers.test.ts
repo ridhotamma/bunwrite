@@ -471,7 +471,7 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
       await manager.close()
       rmSync(dataDir, { recursive: true, force: true })
     }
-  })
+  }, 120_000)
 
   test('the document store and transactions run on Postgres', async () => {
     const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
