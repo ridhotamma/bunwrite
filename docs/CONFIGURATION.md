@@ -356,7 +356,15 @@ curl -s https://your-host/v1/flags \
 | `FUNCTIONS_ENV_FILE` | unset | dotenv file with variables available to every function execution. |
 | `FUNCTIONS_DIR` | schema folder or `.` | Base folder for relative function `path`s. Can also be set in **Console → Settings → Functions**. |
 | `FUNCTIONS_BUILD_COMMANDS` | `true` | Run a function's `commands` during deployment. |
-| `FUNCTIONS_SANDBOX` | `auto` (`on` in Docker Compose) | `on` builds and runs each function as its own user and refuses to start when the helper cannot switch users; `auto` warns and runs code as the server's user instead; `off` never isolates. |
+| `FUNCTIONS_SANDBOX` | `auto` (`on` in Docker Compose) | `on`/`setpriv` builds and runs each function as its own user and refuses to start when the helper cannot switch users; `bwrap` adds bubblewrap mount/PID/IPC/UTS/network namespaces and a read-only system root; `auto` warns and runs code as the server's user instead; `off` never isolates. |
+| `FUNCTIONS_SANDBOX_NETWORK` | `none` in `bwrap` mode, `shared` otherwise | `none` puts functions in an empty network namespace (no API or internet access); `shared` keeps the host network. Sites and builds always share the host network. |
+| `FUNCTIONS_SANDBOX_BWRAP` | `bwrap` | Path to the bubblewrap binary. |
+| `FUNCTIONS_SANDBOX_TMP_MB` | `64` | Size of the private `/tmp` and `/dev/shm` in `bwrap` mode. |
+| `FUNCTIONS_CGROUPS` | `auto` (`on` in `bwrap` mode) | `auto` applies cgroup v2 limits when a writable delegated subtree exists; `on` refuses to start without one; `off` disables limits. |
+| `FUNCTIONS_CGROUP_ROOT` | detected | Writable cgroup v2 subtree for per-build/run limit cgroups. |
+| `FUNCTIONS_MEMORY_MB` / `FUNCTIONS_CPUS` / `FUNCTIONS_PIDS` | `512` / `1` / `128` | Default limits for one function execution. |
+| `SITES_MEMORY_MB` / `SITES_CPUS` / `SITES_PIDS` | `1024` / `1` / `256` | Default limits for one SSR site app. |
+| `BUILD_MEMORY_MB` / `BUILD_CPUS` / `BUILD_PIDS` | `2048` / `2` / `512` | Default limits for one function or site build. |
 | `PYTHON_BIN` | `python3` | Python executable for `python-*` runtimes. |
 
 Paused schedules are a project setting in **Console → Settings → Functions**.

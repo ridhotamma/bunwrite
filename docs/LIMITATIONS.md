@@ -117,17 +117,27 @@ CPU, memory and network.
 
 - `FUNCTIONS_SANDBOX=on` (the Docker Compose default) separates users and
   folders, but not CPU, memory, network or file descriptors.
+- `FUNCTIONS_SANDBOX=bwrap` adds private mount, PID, IPC and UTS namespaces, a
+  read-only system root and bounded temporary files, and
+  `FUNCTIONS_SANDBOX_NETWORK=none` can remove network access. It still shares
+  the host kernel.
 - Outside Docker, or with `no-new-privileges`, `FUNCTIONS_SANDBOX=auto`/`off`
   can run function code as the server user.
 - A function can starve the API, exhaust memory, open many connections or reach
-  internal services.
-- There are no per-function CPU/memory/time quotas beyond the function timeout.
+  internal services unless cgroup limits and a network policy are configured.
+- Cgroup v2 limits are optional in the default setpriv mode: `FUNCTIONS_CGROUPS=auto`
+  does nothing when no writable delegated subtree exists. Bubblewrap mode
+  defaults to `on` and refuses to start without limits; use `off` to opt out.
+- There are no per-function CPU/memory/time quotas beyond the function timeout
+  when cgroups are unavailable.
 - Native modules that need a compiler during install do not build in the
   standard Docker image; functions that need them must use prebuilt binaries or
   a custom image.
 
-Do not run untrusted third-party code here. Appwrite's per-function container
-isolation is not implemented.
+Bubblewrap is a strong process sandbox, not a virtual machine: a kernel exploit
+can still escape it. Do not run hostile multi-tenant code here. For that trust
+boundary use a separate Bunwrite instance, a Docker/OCI executor, a microVM or
+gVisor.
 
 ### 5. Console authentication is password plus optional email MFA
 
@@ -409,8 +419,9 @@ Not a safe drop-in for:
    audit log.
 2. **Backups: PITR, restore drills, storage backup guidance.** Make data loss
    recoverable before scaling traffic.
-3. **Function resource isolation.** Per-function CPU/memory/network limits, or
-   an external runner.
+3. **Function resource isolation.** Optional cgroup v2 CPU/memory/PID limits
+   and the bubblewrap process sandbox now ship; remaining work is per-function
+   network policy, seccomp profiles, and an external runner for hostile code.
 4. **HA and write scaling for one hot project.** A replicated-SQLite design
    (for example LiteFS) for automatic failover. Multi-project write scaling
    already ships as the project-sharded writer pool (`WRITER_SHARDS`); a single

@@ -553,12 +553,14 @@ export class Deployments {
         logs.push(`$ ${d.commands}`)
         await set('building')
         const f = await this.functions.fn(functionId)
+        const home = functionHome(this.config, functionId)
         const result = await runShell({
           command: d.commands,
           cwd: sandbox && uid !== undefined ? undefined : dir,
-          wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv) : undefined,
+          wrap: sandbox && uid !== undefined ? (argv) => sandbox.wrap(uid, dir, argv, { writable: true, home, network: sandbox.networkFor('build') }) : undefined,
           // The build's group belongs to the function's user, so only the helper can signal it.
           signal: sandbox && uid !== undefined ? (pid, signal) => sandbox.signal(pid, signal) : undefined,
+          cgroup: sandbox && uid !== undefined ? sandbox.cgroup(`build-${functionId}-${id}`, 'build') : null,
           // A build that goes live sees live values; one that does not (a Git preview) sees preview values.
           env: withRuntime(await this.buildEnv(f, dir, buildContext(d.activate)), runtime),
           timeoutMs: BUILD_TIMEOUT_MS,

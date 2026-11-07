@@ -21,10 +21,11 @@ import { connect } from 'node:net'
 import { resolveCaller } from '~/auth/caller'
 import type { Config } from '~/config'
 import { functionHttpResponse } from '~/functions/http'
-import type { FunctionSandbox } from '~/functions/sandbox'
+import type { FunctionSandbox, SandboxCgroup, SandboxExecOptions } from '~/functions/sandbox'
 import { errorResponse } from '~/lib/http'
 import type { Services } from '~/services'
 import { sitePage } from './pages'
+import { siteHome } from './paths'
 import type { SiteDeploymentRow, SiteRow } from './service'
 import { ensureRuntime, withRuntime } from '~/runtimes/install'
 import { siteRuntimeEnv } from './env'
@@ -70,6 +71,7 @@ interface RunningApp {
   stopping: boolean
   logs: string
   live: LiveProcess | null
+  cgroup: SandboxCgroup | null
   idleTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -275,6 +277,7 @@ export class SsrRuntime {
       stopping: false,
       logs: '',
       live: null,
+      cgroup: null,
     }
     this.apps.set(target.key, app)
     app.starting = this.start(app)
@@ -308,9 +311,17 @@ export class SsrRuntime {
     // the app binds it, the smaller the chance anything else takes it.
     const port = await this.freePort()
     app.port = port
-    let proc: Bun.Subprocess
+    app.cgroup = sandboxed ? this.sandbox!.cgroup(`site-${target.siteId}-${target.deploymentId}`, 'site') : null
+    const execOptions: SandboxExecOptions = {
+      // The app may write caches inside its own deployment; it still cannot
+      // reach the server's data folder, database or other users.
+      writable: true,
+      home: siteHome(this.config, target.siteId),
+      network: sandboxed ? this.sandbox!.networkFor('site') : 'shared',
+    }
+    let proc: Bun.Subprocess | null = null
     try {
-      proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv) : argv, {
+      proc = Bun.spawn(sandboxed ? this.sandbox!.wrap(uid, target.cwd, argv, execOptions) : argv, {
         cwd: sandboxed ? undefined : target.cwd,
         env: withRuntime(siteRuntimeEnv(this.config, target.siteId, port, await this.variablesFor(target.siteId, target.context)), runtime),
         stdout: 'pipe',
@@ -318,11 +329,22 @@ export class SsrRuntime {
         // One session per app: stopping it takes `npm start`'s children too.
         detached: true,
       })
+      app.cgroup?.attach(proc.pid)
     } catch (error) {
+      if (proc) {
+        try {
+          proc.kill(9)
+        } catch {
+          /* already gone */
+        }
+        await proc.exited.catch(() => undefined)
+      }
       reservedPorts.delete(port)
+      this.releaseCgroup(app)
       this.recordFailure(target.siteId)
       throw new Error(`could not start "${target.command}": ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
+    if (!proc) throw new Error(`could not start "${target.command}".`)
     app.proc = proc
     app.live = { proc, sandbox: sandboxed ? this.sandbox : null }
     LIVE.add(app.live)
@@ -340,7 +362,10 @@ export class SsrRuntime {
       .catch(() => {
         if (app.live) LIVE.delete(app.live)
       })
-      .finally(() => reservedPorts.delete(port))
+      .finally(() => {
+        reservedPorts.delete(port)
+        this.releaseCgroup(app)
+      })
 
     try {
       await this.waitUntilListening(app, proc, port)
@@ -503,9 +528,24 @@ export class SsrRuntime {
     if (this.apps.get(app.target.key) === app) this.apps.delete(app.target.key)
     this.log(app, `[runtime] stopping (${reason})`)
     const proc = app.proc
-    if (!proc) return
+    if (!proc) {
+      this.releaseCgroup(app)
+      return
+    }
     this.terminate(app, proc)
     await proc.exited.catch(() => undefined)
+    this.releaseCgroup(app)
+  }
+
+  /** Drop the cgroup after the process tree has exited; safe to call more than once. */
+  private releaseCgroup(app: RunningApp): void {
+    const cgroup = app.cgroup
+    app.cgroup = null
+    try {
+      cgroup?.remove()
+    } catch {
+      /* the next start's prune removes it */
+    }
   }
 
   /** SIGTERM, then SIGKILL if the app ignores it. */

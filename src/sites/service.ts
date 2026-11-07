@@ -922,11 +922,20 @@ export class SiteService {
       return
     }
     logs.push(`Cleaning up after the build (prune mode: ${mode}).`)
+    const cgroup = sandboxed?.sandbox.cgroup(`build-${site.id}-prune`, 'build') ?? null
     const result = await runShell({
       command: script,
       cwd: sandboxed ? undefined : dir,
-      wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
+      wrap: sandboxed
+        ? (argv) =>
+            sandboxed.sandbox.wrap(sandboxed.uid, dir, argv, {
+              writable: true,
+              home: siteHome(this.config, site.id),
+              network: sandboxed.sandbox.networkFor('build'),
+            })
+        : undefined,
       signal: sandboxed ? (pid, signal) => sandboxed.sandbox.signal(pid, signal) : undefined,
+      cgroup,
       env,
       timeoutMs: BUILD_TIMEOUT_MS,
     })
@@ -975,11 +984,20 @@ export class SiteService {
     for (const [label, command] of commands) {
       logs.push(`$ ${command}`)
       await set('building')
+      const cgroup = sandboxed?.sandbox.cgroup(`build-${site.id}-${label}`, 'build') ?? null
       const result = await runShell({
         command,
         cwd: sandboxed ? undefined : dir,
-        wrap: sandboxed ? (argv) => sandboxed.sandbox.wrap(sandboxed.uid, dir, argv) : undefined,
+        wrap: sandboxed
+          ? (argv) =>
+              sandboxed.sandbox.wrap(sandboxed.uid, dir, argv, {
+                writable: true,
+                home: siteHome(this.config, site.id),
+                network: sandboxed.sandbox.networkFor('build'),
+              })
+          : undefined,
         signal: sandboxed ? (pid, signal) => sandboxed.sandbox.signal(pid, signal) : undefined,
+        cgroup,
         env,
         timeoutMs: BUILD_TIMEOUT_MS,
       })

@@ -28,6 +28,7 @@ import { ENV_KEY_RE, type EnvVariable } from './env'
 import { readCapped } from '~/deploy/command'
 import { Deployments, deploymentDir, functionHome } from './deployments'
 import { removeTree } from './sandbox'
+import type { SandboxCgroup } from './sandbox'
 import { nodeRunner, pythonRunner } from './runtime'
 import { ensureRuntime, withRuntime, type ResolvedRuntime } from '~/runtimes/install'
 import { isPrivateEnv } from '~/lib/private-env'
@@ -892,8 +893,11 @@ export class FunctionService {
     const scopes = configuredScopes(f.scopes)
     // A function with configured scopes gets a key that carries exactly those
     // scopes; an empty list keeps the legacy project key used by older
-    // deployments and the shipped templates.
-    const key = scopes.length
+    // deployments and the shipped templates. In bubblewrap mode never hand out
+    // the project-wide key: an empty scope list gets a signed key with no
+    // scopes, so untrusted code cannot administer the project by default.
+    const scoped = scopes.length > 0 || this.config.functionsSandbox?.kind === 'bwrap'
+    const key = scoped
       ? scopedFunctionKey(this.config.secret, f.id, scopes)
       : (this.config.internalKey ?? this.config.apiKeys[0] ?? '')
     // The function's own values for this deploy context; they win over project variables.
@@ -1011,6 +1015,7 @@ export class FunctionService {
     let body = ''
     let logs = ''
     let errors: string
+    let cgroup: SandboxCgroup | null = null
     /** Set once the function starts a streamed response. */
     let head: { statusCode: number; headers: Record<string, string>; ended: boolean } | null = null
     try {
@@ -1031,9 +1036,13 @@ export class FunctionService {
         // Deployments built before isolation was on (or code from the code folder) get their user now.
         if (dir.startsWith(deploymentDir(this.config, f.id)) && !sandbox.owns(dir, uid)) sandbox.adopt(dir, home, uid)
         else if (!sandbox.owns(home, uid)) sandbox.adopt(null, home, uid)
-        command = sandbox.wrap(uid, dir, command)
+        // Source mode keeps the runner outside the data folder; bind just that
+        // file so the sandbox can execute it without exposing the server tree.
+        const runner = f.runtime.startsWith('python') ? pythonRunner(this.config) : nodeRunner(this.config)
+        command = sandbox.wrap(uid, dir, command, { home, network: sandbox.networkFor('function'), read: [runner] })
         env.HOME = env.TMPDIR = home
       }
+      cgroup = sandbox?.cgroup(`function-${f.id}-${id}`, 'function') ?? null
       const proc = Bun.spawn(command, {
         cwd: sandbox ? undefined : dir,
         env,
@@ -1041,6 +1050,17 @@ export class FunctionService {
         stdout: 'pipe',
         stderr: 'pipe',
       })
+      try {
+        cgroup?.attach(proc.pid)
+      } catch (error) {
+        try {
+          proc.kill(9)
+        } catch {
+          /* already gone */
+        }
+        await proc.exited.catch(() => undefined)
+        throw error
+      }
       const url = new URL(this.config.publicEndpoint)
       proc.stdin.write(
         JSON.stringify({
@@ -1181,6 +1201,7 @@ export class FunctionService {
       errors = error instanceof Error ? error.message : String(error)
     } finally {
       clearInterval(heartbeat)
+      cgroup?.remove()
       // Never leave a client waiting on a stream that will get no more data.
       const open = head as { ended: boolean } | null
       if (open && !open.ended) {

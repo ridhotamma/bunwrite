@@ -240,6 +240,61 @@ warns and then runs build commands as `bunwrite`. Never add
 the host keeps its setuid programs, so an isolated function user still has
 more to reach for than inside the container; run only code you trust.
 
+#### Optional bubblewrap sandbox
+
+`FUNCTIONS_SANDBOX=bwrap` keeps the user boundary and adds a bubblewrap
+sandbox around each build and run:
+
+- a private mount namespace with a read-only `/usr`, `/etc` and system root;
+- a private PID namespace, so the code cannot see or signal the server;
+- private IPC and UTS namespaces, plus `--die-with-parent`;
+- a bounded `/tmp` and `/dev/shm`;
+- read-only deployment files for functions, writable only for builds and SSR
+  app caches;
+- no network at all by default. Set `FUNCTIONS_SANDBOX_NETWORK=shared` when a
+  function needs the API or the internet.
+
+In `bwrap` mode functions never receive the legacy project-wide API key. They
+get a signed key carrying their configured scopes; a function with no scopes
+has no API access. Add scopes in the function's settings when it needs the API.
+
+Install bubblewrap and enable unprivileged user namespaces:
+
+```bash
+sudo apt install bubblewrap
+# Verify as the Bunwrite user:
+bwrap --unshare-user --unshare-pid --ro-bind / / -- /bin/true
+```
+
+The helper is still required. In Docker, the default seccomp/AppArmor profile
+may block user namespaces; `bwrap` will fail its startup probe and the server
+will refuse to start in explicit `bwrap` mode. Allow user namespaces with a
+custom profile rather than making the container privileged.
+
+#### Resource limits
+
+When a writable cgroup v2 subtree is available, Bunwrite creates one cgroup per
+execution/build and moves the whole process tree into it. Bubblewrap mode
+requires this by default; set `FUNCTIONS_CGROUPS=off` only if you accept
+unbounded memory/CPU/PID use. Set `FUNCTIONS_CGROUP_ROOT` to a delegated, empty
+subtree, or use systemd delegation. On systemd 253 and newer:
+
+```ini
+[Service]
+Delegate=yes
+DelegateSubgroup=bunwrite
+```
+
+Use `systemctl show -p ControlGroup bunwrite.service` to find the delegated
+path and set `FUNCTIONS_CGROUP_ROOT` to it. Inside the default Docker container
+`/sys/fs/cgroup` is usually read-only, so bubblewrap mode will refuse to start
+until you mount a writable subtree or set `FUNCTIONS_CGROUPS=off`.
+
+Defaults are 512 MB / 1 CPU / 128 PIDs per function run, 1 GB / 1 CPU / 256 PIDs
+per SSR app, and 2 GB / 2 CPUs / 512 PIDs per build. Override them with
+`FUNCTIONS_MEMORY_MB`, `FUNCTIONS_CPUS`, `FUNCTIONS_PIDS`, `SITES_*` and
+`BUILD_*`.
+
 ### 5. Put it online
 
 Use Cloudflare Tunnel, Caddy, nginx or another reverse proxy for TLS. Keep the

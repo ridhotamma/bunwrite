@@ -290,7 +290,11 @@ Each execution is a child process: `bun src/functions/runner-node.mjs <entry>` (
 `python3 src/functions/runner-python.py <entry>`. The runner builds Appwrite's
 `context` (`req`, `res`, `log`, `error`) and gets `BUNWRITE_FUNCTION_*`
 variables; with `API_COMPAT=appwrite` also the `APPWRITE_FUNCTION_*` ones that
-Appwrite gives.
+Appwrite gives. With `FUNCTIONS_SANDBOX=bwrap`, that child runs inside a
+bubblewrap sandbox with private mount, PID, IPC and UTS namespaces, a read-only
+system root and an optional empty network namespace. Cgroup v2 limits, when a
+delegated subtree is available, put the whole process tree under one memory,
+CPU and PID budget.
 
 The runner reads the request JSON on stdin and writes the result as one
 `__BUNWRITE_EXECUTION_RESULT__` line on stdout; anything else on stdout is the
@@ -337,7 +341,10 @@ the server's group), each function gets its own user ID (20000 and up, kept in
 `<data>/.runtimes/function-users.json`). After unpacking, the deployment
 folder and the function's home (`deployments/<function>/.home`, its HOME and
 TMPDIR) are handed to that user; builds and runs then go through the helper
-with no-new-privs and no capabilities. The server creates files with umask 077
+with no-new-privs and no capabilities. `FUNCTIONS_SANDBOX=bwrap` adds a
+bubblewrap layer around that user boundary (namespaces, read-only root,
+optional no network), and a delegated cgroup v2 subtree puts each build/run
+under memory, CPU and PID limits. The server creates files with umask 077
 and tightens the data folder at start, so only the folders on the way to code
 allow passing through. Function users own their files, so the server deletes,
 downloads and reads code for the console through the helper too. The

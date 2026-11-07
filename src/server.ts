@@ -35,7 +35,11 @@ export async function startServer(): Promise<void> {
 
   // Before the database opens: with function isolation on, files are created private to the server.
   const sandbox = setupSandbox(databasePath)
-  if (sandbox) console.log('[functions] isolation on: each function builds and runs as its own user')
+  if (sandbox) {
+    console.log(
+      `[functions] isolation on (${sandbox.kind}${sandbox.kind === 'bwrap' ? ', bubblewrap namespaces' : ''}): each function builds and runs as its own user`,
+    )
+  }
 
   // The network backends are async, so the whole boot path opens through the
   // same selector. SQLite still uses its synchronous migrations inside it.

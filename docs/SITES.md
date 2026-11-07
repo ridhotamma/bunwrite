@@ -262,8 +262,9 @@ build, so `SITES_BUILD_COMMANDS=false` leaves the upload as it is.
 are kept for rollback when deployment retention is enabled.
 
 The console shows the app's recent output on the live deployment page. Builds
-run under the site's own user when `FUNCTIONS_SANDBOX` is on, with the same
-trust model as functions: the uploaded commands run on the server.
+and runs execute under the site's own user when `FUNCTIONS_SANDBOX` is on. Set
+`FUNCTIONS_SANDBOX=bwrap` to add private mount/PID/IPC/UTS namespaces and a
+read-only system root, with optional cgroup memory/CPU/PID limits.
 
 Each worker gives its site apps a slice of the loopback ports between 10000 and
 31999, sized by `WORKERS`: one process gets the whole range, and the maximum 16

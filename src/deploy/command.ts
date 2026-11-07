@@ -8,6 +8,8 @@
  * command (npm, make and whatever they started) with it instead of only its
  * `sh`, which would leave workers running as the function's user for good.
  */
+import type { SandboxCgroup } from '~/functions/sandbox'
+
 /** Appwrite builds have 15 minutes; a build that takes longer is killed. */
 export const BUILD_TIMEOUT_MS = 15 * 60 * 1000
 
@@ -54,6 +56,8 @@ export interface ShellOptions {
    * Defaults to `process.kill(-pid)`, which covers same-user builds.
    */
   signal?: (pid: number, signal: 'TERM' | 'KILL') => void
+  /** Memory/CPU/PID limits for the build's whole process tree. */
+  cgroup?: SandboxCgroup | null
   timeoutMs?: number
 }
 
@@ -102,9 +106,28 @@ function trackExit(): void {
 /** Run `command` with `sh -c`, collecting both output streams. */
 export async function runShell(options: ShellOptions): Promise<ShellResult> {
   const argv = options.wrap ? options.wrap(['sh', '-c', options.command]) : ['sh', '-c', options.command]
-  // One session per build: the timeout below kills `-pid`, which includes the
-  // children the command started in the background.
-  const proc = Bun.spawn(argv, { cwd: options.cwd, env: options.env, stdout: 'pipe', stderr: 'pipe', detached: true })
+  const cgroup = options.cgroup ?? null
+  let proc: Bun.Subprocess<'pipe', 'pipe', 'pipe'>
+  try {
+    // One session per build: the timeout below kills `-pid`, which includes the
+    // children the command started in the background.
+    proc = Bun.spawn(argv, { cwd: options.cwd, env: options.env, stdout: 'pipe', stderr: 'pipe', detached: true })
+  } catch (error) {
+    cgroup?.remove()
+    throw error
+  }
+  try {
+    cgroup?.attach(proc.pid)
+  } catch (error) {
+    try {
+      proc.kill(9)
+    } catch {
+      /* already gone */
+    }
+    await proc.exited.catch(() => undefined)
+    cgroup?.remove()
+    throw error
+  }
   const build: RunningBuild = { proc, signal: options.signal }
   trackExit()
   RUNNING.add(build)
@@ -126,5 +149,6 @@ export async function runShell(options: ShellOptions): Promise<ShellResult> {
     clearTimeout(timer)
     if (killTimer) clearTimeout(killTimer)
     RUNNING.delete(build)
+    cgroup?.remove()
   }
 }
