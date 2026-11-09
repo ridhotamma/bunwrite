@@ -88,6 +88,7 @@ const integer = (description: string) => ({ type: 'integer', description })
 const number = (description: string) => ({ type: 'number', description })
 const stringList = (description: string) => ({ type: 'array', description, items: { type: 'string' } })
 const numberList = (description: string) => ({ type: 'array', description, items: { type: 'number' } })
+const objectList = (description: string) => ({ type: 'array', description, items: { type: 'object', additionalProperties: true } })
 const objectField = (description: string) => ({ type: 'object', description, additionalProperties: true })
 
 const DATABASE = string('Database ID.')
@@ -923,6 +924,9 @@ export const CATALOG: Operation[] = [
         vector: numberList('Explicit query vector.'),
         topK: integer('How many matches to return; default 5.'),
         filter: VECTOR_FILTER,
+        hybrid: boolean('Fuse BM25 lexical relevance with vector similarity; defaults to the project setting.'),
+        rerank: boolean('Rerank the best candidates; defaults to the project setting.'),
+        alpha: number('Vector share of the hybrid score, 0..1.'),
       },
       ['collectionId'],
     ),
@@ -934,6 +938,9 @@ export const CATALOG: Operation[] = [
         vector: args.vector,
         topK: args.topK,
         filter: args.filter,
+        hybrid: args.hybrid,
+        rerank: args.rerank,
+        alpha: args.alpha,
       }),
   }),
   op({
@@ -1009,6 +1016,9 @@ export const CATALOG: Operation[] = [
         topK: integer('How many chunks to retrieve; default 5.'),
         filter: VECTOR_FILTER,
         generate: boolean('Set false to return context and sources without calling the chat model.'),
+        hybrid: boolean('Fuse BM25 lexical relevance with vector similarity; defaults to the project setting.'),
+        rerank: boolean('Rerank the best candidates; defaults to the project setting.'),
+        alpha: number('Vector share of the hybrid score, 0..1.'),
       },
       ['collectionId', 'query'],
     ),
@@ -1019,6 +1029,40 @@ export const CATALOG: Operation[] = [
         topK: args.topK,
         filter: args.filter,
         generate: args.generate,
+        hybrid: args.hybrid,
+        rerank: args.rerank,
+        alpha: args.alpha,
+      }),
+  }),
+  op({
+    name: 'rag_evaluate',
+    title: 'Evaluate RAG retrieval',
+    description:
+      'Run a golden question set and return recall@k, MRR, nDCG@k, keyword coverage, refusal accuracy and latency. Cases accept query, expectedDocuments, expectedKeywords and expectRefusal.',
+    group: 'rag',
+    input: object(
+      {
+        collectionId: VECTOR_COLLECTION,
+        cases: objectList('Golden cases. Each case needs query plus expectedDocuments, expectedKeywords or expectRefusal.'),
+        topK: integer('How many chunks to retrieve per case; default 5.'),
+        filter: VECTOR_FILTER,
+        generate: boolean('Generate answers and evaluate answer keywords/refusals. Default false.'),
+        hybrid: boolean('Override hybrid search for the evaluation run.'),
+        rerank: boolean('Override reranking for the evaluation run.'),
+        alpha: number('Vector share of the hybrid score, 0..1.'),
+      },
+      ['collectionId', 'cases'],
+    ),
+    run: (services, args) =>
+      services.rag.evaluate({
+        collectionId: args.collectionId,
+        cases: args.cases,
+        topK: args.topK,
+        filter: args.filter,
+        generate: args.generate,
+        hybrid: args.hybrid,
+        rerank: args.rerank,
+        alpha: args.alpha,
       }),
   }),
 

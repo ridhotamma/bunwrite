@@ -307,6 +307,36 @@ function vectorsCards(ctx: ConsoleContext): Html {
   )}
   ${card(
     ctx,
+    'vectors-retrieval',
+    'Retrieval and reranking',
+    null,
+    'Hybrid search combines lexical BM25 with vector similarity. Reranking reorders the best candidates; the local reranker is offline, or use a Cohere/Jina-compatible endpoint.',
+    html` <form method="post" action="${SETTINGS}/vectors/retrieval">
+      <div class="fields center">
+        <label class="check"
+          ><input type="checkbox" name="hybridSearch" ${c.hybridSearch ? 'checked' : ''} /><span>Hybrid search</span
+          ><small>Fuse BM25 and vector scores for text queries.</small></label
+        >
+        <label>Vector weight<input name="hybridAlpha" type="number" min="0" max="1" step="0.05" value="${c.hybridAlpha}" required /><small>0 uses only lexical; 1 uses only vector. Lexical gets the rest.</small></label>
+      </div>
+      <label class="check"
+        ><input type="checkbox" name="rerank" ${c.rerank ? 'checked' : ''} /><span>Rerank candidates</span
+        ><small>Reorder the best hybrid results before returning the final top-k.</small></label
+      >
+      <div class="fields">
+        <label>Rerank endpoint<input name="rerankUrl" class="mono" value="${c.rerankUrl}" placeholder="https://api.cohere.com/v1/rerank" /><small>Full URL or base URL. Empty uses the local lexical reranker.</small></label>
+        <label>Rerank model<input name="rerankModel" class="mono" value="${c.rerankModel}" placeholder="rerank-v3.5" /><small>Optional, for providers that need a model name.</small></label>
+      </div>
+      <div class="fields">
+        <label>Rerank API key<input name="rerankApiKey" type="password" placeholder="${c.rerankApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small>Leave blank to keep the saved key.</small></label>
+        <label>Rerank candidates<input name="rerankCandidates" type="number" min="0" max="500" value="${c.rerankCandidates}" required /><small>0 chooses from top-k; larger pools can improve quality at a small cost.</small></label>
+      </div>
+      <p class="help">Hybrid search makes an extra statistics pass over the filtered collection. The local reranker has no per-query cost beyond that pass.</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}
+  ${card(
+    ctx,
     'vectors-limits',
     'Ingestion and limits',
     null,

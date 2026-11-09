@@ -25,7 +25,7 @@ export interface VectorPoint {
 }
 
 export interface VectorMatch extends VectorPoint {
-    /** Higher is better for every metric. */
+    /** Final ranking score; higher is better. Hybrid/rerank queries return the fused/reranked score. */
     score: number;
 }
 
@@ -86,6 +86,12 @@ export interface VectorSearchParams {
     topK?: number;
     /** Equality filter on metadata; values may be arrays or dotted paths. */
     filter?: Record<string, unknown>;
+    /** Override the project's hybrid-search setting. */
+    hybrid?: boolean;
+    /** Override the project's rerank setting. */
+    rerank?: boolean;
+    /** Vector share of the hybrid score, 0..1. */
+    alpha?: number;
 }
 
 export interface VectorListParams {
@@ -236,6 +242,9 @@ export class Vectors {
             vector: params.vector,
             topK: params.topK,
             filter: params.filter,
+            hybrid: params.hybrid,
+            rerank: params.rerank,
+            alpha: params.alpha,
         }));
     }
 

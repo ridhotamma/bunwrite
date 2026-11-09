@@ -37,6 +37,18 @@ export interface VectorsConfig {
   chatMaxTokens: number
   /** Context characters sent to the chat model. */
   contextChars: number
+  /** Fuse lexical BM25 and vector scores for text searches. */
+  hybridSearch: boolean
+  /** Vector share of the hybrid score, 0..1; the rest goes to the lexical score. */
+  hybridAlpha: number
+  /** Rerank the best hybrid/vector candidates before returning the final top-k. */
+  rerank: boolean
+  /** Cohere/Jina-compatible rerank endpoint; empty uses the built-in local reranker. */
+  rerankUrl: string
+  rerankApiKey: string
+  rerankModel: string
+  /** Candidate pool passed to the reranker; 0 picks a size from topK. */
+  rerankCandidates: number
   /** Refuse new points beyond this per collection. */
   maxPoints: number
   /** Default chunk size for `POST /rag/ingest`. */
@@ -64,6 +76,13 @@ export const DEFAULT_VECTORS: VectorsConfig = {
   chatTemperature: 0.2,
   chatMaxTokens: 800,
   contextChars: 12_000,
+  hybridSearch: true,
+  hybridAlpha: 0.55,
+  rerank: true,
+  rerankUrl: '',
+  rerankApiKey: '',
+  rerankModel: '',
+  rerankCandidates: 0,
   maxPoints: 50_000,
   chunkSize: 1000,
   chunkOverlap: 200,

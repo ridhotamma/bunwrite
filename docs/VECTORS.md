@@ -40,13 +40,15 @@ Open **Vectors** in the project sidebar. It has:
 - **Collections** — list, create and delete vector collections, with their
   dimension, metric, embedder and point count.
 - **Points** — browse and search, add a text point or an explicit vector, open a
-  point to see its content and metadata, and delete it.
+  point to see its content and metadata, and delete it. Search uses hybrid
+  retrieval and reranking by default.
 - **RAG** — upload a PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON,
   CSV, XML, YAML or text file (or paste text) to chunk/embed a document, see
   ingested documents, ask a question, and review the generated answer, sources
   and context.
 - **Settings** — inspect the collection's fixed facts, open the project's
-  Vectors & RAG settings, and delete the collection.
+  Vectors & RAG settings for hybrid search, reranking, embeddings, answers and
+  limits, and delete the collection.
 
 Embedding, answer generation, ingest defaults and limits are edited in
 **Settings → Vectors & RAG** and stored in the project database, so no restart
@@ -76,6 +78,11 @@ The built-in defaults are:
 | Temperature | `0.2` | Chat temperature (0–2). |
 | Maximum answer tokens | `800` | Maximum generated answer length. |
 | Context characters | `12000` | Retrieved context sent to the chat model. |
+| Hybrid search | on | Fuse lexical BM25 with vector similarity for text queries. |
+| Vector weight | `0.55` | Share of the hybrid score from vector similarity; lexical gets the rest. |
+| Rerank | on | Reorder the best hybrid candidates before returning the final top-k. |
+| Rerank endpoint | unset | Cohere/Jina-compatible rerank URL; empty uses the local lexical reranker. |
+| Rerank candidates | `0` | Candidate pool passed to the reranker; 0 derives it from top-k. |
 | Chunk size | `1000` | Default characters per ingested chunk (64–8000). |
 | Chunk overlap | `200` | Default overlap between chunks. |
 
@@ -83,6 +90,103 @@ The default prompt is a grounding baseline, not a compliance control. For
 medical, legal, financial or other high-stakes workflows, write the domain
 policy into the source documents, keep a human in the loop, and evaluate the
 answers against a reviewed question set before production use.
+
+## Hybrid search and reranking
+
+Text queries use two signals by default:
+
+1. **Vector similarity** from the configured embedder.
+2. **BM25 lexical relevance** over the chunk text.
+
+The scores are normalised within the candidate pool and fused with the
+configured vector weight. This catches exact names, product codes, prices and
+rare terms that a semantic model can miss, while the vector side handles
+paraphrases and intent.
+
+A **reranker** then reorders the best candidates. With no rerank endpoint
+configured, Bunwrite uses a deterministic local reranker that rewards exact
+phrases, query-term coverage, adjacent query terms and repeated matches. For a
+neural cross-encoder, configure a Cohere/Jina-compatible endpoint; the service
+falls back to the local reranker if that provider fails.
+
+Every search accepts per-request overrides:
+
+```json
+{
+  "text": "3 bedroom house in Kemang with a pool",
+  "topK": 5,
+  "hybrid": true,
+  "rerank": true,
+  "alpha": 0.55
+}
+```
+
+Set `hybrid` to `false` for vector-only retrieval, `rerank` to `false` to keep
+the fused order, or `alpha` to `0`/`1` for pure lexical/vector ranking. Hybrid
+search makes one extra statistics pass over the filtered collection; the
+default point cap keeps that predictable.
+
+## RAG evaluation
+
+`POST /rag/evaluate` runs a golden question set and returns standard retrieval
+and answer metrics:
+
+- **recall@k** — how many expected documents appeared in the top-k
+- **MRR** — reciprocal rank of the first expected document
+- **nDCG@k** — ranking quality with binary relevance
+- **keyword coverage** — expected facts present in context or answer
+- **refusal accuracy** — out-of-scope questions correctly refused
+- **latency** — per case and average
+
+Example:
+
+```bash
+curl -X POST "$API/rag/evaluate" \
+  -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
+  -H 'content-type: application/json' \
+  -d '{
+    "collectionId":"handbook",
+    "topK":5,
+    "generate":false,
+    "cases":[
+      {"id":"deploy","query":"How do I deploy?","expectedDocuments":["deploy"],"expectedKeywords":["docker"]},
+      {"id":"homes","query":"Which house has a pool?","expectedDocuments":["casa-blanca"]}
+    ]
+  }'
+```
+
+`generate:true` also checks answer keyword coverage and refusal behavior. Refusal
+cases require `generate:true` and a configured chat model:
+
+```json
+{
+  "collectionId":"handbook",
+  "generate":true,
+  "cases":[
+    {"id":"outside","query":"Do you sell cars?","expectRefusal":true}
+  ]
+}
+```
+
+`expectRefusal` is matched against English and Indonesian refusal language; use
+`expectedKeywords` for domain-specific phrasings.
+
+The repository includes a CI-friendly runner:
+
+```bash
+BUNWRITE_ENDPOINT=http://localhost:8080/v1 \
+BUNWRITE_PROJECT=my-project \
+BUNWRITE_KEY=standard_... \
+bun run rag:eval --dataset ./rag-eval.json
+```
+
+Use `--json` for machine-readable output. The command exits non-zero when any
+case fails, so it can gate a deployment. The dataset format is the same object
+accepted by `/rag/evaluate`.
+
+Retrieval metrics are not a substitute for human review. For high-stakes
+answers, keep a reviewed golden set, version the source corpus, and compare
+hybrid/rerank settings before changing models.
 
 ## HTTP API
 
@@ -265,11 +369,18 @@ await vectors.upsertPoints({
   collectionId: 'handbook',
   points: [{ id: 'intro', content: 'Bunwrite runs on Bun.' }],
 })
-const matches = await vectors.search({ collectionId: 'handbook', text: 'what does it run on?', topK: 5 })
+const matches = await vectors.search({ collectionId: 'handbook', text: 'what does it run on?', topK: 5, hybrid: true, rerank: true })
 
 const rag = new RAG(client)
 await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
 const result = await rag.query({ collectionId: 'handbook', query: 'What does it run on?', generate: false })
+
+const evaluation = await rag.evaluate({
+  collectionId: 'handbook',
+  generate: false,
+  topK: 5,
+  cases: [{ id: 'runtime', query: 'What does Bunwrite run on?', expectedDocuments: ['guide'], expectedKeywords: ['Bun'] }],
+})
 
 // Upload a file and let the server extract, chunk and embed its text.
 await vectors.ingestDocument({
@@ -293,8 +404,11 @@ The MCP catalog includes `vectors_*` and `rag_*` operations.
 
 - Search scans every point in the collection in pages and keeps only the best
   `topK` in memory. The point cap in **Settings → Vectors & RAG** (default
-  50,000) keeps the scan bounded. For larger corpora, lower the cap or use a
-  dedicated vector database.
+  50,000) keeps the scan bounded. Hybrid search makes an extra statistics pass
+  for BM25. For larger corpora, lower the cap or use a dedicated vector database.
+- Evaluation is synchronous: each case performs its own retrieval and optional
+  chat request. Keep golden sets small enough for the request timeout, or run
+  them from the CLI where a long-running process is expected.
 - Vectors are stored as JSON text. A 384-dimension vector is a few kilobytes;
   the default local embedder keeps collections small.
 - Writes are transactional. Ingest embeds first, then replaces a document's

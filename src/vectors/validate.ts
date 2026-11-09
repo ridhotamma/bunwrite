@@ -32,6 +32,25 @@ export function integer(value: unknown, fallback: number, min: number, max: numb
   return parsed
 }
 
+/** A boolean from JSON or a query string (`"true"`, `"1"`, `"false"`, `"0"`). */
+export function booleanParam(value: unknown, fallback: boolean, label: string): boolean {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'boolean') return value
+  if (value === 'true' || value === '1' || value === 1) return true
+  if (value === 'false' || value === '0' || value === 0) return false
+  throw invalid(`Param "${label}" must be a boolean.`)
+}
+
+/** A finite number between `min` and `max`, inclusive. */
+export function ratio(value: unknown, fallback: number, min: number, max: number, label: string): number {
+  if (value === undefined || value === null || value === '') return fallback
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw invalid(`Param "${label}" must be a number between ${min} and ${max}.`)
+  }
+  return parsed
+}
+
 export function metadataOf(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return {}
   if (typeof value !== 'object' || Array.isArray(value)) throw invalid('Param "metadata" must be an object.')

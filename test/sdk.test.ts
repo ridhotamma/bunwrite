@@ -274,6 +274,9 @@ describe('vectors and RAG', () => {
     expect(searched.points).toHaveLength(2)
     expect(typeof searched.points[0]!.score).toBe('number')
 
+    const hybrid = await vectors.search({ collectionId: 'sdk-vectors', text: 'SQLite file', hybrid: true, rerank: true, topK: 2 })
+    expect(hybrid.points.length).toBeGreaterThan(0)
+
     const ingested = await rag.ingest({
       collectionId: 'sdk-vectors',
       documentId: 'guide',
@@ -290,6 +293,15 @@ describe('vectors and RAG', () => {
     expect(answer.answer).toBeNull()
     expect(answer.sources.length).toBeGreaterThan(0)
     expect(answer.context).toContain('SQLite')
+
+    const evaluation = await rag.evaluate({
+      collectionId: 'sdk-vectors',
+      generate: false,
+      topK: 2,
+      cases: [{ id: 'storage', query: 'Where does SQLite store data?', expectedDocuments: ['guide'], expectedKeywords: ['SQLite'] }],
+    })
+    expect(evaluation).toMatchObject({ total: 1, passed: 1, failed: 0 })
+    expect(evaluation.metrics.recallAtK).toBe(1)
 
     const uploaded = await vectors.ingestDocument({
       collectionId: 'sdk-vectors',

@@ -1,6 +1,6 @@
 {
   "name": "bunwrite",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle.",
   "license": "MIT",
   "keywords": [
@@ -34,6 +34,7 @@
     "backup:open": "bun src/cli/backup-open.ts",
     "console:admin": "bun src/cli/console-admin.ts",
     "autotune": "bun src/main.ts autotune",
+    "rag:eval": "bun scripts/rag-eval.ts",
     "stress": "bun scripts/stress/index.ts",
     "stress:seed": "bun scripts/stress/index.ts seed",
     "stress:run": "bun scripts/stress/index.ts run",

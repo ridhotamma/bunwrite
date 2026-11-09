@@ -39,6 +39,9 @@ export interface VectorEnv {
   canAnswer: boolean
   chatModel: string
   maxPoints: number
+  hybrid: boolean
+  rerank: boolean
+  reranker: string
 }
 
 export interface CollectionDraft {
@@ -538,6 +541,7 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
           <li><span class="subdued">Dimensions</span><span>${collection.dimension}</span></li>
           <li><span class="subdued">Metric</span><span>${metricLabel(collection.metric)}</span></li>
           <li><span class="subdued">Embedder</span><span class="mono">${collection.embedder}</span></li>
+          <li><span class="subdued">Retrieval</span><span>${env.hybrid ? 'Hybrid BM25 + vector' : 'Vector only'} · ${env.rerank ? env.reranker : 'no rerank'}</span></li>
           <li><span class="subdued">Created</span><span>${when(collection.$createdAt)}</span></li>
           <li><span class="subdued">Updated</span><span>${when(collection.$updatedAt)}</span></li>
         </ul>`,

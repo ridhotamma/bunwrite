@@ -64,8 +64,9 @@ Deployment, upgrade, backups, TLS and production tuning:
 - **Sites**, static or server-rendered, with Git deployments, previews and custom
   domains.
 - **Storage and backups** on local disk or any S3-compatible bucket.
-- **Vectors and RAG** with local or OpenAI-compatible embeddings, including
-  PDF, Markdown and office-document uploads that are converted to text before
+- **Vectors and RAG** with local or OpenAI-compatible embeddings, hybrid
+  BM25 + vector retrieval, local or HTTP reranking, and a golden-set evaluation
+  API. PDF, Markdown and office documents are converted to text before
   embedding.
 - **HTML to PDF or image** with headless Chromium.
 - **Console, queue, request logs, traces, metrics and feature flags** built in.

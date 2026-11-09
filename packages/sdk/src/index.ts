@@ -40,7 +40,17 @@ export type {
     RealtimeResponseConnected,
 } from './services/realtime';
 export { RAG } from './services/rag';
-export type { RAGIngestFileParams, RAGIngestParams, RAGIngestResult, RAGQueryParams, RAGQueryResult } from './services/rag';
+export type {
+    RAGEvalCase,
+    RAGEvalCaseResult,
+    RAGEvaluateParams,
+    RAGEvaluateResult,
+    RAGIngestFileParams,
+    RAGIngestParams,
+    RAGIngestResult,
+    RAGQueryParams,
+    RAGQueryResult,
+} from './services/rag';
 export { Render } from './services/render';
 export { Sites } from './services/sites';
 export type { RenderPdfParams, RenderImageParams, RenderMargin, RenderJob, RenderJobStatus } from './services/render';

@@ -339,6 +339,31 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Answer generation settings saved' })
   })
 
+  router.post(`${SETTINGS}/vectors/retrieval`, async ({ ctx }) => {
+    const f = ctx.form
+    const current = ctx.services.config.vectors
+    const rerankUrl = value(f, 'rerankUrl').replace(/\/+$/, '')
+    if (rerankUrl) httpUrl(rerankUrl, 'The rerank endpoint')
+    const alpha = Number(f.hybridAlpha)
+    if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) {
+      throw err('general_argument_invalid', 'Vector weight must be between 0 and 1.')
+    }
+    const candidates = Number(f.rerankCandidates ?? 0)
+    if (!Number.isInteger(candidates) || candidates < 0 || candidates > 500) {
+      throw err('general_argument_invalid', 'Rerank candidates must be a whole number between 0 and 500.')
+    }
+    await saveVectors(ctx, {
+      hybridSearch: checked(f.hybridSearch),
+      hybridAlpha: alpha,
+      rerank: checked(f.rerank),
+      rerankUrl,
+      rerankApiKey: String(f.rerankApiKey ?? '').trim() || current.rerankApiKey,
+      rerankModel: value(f, 'rerankModel'),
+      rerankCandidates: candidates,
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Retrieval settings saved' })
+  })
+
   router.post(`${SETTINGS}/vectors/limits`, async ({ ctx }) => {
     const f = ctx.form
     const chunkSize = wholeSetting(f, 'chunkSize', 'Chunk size', 64, 8_000)

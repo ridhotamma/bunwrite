@@ -231,10 +231,33 @@ describe('vectors console', () => {
     const page = await (await get('/console/settings/vectors')).text()
     expect(page).toContain('Embeddings')
     expect(page).toContain('Answer generation')
+    expect(page).toContain('Retrieval and reranking')
     expect(page).toContain('Ingestion and limits')
     expect(page).toContain('action="/console/settings/vectors/embedding"')
     expect(page).toContain('action="/console/settings/vectors/answers"')
+    expect(page).toContain('action="/console/settings/vectors/retrieval"')
     expect(page).toContain('action="/console/settings/vectors/limits"')
+
+    const retrieval = await form('/console/settings/vectors/retrieval', {
+      hybridSearch: 'on',
+      hybridAlpha: '0.3',
+      rerank: 'on',
+      rerankUrl: 'https://api.example.com/v1',
+      rerankModel: 'rerank-test',
+      rerankApiKey: 'rerank-key',
+      rerankCandidates: '40',
+    })
+    expect(retrieval.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({
+      hybridSearch: true,
+      hybridAlpha: 0.3,
+      rerank: true,
+      rerankUrl: 'https://api.example.com/v1',
+      rerankModel: 'rerank-test',
+      rerankApiKey: 'rerank-key',
+      rerankCandidates: 40,
+    })
+    expect(server.services.vectors.rerankerName).toBe('http:rerank-test')
 
     const limits = await form('/console/settings/vectors/limits', { maxPoints: '1200', chunkSize: '600', chunkOverlap: '100' })
     expect(limits.status).toBe(303)
@@ -288,6 +311,7 @@ describe('vectors console', () => {
     expect(saved).toContain('value="embed-test"')
     expect(saved).not.toContain('embed-key')
     expect(saved).not.toContain('chat-key')
+    expect(saved).not.toContain('rerank-key')
 
     await form('/console/settings/vectors/reset', {})
     expect(server.config.vectors).toMatchObject({
@@ -297,6 +321,11 @@ describe('vectors console', () => {
       chunkSize: 1000,
       chunkOverlap: 200,
       chatUrl: '',
+      hybridSearch: true,
+      hybridAlpha: 0.55,
+      rerank: true,
+      rerankUrl: '',
+      rerankCandidates: 0,
     })
     expect(server.services.vectors.canAnswer).toBe(false)
     expect(server.services.vectors.embedderName).toBe('local:64')

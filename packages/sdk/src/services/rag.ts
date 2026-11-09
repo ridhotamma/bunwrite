@@ -45,6 +45,12 @@ export interface RAGQueryParams {
     filter?: Record<string, unknown>;
     /** Set false to retrieve context without calling the configured chat model. */
     generate?: boolean;
+    /** Override the project's hybrid-search setting. */
+    hybrid?: boolean;
+    /** Override the project's rerank setting. */
+    rerank?: boolean;
+    /** Vector share of the hybrid score, 0..1. */
+    alpha?: number;
 }
 
 export interface RAGQueryResult {
@@ -55,6 +61,60 @@ export interface RAGQueryResult {
     sources: VectorMatch[];
     model: string | null;
     usage?: unknown;
+}
+
+export interface RAGEvalCase {
+    id?: string;
+    query: string;
+    expectedDocuments?: string[];
+    expectedKeywords?: string[];
+    expectRefusal?: boolean;
+}
+
+export interface RAGEvaluateParams {
+    collectionId: string;
+    cases: RAGEvalCase[];
+    topK?: number;
+    filter?: Record<string, unknown>;
+    /** Required for expectRefusal cases when using a chat provider. */
+    generate?: boolean;
+    hybrid?: boolean;
+    rerank?: boolean;
+    alpha?: number;
+}
+
+export interface RAGEvalCaseResult {
+    id: string;
+    query: string;
+    passed: boolean;
+    expectedRefusal: boolean;
+    recallAtK: number | null;
+    reciprocalRank: number | null;
+    ndcgAtK: number | null;
+    contextKeywordCoverage: number | null;
+    answerKeywordCoverage: number | null;
+    refused: boolean | null;
+    answer: string | null;
+    sources: VectorMatch[];
+    latencyMs: number;
+    error?: string;
+}
+
+export interface RAGEvaluateResult {
+    collectionId: string;
+    total: number;
+    passed: number;
+    failed: number;
+    metrics: {
+        recallAtK: number | null;
+        mrr: number | null;
+        ndcgAtK: number | null;
+        contextKeywordCoverage: number | null;
+        answerKeywordCoverage: number | null;
+        refusalAccuracy: number | null;
+        averageLatencyMs: number;
+    };
+    cases: RAGEvalCaseResult[];
 }
 
 /**
@@ -112,6 +172,27 @@ export class RAG {
             topK: params.topK,
             filter: params.filter,
             generate: params.generate,
+            hybrid: params.hybrid,
+            rerank: params.rerank,
+            alpha: params.alpha,
+        }));
+    }
+
+    /** Run a golden question set through retrieval and optional generation. */
+    evaluate(params: RAGEvaluateParams): Promise<RAGEvaluateResult> {
+        requireString(params?.collectionId, 'collectionId');
+        if (!Array.isArray(params?.cases) || params.cases.length === 0) {
+            throw new BunwriteException('Missing required parameter: "cases"');
+        }
+        return this._call('/rag/evaluate', clean({
+            collectionId: params.collectionId,
+            cases: params.cases,
+            topK: params.topK,
+            filter: params.filter,
+            generate: params.generate,
+            hybrid: params.hybrid,
+            rerank: params.rerank,
+            alpha: params.alpha,
         }));
     }
 

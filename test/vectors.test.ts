@@ -9,8 +9,12 @@ import { postgresSystemIndexStatements, postgresSystemStatements } from '~/db/po
 import { chunkText } from '~/vectors/chunk'
 import { defaultVectorsConfig } from '~/vectors/config'
 import { localVector } from '~/vectors/embedder'
+import { keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from '~/vectors/eval'
 import { extractDocument } from '~/vectors/extract'
+import { addBm25Document, bm25Score, createBm25, finalizeBm25, localRerankScore } from '~/vectors/lexical'
 import { TopK } from '~/vectors/rank'
+import { LocalReranker } from '~/vectors/rerank'
+import type { VectorPoint } from '~/vectors/types'
 import { KEY, PROJECT, startServer, type TestServer } from './helpers'
 
 let server: TestServer
@@ -84,6 +88,41 @@ describe('vector helpers', () => {
     for (const chunk of chunks) expect(chunk.text.length).toBeLessThanOrEqual(80)
     // Adjacent chunks share some words because of the overlap.
     expect(chunks[0]!.text.split(' ')).toContain(chunks[1]!.text.split(' ')[0]!)
+  })
+
+  test('BM25 prefers documents that contain the query terms', () => {
+    const state = createBm25('postgres storage')!
+    addBm25Document(state, 'Postgres stores each project in a local schema.')
+    addBm25Document(state, 'SQLite keeps the whole database in one file.')
+    addBm25Document(state, 'Postgres storage is the topic of this document.')
+    const model = finalizeBm25(state)
+    expect(bm25Score(model, 'Postgres storage is the topic of this document.')).toBeGreaterThan(
+      bm25Score(model, 'SQLite keeps the whole database in one file.'),
+    )
+    expect(bm25Score(model, 'Unrelated words only.')).toBe(0)
+  })
+
+  test('the local reranker rewards exact phrases and coverage', async () => {
+    expect(localRerankScore('private pool kemang', 'Casa Blanca in Kemang has a private pool.')).toBeGreaterThan(
+      localRerankScore('private pool kemang', 'An apartment without a pool.'),
+    )
+    const reranked = await new LocalReranker().rerank('private pool kemang', [
+      'A different property has no pool.',
+      'Casa Blanca in Kemang has a private pool.',
+    ])
+    expect(reranked[0]!.index).toBe(1)
+  })
+
+  test('retrieval metrics handle hits, misses and refusals', () => {
+    const source = (documentId: string): VectorPoint =>
+      ({ $id: `${documentId}.0`, $createdAt: '', $updatedAt: '', documentId, chunkIndex: 0, content: '', metadata: {} }) as VectorPoint
+    expect(recallAtK(['a'], [source('a'), source('b')], 2)).toBe(1)
+    expect(recallAtK(['a'], [source('b')], 2)).toBe(0)
+    expect(reciprocalRank(['a'], [source('b'), source('a')])).toBe(0.5)
+    expect(ndcgAtK(['a'], [source('a')], 1)).toBe(1)
+    expect(keywordCoverage('The private pool is in Kemang', ['pool', 'kemang'])).toBe(1)
+    expect(looksLikeRefusal('I do not know; this is not stated in the context.')).toBe(true)
+    expect(looksLikeRefusal('The pool is in Kemang.')).toBe(false)
   })
 
   test('bounded top-k keeps the best scores without sorting the whole collection', () => {
@@ -228,6 +267,56 @@ describe('vector store', () => {
     expect(result.points.map((point) => point.$id)).toEqual(['p2099', 'p2098', 'p2097'])
   })
 
+  test('hybrid search adds lexical candidates and reranking is available', async () => {
+    const vectors = server.services.vectors
+    const unit = (index: number) => Array.from({ length: 64 }, (_, i) => (i === index ? 1 : 0))
+    await vectors.createCollection({ id: 'hybrid', dimension: 64 })
+    await vectors.upsertPoints('hybrid', [
+      { id: 'lexical', vector: unit(1), content: 'rareterm private pool in Kemang' },
+      { id: 'vector', vector: unit(0), content: 'unrelated listing without the query word' },
+    ])
+
+    // alpha 0 makes the fused score entirely lexical; the rare term wins even
+    // though its vector is not the best match.
+    const lexical = await vectors.search('hybrid', { text: 'rareterm', hybrid: true, alpha: 0, rerank: false, topK: 2 })
+    expect(lexical.total).toBe(2)
+    expect(lexical.points[0]!.$id).toBe('lexical')
+
+    const vectorOnly = await vectors.search('hybrid', { vector: unit(0), topK: 1 })
+    expect(vectorOnly.points[0]!.$id).toBe('vector')
+
+    const reranked = await vectors.search('hybrid', { text: 'private pool Kemang', hybrid: true, alpha: 0.5, rerank: true, topK: 1 })
+    expect(reranked.points).toHaveLength(1)
+  })
+
+  test('evaluation returns recall, MRR, nDCG and keyword coverage', async () => {
+    const vectors = server.services.vectors
+    await vectors.createCollection({ id: 'eval', dimension: 64 })
+    await vectors.ingest({ collectionId: 'eval', documentId: 'casa', text: 'Casa Blanca in Kemang has a private pool and three bedrooms.' })
+    await vectors.ingest({ collectionId: 'eval', documentId: 'lumina', text: 'The Lumina is an apartment without a pool.' })
+    const result = await vectors.evaluate({
+      collectionId: 'eval',
+      topK: 2,
+      generate: false,
+      cases: [
+        { id: 'hit', query: 'Casa Blanca private pool', expectedDocuments: ['casa'], expectedKeywords: ['pool'] },
+        { id: 'miss', query: 'Casa Blanca private pool', expectedDocuments: ['missing'] },
+      ],
+    })
+    expect(result).toMatchObject({ total: 2, passed: 1, failed: 1 })
+    expect(result.metrics.recallAtK).toBe(0.5)
+    expect(result.metrics.mrr).toBe(0.5)
+    expect(result.metrics.ndcgAtK).toBe(0.5)
+    expect(result.metrics.contextKeywordCoverage).toBe(1)
+    expect(result.cases[0]).toMatchObject({ id: 'hit', passed: true, recallAtK: 1, reciprocalRank: 1, ndcgAtK: 1 })
+    expect(result.cases[1]).toMatchObject({ id: 'miss', passed: false, recallAtK: 0 })
+    expect(
+      await vectors
+        .evaluate({ collectionId: 'eval', generate: false, cases: [{ query: 'unknown', expectRefusal: true }] })
+        .catch((error) => error),
+    ).toMatchObject({ type: 'general_argument_invalid' })
+  })
+
   test('deletes points and whole documents', async () => {
     const vectors = server.services.vectors
     await vectors.createCollection({ id: 'delete-me', dimension: 2 })
@@ -320,6 +409,19 @@ describe('HTTP extension', () => {
     expect(query.response.status).toBe(200)
     expect(query.body.answer).toBeNull()
     expect(query.body.sources.length).toBeGreaterThan(0)
+
+    const evaluated = await call('/rag/evaluate', {
+      method: 'POST',
+      body: JSON.stringify({
+        collectionId: 'http',
+        generate: false,
+        topK: 2,
+        cases: [{ id: 'rag', query: 'What does RAG join?', expectedDocuments: ['guide'], expectedKeywords: ['retrieval'] }],
+      }),
+    })
+    expect(evaluated.response.status).toBe(200)
+    expect(evaluated.body).toMatchObject({ total: 1, passed: 1, failed: 0 })
+    expect(evaluated.body.metrics.recallAtK).toBe(1)
 
     const collection = await call('/vectors/http')
     expect(collection.body.points).toBe(2)

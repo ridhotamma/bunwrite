@@ -51,7 +51,7 @@ await new Storage(client).createFile({ bucketId: 'invoices', fileId: ID.unique()
 Without a bundler, load `dist/bunwrite.iife.js` and use `window.Bunwrite`:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.4.0/dist/bunwrite.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.5.0/dist/bunwrite.iife.js"></script>
 <script>
   const client = new Bunwrite.Client().setEndpoint('https://api.example.com/v1').setProject('your-project-id')
 </script>
@@ -69,8 +69,8 @@ deprecated.
 | `Databases` | Databases, collections, attributes, indexes, documents (one and bulk), increment/decrement, transactions |
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
-| `Vectors` | Bunwrite extension: vector collections, point upsert/list/get/delete, similarity search, document upload/ingest and document chunks |
-| `RAG` | Bunwrite extension: chunk/embed/ingest text or files, retrieve context and optionally generate answers |
+| `Vectors` | Bunwrite extension: vector collections, point upsert/list/get/delete, hybrid BM25 + vector search with optional reranking, document upload/ingest and document chunks |
+| `RAG` | Bunwrite extension: chunk/embed/ingest text or files, hybrid retrieval, reranking, retrieval-and-answer evaluation, retrieve context and optionally generate answers |
 | `Functions` | Functions, deployments, executions, variables |
 | `Sites` | Static sites, deployments, custom domains and variables |
 | `Teams` | Teams, prefs, memberships and invitations |

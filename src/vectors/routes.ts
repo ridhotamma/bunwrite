@@ -21,6 +21,7 @@
  *
  *   POST   /rag/ingest                               chunk, embed and store text or a file
  *   POST   /rag/query                                retrieve context and optionally answer
+ *   POST   /rag/evaluate                             run a golden question set and return metrics
  *
  * Everything needs an API key. A point may carry an explicit `vector`, or
  * `content` that the configured embedder turns into one. Document ingest takes
@@ -214,6 +215,25 @@ export function vectorRoutes(router: Router<AppContext>): void {
         topK: num(params.topK),
         filter: params.filter,
         generate: bool(params.generate, true),
+        hybrid: params.hybrid,
+        rerank: params.rerank,
+        alpha: params.alpha,
+      }),
+    )
+  })
+
+  router.post('/rag/evaluate', async ({ ctx, params }) => {
+    requireKey(ctx, 'vectorsdb.documents.read')
+    return json(
+      await ctx.vectors.evaluate({
+        collectionId: params.collectionId,
+        cases: params.cases,
+        topK: num(params.topK),
+        filter: params.filter,
+        generate: bool(params.generate, false),
+        hybrid: params.hybrid,
+        rerank: params.rerank,
+        alpha: params.alpha,
       }),
     )
   })

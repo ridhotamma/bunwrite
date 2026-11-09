@@ -36,6 +36,9 @@ function envOf(ctx: ConsoleContext): VectorEnv {
     canAnswer: ctx.services.vectors.canAnswer,
     chatModel: config.chatModel,
     maxPoints: config.maxPoints,
+    hybrid: config.hybridSearch,
+    rerank: config.rerank,
+    reranker: ctx.services.vectors.rerankerName,
   }
 }
 

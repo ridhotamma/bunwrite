@@ -48,6 +48,7 @@ export interface VectorPoint {
 }
 
 export interface VectorMatch extends VectorPoint {
+  /** Final ranking score; higher is better. Hybrid/rerank queries return the fused/reranked score. */
   score: number
 }
 
@@ -93,6 +94,12 @@ export interface SearchInput {
   vector?: unknown
   topK?: unknown
   filter?: unknown
+  /** Override the project's hybrid-search setting for this query. */
+  hybrid?: unknown
+  /** Override the project's rerank setting for this query. */
+  rerank?: unknown
+  /** Vector share of the hybrid score, 0..1. */
+  alpha?: unknown
 }
 
 export interface IngestInput {
@@ -121,4 +128,66 @@ export interface QueryInput extends IngestInput {
   topK?: unknown
   filter?: unknown
   generate?: unknown
+  hybrid?: unknown
+  rerank?: unknown
+  alpha?: unknown
+}
+
+export interface EvalCaseInput {
+  id?: unknown
+  query?: unknown
+  expectedDocuments?: unknown
+  expectedKeywords?: unknown
+  expectRefusal?: unknown
+}
+
+export interface EvaluateInput {
+  collectionId?: unknown
+  cases?: unknown
+  topK?: unknown
+  filter?: unknown
+  generate?: unknown
+  hybrid?: unknown
+  rerank?: unknown
+  alpha?: unknown
+}
+
+export interface EvalCaseResult {
+  id: string
+  query: string
+  passed: boolean
+  expectedRefusal: boolean
+  /** Fraction of expected documents present in the top-k results; null when none were given. */
+  recallAtK: number | null
+  /** Reciprocal rank of the first expected document; null when none were given. */
+  reciprocalRank: number | null
+  /** Binary-relevance nDCG at k; null when no expected documents were given. */
+  ndcgAtK: number | null
+  /** Fraction of expected keywords present in the retrieved context. */
+  contextKeywordCoverage: number | null
+  /** Fraction of expected keywords present in the generated answer, when one exists. */
+  answerKeywordCoverage: number | null
+  /** Whether the answer looks like a refusal; null without a generated answer. */
+  refused: boolean | null
+  answer: string | null
+  sources: VectorMatch[]
+  latencyMs: number
+  error?: string
+}
+
+export interface EvaluateResult {
+  collectionId: string
+  total: number
+  passed: number
+  failed: number
+  metrics: {
+    recallAtK: number | null
+    mrr: number | null
+    ndcgAtK: number | null
+    contextKeywordCoverage: number | null
+    answerKeywordCoverage: number | null
+    refusalAccuracy: number | null
+    averageLatencyMs: number
+  }
+  cases: EvalCaseResult[]
 }

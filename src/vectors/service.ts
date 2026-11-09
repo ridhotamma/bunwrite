@@ -21,11 +21,16 @@ import { HttpChat } from './chat'
 import type { VectorsConfig } from './config'
 import type { EmbeddingProvider } from './embedder'
 import { HttpEmbedding, LocalEmbedding } from './embedder'
+import { average, keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from './eval'
 import { extractDocument, type DocumentFormat } from './extract'
+import { addBm25Document, bm25Score, createBm25, finalizeBm25, tokenize, type Bm25Model } from './lexical'
 import {
   DEFAULT_LIST_LIMIT,
   MAX_BATCH,
   MAX_CONTENT,
+  MAX_EVAL_CASES,
+  MAX_EVAL_KEYWORDS,
+  MAX_HYBRID_CANDIDATES,
   MAX_INGEST_TEXT,
   MAX_LIST_LIMIT,
   MAX_RAG_TOP_K,
@@ -34,11 +39,16 @@ import {
 } from './limits'
 import { answerPrompt, buildContext } from './rag'
 import { TopK } from './rank'
+import { HttpReranker, LocalReranker, type RerankProvider } from './rerank'
 import { parseRowMetadata, pointModel } from './rows'
 import { norm, parseMetric, parseVector, score, type VectorMetric } from './similarity'
 import { VectorStore } from './store'
 import type {
   CreateCollectionInput,
+  EvalCaseInput,
+  EvalCaseResult,
+  EvaluateInput,
+  EvaluateResult,
   IngestInput,
   IngestResult,
   PointInput,
@@ -52,10 +62,77 @@ import type {
   VectorPoint,
   VectorPointRow,
 } from './types'
-import { integer, invalid, matchesFilter, metadataOf, optionalText, pathId, textOf } from './validate'
+import { booleanParam, integer, invalid, matchesFilter, metadataOf, optionalText, pathId, ratio, textOf } from './validate'
 
 interface PendingPoint extends Omit<StoredPoint, 'vector'> {
   vector: number[] | null
+}
+
+interface SearchCandidate {
+  row: VectorPointRow
+  vector: number
+  text: number
+  fused: number
+}
+
+interface ScoreBounds {
+  min: number
+  max: number
+}
+
+function bounds(values: readonly number[]): ScoreBounds | null {
+  if (values.length === 0) return null
+  let min = values[0]!
+  let max = values[0]!
+  for (const value of values) {
+    if (value < min) min = value
+    if (value > max) max = value
+  }
+  return { min, max }
+}
+
+function normalize(value: number, range: ScoreBounds | null): number {
+  if (!range) return 0
+  if (range.max === range.min) return range.max > 0 ? 0.5 : 0
+  return (value - range.min) / (range.max - range.min)
+}
+
+interface NormalizedEvalCase {
+  id: string
+  query: string
+  expectedDocuments: string[]
+  expectedKeywords: string[]
+  expectRefusal: boolean
+}
+
+function evalCase(value: unknown, index: number): NormalizedEvalCase {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid(`Param "cases[${index}]" must be an object.`)
+  const record = value as EvalCaseInput
+  if (typeof record.query !== 'string' || record.query.trim() === '') {
+    throw invalid(`Param "cases[${index}].query" must be a non-empty string.`)
+  }
+  const strings = (raw: unknown, field: string, max: number): string[] => {
+    if (raw === undefined || raw === null) return []
+    if (!Array.isArray(raw) || raw.some((entry) => typeof entry !== 'string')) {
+      throw invalid(`Param "cases[${index}].${field}" must be an array of strings.`)
+    }
+    return [...new Set(raw.map((entry) => entry.trim()).filter(Boolean))].slice(0, max)
+  }
+  const expectedDocuments = strings(record.expectedDocuments, 'expectedDocuments', 20)
+  if (expectedDocuments.some((id) => id.length > 128)) throw invalid(`Param "cases[${index}].expectedDocuments" contains an ID longer than 128 characters.`)
+  const expectedKeywords = strings(record.expectedKeywords, 'expectedKeywords', MAX_EVAL_KEYWORDS)
+  if (expectedKeywords.some((keyword) => keyword.length > 200)) throw invalid(`Param "cases[${index}].expectedKeywords" contains a keyword longer than 200 characters.`)
+  const expectRefusal = booleanParam(record.expectRefusal, false, `cases[${index}].expectRefusal`)
+  if (expectedDocuments.length === 0 && expectedKeywords.length === 0 && !expectRefusal) {
+    throw invalid(`Param "cases[${index}]" needs expectedDocuments, expectedKeywords or expectRefusal.`)
+  }
+  return {
+    id: typeof record.id === 'string' && record.id.trim() ? record.id.trim() : `case-${index + 1}`,
+    query: record.query,
+    expectedDocuments,
+    expectedKeywords,
+    expectRefusal,
+  }
 }
 
 /** A file name as a stable document ID, so re-uploading `handbook.pdf` replaces its chunks. */
@@ -73,6 +150,8 @@ export function documentIdFromName(name: string): string {
 export class VectorService {
   private embedder: EmbeddingProvider
   private chat: ChatProvider | null
+  private reranker: RerankProvider
+  private readonly localReranker = new LocalReranker()
   private readonly store: VectorStore
 
   constructor(
@@ -82,6 +161,7 @@ export class VectorService {
     this.store = new VectorStore(db)
     this.embedder = this.makeEmbedder()
     this.chat = this.makeChat()
+    this.reranker = this.makeReranker()
   }
 
   /** Apply settings saved in the console without restarting the server. */
@@ -89,6 +169,7 @@ export class VectorService {
     this.config = config
     this.embedder = this.makeEmbedder()
     this.chat = this.makeChat()
+    this.reranker = this.makeReranker()
   }
 
   private makeEmbedder(): EmbeddingProvider {
@@ -120,9 +201,30 @@ export class VectorService {
       : null
   }
 
+  private makeReranker(): RerankProvider {
+    const config = this.config
+    if (!config.rerankUrl) return this.localReranker
+    try {
+      return new HttpReranker({
+        url: config.rerankUrl,
+        apiKey: config.rerankApiKey,
+        model: config.rerankModel,
+        timeoutMs: config.timeoutMs,
+      })
+    } catch (error) {
+      console.warn(`[vectors] rerank provider is unavailable, using the local reranker: ${error instanceof Error ? error.message : String(error)}`)
+      return this.localReranker
+    }
+  }
+
   /** The provider a new collection records; changing it requires re-indexing. */
   get embedderName(): string {
     return this.embedder.name
+  }
+
+  /** The active reranker, for the console's configuration summary. */
+  get rerankerName(): string {
+    return this.reranker.name
   }
 
   get canAnswer(): boolean {
@@ -351,8 +453,59 @@ export class VectorService {
     return vector
   }
 
+  /** One BM25 statistics pass over the filtered points; the scoring pass follows. */
+  private async hybridStats(collection: VectorCollectionRow, filter: unknown, query: string): Promise<{ model: Bm25Model; total: number }> {
+    const state = createBm25(query)!
+    let total = 0
+    let afterSeq = 0
+    for (;;) {
+      const batch = await this.store.scanPoints(collection.id, afterSeq, SCAN_BATCH)
+      if (batch.length === 0) break
+      for (const row of batch) {
+        if (!matchesFilter(parseRowMetadata(row.metadata), filter)) continue
+        total++
+        addBm25Document(state, row.content)
+      }
+      afterSeq = Number(batch[batch.length - 1]!.seq)
+      if (batch.length < SCAN_BATCH) break
+    }
+    return { model: finalizeBm25(state), total }
+  }
+
+  private async rerank(query: string, candidates: SearchCandidate[]): Promise<SearchCandidate[]> {
+    if (candidates.length === 0) return candidates
+    const documents = candidates.map((candidate) => candidate.row.content)
+    let results
+    try {
+      results = await this.reranker.rerank(query, documents)
+    } catch (error) {
+      if (this.reranker.name !== this.localReranker.name) {
+        console.warn(`[vectors] ${this.reranker.name} failed, using the local reranker: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      results = await this.localReranker.rerank(query, documents)
+    }
+
+    const ordered: SearchCandidate[] = []
+    const used = new Set<number>()
+    for (const result of results) {
+      const candidate = candidates[result.index]
+      if (!candidate || used.has(result.index)) continue
+      used.add(result.index)
+      ordered.push({ ...candidate, fused: result.score })
+    }
+    // A provider may return only its top_n. Keep unmentioned candidates after
+    // the reranked ones instead of silently dropping them.
+    for (let index = 0; index < candidates.length; index++) {
+      if (used.has(index)) continue
+      const candidate = candidates[index]
+      if (candidate) ordered.push(candidate)
+    }
+    return ordered
+  }
+
   async search(collectionId: string, input: SearchInput): Promise<{ total: number; points: VectorMatch[] }> {
     const collection = await this.collectionRow(collectionId)
+    const queryText = optionalText(input.text) ?? optionalText(input.query)
     const vector = await this.queryVector(collection, input)
     const queryNorm = norm(vector)
     const topK = integer(input.topK, 5, 1, MAX_TOP_K, 'topK')
@@ -365,8 +518,16 @@ export class VectorService {
 
     // Validate the filter even when the collection has no points yet.
     matchesFilter({}, input.filter)
-    const ranker = new TopK<VectorPointRow>(topK)
-    let total = 0
+    const alpha = ratio(input.alpha, this.config.hybridAlpha, 0, 1, 'alpha')
+    const useHybrid = queryText !== undefined && booleanParam(input.hybrid, this.config.hybridSearch, 'hybrid') && tokenize(queryText).length > 0
+    const useRerank = queryText !== undefined && booleanParam(input.rerank, this.config.rerank, 'rerank')
+    const configuredCandidates = this.config.rerankCandidates > 0 ? this.config.rerankCandidates : Math.max(topK * 4, 20)
+    const candidateLimit = Math.min(MAX_HYBRID_CANDIDATES, Math.max(topK, useHybrid || useRerank ? configuredCandidates : topK))
+
+    const stats = useHybrid ? await this.hybridStats(collection, input.filter, queryText!) : null
+    const vectorRanker = new TopK<VectorPointRow>(candidateLimit)
+    const lexicalRanker = stats ? new TopK<VectorPointRow>(candidateLimit) : null
+    let total = stats?.total ?? 0
     let afterSeq = 0
     for (;;) {
       const batch = await this.store.scanPoints(collection.id, afterSeq, SCAN_BATCH)
@@ -381,17 +542,47 @@ export class VectorService {
         }
         if (embedding.length !== vector.length) continue
         const value = score(metric, vector, embedding, Number(row.norm) || norm(embedding), queryNorm)
-        if (!Number.isFinite(value)) continue
-        ranker.push(row, value)
-        total++
+        if (Number.isFinite(value)) vectorRanker.push(row, value)
+        if (!stats) {
+          total++
+        } else if (lexicalRanker) {
+          const lexical = bm25Score(stats.model, row.content)
+          if (lexical > 0) lexicalRanker.push(row, lexical)
+        }
       }
       afterSeq = Number(batch[batch.length - 1]!.seq)
       if (batch.length < SCAN_BATCH) break
     }
 
+    const vectorEntries = vectorRanker.values()
+    const lexicalEntries = lexicalRanker?.values() ?? []
+    const candidates = new Map<string, SearchCandidate>()
+    for (const entry of vectorEntries) {
+      candidates.set(entry.item.id, { row: entry.item, vector: entry.score, text: 0, fused: entry.score })
+    }
+    for (const entry of lexicalEntries) {
+      const existing = candidates.get(entry.item.id)
+      if (existing) existing.text = entry.score
+      else candidates.set(entry.item.id, { row: entry.item, vector: 0, text: entry.score, fused: 0 })
+    }
+
+    let ordered = [...candidates.values()]
+    if (stats) {
+      const vectorBounds = bounds(vectorEntries.map((entry) => entry.score))
+      const lexicalBounds = bounds(lexicalEntries.map((entry) => entry.score))
+      for (const candidate of ordered) {
+        candidate.fused = alpha * normalize(candidate.vector, vectorBounds) + (1 - alpha) * normalize(candidate.text, lexicalBounds)
+      }
+      ordered.sort((a, b) => b.fused - a.fused || b.vector - a.vector || a.row.id.localeCompare(b.row.id))
+    } else {
+      ordered.sort((a, b) => b.fused - a.fused || a.row.id.localeCompare(b.row.id))
+    }
+
+    if (useRerank && queryText !== undefined) ordered = await this.rerank(queryText, ordered)
+
     return {
       total,
-      points: ranker.values().map(({ item, score: value }) => ({ ...pointModel(item), score: value })),
+      points: ordered.slice(0, topK).map((candidate) => ({ ...pointModel(candidate.row), score: candidate.fused })),
     }
   }
 
@@ -481,7 +672,14 @@ export class VectorService {
   }> {
     const collectionId = typeof input.collectionId === 'string' ? input.collectionId : ''
     const question = textOf(input.query !== undefined ? input.query : input.text, 'query', 20_000)
-    const found = await this.search(collectionId, { text: question, topK: input.topK ?? 5, filter: input.filter })
+    const found = await this.search(collectionId, {
+      text: question,
+      topK: input.topK ?? 5,
+      filter: input.filter,
+      hybrid: input.hybrid,
+      rerank: input.rerank,
+      alpha: input.alpha,
+    })
     const { context, sources } = buildContext(found.points.slice(0, MAX_RAG_TOP_K), this.config.contextChars)
 
     const generate = input.generate === undefined ? true : input.generate === true || input.generate === 'true' || input.generate === 1
@@ -493,6 +691,106 @@ export class VectorService {
       return { query: question, answer: result.answer, context, sources, model: this.chat.name, usage: result.usage }
     } catch (error) {
       throw err('general_unknown', error instanceof Error ? error.message : 'Answer generation failed.')
+    }
+  }
+
+  /** Run a golden question set through retrieval and optional generation, returning standard metrics. */
+  async evaluate(input: EvaluateInput): Promise<EvaluateResult> {
+    const collection = await this.collectionRow(typeof input.collectionId === 'string' ? input.collectionId : '')
+    if (!Array.isArray(input.cases) || input.cases.length === 0) throw invalid('Param "cases" must be a non-empty array.')
+    if (input.cases.length > MAX_EVAL_CASES) throw invalid(`Param "cases" may contain at most ${MAX_EVAL_CASES} cases.`)
+    const cases = input.cases.map(evalCase)
+    const topK = integer(input.topK, 5, 1, MAX_RAG_TOP_K, 'topK')
+    const generate = booleanParam(input.generate, false, 'generate')
+    if (cases.some((entry) => entry.expectRefusal) && (!generate || !this.chat)) {
+      throw invalid('Param "generate" must be true and a chat provider must be configured when a case expects a refusal.')
+    }
+    // Fail before a long run if the filter is not an object.
+    matchesFilter({}, input.filter)
+
+    const results: EvalCaseResult[] = []
+    let passed = 0
+    for (const entry of cases) {
+      const started = performance.now()
+      try {
+        const result = await this.query({
+          collectionId: collection.id,
+          query: entry.query,
+          topK,
+          filter: input.filter,
+          generate,
+          hybrid: input.hybrid,
+          rerank: input.rerank,
+          alpha: input.alpha,
+        })
+        const contextText = result.sources.map((source) => source.content).join('\n')
+        const answer = result.answer
+        const recall = recallAtK(entry.expectedDocuments, result.sources, topK)
+        const rank = reciprocalRank(entry.expectedDocuments, result.sources)
+        const ndcg = ndcgAtK(entry.expectedDocuments, result.sources, topK)
+        const contextCoverage = keywordCoverage(contextText, entry.expectedKeywords)
+        const answerCoverage = answer === null ? null : keywordCoverage(answer, entry.expectedKeywords)
+        const refused = looksLikeRefusal(answer)
+        const checks: string[] = []
+        if (entry.expectedDocuments.length > 0 && (recall ?? 0) < 1) checks.push(`missing documents: ${entry.expectedDocuments.join(', ')}`)
+        if (entry.expectedKeywords.length > 0) {
+          const coverage = answerCoverage ?? contextCoverage
+          if ((coverage ?? 0) < 1) checks.push(`missing keywords: ${entry.expectedKeywords.join(', ')}`)
+        }
+        if (entry.expectRefusal && refused !== true) checks.push('expected a refusal')
+        const ok = checks.length === 0
+        if (ok) passed++
+        results.push({
+          id: entry.id,
+          query: entry.query,
+          passed: ok,
+          expectedRefusal: entry.expectRefusal,
+          recallAtK: recall,
+          reciprocalRank: rank,
+          ndcgAtK: ndcg,
+          contextKeywordCoverage: contextCoverage,
+          answerKeywordCoverage: answerCoverage,
+          refused,
+          answer,
+          sources: result.sources,
+          latencyMs: Math.round(performance.now() - started),
+          ...(checks.length > 0 ? { error: checks.join('; ') } : {}),
+        })
+      } catch (error) {
+        results.push({
+          id: entry.id,
+          query: entry.query,
+          passed: false,
+          expectedRefusal: entry.expectRefusal,
+          recallAtK: null,
+          reciprocalRank: null,
+          ndcgAtK: null,
+          contextKeywordCoverage: null,
+          answerKeywordCoverage: null,
+          refused: null,
+          answer: null,
+          sources: [],
+          latencyMs: Math.round(performance.now() - started),
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    return {
+      collectionId: collection.id,
+      total: results.length,
+      passed,
+      failed: results.length - passed,
+      metrics: {
+        recallAtK: average(results.map((result) => result.recallAtK)),
+        mrr: average(results.map((result) => result.reciprocalRank)),
+        ndcgAtK: average(results.map((result) => result.ndcgAtK)),
+        contextKeywordCoverage: average(results.map((result) => result.contextKeywordCoverage)),
+        answerKeywordCoverage: average(results.map((result) => result.answerKeywordCoverage)),
+        refusalAccuracy: average(results.filter((result) => result.expectedRefusal).map((result) => (result.refused === true ? 1 : 0))),
+        averageLatencyMs: average(results.map((result) => result.latencyMs)) ?? 0,
+      },
+      cases: results,
     }
   }
 }

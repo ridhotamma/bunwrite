@@ -1,6 +1,6 @@
 {
   "name": "@bunwrite/mcp",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Model Context Protocol server for Bunwrite: let AI agents inspect and operate a Bunwrite project through a compact, searchable tool catalog.",
   "license": "MIT AND BSD-3-Clause",
   "keywords": [
