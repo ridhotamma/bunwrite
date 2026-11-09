@@ -201,6 +201,8 @@ describe('vectors console', () => {
     expect(page).toContain('Run an evaluation')
     expect(page).toContain('Cases JSON')
     expect(page).toContain('No evaluation runs')
+    expect(page).toContain('<span class="field-label">Answers</span>')
+    expect(page).toContain('Generate answers')
 
     const run = await form('/console/vectors/knowledge/evaluation', {
       name: 'smoke',

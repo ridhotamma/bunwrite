@@ -128,10 +128,13 @@ export function evaluationView(
                 (run) => html`<option value="${run.$id}" ${run.$id === draft.baselineId ? 'selected' : ''}>${run.name || run.$id} · recall ${percent(run.metrics.recallAtK)}</option>`,
               )}
             </select><small>Compares recall, MRR, nDCG and keyword coverage.</small></label>
-            <label class="check"
-              ><input type="checkbox" name="generate" ${draft.generate ? 'checked' : ''} /><span>Generate answers</span
-              ><small>Answer keyword coverage and refusal accuracy need a chat model.</small></label
-            >
+            <div>
+              <span class="field-label">Answers</span>
+              <label class="check"
+                ><input type="checkbox" name="generate" ${draft.generate ? 'checked' : ''} /><span>Generate answers</span
+                ><small>Answer keyword coverage and refusal accuracy need a chat model.</small></label
+              >
+            </div>
           </div>
           <div class="fields">
             <label class="check"><input type="checkbox" name="hybrid" ${draft.hybrid ? 'checked' : ''} /><span>Hybrid search</span></label>

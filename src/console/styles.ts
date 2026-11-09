@@ -266,6 +266,7 @@ th.select-col,td.select-col{width:36px;padding-left:12px;padding-right:0;text-al
 label{display:block;margin-bottom:12px;font-weight:450}
 label>input,label>select,label>textarea{display:block;width:100%;margin-top:4px}
 label small,.help{display:block;color:var(--subdued);font-size:12px;margin-top:4px}
+.field-label{display:block;font-weight:450;line-height:20px;margin-bottom:4px}
 input,select,textarea{font:inherit;color:var(--text);background:#fdfdfd;border:1px solid var(--border-strong);border-radius:8px;padding:6px 12px;min-height:32px}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--text)}
 input[type=checkbox],input[type=radio]{accent-color:var(--primary)}
