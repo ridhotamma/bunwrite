@@ -10,9 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - id: bun
+        uses: oven-sh/setup-bun@v2
+        continue-on-error: true
         with:
-          bun-version: latest
+          bun-version: 1.4.4
+      # GitHub release downloads occasionally return 504. The npm package ships
+      # the same binary and is served from the npm registry, so use it as a
+      # fallback instead of failing the whole test job.
+      - name: Install Bun from npm fallback
+        if: steps.bun.outcome == 'failure'
+        run: |
+          npm install -g bun@1.4.4 --fetch-retries=5 --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=20000
+          bun --version
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run format:check
