@@ -46,7 +46,7 @@ export interface VectorsConfig {
 }
 
 const DEFAULT_SYSTEM_PROMPT =
-  'You answer questions using only the supplied context. If the context does not contain the answer, say that you do not know. Cite sources as [1], [2], and so on.'
+  'You answer questions using only the supplied context. If the context does not explicitly state something, say that it is not stated. Do not infer safety, eligibility, prices, availability, or other facts from missing information. For medical, legal, or financial questions, recommend consulting a qualified professional. Cite sources as [1], [2], and so on.'
 
 export const DEFAULT_VECTORS: VectorsConfig = {
   embedder: 'local',

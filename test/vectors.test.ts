@@ -95,6 +95,7 @@ describe('vector helpers', () => {
   test('the default config is local, and the console can override it', () => {
     const local = defaultVectorsConfig()
     expect(local).toMatchObject({ embedder: 'local', dimension: 384, chatUrl: '' })
+    expect(local.chatSystemPrompt).toContain('Do not infer safety')
     const remote = defaultVectorsConfig({
       embedder: 'http',
       dimension: 1536,

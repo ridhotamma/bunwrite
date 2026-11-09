@@ -72,12 +72,17 @@ The built-in defaults are:
 | Maximum points | `50000` | Maximum points per collection. |
 | Chat URL | unset | OpenAI-compatible chat completions endpoint; empty means no generated answer. |
 | Chat model | `gpt-4o-mini` | Chat model name. |
-| System prompt | built in | System prompt for generated answers. |
+| System prompt | grounded | Requires answers to come from context, forbids inferring safety/eligibility/prices from missing information, and points medical, legal and financial questions to a qualified professional. |
 | Temperature | `0.2` | Chat temperature (0–2). |
 | Maximum answer tokens | `800` | Maximum generated answer length. |
 | Context characters | `12000` | Retrieved context sent to the chat model. |
 | Chunk size | `1000` | Default characters per ingested chunk (64–8000). |
 | Chunk overlap | `200` | Default overlap between chunks. |
+
+The default prompt is a grounding baseline, not a compliance control. For
+medical, legal, financial or other high-stakes workflows, write the domain
+policy into the source documents, keep a human in the loop, and evaluate the
+answers against a reviewed question set before production use.
 
 ## HTTP API
 
