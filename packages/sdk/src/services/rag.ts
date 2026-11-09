@@ -9,6 +9,8 @@ export interface RAGIngestParams {
     /** Re-ingesting the same ID replaces that document's chunks. */
     documentId?: string;
     metadata?: Record<string, unknown>;
+    /** Appwrite-style permissions applied to every chunk. */
+    permissions?: string[];
     /** Characters per chunk, 64 to 8000. */
     chunkSize?: number;
     /** Characters shared by adjacent chunks. */
@@ -23,6 +25,7 @@ export interface RAGIngestFileParams {
     filename?: string;
     documentId?: string;
     metadata?: Record<string, unknown>;
+    permissions?: string[];
     chunkSize?: number;
     chunkOverlap?: number;
 }
@@ -38,6 +41,22 @@ export interface RAGIngestResult {
     $createdAt: string;
 }
 
+export interface RAGIngestJob {
+    jobId: string;
+    status: string;
+    collectionId: string;
+    documentId: string;
+}
+
+export interface RAGJobStatus {
+    id: string;
+    status: string;
+    attempts: number;
+    result: unknown;
+    errors: string;
+    createdAt: string;
+}
+
 export interface RAGQueryParams {
     collectionId: string;
     query: string;
@@ -51,6 +70,8 @@ export interface RAGQueryParams {
     rerank?: boolean;
     /** Vector share of the hybrid score, 0..1. */
     alpha?: number;
+    /** Ask the chat model to plan multiple retrieval queries (requires generation). */
+    multiHop?: boolean;
 }
 
 export interface RAGQueryResult {
@@ -60,6 +81,12 @@ export interface RAGQueryResult {
     context: string;
     sources: VectorMatch[];
     model: string | null;
+    security?: {
+        redactions: number;
+        redactionKinds: string[];
+        suspiciousSources: string[];
+    };
+    plannedQueries?: string[];
     usage?: unknown;
 }
 
@@ -81,6 +108,16 @@ export interface RAGEvaluateParams {
     hybrid?: boolean;
     rerank?: boolean;
     alpha?: number;
+    /** Display name for a saved run. */
+    name?: string;
+    /** Save the run; defaults to true. */
+    save?: boolean;
+    /** Compare against an earlier run in the same collection. */
+    baselineId?: string;
+    /** Record whether the result should fail a regression gate. */
+    failOnRegression?: boolean;
+    /** Plan multiple retrieval queries per case. */
+    multiHop?: boolean;
 }
 
 export interface RAGEvalCaseResult {
@@ -100,8 +137,19 @@ export interface RAGEvalCaseResult {
     error?: string;
 }
 
+export interface RAGEvaluationRegression {
+    baselineId: string;
+    baselineName: string;
+    deltas: Record<string, number | null>;
+    failures: string[];
+    passed: boolean;
+}
+
 export interface RAGEvaluateResult {
+    $id?: string;
     collectionId: string;
+    name?: string;
+    saved?: boolean;
     total: number;
     passed: number;
     failed: number;
@@ -114,7 +162,30 @@ export interface RAGEvaluateResult {
         refusalAccuracy: number | null;
         averageLatencyMs: number;
     };
+    regression?: RAGEvaluationRegression;
     cases: RAGEvalCaseResult[];
+}
+
+export interface RAGEvaluationSummary {
+    $id: string;
+    collectionId: string;
+    name: string;
+    total: number;
+    passed: number;
+    failed: number;
+    metrics: RAGEvaluateResult['metrics'];
+    $createdAt: string;
+    $updatedAt: string;
+}
+
+export interface RAGEvaluationRun extends RAGEvaluationSummary {
+    dataset: unknown;
+    result: RAGEvaluateResult;
+}
+
+export interface RAGEvaluationList {
+    total: number;
+    evaluations: RAGEvaluationSummary[];
 }
 
 /**
@@ -138,9 +209,32 @@ export class RAG {
             documentId: params.documentId,
             text: params.text,
             metadata: params.metadata,
+            permissions: params.permissions,
             chunkSize: params.chunkSize,
             chunkOverlap: params.chunkOverlap,
         }));
+    }
+
+    /** Queue a text ingest; poll getJob for completion. */
+    enqueueIngest(params: RAGIngestParams): Promise<RAGIngestJob> {
+        requireString(params?.collectionId, 'collectionId');
+        requireString(params?.text, 'text');
+        return this._call('/rag/ingest', clean({
+            collectionId: params.collectionId,
+            documentId: params.documentId,
+            text: params.text,
+            metadata: params.metadata,
+            permissions: params.permissions,
+            chunkSize: params.chunkSize,
+            chunkOverlap: params.chunkOverlap,
+            async: true,
+        }));
+    }
+
+    /** Status of an asynchronous ingest job. */
+    getJob(params: { jobId: string }): Promise<RAGJobStatus> {
+        requireString(params?.jobId, 'jobId');
+        return this._request('get', `/rag/jobs/${encodeURIComponent(params.jobId)}`);
     }
 
     /** Upload a file, extract its text, chunk and embed it. */
@@ -156,6 +250,7 @@ export class RAG {
                 file,
                 documentId: params.documentId,
                 metadata: params.metadata,
+                permissions: params.permissions,
                 chunkSize: params.chunkSize,
                 chunkOverlap: params.chunkOverlap,
             }),
@@ -175,6 +270,7 @@ export class RAG {
             hybrid: params.hybrid,
             rerank: params.rerank,
             alpha: params.alpha,
+            multiHop: params.multiHop,
         }));
     }
 
@@ -193,16 +289,43 @@ export class RAG {
             hybrid: params.hybrid,
             rerank: params.rerank,
             alpha: params.alpha,
+            name: params.name,
+            save: params.save,
+            baselineId: params.baselineId,
+            failOnRegression: params.failOnRegression,
+            multiHop: params.multiHop,
         }));
     }
 
-    private _call(path: string, params: Payload): Promise<any> {
+    /** Saved evaluation runs, newest first. */
+    listEvaluations(params: { collectionId: string; limit?: number }): Promise<RAGEvaluationList> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._request('get', '/rag/evaluations', clean({ collectionId: params.collectionId, limit: params.limit }));
+    }
+
+    /** Read one saved evaluation run, including case results. */
+    getEvaluation(params: { evaluationId: string }): Promise<RAGEvaluationRun> {
+        requireString(params?.evaluationId, 'evaluationId');
+        return this._request('get', `/rag/evaluations/${encodeURIComponent(params.evaluationId)}`);
+    }
+
+    /** Delete a saved evaluation run. */
+    deleteEvaluation(params: { evaluationId: string }): Promise<void> {
+        requireString(params?.evaluationId, 'evaluationId');
+        return this._request('delete', `/rag/evaluations/${encodeURIComponent(params.evaluationId)}`).then(() => undefined);
+    }
+
+    private _request(method: string, path: string, params: Payload = {}): Promise<any> {
         return this.client.call(
-            'post',
+            method,
             new URL(this.client.config.endpoint + path),
             { 'X-Bunwrite-Project': this.client.config.project, accept: 'application/json', 'content-type': 'application/json' },
             params,
         );
+    }
+
+    private _call(path: string, params: Payload): Promise<any> {
+        return this._request('post', path, params);
     }
 }
 

@@ -148,6 +148,10 @@ export const vectorPoints = sqliteTable(
     embedding: text('embedding').notNull(),
     norm: real('norm').notNull().default(0),
     dimension: integer('dimension').notNull(),
+    /** Appwrite-style permissions; `read("users")`, `read("team:...")`, etc. Empty means API keys only. */
+    permissions: json<string[]>('permissions')
+      .notNull()
+      .default(sql`'[]'`),
     ...timestamps,
   },
   (t) => [
@@ -155,6 +159,44 @@ export const vectorPoints = sqliteTable(
     index('_vector_points_collection').on(t.collectionId),
     index('_vector_points_document').on(t.collectionId, t.documentId),
   ],
+)
+
+export const vectorEvaluationRuns = sqliteTable(
+  '_vector_evaluation_runs',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull(),
+    collectionId: text('collection_id').notNull(),
+    name: text('name').notNull().default(''),
+    dataset: json<unknown>('dataset').notNull(),
+    result: json<unknown>('result').notNull(),
+    total: integer('total').notNull().default(0),
+    passed: integer('passed').notNull().default(0),
+    failed: integer('failed').notNull().default(0),
+    metrics: json<Record<string, unknown>>('metrics')
+      .notNull()
+      .default(sql`'{}'`),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex('_vector_evaluation_runs_id').on(t.id), index('_vector_evaluation_runs_collection').on(t.collectionId, t.createdAt)],
+)
+
+export const vectorAuditLogs = sqliteTable(
+  '_vector_audit_logs',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    id: text('id').notNull(),
+    collectionId: text('collection_id').notNull(),
+    userId: text('user_id'),
+    callerKind: text('caller_kind').notNull().default('guest'),
+    query: text('query').notNull(),
+    answer: text('answer').notNull().default(''),
+    sourceIds: json<string[]>('source_ids').notNull(),
+    security: json<Record<string, unknown>>('security').notNull(),
+    latencyMs: integer('latency_ms').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('_vector_audit_logs_id').on(t.id), index('_vector_audit_logs_collection').on(t.collectionId, t.createdAt)],
 )
 
 export const transactions = sqliteTable('_transactions', {

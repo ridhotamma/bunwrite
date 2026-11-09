@@ -84,6 +84,15 @@ async function main(): Promise<void> {
     passed: number
     failed: number
     metrics: Record<string, number | null>
+    $id?: string
+    name?: string
+    saved?: boolean
+    regression?: {
+      baselineId: string
+      baselineName: string
+      failures: string[]
+      passed: boolean
+    }
     cases: Array<{
       id: string
       query: string
@@ -113,6 +122,11 @@ async function main(): Promise<void> {
     console.log(`  answers   ${percentage(result.metrics.answerKeywordCoverage ?? null)}`)
     console.log(`  refusal   ${percentage(result.metrics.refusalAccuracy ?? null)}`)
     console.log(`  latency   ${Math.round(result.metrics.averageLatencyMs ?? 0)} ms average`)
+    if (result.$id) console.log(`  run       ${result.$id}${result.name ? ` (${result.name})` : ''}`)
+    if (result.regression) {
+      console.log(`  baseline  ${result.regression.baselineName || result.regression.baselineId}: ${result.regression.passed ? 'PASS' : 'REGRESSION'}`)
+      if (result.regression.failures.length > 0) console.log(`            ${result.regression.failures.join(', ')}`)
+    }
 
     console.log('\nCases')
     for (const entry of result.cases) {
@@ -126,7 +140,8 @@ async function main(): Promise<void> {
     console.log('')
   }
 
-  if (result.failed > 0) process.exitCode = 1
+  const regressionFailed = dataset.failOnRegression === true && result.regression?.passed === false
+  if (result.failed > 0 || regressionFailed) process.exitCode = 1
 }
 
 await main()

@@ -65,8 +65,9 @@ Deployment, upgrade, backups, TLS and production tuning:
   domains.
 - **Storage and backups** on local disk or any S3-compatible bucket.
 - **Vectors and RAG** with local or OpenAI-compatible embeddings, hybrid
-  BM25 + vector retrieval, local or HTTP reranking, and a golden-set evaluation
-  API. PDF, Markdown and office documents are converted to text before
+  BM25 + vector retrieval, local or HTTP reranking, point-level ACLs, persisted
+  golden-set evaluation, PII redaction, prompt-injection signals and audit
+  trails. PDF, Markdown and office documents are converted to text before
   embedding.
 - **HTML to PDF or image** with headless Chromium.
 - **Console, queue, request logs, traces, metrics and feature flags** built in.

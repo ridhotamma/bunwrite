@@ -1019,6 +1019,7 @@ export const CATALOG: Operation[] = [
         hybrid: boolean('Fuse BM25 lexical relevance with vector similarity; defaults to the project setting.'),
         rerank: boolean('Rerank the best candidates; defaults to the project setting.'),
         alpha: number('Vector share of the hybrid score, 0..1.'),
+        multiHop: boolean('Use the chat model to plan multiple retrieval queries.'),
       },
       ['collectionId', 'query'],
     ),
@@ -1032,6 +1033,7 @@ export const CATALOG: Operation[] = [
         hybrid: args.hybrid,
         rerank: args.rerank,
         alpha: args.alpha,
+        multiHop: args.multiHop,
       }),
   }),
   op({
@@ -1050,6 +1052,7 @@ export const CATALOG: Operation[] = [
         hybrid: boolean('Override hybrid search for the evaluation run.'),
         rerank: boolean('Override reranking for the evaluation run.'),
         alpha: number('Vector share of the hybrid score, 0..1.'),
+        multiHop: boolean('Plan multiple retrieval queries per case.'),
       },
       ['collectionId', 'cases'],
     ),
@@ -1063,6 +1066,7 @@ export const CATALOG: Operation[] = [
         hybrid: args.hybrid,
         rerank: args.rerank,
         alpha: args.alpha,
+        multiHop: args.multiHop,
       }),
   }),
 

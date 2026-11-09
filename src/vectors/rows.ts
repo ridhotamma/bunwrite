@@ -30,6 +30,16 @@ export function collectionModel(row: VectorCollectionRow, points = 0): VectorCol
   }
 }
 
+export function parseRowPermissions(value: unknown): string[] {
+  if (typeof value !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 export function pointModel(row: VectorPointRow): VectorPoint {
   return {
     $id: row.id,
@@ -39,5 +49,6 @@ export function pointModel(row: VectorPointRow): VectorPoint {
     chunkIndex: Number(row.chunk_index),
     content: row.content,
     metadata: parseRowMetadata(row.metadata),
+    permissions: parseRowPermissions(row.permissions),
   }
 }

@@ -22,6 +22,7 @@ export interface VectorPointRow {
   embedding: string
   norm: number
   dimension: number
+  permissions: string
   created_at: string
   updated_at: string
 }
@@ -45,6 +46,8 @@ export interface VectorPoint {
   chunkIndex: number
   content: string
   metadata: Record<string, unknown>
+  /** Appwrite-style permissions such as `read("users")` or `read("team:acme")`. */
+  permissions: string[]
 }
 
 export interface VectorMatch extends VectorPoint {
@@ -69,6 +72,7 @@ export interface StoredPoint {
   chunkIndex: number
   content: string
   metadata: Record<string, unknown>
+  permissions: string[]
   vector: number[]
 }
 
@@ -86,6 +90,8 @@ export interface PointInput {
   metadata?: unknown
   documentId?: unknown
   chunkIndex?: unknown
+  /** Appwrite-style permissions; omitted points are API-key-only. */
+  permissions?: unknown
 }
 
 export interface SearchInput {
@@ -102,6 +108,34 @@ export interface SearchInput {
   alpha?: unknown
 }
 
+/** A non-privileged reader. Omit it for API keys and console admins, which bypass ACLs. */
+export interface VectorReadAccess {
+  roles: Set<string>
+  /** Used for audit rows when auditing is enabled. */
+  userId?: string
+}
+
+export interface VectorQuerySecurity {
+  /** PII values replaced before the context reached the chat model. */
+  redactions: number
+  redactionKinds: string[]
+  /** Source document IDs that contain instruction-like text. */
+  suspiciousSources: string[]
+}
+
+export interface VectorAuditEntry {
+  $id: string
+  collectionId: string
+  userId: string | null
+  callerKind: string
+  query: string
+  answer: string
+  sourceIds: string[]
+  security: VectorQuerySecurity
+  latencyMs: number
+  $createdAt: string
+}
+
 export interface IngestInput {
   collectionId?: unknown
   documentId?: unknown
@@ -109,6 +143,8 @@ export interface IngestInput {
   /** A File/Blob upload; the server extracts text before chunking. */
   file?: unknown
   metadata?: unknown
+  /** Appwrite-style permissions applied to every chunk; omitted means API-key-only. */
+  permissions?: unknown
   chunkSize?: unknown
   chunkOverlap?: unknown
 }
@@ -123,6 +159,13 @@ export interface IngestResult {
   $createdAt: string
 }
 
+export interface ReindexResult {
+  collectionId: string
+  points: number
+  embedder: string
+  dimension: number
+}
+
 export interface QueryInput extends IngestInput {
   query?: unknown
   topK?: unknown
@@ -131,6 +174,8 @@ export interface QueryInput extends IngestInput {
   hybrid?: unknown
   rerank?: unknown
   alpha?: unknown
+  /** Ask the chat model to plan multiple retrieval queries (requires generation). */
+  multiHop?: unknown
 }
 
 export interface EvalCaseInput {
@@ -150,6 +195,16 @@ export interface EvaluateInput {
   hybrid?: unknown
   rerank?: unknown
   alpha?: unknown
+  /** Ask the chat model to plan multiple retrieval queries per case. */
+  multiHop?: unknown
+  /** Display name for a saved evaluation run. */
+  name?: unknown
+  /** Store the run; defaults to true. */
+  save?: unknown
+  /** Compare against an earlier run in the same collection. */
+  baselineId?: unknown
+  /** Mark the result when metrics regress against the baseline. */
+  failOnRegression?: unknown
 }
 
 export interface EvalCaseResult {
@@ -175,8 +230,21 @@ export interface EvalCaseResult {
   error?: string
 }
 
+export interface EvaluationRegression {
+  baselineId: string
+  baselineName: string
+  /** Metric name to current-minus-baseline delta. */
+  deltas: Record<string, number | null>
+  /** Metrics that fell beyond the tolerance. */
+  failures: string[]
+  passed: boolean
+}
+
 export interface EvaluateResult {
+  $id?: string
   collectionId: string
+  name?: string
+  saved?: boolean
   total: number
   passed: number
   failed: number
@@ -189,5 +257,24 @@ export interface EvaluateResult {
     refusalAccuracy: number | null
     averageLatencyMs: number
   }
+  regression?: EvaluationRegression
   cases: EvalCaseResult[]
+}
+
+/** A saved evaluation without the full case/source payload. */
+export interface EvaluationRunSummary {
+  $id: string
+  collectionId: string
+  name: string
+  total: number
+  passed: number
+  failed: number
+  metrics: EvaluateResult['metrics']
+  $createdAt: string
+  $updatedAt: string
+}
+
+export interface EvaluationRun extends EvaluationRunSummary {
+  dataset: unknown
+  result: EvaluateResult
 }

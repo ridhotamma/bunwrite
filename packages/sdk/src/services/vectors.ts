@@ -22,6 +22,8 @@ export interface VectorPoint {
     chunkIndex: number;
     content: string;
     metadata: Record<string, unknown>;
+    /** Appwrite-style permissions; API keys bypass them. */
+    permissions: string[];
 }
 
 export interface VectorMatch extends VectorPoint {
@@ -37,6 +39,28 @@ export interface VectorPointList {
 export interface VectorSearchResult {
     total: number;
     points: VectorMatch[];
+}
+
+export interface VectorAuditEntry {
+    $id: string;
+    collectionId: string;
+    userId: string | null;
+    callerKind: string;
+    query: string;
+    answer: string;
+    sourceIds: string[];
+    security: {
+        redactions: number;
+        redactionKinds: string[];
+        suspiciousSources: string[];
+    };
+    latencyMs: number;
+    $createdAt: string;
+}
+
+export interface VectorAuditList {
+    total: number;
+    audit: VectorAuditEntry[];
 }
 
 export interface VectorCollectionList {
@@ -62,6 +86,8 @@ export interface VectorPointInput {
     metadata?: Record<string, unknown>;
     documentId?: string;
     chunkIndex?: number;
+    /** Appwrite-style permissions; omitted points are API-key-only. */
+    permissions?: string[];
 }
 
 export type UpsertVectorPointParams = Omit<VectorPointInput, 'id'> & {
@@ -115,6 +141,13 @@ export interface VectorDocumentList {
     documents: VectorDocument[];
 }
 
+export interface VectorReindexResult {
+    collectionId: string;
+    points: number;
+    embedder: string;
+    dimension: number;
+}
+
 export interface VectorIngestResult {
     collectionId: string;
     documentId: string;
@@ -135,6 +168,8 @@ export interface VectorIngestDocumentParams {
     /** Re-ingesting the same ID replaces that document's chunks. */
     documentId?: string;
     metadata?: Record<string, unknown>;
+    /** Appwrite-style permissions applied to every chunk. */
+    permissions?: string[];
     /** Characters per chunk, 64 to 8000. */
     chunkSize?: number;
     /** Characters shared by adjacent chunks. */
@@ -181,6 +216,12 @@ export class Vectors {
         return this._call('delete', `/vectors/${encodeURIComponent(params.collectionId)}`).then(() => undefined);
     }
 
+    /** Re-embed every point with the project's active embedder. */
+    reindex(params: { collectionId: string }): Promise<VectorReindexResult> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/reindex`);
+    }
+
     /** List points, optionally only those belonging to one document. */
     listPoints(params: VectorListParams): Promise<VectorPointList> {
         requireString(params?.collectionId, 'collectionId');
@@ -208,6 +249,7 @@ export class Vectors {
             metadata: params.metadata,
             documentId: params.documentId,
             chunkIndex: params.chunkIndex,
+            permissions: params.permissions,
         });
         if (typeof params.pointId === 'string' && params.pointId) {
             return this._call('put', `/vectors/${encodeURIComponent(params.collectionId)}/points/${encodeURIComponent(params.pointId)}`, payload);
@@ -269,6 +311,7 @@ export class Vectors {
                 file,
                 documentId: params.documentId,
                 metadata: params.metadata,
+                permissions: params.permissions,
                 chunkSize: params.chunkSize,
                 chunkOverlap: params.chunkOverlap,
             }),
@@ -284,6 +327,18 @@ export class Vectors {
             `/vectors/${encodeURIComponent(params.collectionId)}/documents/${encodeURIComponent(params.documentId)}`,
             clean({ limit: params.limit, offset: params.offset }),
         );
+    }
+
+    /** Recent retrieval audit rows for this collection (API key only). */
+    listAudit(params: { collectionId: string; limit?: number }): Promise<VectorAuditList> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}/audit`, clean({ limit: params.limit }));
+    }
+
+    /** Delete the audit trail for this collection. */
+    deleteAudit(params: { collectionId: string }): Promise<{ deleted: number }> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('delete', `/vectors/${encodeURIComponent(params.collectionId)}/audit`);
     }
 
     /** Delete every chunk belonging to one document. */

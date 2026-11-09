@@ -196,6 +196,31 @@ describe('vectors console', () => {
     await form('/console/vectors/knowledge/documents/uploaded-handbook/delete', {})
   })
 
+  test('the evaluation dashboard runs a golden set and stores history', async () => {
+    const page = await (await get('/console/vectors/knowledge/evaluation')).text()
+    expect(page).toContain('Run an evaluation')
+    expect(page).toContain('Cases JSON')
+    expect(page).toContain('No evaluation runs')
+
+    const run = await form('/console/vectors/knowledge/evaluation', {
+      name: 'smoke',
+      dataset: JSON.stringify([{ id: 'database', query: 'Which database does Bunwrite use?', expectedDocuments: ['handbook'], expectedKeywords: ['SQLite'] }]),
+      topK: '2',
+      hybrid: 'on',
+      rerank: 'on',
+    })
+    expect(run.status).toBe(200)
+    const result = await run.text()
+    expect(result).toContain('Result')
+    expect(result).toContain('Recall@k')
+    expect(result).toContain('Pass')
+    expect(result).toContain('smoke')
+
+    const history = await (await get('/console/vectors/knowledge/evaluation')).text()
+    expect(history).toContain('smoke')
+    expect(history).toContain('/evaluation?run=')
+  })
+
   test('documents and the collection can be deleted', async () => {
     const deleted = await form('/console/vectors/knowledge/documents/handbook/delete', {})
     expect(deleted.status).toBe(303)
@@ -236,6 +261,7 @@ describe('vectors console', () => {
     expect(page).toContain('action="/console/settings/vectors/embedding"')
     expect(page).toContain('action="/console/settings/vectors/answers"')
     expect(page).toContain('action="/console/settings/vectors/retrieval"')
+    expect(page).toContain('action="/console/settings/vectors/guardrails"')
     expect(page).toContain('action="/console/settings/vectors/limits"')
 
     const retrieval = await form('/console/settings/vectors/retrieval', {
@@ -246,6 +272,8 @@ describe('vectors console', () => {
       rerankModel: 'rerank-test',
       rerankApiKey: 'rerank-key',
       rerankCandidates: '40',
+      multiHop: 'on',
+      multiHopQueries: '4',
     })
     expect(retrieval.status).toBe(303)
     expect(server.config.vectors).toMatchObject({
@@ -256,8 +284,14 @@ describe('vectors console', () => {
       rerankModel: 'rerank-test',
       rerankApiKey: 'rerank-key',
       rerankCandidates: 40,
+      multiHop: true,
+      multiHopQueries: 4,
     })
     expect(server.services.vectors.rerankerName).toBe('http:rerank-test')
+
+    const guardrails = await form('/console/settings/vectors/guardrails', { redactPii: 'on', promptInjectionGuard: 'on', auditQueries: 'on' })
+    expect(guardrails.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({ redactPii: true, promptInjectionGuard: true, auditQueries: true })
 
     const limits = await form('/console/settings/vectors/limits', { maxPoints: '1200', chunkSize: '600', chunkOverlap: '100' })
     expect(limits.status).toBe(303)
@@ -326,6 +360,11 @@ describe('vectors console', () => {
       rerank: true,
       rerankUrl: '',
       rerankCandidates: 0,
+      redactPii: false,
+      promptInjectionGuard: true,
+      auditQueries: false,
+      multiHop: false,
+      multiHopQueries: 3,
     })
     expect(server.services.vectors.canAnswer).toBe(false)
     expect(server.services.vectors.embedderName).toBe('local:64')

@@ -1,4 +1,5 @@
 /** Input validation shared by the service and the HTTP layer. */
+import { aggregatePermissions, grants } from '~/auth/permissions'
 import { err } from '~/lib/errors'
 import { MAX_CONTENT, MAX_METADATA, MAX_POINT_ID } from './limits'
 
@@ -57,6 +58,22 @@ export function metadataOf(value: unknown): Record<string, unknown> {
   const text = JSON.stringify(value)
   if (text.length > MAX_METADATA) throw invalid(`Param "metadata" must be at most ${MAX_METADATA} bytes of JSON.`)
   return value as Record<string, unknown>
+}
+
+/** Validate and normalise Appwrite-style point/document permissions. */
+export function permissionsOf(value: unknown): string[] {
+  if (value === undefined || value === null || value === '') return []
+  try {
+    return aggregatePermissions(value, ['read', 'update', 'delete']) ?? []
+  } catch {
+    throw invalid('Param "permissions" must be an array of Appwrite-style permission strings.')
+  }
+}
+
+/** A point is readable by a non-privileged caller only when a read grant matches its roles. */
+export function canReadPoint(permissions: readonly string[], access: { roles: Set<string> } | undefined): boolean {
+  if (!access) return true
+  return grants([...permissions], 'read', access.roles)
 }
 
 function lookup(metadata: Record<string, unknown>, key: string): unknown {

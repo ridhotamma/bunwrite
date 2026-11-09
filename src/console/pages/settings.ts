@@ -352,6 +352,10 @@ export function settingsPages(router: ConsoleRouter): void {
     if (!Number.isInteger(candidates) || candidates < 0 || candidates > 500) {
       throw err('general_argument_invalid', 'Rerank candidates must be a whole number between 0 and 500.')
     }
+    const multiHopQueries = Number(f.multiHopQueries ?? 3)
+    if (!Number.isInteger(multiHopQueries) || multiHopQueries < 1 || multiHopQueries > 5) {
+      throw err('general_argument_invalid', 'Planned queries must be a whole number between 1 and 5.')
+    }
     await saveVectors(ctx, {
       hybridSearch: checked(f.hybridSearch),
       hybridAlpha: alpha,
@@ -360,8 +364,20 @@ export function settingsPages(router: ConsoleRouter): void {
       rerankApiKey: String(f.rerankApiKey ?? '').trim() || current.rerankApiKey,
       rerankModel: value(f, 'rerankModel'),
       rerankCandidates: candidates,
+      multiHop: checked(f.multiHop),
+      multiHopQueries,
     })
     return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Retrieval settings saved' })
+  })
+
+  router.post(`${SETTINGS}/vectors/guardrails`, async ({ ctx }) => {
+    const f = ctx.form
+    await saveVectors(ctx, {
+      redactPii: checked(f.redactPii),
+      promptInjectionGuard: checked(f.promptInjectionGuard),
+      auditQueries: checked(f.auditQueries),
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Guardrails saved' })
   })
 
   router.post(`${SETTINGS}/vectors/limits`, async ({ ctx }) => {

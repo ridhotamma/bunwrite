@@ -14,6 +14,8 @@ export interface ChunkOptions {
 export interface Chunk {
   text: string
   index: number
+  /** Markdown/HTML heading path, when the document has structure. */
+  section?: string
 }
 
 const DEFAULT_SIZE = 1000
@@ -52,6 +54,48 @@ export function chunkText(text: string, options: Partial<ChunkOptions> = {}): Ch
     }
     // Always move forward, even when one word is larger than the overlap.
     start = next > start ? next : end
+  }
+  return chunks
+}
+
+/**
+ * Heading-aware chunking for Markdown. Each chunk carries its heading path so
+ * retrieved chunks remain self-describing and a section does not lose context
+ * when it is split.
+ */
+export function chunkMarkdown(text: string, options: Partial<ChunkOptions> = {}): Chunk[] {
+  const normalized = text.replace(/\r\n?/g, '\n')
+  const sections: { heading: string; body: string }[] = []
+  const stack: { level: number; title: string }[] = []
+  let body: string[] = []
+  const flush = () => {
+    const content = body.join('\n').trim()
+    if (content) sections.push({ heading: stack.map((entry) => entry.title).join(' / '), body: content })
+    body = []
+  }
+  for (const line of normalized.split('\n')) {
+    const heading = /^(#{1,6})\s+(.+?)\s*#*$/.exec(line)
+    if (!heading) {
+      body.push(line)
+      continue
+    }
+    flush()
+    const level = heading[1]!.length
+    while (stack.length > 0 && stack[stack.length - 1]!.level >= level) stack.pop()
+    stack.push({ level, title: heading[2]!.trim() })
+  }
+  flush()
+  if (sections.length === 0) return chunkText(text, options)
+
+  const chunks: Chunk[] = []
+  for (const section of sections) {
+    for (const chunk of chunkText(section.body, options)) {
+      chunks.push({
+        text: section.heading ? `${section.heading}\n${chunk.text}` : chunk.text,
+        index: chunks.length,
+        ...(section.heading ? { section: section.heading } : {}),
+      })
+    }
   }
   return chunks
 }

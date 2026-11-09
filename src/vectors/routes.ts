@@ -5,6 +5,7 @@
  *   POST   /vectors                                  create a collection
  *   GET    /vectors/:collectionId                    collection details
  *   DELETE /vectors/:collectionId                    drop a collection and its points
+ *   POST   /vectors/:collectionId/reindex            re-embed every point with the active embedder
  *
  *   GET    /vectors/:collectionId/points             list points
  *   POST   /vectors/:collectionId/points             upsert one point or a batch
@@ -12,6 +13,8 @@
  *   PUT    /vectors/:collectionId/points/:pointId    upsert one point
  *   DELETE /vectors/:collectionId/points/:pointId    delete one point
  *   POST   /vectors/:collectionId/search             similarity search
+ *   GET    /vectors/:collectionId/audit              recent retrieval audit rows
+ *   DELETE /vectors/:collectionId/audit              clear retrieval audit rows
  *
  *   GET    /vectors/:collectionId/documents          list ingested documents
  *   POST   /vectors/:collectionId/documents          upload/chunk/embed a document
@@ -20,8 +23,12 @@
  *   DELETE /vectors/:collectionId/documents/:id      delete one ingested document
  *
  *   POST   /rag/ingest                               chunk, embed and store text or a file
+ *   GET    /rag/jobs/:id                             async ingestion job status
  *   POST   /rag/query                                retrieve context and optionally answer
  *   POST   /rag/evaluate                             run a golden question set and return metrics
+ *   GET    /rag/evaluations                          saved evaluation runs
+ *   GET    /rag/evaluations/:id                      one saved run
+ *   DELETE /rag/evaluations/:id                      delete a saved run
  *
  * Everything needs an API key. A point may carry an explicit `vector`, or
  * `content` that the configured embedder turns into one. Document ingest takes
@@ -34,7 +41,7 @@ import { bool, json, noContent, num, str } from '~/lib/http'
 import { uniqueId } from '~/lib/ids'
 import type { Router } from '~/lib/router'
 import { MAX_FILE_BYTES } from './limits'
-import type { IngestInput, PointInput } from './types'
+import type { IngestInput, PointInput, VectorReadAccess } from './types'
 import { invalid } from './validate'
 
 function pointFrom(value: unknown, fallbackId?: string): PointInput {
@@ -42,6 +49,24 @@ function pointFrom(value: unknown, fallbackId?: string): PointInput {
     throw err('general_argument_invalid', 'Each point must be an object.')
   }
   return { ...(value as PointInput), ...(fallbackId ? { id: fallbackId } : {}) }
+}
+
+/**
+ * Read endpoints accept an API key with the scope, or a signed-in user whose
+ * point permissions grant read. API keys and console admins bypass point ACLs.
+ */
+function requireVectorRead(ctx: AppContext, scope: string): void {
+  if (ctx.caller.kind === 'key') {
+    requireKey(ctx, scope)
+    return
+  }
+  if (ctx.caller.user) return
+  throw err('general_unauthorized_scope', `User (role: guests) missing scopes (["${scope}"])`)
+}
+
+/** Undefined means a privileged reader; a user gets their team/label/user roles. */
+function readAccess(ctx: AppContext): VectorReadAccess | undefined {
+  return ctx.caller.privileged ? undefined : { roles: ctx.caller.roles, userId: ctx.caller.user?.id }
 }
 
 /** Multipart forms carry metadata as JSON text; JSON bodies already carry an object. */
@@ -73,6 +98,7 @@ async function ingestInput(
     documentId: documentId ?? params.documentId,
     text: params.text !== undefined ? params.text : params.content,
     metadata: metadataParam(params.metadata),
+    permissions: params.permissions,
     chunkSize: params.chunkSize,
     chunkOverlap: params.chunkOverlap,
   }
@@ -115,7 +141,7 @@ export function vectorRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/vectors/:collectionId', async ({ ctx, path }) => {
-    requireKey(ctx, 'vectorsdb.collections.read')
+    requireVectorRead(ctx, 'vectorsdb.collections.read')
     return json(await ctx.vectors.getCollection(path.collectionId!))
   })
 
@@ -125,14 +151,23 @@ export function vectorRoutes(router: Router<AppContext>): void {
     return noContent()
   })
 
+  router.post('/vectors/:collectionId/reindex', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.write')
+    return json(await ctx.vectors.reindex(path.collectionId!))
+  })
+
   router.get('/vectors/:collectionId/points', async ({ ctx, path, params }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
     return json(
-      await ctx.vectors.listPoints(path.collectionId!, {
-        documentId: str(params.documentId),
-        limit: num(params.limit),
-        offset: num(params.offset),
-      }),
+      await ctx.vectors.listPoints(
+        path.collectionId!,
+        {
+          documentId: str(params.documentId),
+          limit: num(params.limit),
+          offset: num(params.offset),
+        },
+        readAccess(ctx),
+      ),
     )
   })
 
@@ -148,8 +183,8 @@ export function vectorRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/vectors/:collectionId/points/:pointId', async ({ ctx, path }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
-    return json(await ctx.vectors.getPoint(path.collectionId!, path.pointId!))
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
+    return json(await ctx.vectors.getPoint(path.collectionId!, path.pointId!, readAccess(ctx)))
   })
 
   router.put('/vectors/:collectionId/points/:pointId', async ({ ctx, path, params }) => {
@@ -164,20 +199,33 @@ export function vectorRoutes(router: Router<AppContext>): void {
     return noContent()
   })
 
-  router.post('/vectors/:collectionId/search', async ({ ctx, path, params }) => {
+  router.get('/vectors/:collectionId/audit', async ({ ctx, path, params }) => {
     requireKey(ctx, 'vectorsdb.documents.read')
-    return json(await ctx.vectors.search(path.collectionId!, params))
+    const audit = await ctx.vectors.listAudit(path.collectionId!, num(params.limit))
+    return json({ total: audit.length, audit })
+  })
+
+  router.delete('/vectors/:collectionId/audit', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.write')
+    return json({ deleted: await ctx.vectors.deleteAudit(path.collectionId!) })
+  })
+
+  router.post('/vectors/:collectionId/search', async ({ ctx, path, params }) => {
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
+    return json(await ctx.vectors.search(path.collectionId!, params, readAccess(ctx)))
   })
 
   router.get('/vectors/:collectionId/documents', async ({ ctx, path, params }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
-    const documents = await ctx.vectors.listDocuments(path.collectionId!, num(params.limit))
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
+    const documents = await ctx.vectors.listDocuments(path.collectionId!, num(params.limit), readAccess(ctx))
     return json({ total: documents.length, documents })
   })
 
   router.post('/vectors/:collectionId/documents', async ({ ctx, path, params, request }) => {
     requireKey(ctx, 'vectorsdb.documents.write')
-    return json(await ctx.vectors.ingest(await ingestInput(request, params, path.collectionId!)), 201)
+    const input = await ingestInput(request, params, path.collectionId!)
+    if (bool(params.async, false)) return json(await ctx.vectors.queueIngest(input), 202)
+    return json(await ctx.vectors.ingest(input), 201)
   })
 
   router.put('/vectors/:collectionId/documents/:documentId', async ({ ctx, path, params, request }) => {
@@ -186,12 +234,17 @@ export function vectorRoutes(router: Router<AppContext>): void {
   })
 
   router.get('/vectors/:collectionId/documents/:documentId', async ({ ctx, path, params }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
     return json(
-      await ctx.vectors.listDocumentPoints(path.collectionId!, path.documentId!, {
-        limit: num(params.limit),
-        offset: num(params.offset),
-      }),
+      await ctx.vectors.listDocumentPoints(
+        path.collectionId!,
+        path.documentId!,
+        {
+          limit: num(params.limit),
+          offset: num(params.offset),
+        },
+        readAccess(ctx),
+      ),
     )
   })
 
@@ -202,39 +255,76 @@ export function vectorRoutes(router: Router<AppContext>): void {
 
   router.post('/rag/ingest', async ({ ctx, params, request }) => {
     requireKey(ctx, 'vectorsdb.documents.write')
-    return json(await ctx.vectors.ingest(await ingestInput(request, params, String(params.collectionId ?? ''))), 201)
+    const input = await ingestInput(request, params, String(params.collectionId ?? ''))
+    if (bool(params.async, false)) return json(await ctx.vectors.queueIngest(input), 202)
+    return json(await ctx.vectors.ingest(input), 201)
+  })
+
+  router.get('/rag/jobs/:jobId', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.read')
+    return json(await ctx.vectors.job(path.jobId!))
+  })
+
+  router.get('/rag/evaluations', async ({ ctx, params }) => {
+    requireKey(ctx, 'vectorsdb.documents.read')
+    const collectionId = str(params.collectionId) ?? ''
+    const runs = await ctx.vectors.listEvaluations(collectionId, num(params.limit))
+    return json({ total: runs.length, evaluations: runs })
+  })
+
+  router.get('/rag/evaluations/:evaluationId', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.read')
+    return json(await ctx.vectors.getEvaluation(path.evaluationId!))
+  })
+
+  router.delete('/rag/evaluations/:evaluationId', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.write')
+    await ctx.vectors.deleteEvaluation(path.evaluationId!)
+    return noContent()
   })
 
   router.post('/rag/query', async ({ ctx, params }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
     return json(
-      await ctx.vectors.query({
-        collectionId: params.collectionId,
-        query: params.query !== undefined ? params.query : params.prompt,
-        text: params.text,
-        topK: num(params.topK),
-        filter: params.filter,
-        generate: bool(params.generate, true),
-        hybrid: params.hybrid,
-        rerank: params.rerank,
-        alpha: params.alpha,
-      }),
+      await ctx.vectors.query(
+        {
+          collectionId: params.collectionId,
+          query: params.query !== undefined ? params.query : params.prompt,
+          text: params.text,
+          topK: num(params.topK),
+          filter: params.filter,
+          generate: bool(params.generate, true),
+          hybrid: params.hybrid,
+          rerank: params.rerank,
+          alpha: params.alpha,
+          multiHop: params.multiHop,
+        },
+        readAccess(ctx),
+      ),
     )
   })
 
   router.post('/rag/evaluate', async ({ ctx, params }) => {
-    requireKey(ctx, 'vectorsdb.documents.read')
+    requireVectorRead(ctx, 'vectorsdb.documents.read')
     return json(
-      await ctx.vectors.evaluate({
-        collectionId: params.collectionId,
-        cases: params.cases,
-        topK: num(params.topK),
-        filter: params.filter,
-        generate: bool(params.generate, false),
-        hybrid: params.hybrid,
-        rerank: params.rerank,
-        alpha: params.alpha,
-      }),
+      await ctx.vectors.evaluate(
+        {
+          collectionId: params.collectionId,
+          cases: params.cases,
+          topK: num(params.topK),
+          filter: params.filter,
+          generate: bool(params.generate, false),
+          hybrid: params.hybrid,
+          rerank: params.rerank,
+          alpha: params.alpha,
+          multiHop: params.multiHop,
+          name: params.name,
+          save: params.save,
+          baselineId: params.baselineId,
+          failOnRegression: params.failOnRegression,
+        },
+        readAccess(ctx),
+      ),
     )
   })
 }

@@ -83,6 +83,11 @@ The built-in defaults are:
 | Rerank | on | Reorder the best hybrid candidates before returning the final top-k. |
 | Rerank endpoint | unset | Cohere/Jina-compatible rerank URL; empty uses the local lexical reranker. |
 | Rerank candidates | `0` | Candidate pool passed to the reranker; 0 derives it from top-k. |
+| PII redaction | off | Replace emails, phones, cards, NIK, SSN and IBAN before context reaches the chat model. |
+| Prompt-injection guard | on | Mark context as untrusted and report suspicious sources. |
+| Audit retrieval | off | Store query, answer, sources, redaction and injection metadata. |
+| Multi-hop planning | off | Use the chat model to split a question into multiple retrieval queries. |
+| Planned queries | `3` | Maximum queries, including the original question. |
 | Chunk size | `1000` | Default characters per ingested chunk (64–8000). |
 | Chunk overlap | `200` | Default overlap between chunks. |
 
@@ -125,6 +130,35 @@ Set `hybrid` to `false` for vector-only retrieval, `rerank` to `false` to keep
 the fused order, or `alpha` to `0`/`1` for pure lexical/vector ranking. Hybrid
 search makes one extra statistics pass over the filtered collection; the
 default point cap keeps that predictable.
+
+### Multi-hop query planning
+
+When **Plan multi-hop queries** is enabled, `/rag/query` asks the configured
+chat model for up to five standalone search queries, runs them, and fuses the
+results with reciprocal-rank fusion before generating the answer. The original
+question is always included. The response includes `plannedQueries` when
+planning was used. This costs one extra chat call per question and requires
+`generate: true`.
+
+### Retrieval guardrails
+
+- **PII redaction** replaces emails, phone numbers, card numbers, NIK, SSN and
+  IBAN in the context before it reaches the chat model. Returned sources remain
+  the authorized originals.
+- **Prompt-injection guard** tells the model that retrieved context is untrusted
+  and reports source documents containing instruction-like text in
+  `security.suspiciousSources`. It does not modify the source content.
+- **Audit retrieval** stores the query, answer, source IDs, security metadata
+  and latency in `_vector_audit_logs`. Read or clear it with:
+
+```bash
+curl "$API/vectors/handbook/audit?limit=50" ...
+curl -X DELETE "$API/vectors/handbook/audit" ...
+```
+
+The default prompt is a grounding baseline, not a compliance control. For
+high-stakes workflows, combine it with reviewed source policy, human review and
+audit retention.
 
 ## RAG evaluation
 
@@ -170,6 +204,21 @@ cases require `generate:true` and a configured chat model:
 
 `expectRefusal` is matched against English and Indonesian refusal language; use
 `expectedKeywords` for domain-specific phrasings.
+
+Evaluation runs are saving by default. Set `"save": false` for an ad-hoc run.
+Pass `"baselineId": "<run-id>"` to compare against an earlier run in the same
+collection; the response includes a `regression` object with metric deltas and
+failed checks. Add `"failOnRegression": true` when the runner should treat a
+regression as a failure.
+
+```bash
+curl "$API/rag/evaluations?collectionId=handbook" ...
+curl "$API/rag/evaluations/<run-id>" ...
+curl -X DELETE "$API/rag/evaluations/<run-id>" ...
+```
+
+The console's **Evaluation** tab runs a pasted golden set, shows the metrics,
+lists saved runs, opens a previous run, and lets you delete runs.
 
 The repository includes a CI-friendly runner:
 
@@ -250,6 +299,45 @@ curl "$API/vectors/handbook/points/p1" ...
 curl -X DELETE "$API/vectors/handbook/points/p1" ...
 ```
 
+### Point and document permissions
+
+Every point can carry Appwrite-style permissions. Ingest applies them to every
+chunk of a document:
+
+```json
+{
+  "collectionId": "handbook",
+  "documentId": "hr-policy",
+  "text": "Internal HR policy...",
+  "permissions": ["read(\"users\")", "read(\"team:hr\")"]
+}
+```
+
+`POST /vectors/:collectionId/points` accepts the same `permissions` field.
+API keys and console admins bypass point ACLs. A signed-in user can read only
+points where a `read(...)` grant matches their roles (`users`, `user:<id>`,
+`team:<id>`, `team:<id>/<role>`, `label:<name>`, `member:<membershipId>`).
+
+This is the tenant-isolation primitive:
+
+- Keep each tenant in its own project, or
+- use `read("team:<tenantId>")` and make users members of that team.
+
+Search, point lists, document lists, `/rag/query` and `/rag/evaluate` all
+filter before anything is scored or returned. Ingestion and writes remain
+API-key-only; the application backend is expected to attach permissions when it
+indexes documents.
+
+```bash
+# API key: sees everything
+curl -X POST "$API/vectors/handbook/search" ...
+
+# User session: only points whose read ACL matches the user's roles
+curl -X POST "$API/vectors/handbook/search" \
+  -H "x-appwrite-project: $PROJECT" \
+  -H "x-appwrite-session: $USER_SESSION" ...
+```
+
 ### RAG ingest
 
 `POST /rag/ingest` accepts JSON text, a multipart `file`, or a raw request body.
@@ -314,6 +402,33 @@ curl -X PUT "$API/vectors/handbook/documents/guide" -F file=@guide.md ...  # rep
 curl "$API/vectors/handbook/documents/guide" ...               # chunks of one document
 curl -X DELETE "$API/vectors/handbook/documents/guide" ...     # delete its chunks
 ```
+
+Markdown ingestion is heading-aware: each chunk records a `section` metadata
+path such as `Handbook / Deploy`, and the heading path is included in the text
+sent to the embedder. This keeps section context after a long section is split.
+
+After changing the embedder or dimension, re-embed every point in place:
+
+```bash
+curl -X POST "$API/vectors/handbook/reindex" ...
+```
+
+The call is synchronous. For large collections, run it during a maintenance
+window or from the console's collection Settings tab.
+
+Ingestion can also be queued:
+
+```bash
+curl -X POST "$API/rag/ingest" ... -d '{..., "async":true}'
+# 202 {"jobId":"...","status":"waiting","collectionId":"handbook","documentId":"guide"}
+curl "$API/rag/jobs/<job-id>" ...
+```
+
+The API extracts text synchronously, queues chunking/embedding, and works
+through jobs in the leader process. Jobs survive a restart through the durable
+queue. The console's **Upload** form always uses synchronous ingestion.
+
+The SDK mirrors this with `RAG.enqueueIngest()` and `RAG.getJob()`.
 
 ### RAG query
 
@@ -409,6 +524,17 @@ The MCP catalog includes `vectors_*` and `rag_*` operations.
 - Evaluation is synchronous: each case performs its own retrieval and optional
   chat request. Keep golden sets small enough for the request timeout, or run
   them from the CLI where a long-running process is expected.
+- User-session reads scan points in memory to enforce point ACLs before
+  pagination. API keys and console admins keep the SQL-paged path.
+- Async ingestion queues chunking and embedding, but text extraction stays in the
+  request so invalid files fail immediately. There is no OCR or PDF table
+  extraction yet; scanned PDFs without a text layer are refused and should be
+  OCR'd before upload. Re-indexing is synchronous.
+- Point ACLs are applied to every chunk created by one ingest. Manually added
+  points can have different permissions, but there is no separate document ACL
+  object or permission inheritance beyond that.
+- The built-in store still uses a bounded scan; an external ANN adapter
+  (pgvector, Qdrant, OpenSearch or Vespa) is not implemented yet.
 - Vectors are stored as JSON text. A 384-dimension vector is a few kilobytes;
   the default local embedder keeps collections small.
 - Writes are transactional. Ingest embeds first, then replaces a document's

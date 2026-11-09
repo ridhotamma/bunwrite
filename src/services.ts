@@ -126,6 +126,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
   const vectors = new VectorService(db, config.vectors)
+  vectors.startJobs()
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })
   const webhooks = new WebhookService(

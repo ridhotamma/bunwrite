@@ -30,7 +30,7 @@ export const pointUrl = (collectionId: string, pointId: string) => `${collection
 export const documentPointsUrl = (collectionId: string, documentId: string) =>
   `${collectionUrl(collectionId)}?documentId=${encodeURIComponent(documentId)}`
 
-export type CollectionTab = 'points' | 'rag' | 'settings'
+export type CollectionTab = 'points' | 'rag' | 'evaluation' | 'settings'
 
 /** The parts every vector page needs: the active embedder and whether answers are generated. */
 export interface VectorEnv {
@@ -150,13 +150,14 @@ function collectionTabs(collection: VectorCollection, active: CollectionTab): Ht
     [
       { key: 'points', label: 'Points', href: base },
       { key: 'rag', label: 'RAG & documents', href: `${base}/rag` },
+      { key: 'evaluation', label: 'Evaluation', href: `${base}/evaluation` },
       { key: 'settings', label: 'Settings', href: `${base}/settings` },
     ],
     active,
   )
 }
 
-function collectionShell(
+export function collectionShell(
   collection: VectorCollection,
   active: CollectionTab,
   body: Html,
@@ -555,7 +556,12 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
           <li><span class="subdued">Point limit</span><span>${env.maxPoints.toLocaleString('en-US')}</span></li>
         </ul>
         <p class="help">If the active embedder changes, add the points again or they will not match text queries.</p>
-        <div class="foot" style="justify-content:flex-start"><a class="btn" href="${VECTOR_SETTINGS}">Open Vectors &amp; RAG settings</a></div>`,
+        <div class="foot" style="justify-content:flex-start">
+          <a class="btn" href="${VECTOR_SETTINGS}">Open Vectors &amp; RAG settings</a>
+          <form method="post" action="${base}/reindex" data-confirm="Re-embed every point in this collection with the active embedder?" data-confirm-label="Re-index" data-confirm-tone="critical">
+            <button class="plain">Re-index all points</button>
+          </form>
+        </div>`,
       )}
       ${settingsSection(
         'Delete collection',

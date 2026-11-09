@@ -302,6 +302,10 @@ describe('vectors and RAG', () => {
     })
     expect(evaluation).toMatchObject({ total: 1, passed: 1, failed: 0 })
     expect(evaluation.metrics.recallAtK).toBe(1)
+    const history = await rag.listEvaluations({ collectionId: 'sdk-vectors' })
+    expect(history.evaluations.some((run) => run.$id === evaluation.$id)).toBe(true)
+    expect(await rag.getEvaluation({ evaluationId: evaluation.$id! })).toMatchObject({ $id: evaluation.$id })
+    await rag.deleteEvaluation({ evaluationId: evaluation.$id! })
 
     const uploaded = await vectors.ingestDocument({
       collectionId: 'sdk-vectors',

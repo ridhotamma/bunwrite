@@ -331,7 +331,36 @@ function vectorsCards(ctx: ConsoleContext): Html {
         <label>Rerank API key<input name="rerankApiKey" type="password" placeholder="${c.rerankApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small>Leave blank to keep the saved key.</small></label>
         <label>Rerank candidates<input name="rerankCandidates" type="number" min="0" max="500" value="${c.rerankCandidates}" required /><small>0 chooses from top-k; larger pools can improve quality at a small cost.</small></label>
       </div>
-      <p class="help">Hybrid search makes an extra statistics pass over the filtered collection. The local reranker has no per-query cost beyond that pass.</p>
+      <div class="fields center">
+        <label class="check"
+          ><input type="checkbox" name="multiHop" ${c.multiHop ? 'checked' : ''} /><span>Plan multi-hop queries</span
+          ><small>Uses the chat model to split a question into multiple retrieval queries before answering.</small></label
+        >
+        <label>Planned queries<input name="multiHopQueries" type="number" min="1" max="5" value="${c.multiHopQueries}" required /><small>1–5 queries, including the original question.</small></label>
+      </div>
+      <p class="help">Hybrid search makes an extra statistics pass over the filtered collection. Multi-hop adds one chat planning call per question.</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}
+  ${card(
+    ctx,
+    'vectors-guardrails',
+    'Guardrails',
+    null,
+    'Optional data-protection checks for retrieval and generated answers.',
+    html` <form method="post" action="${SETTINGS}/vectors/guardrails">
+      <label class="check"
+        ><input type="checkbox" name="redactPii" ${c.redactPii ? 'checked' : ''} /><span>Redact PII from context</span
+        ><small>Replaces emails, phone numbers, card numbers, NIK, SSN and IBAN before the context reaches the chat model.</small></label
+      >
+      <label class="check"
+        ><input type="checkbox" name="promptInjectionGuard" ${c.promptInjectionGuard ? 'checked' : ''} /><span>Prompt-injection guard</span
+        ><small>Mark context as untrusted and report sources containing instruction-like text.</small></label
+      >
+      <label class="check"
+        ><input type="checkbox" name="auditQueries" ${c.auditQueries ? 'checked' : ''} /><span>Audit retrieval</span
+        ><small>Store queries, answers, source IDs, redaction counts and injection signals for this project.</small></label
+      >
       <div class="foot"><button class="primary">Save</button></div>
     </form>`,
   )}

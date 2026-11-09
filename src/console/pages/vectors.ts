@@ -2,6 +2,7 @@
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, numberOrUndefined, parseJsonObject, value } from '~/console/forms'
 import { pageCount, pageParams } from '~/console/query'
+import { emptyEvaluationDraft, evaluationView, type EvaluationDraft } from '~/console/views/evaluation'
 import { err, BunwriteError } from '~/lib/errors'
 import {
   VECTORS,
@@ -23,7 +24,7 @@ import {
   type RagOptions,
   type VectorEnv,
 } from '~/console/views/vectors'
-import type { VectorCollection, VectorMatch, VectorPoint } from '~/vectors/types'
+import type { EvaluateResult, VectorCollection, VectorMatch, VectorPoint } from '~/vectors/types'
 
 const POINT_LIMIT = 25
 const TOP_K = ['5', '10', '20', '50']
@@ -101,6 +102,61 @@ function queryDraft(ctx: ConsoleContext, env: VectorEnv): QueryDraft {
 
 function topKOf(raw: string | null): string {
   return raw && TOP_K.includes(raw) ? raw : '10'
+}
+
+function evaluationDraft(ctx: ConsoleContext, env: VectorEnv): EvaluationDraft {
+  const fallback = emptyEvaluationDraft(env)
+  return {
+    name: value(ctx.form, 'name'),
+    dataset: String(ctx.form.dataset ?? fallback.dataset),
+    topK: value(ctx.form, 'topK') || fallback.topK,
+    generate: checked(ctx.form.generate),
+    hybrid: checked(ctx.form.hybrid),
+    rerank: checked(ctx.form.rerank),
+    baselineId: value(ctx.form, 'baselineId'),
+  }
+}
+
+async function evaluationPage(
+  ctx: ConsoleContext,
+  collection: VectorCollection,
+  options: { draft?: EvaluationDraft; result?: EvaluateResult; error?: string } = {},
+): Promise<Response> {
+  const env = envOf(ctx)
+  const runs = await ctx.services.vectors.listEvaluations(collection.$id, 25)
+  const runId = ctx.url.searchParams.get('run')
+  let selected
+  if (runId) {
+    try {
+      const run = await ctx.services.vectors.getEvaluation(runId)
+      if (run.collectionId === collection.$id) selected = run
+    } catch (error) {
+      if (!(error instanceof BunwriteError)) throw error
+    }
+  }
+  return ctx.render(
+    'Evaluation',
+    'vectors',
+    evaluationView(env, {
+      collection,
+      runs,
+      draft: options.draft ?? emptyEvaluationDraft(env),
+      result: options.result,
+      selected,
+      error: options.error,
+    }),
+  )
+}
+
+function casesFrom(raw: string): unknown[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw err('general_argument_invalid', 'Cases JSON is not valid JSON.')
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) throw err('general_argument_invalid', 'Cases JSON must be a non-empty array.')
+  return parsed
 }
 
 async function ragPage(ctx: ConsoleContext, collection: VectorCollection, options: Omit<RagOptions, 'collection' | 'documents'>): Promise<ReturnType<typeof ragView>> {
@@ -250,6 +306,14 @@ export function vectorPages(router: ConsoleRouter): void {
     return ctx.go(collectionUrl(path.collectionId!), { tone: 'success', text: 'Point deleted' })
   })
 
+  router.post(`${VECTORS}/:collectionId/reindex`, async ({ ctx, path }) => {
+    const result = await ctx.services.vectors.reindex(path.collectionId!)
+    return ctx.go(`${collectionUrl(path.collectionId!)}/settings`, {
+      tone: 'success',
+      text: `Re-embedded ${result.points} point${result.points === 1 ? '' : 's'} at ${result.dimension} dimensions`,
+    })
+  })
+
   router.post(`${VECTORS}/:collectionId/delete`, async ({ ctx, path }) => {
     await ctx.services.vectors.deleteCollection(path.collectionId!)
     return ctx.go(VECTORS, { tone: 'success', text: 'Vector collection deleted' })
@@ -315,6 +379,39 @@ export function vectorPages(router: ConsoleRouter): void {
         await ragPage(ctx, collection, { ingest: emptyIngestDraft(), query: draft, error: error.message }),
       )
     }
+  })
+
+  router.get(`${VECTORS}/:collectionId/evaluation`, async ({ ctx, path }) => {
+    const collection = await ctx.services.vectors.getCollection(path.collectionId!)
+    return evaluationPage(ctx, collection)
+  })
+
+  router.post(`${VECTORS}/:collectionId/evaluation`, async ({ ctx, path }) => {
+    const collection = await ctx.services.vectors.getCollection(path.collectionId!)
+    const env = envOf(ctx)
+    const draft = evaluationDraft(ctx, env)
+    try {
+      const result = await ctx.services.vectors.evaluate({
+        collectionId: collection.$id,
+        cases: casesFrom(draft.dataset),
+        topK: Number(draft.topK),
+        generate: draft.generate,
+        hybrid: draft.hybrid,
+        rerank: draft.rerank,
+        baselineId: draft.baselineId || undefined,
+        name: draft.name || undefined,
+        save: true,
+      })
+      return evaluationPage(ctx, collection, { draft, result })
+    } catch (error) {
+      if (!(error instanceof BunwriteError)) throw error
+      return evaluationPage(ctx, collection, { draft, error: error.message })
+    }
+  })
+
+  router.post(`${VECTORS}/:collectionId/evaluation/:evaluationId/delete`, async ({ ctx, path }) => {
+    await ctx.services.vectors.deleteEvaluation(path.evaluationId!)
+    return ctx.go(`${collectionUrl(path.collectionId!)}/evaluation`, { tone: 'success', text: 'Evaluation run deleted' })
   })
 
   router.post(`${VECTORS}/:collectionId/documents/:documentId/delete`, async ({ ctx, path }) => {

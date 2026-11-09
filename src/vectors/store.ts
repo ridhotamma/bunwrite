@@ -8,7 +8,18 @@
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { compact, norm } from './similarity'
-import type { StoredPoint, VectorCollection, VectorCollectionRow, VectorDocument, VectorPoint, VectorPointRow } from './types'
+import type {
+  EvaluationRun,
+  EvaluationRunSummary,
+  EvaluateResult,
+  StoredPoint,
+  VectorAuditEntry,
+  VectorCollection,
+  VectorCollectionRow,
+  VectorDocument,
+  VectorPoint,
+  VectorPointRow,
+} from './types'
 import { collectionModel, pointModel } from './rows'
 
 export interface CollectionRecord {
@@ -28,6 +39,51 @@ export interface ListPointOptions {
 export interface PointPage {
   total: number
   rows: VectorPointRow[]
+}
+
+interface EvaluationRow {
+  seq: number
+  id: string
+  collection_id: string
+  name: string
+  dataset: string
+  result: string
+  total: number
+  passed: number
+  failed: number
+  metrics: string
+  created_at: string
+  updated_at: string
+}
+
+function parsed<T>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(value) as T
+  } catch {
+    return fallback
+  }
+}
+
+function evaluationSummary(row: EvaluationRow): EvaluationRunSummary {
+  return {
+    $id: row.id,
+    collectionId: row.collection_id,
+    name: row.name,
+    total: Number(row.total) || 0,
+    passed: Number(row.passed) || 0,
+    failed: Number(row.failed) || 0,
+    metrics: parsed<EvaluateResult['metrics']>(row.metrics, {
+      recallAtK: null,
+      mrr: null,
+      ndcgAtK: null,
+      contextKeywordCoverage: null,
+      answerKeywordCoverage: null,
+      refusalAccuracy: null,
+      averageLatencyMs: 0,
+    }),
+    $createdAt: row.created_at,
+    $updatedAt: row.updated_at,
+  }
 }
 
 export class VectorStore {
@@ -74,6 +130,8 @@ export class VectorStore {
   /** Delete a collection and every point in it inside the caller's transaction. */
   async deleteCollection(collectionId: string, exec: SqlExecutor = this.db.driver): Promise<boolean> {
     await exec.run('DELETE FROM _vector_points WHERE collection_id = ?', [collectionId])
+    await exec.run('DELETE FROM _vector_evaluation_runs WHERE collection_id = ?', [collectionId])
+    await exec.run('DELETE FROM _vector_audit_logs WHERE collection_id = ?', [collectionId])
     const result = await exec.run('DELETE FROM _vector_collections WHERE id = ?', [collectionId])
     return Number(result.changes) > 0
   }
@@ -84,8 +142,8 @@ export class VectorStore {
       const stored = compact(point.vector)
       await exec.run(
         `INSERT INTO _vector_points
-           (collection_id, id, document_id, chunk_index, content, metadata, embedding, norm, dimension, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (collection_id, id, document_id, chunk_index, content, metadata, embedding, norm, dimension, permissions, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (collection_id, id) DO UPDATE SET
            document_id = excluded.document_id,
            chunk_index = excluded.chunk_index,
@@ -94,6 +152,7 @@ export class VectorStore {
            embedding = excluded.embedding,
            norm = excluded.norm,
            dimension = excluded.dimension,
+           permissions = excluded.permissions,
            updated_at = excluded.updated_at`,
         [
           collectionId,
@@ -105,11 +164,31 @@ export class VectorStore {
           JSON.stringify(stored),
           norm(stored),
           stored.length,
+          JSON.stringify(point.permissions),
           stamp,
           stamp,
         ],
       )
     }
+  }
+
+  async updatePointVectors(
+    exec: SqlExecutor,
+    collectionId: string,
+    updates: { id: string; embedding: number[]; dimension: number }[],
+  ): Promise<void> {
+    const stamp = now()
+    for (const update of updates) {
+      const stored = compact(update.embedding)
+      await exec.run(
+        'UPDATE _vector_points SET embedding = ?, norm = ?, dimension = ?, updated_at = ? WHERE collection_id = ? AND id = ?',
+        [JSON.stringify(stored), norm(stored), update.dimension, stamp, collectionId, update.id],
+      )
+    }
+  }
+
+  async updateCollectionEmbedder(exec: SqlExecutor, collectionId: string, embedder: string, dimension: number): Promise<void> {
+    await exec.run('UPDATE _vector_collections SET embedder = ?, dimension = ?, updated_at = ? WHERE id = ?', [embedder, dimension, now(), collectionId])
   }
 
   async existingPointIds(collectionId: string, ids: string[], exec: SqlExecutor = this.db.driver): Promise<Set<string>> {
@@ -192,6 +271,127 @@ export class VectorStore {
         $updatedAt: row.updated_at,
       }
     })
+  }
+
+  async insertAudit(entry: {
+    id: string
+    collectionId: string
+    userId: string | null
+    callerKind: string
+    query: string
+    answer: string
+    sourceIds: string[]
+    security: unknown
+    latencyMs: number
+  }): Promise<void> {
+    await this.db.driver.run(
+      `INSERT INTO _vector_audit_logs
+         (id, collection_id, user_id, caller_kind, query, answer, source_ids, security, latency_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.collectionId,
+        entry.userId,
+        entry.callerKind,
+        entry.query,
+        entry.answer,
+        JSON.stringify(entry.sourceIds),
+        JSON.stringify(entry.security),
+        entry.latencyMs,
+        now(),
+      ],
+    )
+  }
+
+  async listAudit(collectionId: string, limit = 25): Promise<VectorAuditEntry[]> {
+    const rows = await this.db.driver.all<{
+      id: string
+      collection_id: string
+      user_id: string | null
+      caller_kind: string
+      query: string
+      answer: string
+      source_ids: string
+      security: string
+      latency_ms: number
+      created_at: string
+    }>('SELECT * FROM _vector_audit_logs WHERE collection_id = ? ORDER BY seq DESC LIMIT ?', [collectionId, limit])
+    return rows.map((row) => ({
+      $id: row.id,
+      collectionId: row.collection_id,
+      userId: row.user_id,
+      callerKind: row.caller_kind,
+      query: row.query,
+      answer: row.answer,
+      sourceIds: parsed<string[]>(row.source_ids, []),
+      security: parsed<VectorAuditEntry['security']>(row.security, { redactions: 0, redactionKinds: [], suspiciousSources: [] }),
+      latencyMs: Number(row.latency_ms) || 0,
+      $createdAt: row.created_at,
+    }))
+  }
+
+  async deleteAudit(collectionId: string): Promise<number> {
+    const result = await this.db.driver.run('DELETE FROM _vector_audit_logs WHERE collection_id = ?', [collectionId])
+    return Number(result.changes) || 0
+  }
+
+  async insertEvaluation(
+    id: string,
+    collectionId: string,
+    name: string,
+    dataset: unknown,
+    result: EvaluateResult,
+  ): Promise<EvaluationRun> {
+    const stamp = now()
+    await this.db.driver.run(
+      `INSERT INTO _vector_evaluation_runs
+         (id, collection_id, name, dataset, result, total, passed, failed, metrics, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        collectionId,
+        name,
+        JSON.stringify(dataset),
+        JSON.stringify(result),
+        result.total,
+        result.passed,
+        result.failed,
+        JSON.stringify(result.metrics),
+        stamp,
+        stamp,
+      ],
+    )
+    return (await this.evaluation(id))!
+  }
+
+  async listEvaluations(collectionId: string, limit = 25): Promise<EvaluationRunSummary[]> {
+    const rows = await this.db.driver.all<EvaluationRow>(
+      'SELECT * FROM _vector_evaluation_runs WHERE collection_id = ? ORDER BY seq DESC LIMIT ?',
+      [collectionId, limit],
+    )
+    return rows.map(evaluationSummary)
+  }
+
+  async evaluation(id: string): Promise<EvaluationRun | null> {
+    const row = await this.db.driver.get<EvaluationRow>('SELECT * FROM _vector_evaluation_runs WHERE id = ?', [id])
+    if (!row) return null
+    return {
+      ...evaluationSummary(row),
+      dataset: parsed<unknown>(row.dataset, null),
+      result: parsed<EvaluateResult>(row.result, {
+        collectionId: row.collection_id,
+        total: 0,
+        passed: 0,
+        failed: 0,
+        metrics: evaluationSummary(row).metrics,
+        cases: [],
+      }),
+    }
+  }
+
+  async deleteEvaluation(id: string): Promise<boolean> {
+    const result = await this.db.driver.run('DELETE FROM _vector_evaluation_runs WHERE id = ?', [id])
+    return Number(result.changes) > 0
   }
 
   async deletePoint(collectionId: string, pointId: string): Promise<boolean> {
