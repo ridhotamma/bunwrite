@@ -131,7 +131,8 @@ through another.
 | `src/schema/` | Registry of databases/collections, `push.ts` (config → tables, used by CLI, import and console), `admin.ts` (console edits, export) |
 | `src/documents/` | Query parser/compiler, codec (validation, encoding), `store.ts` (reads, writes, permissions), routes |
 | `src/transactions/` | Staged operations and commit with conflict detection |
-| `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, OAuth (Google, Facebook, GitHub, Apple), JWT, account and users routes |
+| `src/auth/` | Caller resolution, permissions and roles, passwords, sessions, tokens, OAuth (Google, Facebook, GitHub, Apple), JWT, magic URL sign-in, account and users routes |
+| `src/locale/` | Appwrite's Locale API: countries, continents, currencies, languages, phone codes and locale codes, localized with `Intl` from the request's locale |
 | `src/teams/`, `src/storage/`, `src/functions/`, `src/realtime/`, `src/webhooks/`, `src/messaging/` | One service and its routes each |
 | `src/sites/` | Sites: `service.ts` (sites, deployments, lookup by Host, build), `serve.ts` (static files, fallback, `/api/*` to a function), `ssr.ts` (an SSR app's process, proxy and idle reaper), `routes.ts` (Appwrite's Sites API). `app.ts` serves a request as a site when its Host is `<id>.<SITES_DOMAIN>` or a custom domain, before anything else |
 | `src/vcs/` | Git deployments: `hub.ts` (one per server: GitHub webhooks, builds from a commit, commit statuses, the PR comment, fork approval), `github.ts` (REST client, app JWT, installation tokens), `credentials.ts` (the GitHub App from `VCS_GITHUB_*` or the console), `repositories.ts` (control-DB links from a repository to each project's sites and functions), `installations.ts` (per project), `detect.ts`, `routes.ts` (Appwrite's VCS API). Previews are served by `src/sites/previews.ts` hosts. See [GIT.md](GIT.md) |

@@ -191,9 +191,9 @@ Current known gaps:
 - Queries: `regex`, geo, vector and `exists` are not implemented. Bunwrite has a
   separate built-in `/vectors` and `/rag` extension (see
   [VECTORS.md](VECTORS.md)); Appwrite's VectorsDB endpoints are not implemented.
-- Auth: project-user MFA (TOTP or email), phone/SMS sign-in and magic URLs are
-  not implemented (magic-url token types exist in the token model, but the full
-  client flow is not there). Console admins have optional email MFA.
+- Auth: project-user MFA (TOTP or email) and phone/SMS sign-in are not
+  implemented. Console admins have optional email MFA. Magic URL sign-in and
+  per-language email templates are supported.
 - Messaging: topics are stored, but sending messages is not implemented.
 - GraphQL: the protocol/service toggle exists, but there is no GraphQL route in
   this codebase.

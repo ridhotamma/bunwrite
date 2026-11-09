@@ -56,13 +56,17 @@ Deployment, upgrade, backups, TLS and production tuning:
 
 - **Appwrite-compatible API** for documents, users, teams, storage, functions,
   sites, realtime, webhooks and the console.
+- **Localization** with Appwrite's Locale API, plus per-language email
+  templates and magic URL sign-in.
 - **SQLite by default**, with Postgres supported through the same service layer.
 - **Functions** for Node.js and Python, with builds, schedules, executions and
   custom domains.
 - **Sites**, static or server-rendered, with Git deployments, previews and custom
   domains.
 - **Storage and backups** on local disk or any S3-compatible bucket.
-- **Vectors and RAG** with local or OpenAI-compatible embeddings.
+- **Vectors and RAG** with local or OpenAI-compatible embeddings, including
+  PDF, Markdown and office-document uploads that are converted to text before
+  embedding.
 - **HTML to PDF or image** with headless Chromium.
 - **Console, queue, request logs, traces, metrics and feature flags** built in.
 

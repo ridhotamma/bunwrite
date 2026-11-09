@@ -21,6 +21,7 @@ import { HttpChat } from './chat'
 import type { VectorsConfig } from './config'
 import type { EmbeddingProvider } from './embedder'
 import { HttpEmbedding, LocalEmbedding } from './embedder'
+import { extractDocument, type DocumentFormat } from './extract'
 import {
   DEFAULT_LIST_LIMIT,
   MAX_BATCH,
@@ -39,6 +40,7 @@ import { VectorStore } from './store'
 import type {
   CreateCollectionInput,
   IngestInput,
+  IngestResult,
   PointInput,
   QueryInput,
   SearchInput,
@@ -54,6 +56,18 @@ import { integer, invalid, matchesFilter, metadataOf, optionalText, pathId, text
 
 interface PendingPoint extends Omit<StoredPoint, 'vector'> {
   vector: number[] | null
+}
+
+/** A file name as a stable document ID, so re-uploading `handbook.pdf` replaces its chunks. */
+export function documentIdFromName(name: string): string {
+  const stem = name.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, '')
+  const id = stem
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .slice(0, 36)
+  return id || uniqueId()
 }
 
 export class VectorService {
@@ -385,12 +399,39 @@ export class VectorService {
   // RAG
   // ---------------------------------------------------------------------------
 
-  async ingest(input: IngestInput): Promise<{ collectionId: string; documentId: string; chunks: number; $createdAt: string }> {
+  async ingest(input: IngestInput): Promise<IngestResult> {
     const collection = await this.collectionRow(typeof input.collectionId === 'string' ? input.collectionId : '')
-    const text = textOf(input.text, 'text', MAX_INGEST_TEXT)
+    let text: string
+    let format: DocumentFormat = 'text'
+    let characters: number
+    let pages: number | undefined
+    let source: Record<string, unknown> = {}
+    if (input.file !== undefined && input.file !== null) {
+      const extracted = await extractDocument(input.file)
+      if (extracted.characters > MAX_INGEST_TEXT) {
+        throw invalid(`The extracted text has ${extracted.characters.toLocaleString('en-US')} characters; the limit is ${MAX_INGEST_TEXT.toLocaleString('en-US')}.`)
+      }
+      text = extracted.text
+      characters = extracted.characters
+      format = extracted.format
+      pages = extracted.pages
+      source = {
+        source: extracted.name,
+        filename: extracted.name,
+        mimeType: extracted.mimeType,
+        format: extracted.format,
+        size: extracted.size,
+        ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),
+      }
+    } else {
+      text = textOf(input.text, 'text', MAX_INGEST_TEXT)
+      characters = text.length
+    }
     const documentId =
       input.documentId === undefined || input.documentId === null || input.documentId === ''
-        ? uniqueId()
+        ? typeof source.filename === 'string'
+          ? documentIdFromName(source.filename)
+          : uniqueId()
         : resolveId(input.documentId, 'Document ID')
     const metadata = metadataOf(input.metadata)
     const chunkSize = integer(input.chunkSize, this.config.chunkSize, 64, 8000, 'chunkSize')
@@ -409,7 +450,7 @@ export class VectorService {
       documentId,
       chunkIndex: index,
       content: chunk.text,
-      metadata: { ...metadata, documentId, chunkIndex: index },
+      metadata: { ...source, ...metadata, documentId, chunkIndex: index },
       vector: vectors[index]!,
     }))
     for (const point of points) this.assertDimension(collection, point.vector)
@@ -419,7 +460,15 @@ export class VectorService {
       await this.assertCapacity(tx, collection, points)
       await this.store.insertPoints(tx, collection.id, points)
     })
-    return { collectionId: collection.id, documentId, chunks: points.length, $createdAt: now() }
+    return {
+      collectionId: collection.id,
+      documentId,
+      chunks: points.length,
+      characters,
+      format,
+      ...(pages !== undefined ? { pages } : {}),
+      $createdAt: now(),
+    }
   }
 
   async query(input: QueryInput): Promise<{

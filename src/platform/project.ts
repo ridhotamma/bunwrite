@@ -13,12 +13,12 @@ import type { Router } from '~/lib/router'
 import type { ProjectInfo } from '~/projects/types'
 import type { Services } from '~/services'
 import type { MockPhone } from '~/settings/access'
-import { localeParam, TEMPLATE_IDS, TEMPLATE_LOCALE, templateIdParam, type TemplateFields, type TemplateId } from '~/mail/templates'
+import { localeParam, templateIdParam, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { variableModel } from '~/variables/model'
 import { PROJECT_SCOPE } from '~/variables/service'
 import { variableContext } from '~/variables/context'
 
-const templateModel = (id: TemplateId, t: TemplateFields) => ({ templateId: id, locale: TEMPLATE_LOCALE, ...t })
+const templateModel = (id: TemplateId, locale: string, t: TemplateFields) => ({ templateId: id, locale, ...t })
 
 /** Appwrite's Project model, with what this server has. */
 export function projectModel(info: ProjectInfo, services: Services) {
@@ -175,11 +175,11 @@ export function projectRoutes(router: Router<AppContext>): void {
     return json(await ctx.access.updatePolicy(path.policyId!, params))
   })
 
-  // Email templates. Only English is sent, so `locale` must be "en" (or left out).
+  // Email templates. Each template can be translated into any supported locale.
   router.get('/project/templates/email', ({ ctx, params }) => {
     requireKey(ctx, 'templates.read')
-    // Appwrite lists the templates that were changed from their default.
-    const custom = TEMPLATE_IDS.filter((id) => ctx.templates.customized(id)).map((id) => ({ $id: id, ...templateModel(id, ctx.templates.get(id)) }))
+    // Appwrite lists the templates that were changed from their default, for every locale.
+    const custom = ctx.templates.allCustom().map(({ id, locale, fields }) => ({ $id: `${id}-${locale}`, ...templateModel(id, locale, fields) }))
     const { total, items } = page(custom, list(params.queries))
     return json({ total, templates: items.map(({ $id: _, ...t }) => t) })
   })
@@ -187,15 +187,15 @@ export function projectRoutes(router: Router<AppContext>): void {
   router.get('/project/templates/email/:templateId', ({ ctx, path, params }) => {
     requireKey(ctx, 'templates.read')
     const id = templateIdParam(path.templateId)
-    localeParam(params.locale)
-    return json(templateModel(id, ctx.templates.get(id)))
+    const locale = localeParam(params.locale)
+    return json(templateModel(id, locale, ctx.templates.get(id, locale)))
   })
 
   router.patch('/project/templates/email', async ({ ctx, params }) => {
     requireKey(ctx, 'templates.write')
     const id = templateIdParam(params.templateId)
-    localeParam(params.locale)
-    return json(templateModel(id, await ctx.templates.update(id, params)))
+    const locale = localeParam(params.locale)
+    return json(templateModel(id, locale, await ctx.templates.update(id, locale, params)))
   })
 
   router.get('/project/mock-phones', ({ ctx, params }) => {

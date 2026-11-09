@@ -1,4 +1,5 @@
 import { BunwriteException, Client, type Payload } from '../client';
+import { InputFile } from '../inputFile';
 
 export type VectorMetric = 'cosine' | 'dot' | 'euclidean';
 
@@ -92,6 +93,46 @@ export interface VectorListParams {
     documentId?: string;
     limit?: number;
     offset?: number;
+}
+
+export interface VectorDocument {
+    documentId: string;
+    chunks: number;
+    /** Metadata of the document's first chunk, including source/filename/format for uploads. */
+    metadata: Record<string, unknown>;
+    $createdAt: string;
+    $updatedAt: string;
+}
+
+export interface VectorDocumentList {
+    total: number;
+    documents: VectorDocument[];
+}
+
+export interface VectorIngestResult {
+    collectionId: string;
+    documentId: string;
+    chunks: number;
+    characters: number;
+    /** Source format: pdf, markdown, html, docx, text, ... */
+    format: string;
+    pages?: number;
+    $createdAt: string;
+}
+
+export interface VectorIngestDocumentParams {
+    collectionId: string;
+    /** A PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
+    file: File | Blob | InputFile;
+    /** Used when a Blob has no name. */
+    filename?: string;
+    /** Re-ingesting the same ID replaces that document's chunks. */
+    documentId?: string;
+    metadata?: Record<string, unknown>;
+    /** Characters per chunk, 64 to 8000. */
+    chunkSize?: number;
+    /** Characters shared by adjacent chunks. */
+    chunkOverlap?: number;
 }
 
 /**
@@ -198,6 +239,33 @@ export class Vectors {
         }));
     }
 
+    /** Ingested documents in this collection. */
+    listDocuments(params: { collectionId: string; limit?: number }): Promise<VectorDocumentList> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}/documents`, clean({ limit: params.limit }));
+    }
+
+    /**
+     * Upload a document (PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV,
+     * XML, YAML or text), extract its text, chunk and embed it.
+     */
+    async ingestDocument(params: VectorIngestDocumentParams): Promise<VectorIngestResult> {
+        requireString(params?.collectionId, 'collectionId');
+        const file = await fileOf(params.file, params.filename);
+        return this.client.call(
+            'post',
+            new URL(this.client.config.endpoint + `/vectors/${encodeURIComponent(params.collectionId)}/documents`),
+            { 'X-Bunwrite-Project': this.client.config.project, accept: 'application/json', 'content-type': 'multipart/form-data' },
+            clean({
+                file,
+                documentId: params.documentId,
+                metadata: params.metadata,
+                chunkSize: params.chunkSize,
+                chunkOverlap: params.chunkOverlap,
+            }),
+        );
+    }
+
     /** Chunks of one ingested document. */
     listDocumentPoints(params: VectorListParams & { documentId: string }): Promise<VectorPointList> {
         requireString(params?.collectionId, 'collectionId');
@@ -231,6 +299,13 @@ export class Vectors {
 
 function requireString(value: unknown, name: string): void {
     if (typeof value !== 'string' || !value) throw new BunwriteException(`Missing required parameter: "${name}"`);
+}
+
+async function fileOf(value: File | Blob | InputFile, filename?: string): Promise<File> {
+    if (value instanceof InputFile) return value.toFile();
+    if (typeof File !== 'undefined' && value instanceof File) return value;
+    if (typeof Blob !== 'undefined' && value instanceof Blob) return new File([value], filename || 'upload', { type: value.type });
+    throw new BunwriteException('Missing required parameter: "file"');
 }
 
 function clean(params: Payload): Payload {

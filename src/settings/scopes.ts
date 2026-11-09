@@ -94,6 +94,10 @@ export const API_KEY_SCOPE_GROUPS: ApiKeyScopeGroup[] = [
       { id: 'templates.write', label: 'Update email templates' },
     ],
   },
+  {
+    label: 'Localization',
+    scopes: [{ id: 'locale.read', label: 'Read countries, continents, currencies and languages' }],
+  },
 ]
 
 export const API_KEY_SCOPES = API_KEY_SCOPE_GROUPS.flatMap((group) => group.scopes.map((scope) => scope.id))

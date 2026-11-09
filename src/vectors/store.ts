@@ -158,21 +158,40 @@ export class VectorStore {
 
   /** Ingested documents with their chunk counts, newest first. */
   async listDocuments(collectionId: string, limit: number): Promise<VectorDocument[]> {
-    const rows = await this.db.driver.all<{ document_id: string; chunks: number; created_at: string; updated_at: string }>(
-      `SELECT document_id, count(*) AS chunks, min(created_at) AS created_at, max(updated_at) AS updated_at
-       FROM _vector_points
-       WHERE collection_id = ? AND document_id <> ''
-       GROUP BY document_id
-       ORDER BY max(updated_at) DESC
+    const rows = await this.db.driver.all<{
+      document_id: string
+      chunks: number
+      created_at: string
+      updated_at: string
+      metadata: string | null
+    }>(
+      `SELECT p.document_id, count(*) AS chunks, min(p.created_at) AS created_at, max(p.updated_at) AS updated_at,
+         (SELECT q.metadata FROM _vector_points q
+          WHERE q.collection_id = p.collection_id AND q.document_id = p.document_id
+          ORDER BY q.chunk_index, q.id LIMIT 1) AS metadata
+       FROM _vector_points p
+       WHERE p.collection_id = ? AND p.document_id <> ''
+       GROUP BY p.document_id
+       ORDER BY max(p.updated_at) DESC
        LIMIT ?`,
       [collectionId, limit],
     )
-    return rows.map((row) => ({
-      documentId: row.document_id,
-      chunks: Number(row.chunks) || 0,
-      $createdAt: row.created_at,
-      $updatedAt: row.updated_at,
-    }))
+    return rows.map((row) => {
+      let metadata: Record<string, unknown> = {}
+      try {
+        const parsed: unknown = row.metadata ? JSON.parse(row.metadata) : {}
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) metadata = parsed as Record<string, unknown>
+      } catch {
+        // A corrupt metadata row should not hide the rest of the document index.
+      }
+      return {
+        documentId: row.document_id,
+        chunks: Number(row.chunks) || 0,
+        metadata,
+        $createdAt: row.created_at,
+        $updatedAt: row.updated_at,
+      }
+    })
   }
 
   async deletePoint(collectionId: string, pointId: string): Promise<boolean> {

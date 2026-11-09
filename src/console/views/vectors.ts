@@ -3,6 +3,7 @@
  * function here takes plain values, like the other console views.
  */
 import { html, type Html } from '~/console/html'
+import { fileField } from '~/console/upload'
 import {
   alert,
   badge,
@@ -20,6 +21,7 @@ import {
   when,
 } from '~/console/ui'
 import type { VectorCollection, VectorDocument, VectorMatch, VectorPoint } from '~/vectors/types'
+import { MAX_FILE_BYTES } from '~/vectors/limits'
 
 export const VECTORS = '/console/vectors'
 export const VECTOR_SETTINGS = '/console/settings/vectors'
@@ -130,12 +132,21 @@ export const emptyQueryDraft = (env: VectorEnv): QueryDraft => ({
 const preview = (text: string, max = 160) => (text.length > max ? `${text.slice(0, max)}…` : text)
 const scoreText = (score: number) => score.toFixed(3)
 
+/** The uploaded file name, or a user-supplied source for text ingest. */
+function documentLabel(document: VectorDocument): string {
+  const filename = document.metadata.filename
+  if (typeof filename === 'string' && filename && filename !== document.documentId) return filename
+  const source = document.metadata.source
+  if (typeof source === 'string' && source && source !== document.documentId) return source
+  return ''
+}
+
 function collectionTabs(collection: VectorCollection, active: CollectionTab): Html {
   const base = collectionUrl(collection.$id)
   return tabs(
     [
       { key: 'points', label: 'Points', href: base },
-      { key: 'rag', label: 'RAG', href: `${base}/rag` },
+      { key: 'rag', label: 'RAG & documents', href: `${base}/rag` },
       { key: 'settings', label: 'Settings', href: `${base}/settings` },
     ],
     active,
@@ -224,7 +235,7 @@ export function pointsView(env: VectorEnv, options: PointsOptions): Html {
   const { collection } = options
   const base = collectionUrl(collection.$id)
   const searching = Boolean(options.query.trim() || options.filter.trim())
-  const actions = html`<a class="btn primary" href="${base}/points/new">${icon('plus')}<span>Add point</span></a>`
+  const actions = html`<a class="btn" href="${base}/rag">${icon('upload-simple')}<span>Upload documents</span></a><a class="btn primary" href="${base}/points/new">${icon('plus')}<span>Add point</span></a>`
   const toolbar = html`<form
     class="toolbar"
     method="get"
@@ -436,7 +447,12 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
           <tbody>
             ${options.documents.map(
               (document) => html`<tr>
-                <td><a href="${documentPointsUrl(collection.$id, document.documentId)}" class="mono">${document.documentId}</a></td>
+                <td>
+                  <a href="${documentPointsUrl(collection.$id, document.documentId)}" class="mono">${document.documentId}</a>
+                  ${documentLabel(document)
+                    ? html`<div class="subdued mono" style="font-size:12px">${documentLabel(document)}${typeof document.metadata.format === 'string' ? ` · ${document.metadata.format}` : ''}</div>`
+                    : ''}
+                </td>
                 <td class="num">${document.chunks}</td>
                 <td class="hide-sm subdued">${when(document.$updatedAt)}</td>
                 <td class="actions-col">${destroy(
@@ -451,7 +467,7 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
           </tbody>
         </table>
       </div>`
-    : emptyState('No ingested documents', 'Paste text below to chunk and embed a document.', undefined)
+    : emptyState('No ingested documents', 'Upload a file or paste text below to chunk and embed a document.', undefined)
 
   return collectionShell(
     collection,
@@ -475,11 +491,19 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
       ${answerSections}
       ${settingsSection(
         'Ingest a document',
-        'The text is split on word boundaries, embedded and stored. Re-ingesting the same document ID replaces its chunks.',
-        html`<form method="post" action="${base}/rag/ingest">
-          <label>Text<textarea name="text" rows="8" required placeholder="Paste a handbook section, support article or notes…">${options.ingest.text}</textarea></label>
+        'Upload a file or paste text. Bunwrite extracts the text, splits it on word boundaries, embeds it and stores it. Re-ingesting the same document ID or filename replaces its chunks.',
+        html`<form method="post" action="${base}/rag/ingest" enctype="multipart/form-data" hx-boost="false">
+          ${fileField({
+            name: 'file',
+            label: 'File',
+            accept: '.pdf,.md,.markdown,.txt,.html,.htm,.docx,.odt,.epub,.rtf,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.log',
+            title: 'Drag and drop a document here',
+            hint: `PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text — up to ${MAX_FILE_BYTES / 1024 / 1024} MB`,
+            help: 'Or paste text below. A file takes precedence when both are provided.',
+          })}
+          <label>Text<textarea name="text" rows="8" placeholder="Paste a handbook section, support article or notes…">${options.ingest.text}</textarea></label>
           <div class="fields">
-            <label>Document ID<input name="documentId" value="${options.ingest.documentId}" class="mono" placeholder="Generated if empty" /></label>
+            <label>Document ID<input name="documentId" value="${options.ingest.documentId}" class="mono" placeholder="Generated from the file name" /></label>
             <label>Metadata JSON<textarea name="metadata" class="mono" rows="3" spellcheck="false">${options.ingest.metadata}</textarea></label>
           </div>
           <div class="fields">

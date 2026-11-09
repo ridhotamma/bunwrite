@@ -200,6 +200,7 @@ const SERVICES: ServiceSpec[] = [
     rename: { getFileDownload: 'getFileDownloadBytes', getFilePreview: 'getFilePreviewBytes', getFileView: 'getFileViewBytes' },
   },
   { file: 'functions' },
+  { file: 'locale' },
   { file: 'sites', extend: extendSites },
   { file: 'proxy' },
   { file: 'teams' },

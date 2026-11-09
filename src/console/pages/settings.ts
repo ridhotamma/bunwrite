@@ -13,7 +13,7 @@ import { alert } from '~/console/ui'
 import { inlineStatus, settingsView } from '~/console/views/settings'
 import { SETTINGS, TAB_OF_SETTING, isTab, tabPath } from '~/console/settings-meta'
 import { templatePath, templatePreview } from '~/console/views/templates'
-import { isTemplateId, type TemplateFields, type TemplateId } from '~/mail/templates'
+import { isTemplateId, normalizedTemplateLocale, TEMPLATE_LOCALE, type TemplateFields, type TemplateId } from '~/mail/templates'
 import { BunwriteError } from '~/lib/errors'
 import { PROJECT_SCOPE } from '~/variables/service'
 import { registerVariableRoutes } from './variables'
@@ -82,37 +82,47 @@ export function settingsPages(router: ConsoleRouter): void {
     replyToEmail: value(form, 'replyToEmail'),
     replyToName: value(form, 'replyToName'),
   })
+  const templateRedirect = (id: TemplateId, locale: string) =>
+    locale === TEMPLATE_LOCALE ? templatePath(id) : `${templatePath(id)}?locale=${encodeURIComponent(locale)}`
 
   router.get(`${SETTINGS}/templates/:id`, async ({ ctx, path }) => {
     if (!path.id || !isTemplateId(path.id)) return ctx.go(tabPath('templates'))
-    return ctx.render('Email templates', 'settings', await settingsView(ctx, 'templates', { template: path.id }))
+    const locale = normalizedTemplateLocale(ctx.url.searchParams.get('locale'))
+    return ctx.render('Email templates', 'settings', await settingsView(ctx, 'templates', { template: path.id, locale }))
   })
 
   router.post(`${SETTINGS}/templates/:id`, async ({ ctx, path }) => {
     const id = templateOf(path.id)
+    const locale = normalizedTemplateLocale(ctx.form.locale)
     const fields = templateForm(ctx.form)
     try {
-      await ctx.services.templates.update(id, fields)
+      await ctx.services.templates.update(id, locale, fields)
     } catch (error) {
       // Keep what was typed on the page instead of losing it on a redirect.
       if (!(error instanceof BunwriteError)) throw error
-      return ctx.render('Email templates', 'settings', html`${alert('critical', html`${error.message}`)}${await settingsView(ctx, 'templates', { template: id, fields })}`)
+      return ctx.render(
+        'Email templates',
+        'settings',
+        html`${alert('critical', html`${error.message}`)}${await settingsView(ctx, 'templates', { template: id, locale, fields })}`,
+      )
     }
-    return ctx.go(templatePath(id), { tone: 'success', text: 'Template updated' })
+    return ctx.go(templateRedirect(id, locale), { tone: 'success', text: locale === TEMPLATE_LOCALE ? 'Template updated' : `Template updated for ${locale}` })
   })
 
   router.post(`${SETTINGS}/templates/:id/reset`, async ({ ctx, path }) => {
     const id = templateOf(path.id)
-    await ctx.services.templates.reset(id)
-    return ctx.go(templatePath(id), { tone: 'success', text: 'Template reset to the default' })
+    const locale = normalizedTemplateLocale(ctx.form.locale)
+    await ctx.services.templates.reset(id, locale)
+    return ctx.go(templateRedirect(id, locale), { tone: 'success', text: 'Template reset to the default' })
   })
 
   // The unsaved form rendered with sample values, for the Preview tab.
   router.post(`${SETTINGS}/templates/:id/preview`, ({ ctx, path }) => {
     const id = templateOf(path.id)
+    const locale = normalizedTemplateLocale(ctx.form.locale)
     const fields = templateForm(ctx.form)
     const defaults = ctx.services.templates.defaults(id)
-    return page(templatePreview(ctx.services.templates.preview(id, { ...fields, subject: fields.subject || defaults.subject, message: fields.message || defaults.message })))
+    return page(templatePreview(ctx.services.templates.preview(id, { ...fields, subject: fields.subject || defaults.subject, message: fields.message || defaults.message }, locale)))
   })
 
   router.post(`${SETTINGS}/project`, async ({ ctx }) => {

@@ -55,6 +55,8 @@ export interface VectorMatch extends VectorPoint {
 export interface VectorDocument {
   documentId: string
   chunks: number
+  /** Metadata of the document's first chunk, including source/filename/format for uploads. */
+  metadata: Record<string, unknown>
   $createdAt: string
   $updatedAt: string
 }
@@ -97,9 +99,21 @@ export interface IngestInput {
   collectionId?: unknown
   documentId?: unknown
   text?: unknown
+  /** A File/Blob upload; the server extracts text before chunking. */
+  file?: unknown
   metadata?: unknown
   chunkSize?: unknown
   chunkOverlap?: unknown
+}
+
+export interface IngestResult {
+  collectionId: string
+  documentId: string
+  chunks: number
+  characters: number
+  format: string
+  pages?: number
+  $createdAt: string
 }
 
 export interface QueryInput extends IngestInput {

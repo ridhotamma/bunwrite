@@ -3,11 +3,13 @@
  * embeddings, chunked ingest, and the HTTP extension.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { strToU8, zipSync } from 'fflate'
 
 import { postgresSystemIndexStatements, postgresSystemStatements } from '~/db/postgres-schema'
 import { chunkText } from '~/vectors/chunk'
 import { defaultVectorsConfig } from '~/vectors/config'
 import { localVector } from '~/vectors/embedder'
+import { extractDocument } from '~/vectors/extract'
 import { TopK } from '~/vectors/rank'
 import { KEY, PROJECT, startServer, type TestServer } from './helpers'
 
@@ -20,8 +22,46 @@ beforeAll(() => {
 afterAll(() => server.stop())
 
 const headers = { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY, 'content-type': 'application/json' }
+const authHeaders = { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY }
 const call = async (path: string, init: RequestInit = {}) => {
   const response = await fetch(`${server.endpoint}${path}`, { ...init, headers: { ...headers, ...(init.headers ?? {}) } })
+  const text = await response.text()
+  return { response, body: text ? (JSON.parse(text) as any) : null }
+}
+
+/** A tiny valid PDF with one line of text, for the extractor tests. */
+function pdfWithText(text: string): Uint8Array {
+  const content = `BT /F1 24 Tf 20 100 Td (${text.replace(/[()\\]/g, (c) => `\\${c}`)}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let body = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((object, index) => {
+    offsets.push(body.length)
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`
+  })
+  const xref = body.length
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const offset of offsets) body += `${String(offset).padStart(10, '0')} 00000 n \n`
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return new TextEncoder().encode(body)
+}
+
+function docxWithText(text: string): Uint8Array {
+  const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p><w:p><w:r><w:t>Second paragraph</w:t></w:r></w:p></w:body></w:document>`
+  return zipSync({ 'word/document.xml': strToU8(xml) })
+}
+
+async function upload(path: string, file: File, fields: Record<string, string> = {}, method = 'POST') {
+  const form = new FormData()
+  form.append('file', file)
+  for (const [key, value] of Object.entries(fields)) form.append(key, value)
+  const response = await fetch(`${server.endpoint}${path}`, { method, headers: authHeaders, body: form })
   const text = await response.text()
   return { response, body: text ? (JSON.parse(text) as any) : null }
 }
@@ -68,6 +108,32 @@ describe('vector helpers', () => {
       embedder: 'http',
       dimension: 768,
       embeddingUrl: 'http://127.0.0.1:11434',
+    })
+  })
+
+  test('uploaded documents are converted to plain text before chunking', async () => {
+    const pdf = await extractDocument(new File([pdfWithText('Hello PDF extraction')], 'guide.pdf', { type: 'application/pdf' }))
+    expect(pdf).toMatchObject({ format: 'pdf', pages: 1, characters: 20 })
+    expect(pdf.text).toBe('Hello PDF extraction')
+
+    const markdown = await extractDocument(new File(['# Title\n\nSome **bold** text and [a link](https://example.com).'], 'guide.md', { type: 'text/markdown' }))
+    expect(markdown).toMatchObject({ format: 'markdown' })
+    expect(markdown.text).toBe('Title\n\nSome bold text and a link.')
+
+    const html = await extractDocument(new File(['<h1>Hello</h1><p>World &amp; <b>friends</b></p>'], 'page.html', { type: 'text/html' }))
+    expect(html).toMatchObject({ format: 'html' })
+    expect(html.text).toBe('Hello\n\nWorld & friends')
+
+    const json = await extractDocument(new File(['{"name":"Bunwrite","kind":"backend"}'], 'data.json', { type: 'application/json' }))
+    expect(json.format).toBe('json')
+    expect(json.text).toContain('"name": "Bunwrite"')
+
+    const docx = await extractDocument(new File([docxWithText('Hello DOCX')], 'notes.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }))
+    expect(docx).toMatchObject({ format: 'docx' })
+    expect(docx.text).toBe('Hello DOCX\n\nSecond paragraph')
+
+    expect(await extractDocument(new File([new Uint8Array([0, 1, 2, 3])], 'binary.bin', { type: 'application/octet-stream' })).catch((error) => error)).toMatchObject({
+      type: 'general_argument_invalid',
     })
   })
 })
@@ -270,6 +336,54 @@ describe('HTTP extension', () => {
     })
     expect(denied.response.status).toBe(401)
     expect(denied.body.type).toBe('general_unauthorized_scope')
+  })
+
+  test('documents can be uploaded as files, raw bodies or multipart forms', async () => {
+    await call('/vectors', { method: 'POST', body: JSON.stringify({ collectionId: 'files', dimension: 64 }) })
+
+    const markdown = await upload('/vectors/files/documents', new File(['# Handbook\n\nBunwrite stores knowledge in SQLite.'], 'handbook.md', { type: 'text/markdown' }), {
+      metadata: '{"lang":"en"}',
+    })
+    expect(markdown.response.status).toBe(201)
+    expect(markdown.body).toMatchObject({ collectionId: 'files', documentId: 'handbook', format: 'markdown', chunks: 1 })
+    expect(markdown.body.characters).toBeGreaterThan(20)
+
+    const listed = await call('/vectors/files/documents')
+    expect(listed.body.total).toBe(1)
+    expect(listed.body.documents[0]).toMatchObject({
+      documentId: 'handbook',
+      chunks: 1,
+      metadata: { lang: 'en', source: 'handbook.md', format: 'markdown' },
+    })
+
+    const chunks = await call('/vectors/files/documents/handbook')
+    expect(chunks.body.points[0]).toMatchObject({ documentId: 'handbook', chunkIndex: 0, metadata: { lang: 'en', source: 'handbook.md', format: 'markdown' } })
+
+    // Uploading the same file name again replaces the document instead of creating a duplicate.
+    const replaced = await upload('/vectors/files/documents', new File(['A shorter handbook.'], 'handbook.md', { type: 'text/markdown' }))
+    expect(replaced.body.documentId).toBe('handbook')
+    expect((await call('/vectors/files/documents')).body.total).toBe(1)
+    expect((await call('/vectors/files/documents/handbook')).body.points[0].content).toBe('A shorter handbook.')
+
+    const pdf = await upload('/vectors/files/documents', new File([pdfWithText('PDF from an upload')], 'manual.pdf', { type: 'application/pdf' }))
+    expect(pdf.body).toMatchObject({ documentId: 'manual', format: 'pdf', pages: 1 })
+    expect((await call('/vectors/files/documents/manual')).body.points[0].content).toBe('PDF from an upload')
+
+    const raw = await fetch(`${server.endpoint}/vectors/files/documents?filename=notes.txt`, {
+      method: 'POST',
+      headers: { ...authHeaders, 'content-type': 'text/plain' },
+      body: 'A raw request body becomes a text document.',
+    })
+    expect(raw.status).toBe(201)
+    expect((await raw.json()) as any).toMatchObject({ documentId: 'notes', format: 'text' })
+
+    const updated = await upload('/vectors/files/documents/renamed', new File(['Replaced by a PUT.'], 'ignored.md', { type: 'text/markdown' }), {}, 'PUT')
+    expect(updated.body.documentId).toBe('renamed')
+    expect((await call('/vectors/files/documents/renamed')).body.points[0].content).toBe('Replaced by a PUT.')
+
+    const binary = await upload('/vectors/files/documents', new File([new Uint8Array([0, 1, 2, 3, 4])], 'data.bin', { type: 'application/octet-stream' }))
+    expect(binary.response.status).toBe(400)
+    expect(binary.body.type).toBe('general_argument_invalid')
   })
 })
 

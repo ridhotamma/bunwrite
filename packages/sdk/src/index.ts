@@ -13,6 +13,7 @@ export { Account } from './services/account';
 export { Databases } from './services/databases';
 export { Functions } from './services/functions';
 export { Health } from './services/health';
+export { Locale } from './services/locale';
 export { Messaging } from './services/messaging';
 export { Organization } from './services/organization';
 export { Project } from './services/project';
@@ -39,7 +40,7 @@ export type {
     RealtimeResponseConnected,
 } from './services/realtime';
 export { RAG } from './services/rag';
-export type { RAGIngestParams, RAGIngestResult, RAGQueryParams, RAGQueryResult } from './services/rag';
+export type { RAGIngestFileParams, RAGIngestParams, RAGIngestResult, RAGQueryParams, RAGQueryResult } from './services/rag';
 export { Render } from './services/render';
 export { Sites } from './services/sites';
 export type { RenderPdfParams, RenderImageParams, RenderMargin, RenderJob, RenderJobStatus } from './services/render';
@@ -50,6 +51,10 @@ export type {
     UpsertVectorPointsParams,
     VectorCollection,
     VectorCollectionList,
+    VectorDocument,
+    VectorDocumentList,
+    VectorIngestDocumentParams,
+    VectorIngestResult,
     VectorListParams,
     VectorMatch,
     VectorMetric,

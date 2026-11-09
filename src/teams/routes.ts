@@ -81,12 +81,17 @@ export function teamRoutes(router: Router<AppContext>): void {
       const link = withQuery(url, { membershipId: membership.id, userId: membership.user_id, secret, teamId: membership.team_id })
       const owner = ctx.caller.user?.name || ctx.caller.user?.email || ctx.config.projectName
       await ctx.mailer.send(
-        ctx.templates.render('invitation', membership.user_email, {
-          user: membership.user_name || membership.user_email,
-          owner,
-          team: membership.team_name,
-          redirect: link,
-        }),
+        ctx.templates.render(
+          'invitation',
+          membership.user_email,
+          {
+            user: membership.user_name || membership.user_email,
+            owner,
+            team: membership.team_name,
+            redirect: link,
+          },
+          { locale: ctx.locale },
+        ),
       )
     }
     return json(membershipModel(membership), 201)

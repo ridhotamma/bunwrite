@@ -25,6 +25,7 @@ export const SERVICES: Record<string, new (client: sdk.Client) => object> = {
   project: sdk.Project,
   organization: sdk.Organization,
   health: sdk.Health,
+  locale: sdk.Locale,
   render: sdk.Render,
   sites: sdk.Sites,
   vectors: sdk.Vectors,

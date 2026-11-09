@@ -36,7 +36,7 @@ export function apiHeader(request: Request, name: string): string | null {
 }
 
 /** Short names read through `apiHeader` that both families may carry. */
-const COMPAT_HEADER_NAMES = ['project', 'key', 'session', 'jwt', 'organization', 'mode', 'id']
+const COMPAT_HEADER_NAMES = ['project', 'key', 'session', 'jwt', 'organization', 'mode', 'id', 'locale']
 
 /** Refuse a request that gives one header two different values, so it cannot mean two things at once. */
 export function assertCompatHeaders(request: Request): void {

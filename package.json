@@ -1,6 +1,6 @@
 {
   "name": "bunwrite",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle.",
   "license": "MIT",
   "keywords": [
@@ -56,9 +56,11 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",
+    "fflate": "^0.8.3",
     "htmx.org": "2.0.11",
     "nodemailer": "10.2.1",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "unpdf": "^2.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

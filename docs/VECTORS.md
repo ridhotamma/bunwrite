@@ -41,8 +41,10 @@ Open **Vectors** in the project sidebar. It has:
   dimension, metric, embedder and point count.
 - **Points** — browse and search, add a text point or an explicit vector, open a
   point to see its content and metadata, and delete it.
-- **RAG** — paste text to chunk/embed a document, see ingested documents, ask a
-  question, and review the generated answer, sources and context.
+- **RAG** — upload a PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON,
+  CSV, XML, YAML or text file (or paste text) to chunk/embed a document, see
+  ingested documents, ask a question, and review the generated answer, sources
+  and context.
 - **Settings** — inspect the collection's fixed facts, open the project's
   Vectors & RAG settings, and delete the collection.
 
@@ -141,10 +143,12 @@ curl -X DELETE "$API/vectors/handbook/points/p1" ...
 
 ### RAG ingest
 
-`POST /rag/ingest` splits text on word boundaries, embeds each chunk and stores
-it in the collection. Re-ingesting the same `documentId` replaces its chunks.
+`POST /rag/ingest` accepts JSON text, a multipart `file`, or a raw request body.
+It splits the text on word boundaries, embeds each chunk and stores it in the
+collection. Re-ingesting the same `documentId` replaces its chunks.
 
 ```bash
+# Text in JSON
 curl -X POST "$API/rag/ingest" \
   -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
   -H 'content-type: application/json' \
@@ -156,9 +160,51 @@ curl -X POST "$API/rag/ingest" \
     "chunkSize":1000,
     "chunkOverlap":200
   }'
+
+# A file: PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text
+curl -X POST "$API/rag/ingest" \
+  -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
+  -F collectionId=handbook \
+  -F file=@handbook.pdf \
+  -F metadata='{"source":"handbook.pdf"}'
+
+# A raw body with the collection and file name in the query
+curl -X POST "$API/rag/ingest?collectionId=handbook&filename=notes.md" \
+  -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
+  -H 'content-type: text/markdown' \
+  --data-binary @notes.md
 ```
 
-Response: `{ "collectionId", "documentId", "chunks", "$createdAt" }`.
+Response:
+
+```json
+{
+  "collectionId": "handbook",
+  "documentId": "handbook",
+  "chunks": 12,
+  "characters": 11480,
+  "format": "pdf",
+  "pages": 8,
+  "$createdAt": "2026-01-01T00:00:00.000+00:00"
+}
+```
+
+When no `documentId` is given for a file, it is derived from the file name, so
+uploading `handbook.pdf` again replaces the previous `handbook` document. File
+metadata (`source`, `filename`, `mimeType`, `format`, `size`, and `pages` for
+PDFs) is stored with each chunk unless the request's `metadata` overrides it.
+Uploads are limited to 25 MB and PDFs to 1000 pages. A scanned PDF without a
+text layer is refused; run OCR first.
+
+The document routes are equivalent and make CRUD clearer:
+
+```bash
+curl "$API/vectors/handbook/documents" ...                     # list documents
+curl -X POST "$API/vectors/handbook/documents" -F file=@guide.md ...  # ingest/upload
+curl -X PUT "$API/vectors/handbook/documents/guide" -F file=@guide.md ...  # replace
+curl "$API/vectors/handbook/documents/guide" ...               # chunks of one document
+curl -X DELETE "$API/vectors/handbook/documents/guide" ...     # delete its chunks
+```
 
 ### RAG query
 
@@ -219,10 +265,24 @@ const matches = await vectors.search({ collectionId: 'handbook', text: 'what doe
 const rag = new RAG(client)
 await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
 const result = await rag.query({ collectionId: 'handbook', query: 'What does it run on?', generate: false })
+
+// Upload a file and let the server extract, chunk and embed its text.
+await vectors.ingestDocument({
+  collectionId: 'handbook',
+  file: new File([bytes], 'handbook.pdf', { type: 'application/pdf' }),
+})
+await rag.ingestFile({ collectionId: 'handbook', file: fileFromAnInput })
 ```
 
 The `bunwrite vectors ...` and `bunwrite rag ...` CLI commands call the same
-methods. The MCP catalog includes `vectors_*` and `rag_*` operations.
+methods. A file path is accepted too:
+
+```bash
+bunwrite vectors ingest-document --collection-id handbook --file ./handbook.pdf
+bunwrite rag ingest-file --collection-id handbook --file ./notes.md
+```
+
+The MCP catalog includes `vectors_*` and `rag_*` operations.
 
 ## Limits and operations
 

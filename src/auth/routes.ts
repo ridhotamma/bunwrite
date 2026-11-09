@@ -23,6 +23,7 @@ async function limit(route: { ctx: AppContext; request: Request }, name: string,
 const OTP_TTL = 15 * 60
 const RECOVERY_TTL = 60 * 60
 const VERIFICATION_TTL = 60 * 60
+const TOKEN_EXPIRATION_MAGIC_URL = 60 * 60
 
 const ADJECTIVES = ['Brave', 'Calm', 'Clever', 'Gentle', 'Happy', 'Kind', 'Lucky', 'Quiet', 'Swift', 'Wise']
 const NOUNS = ['Badger', 'Falcon', 'Lotus', 'Mango', 'Otter', 'Panda', 'River', 'Tiger', 'Willow', 'Zebra']
@@ -272,8 +273,53 @@ export function accountRoutes(router: Router<AppContext>): void {
     const code = otpCode()
     const phrase = bool(params.phrase, false) ? `${pick(ADJECTIVES)} ${pick(NOUNS)}` : ''
     const { token } = await ctx.auth.createToken(user.id, 'email', { secret: code, ttl: OTP_TTL })
-    await ctx.mailer.send(ctx.templates.render('otpSession', email, { user: user.name || email, otp: code, phrase }))
+    await ctx.mailer.send(ctx.templates.render('otpSession', email, { user: user.name || email, otp: code, phrase }, { locale: ctx.locale }))
     return json(tokenModel(token, ctx.caller.privileged ? code : '', phrase), 201)
+  })
+
+  const createMagicUrlToken = async (route: RouteContext<AppContext>) => {
+    const { ctx, params } = route
+    requireScope(ctx, 'users.write')
+    method(ctx, 'magic-url')
+    await limit(route, 'tokens-magic-url', params.email, 60)
+    if (!ctx.mailer.enabled) throw err('general_smtp_disabled', 'SMTP disabled')
+    const email = validEmail(params.email)
+    const redirect = params.url
+      ? assertRedirect(params.url, ctx.sites.allowedOrigins(), 'url')
+      : `${ctx.config.publicEndpoint.replace(/\/v1\/?$/, '')}/auth/magic-url`
+    const existing = await ctx.auth.userByEmail(email)
+    if (!existing) await ctx.access.assertUserLimit()
+    const user = existing ?? (await ctx.auth.createUser({ id: params.userId, email }))
+    if (!user.status) throw err('user_blocked')
+    const phrase = bool(params.phrase, false) ? `${pick(ADJECTIVES)} ${pick(NOUNS)}` : ''
+    const { token, secret } = await ctx.auth.createToken(user.id, 'magic-url', { ttl: TOKEN_EXPIRATION_MAGIC_URL })
+    const link = withQuery(redirect, { userId: user.id, secret, expire: token.expire, project: ctx.config.projectId })
+    await ctx.mailer.send(
+      ctx.templates.render(
+        'magicSession',
+        email,
+        { user: user.name || email, redirect: link, phrase },
+        { locale: ctx.locale },
+      ),
+    )
+    return json(tokenModel(token, ctx.caller.privileged ? secret : '', phrase), 201)
+  }
+
+  router.post('/account/tokens/magic-url', createMagicUrlToken)
+  // Appwrite still answers the older SDK path with the same token-creation flow.
+  router.post('/account/sessions/magic-url', createMagicUrlToken)
+
+  router.put('/account/sessions/magic-url', async (route) => {
+    const { ctx, params } = route
+    requireScope(ctx, 'users.write')
+    assertNoSession(ctx)
+    const userId = str(params.userId) ?? ''
+    await limit(route, 'sessions-magic-url', userId)
+    const user = await ctx.auth.findUser(userId)
+    if (!user) throw err('user_invalid_token')
+    const token = await ctx.auth.verifyToken(userId, params.secret, ['magic-url'])
+    if (!user.status) throw err('user_blocked')
+    return sessionFromToken(route, user, token)
   })
 
   router.get('/account/tokens/oauth2/:provider', async ({ ctx, params, path }) => {
@@ -321,7 +367,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     if (!user.status) throw err('user_blocked')
     const { token, secret } = await ctx.auth.createToken(user.id, 'recovery', { ttl: RECOVERY_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
-    await ctx.mailer.send(ctx.templates.render('recovery', email, { user: user.name || email, redirect: link }))
+    await ctx.mailer.send(ctx.templates.render('recovery', email, { user: user.name || email, redirect: link }, { locale: ctx.locale }))
     return json(tokenModel(token, ctx.caller.privileged ? secret : ''), 201)
   })
 
@@ -348,7 +394,7 @@ export function accountRoutes(router: Router<AppContext>): void {
     if (!user.email) throw err('user_email_not_found')
     const { token, secret } = await ctx.auth.createToken(user.id, 'verification', { ttl: VERIFICATION_TTL })
     const link = withQuery(url, { userId: user.id, secret, expire: token.expire })
-    await ctx.mailer.send(ctx.templates.render('verification', user.email, { user: user.name || user.email, redirect: link }))
+    await ctx.mailer.send(ctx.templates.render('verification', user.email, { user: user.name || user.email, redirect: link }, { locale: ctx.locale }))
     return json(tokenModel(token), 201)
   })
 

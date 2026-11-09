@@ -8,10 +8,13 @@ import type { ConsoleContext } from '~/console/context'
 import { html, raw, type Html } from '~/console/html'
 import { SETTINGS } from '~/console/settings-meta'
 import { alert, badge, icon } from '~/console/ui'
-import { TEMPLATES, templateInfo, type TemplateFields, type TemplateId } from '~/mail/templates'
+import { TEMPLATES, TEMPLATE_LOCALE, TEMPLATE_LOCALES, normalizedTemplateLocale, templateInfo, type TemplateFields, type TemplateId } from '~/mail/templates'
 import type { Mail } from '~/mail/mailer'
 
 export const templatePath = (id: TemplateId) => `${SETTINGS}/templates/${id}`
+
+/** Keep the selected language when switching templates. */
+const templateHref = (id: TemplateId, locale: string) => `${templatePath(id)}${locale === TEMPLATE_LOCALE ? '' : `?locale=${encodeURIComponent(locale)}`}`
 
 /** Source/Preview switching and click-to-copy variables. Listeners sit on the document, so htmx page swaps keep working. */
 const TEMPLATE_SCRIPT = `
@@ -47,6 +50,13 @@ const TEMPLATE_SCRIPT = `
       }
     }
   })
+  document.addEventListener("change", (event) => {
+    const select = event.target instanceof Element ? event.target.closest("[data-template-locale]") : null
+    if (!select || !select.dataset.templateBase) return
+    const locale = select.value
+    const url = select.dataset.templateBase + (locale === "en" ? "" : "?locale=" + encodeURIComponent(locale))
+    window.location.href = url
+  })
 })()
 `
 
@@ -62,15 +72,21 @@ export function templatePreview(mail: Mail): Html {
     <iframe class="template-frame" sandbox="allow-same-origin" referrerpolicy="no-referrer" title="Email preview" srcdoc="${mail.html}"></iframe>`
 }
 
-export function templatesView(ctx: ConsoleContext, id: TemplateId, fields: TemplateFields = ctx.services.templates.get(id)): Html {
+export function templatesView(
+  ctx: ConsoleContext,
+  id: TemplateId,
+  locale: string = TEMPLATE_LOCALE,
+  fields: TemplateFields = ctx.services.templates.get(id, locale),
+): Html {
   const info = templateInfo(id)
   const smtp = ctx.services.config.smtp
   const templates = ctx.services.templates
-  const customized = templates.customized(id)
+  const selected = normalizedTemplateLocale(locale)
+  const saved = templates.translated(id, selected)
   const list = html`<nav class="card flush template-list" aria-label="Email templates">
     <div class="template-list-head"><h2>Email templates</h2><span class="subdued">${TEMPLATES.length} templates</span></div>
     ${TEMPLATES.map(
-      (t) => html`<a href="${templatePath(t.id)}" class="template-item ${t.id === id ? 'on' : ''}" ${t.id === id ? html`aria-current="page"` : ''}>
+      (t) => html`<a href="${templateHref(t.id, selected)}" class="template-item ${t.id === id ? 'on' : ''}" ${t.id === id ? html`aria-current="page"` : ''}>
         ${raw(ENVELOPE)}
         <span class="template-item-text"><span class="template-item-name">${t.name}${templates.customized(t.id) ? html` ${badge('Custom', 'info')}` : ''}</span><span class="subdued">${t.description}</span></span>
       </a>`,
@@ -82,7 +98,19 @@ export function templatesView(ctx: ConsoleContext, id: TemplateId, fields: Templ
       ${smtp
         ? ''
         : alert('warning', html`SMTP is not set up, so these emails are not sent yet. <a href="${SETTINGS}/email">Set up SMTP</a>.`)}
-      <div class="card-head"><h2>${info.name}</h2>${customized ? html`<div class="card-head-actions">${badge('Custom', 'info')}</div>` : ''}</div>
+      <div class="card-head"><h2>${info.name}</h2>${templates.customized(id) ? html`<div class="card-head-actions">${badge('Custom', 'info')}</div>` : ''}</div>
+      <label
+        >Template language
+        <select name="locale" data-template-locale data-template-base="${templatePath(id)}">
+          ${TEMPLATE_LOCALES.map(
+            (language) => html`<option value="${language.code}" ${language.code === selected ? 'selected' : ''}>${language.name} (${language.code})</option>`,
+          )}
+        </select>
+        <small>A language with no saved template uses its base language, then English. The email is sent in the language the API client selects.</small>
+      </label>
+      ${selected !== TEMPLATE_LOCALE && !saved
+        ? alert('info', html`No <strong>${TEMPLATE_LOCALES.find((language) => language.code === selected)?.name ?? selected}</strong> template yet, so this email is sent in English until you save one here.`)
+        : ''}
       <label>Subject<input name="subject" value="${fields.subject}" maxlength="255" required></label>
       <div class="fields">
         <label>Sender name<input name="senderName" value="${fields.senderName}" placeholder="${smtp?.senderName || 'From SMTP settings'}"></label>
@@ -107,9 +135,9 @@ export function templatesView(ctx: ConsoleContext, id: TemplateId, fields: Templ
         <textarea name="message" class="mono template-source" spellcheck="false" aria-label="Message HTML">${fields.message}</textarea>
         <small class="subdued">HTML. It is placed inside the email layout; variable values are escaped.</small>
       </div>
-      <div data-template-pane="preview" hidden><div id="template-preview" class="template-preview">${templatePreview(templates.preview(id, fields))}</div></div>
+      <div data-template-pane="preview" hidden><div id="template-preview" class="template-preview">${templatePreview(templates.preview(id, fields, selected))}</div></div>
       <div class="foot template-foot">
-        ${customized ? html`<button type="submit" formaction="${templatePath(id)}/reset" formnovalidate class="plain" data-reset-template>Reset to default</button>` : html`<span></span>`}
+        ${saved ? html`<button type="submit" formaction="${templatePath(id)}/reset" formnovalidate class="plain" data-reset-template>Reset to default</button>` : html`<span></span>`}
         <button class="primary">Update template</button>
       </div>
     </form>

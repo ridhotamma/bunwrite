@@ -19,6 +19,13 @@ async function form(path: string, fields: Record<string, string | string[]>) {
   })
 }
 
+async function upload(path: string, file: File, fields: Record<string, string> = {}) {
+  const body = new FormData()
+  body.append('file', file)
+  for (const [key, value] of Object.entries(fields)) body.append(key, value)
+  return fetch(`${base}${path}`, { method: 'POST', body, redirect: 'manual', headers: { cookie } })
+}
+
 const get = (path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' })
 const flash = (res: Response) => new URL(res.headers.get('location') ?? '/', base).searchParams
 
@@ -168,6 +175,25 @@ describe('vectors console', () => {
       filter: '{bad',
     })
     expect(await badFilter.text()).toContain('Filter must be a JSON object')
+  })
+
+  test('a file upload is converted and the page reports the source format', async () => {
+    const uploaded = await upload(
+      '/console/vectors/knowledge/rag/ingest',
+      new File(['# Uploaded handbook\n\nUploaded files become chunks without pasting text.'], 'uploaded-handbook.md', { type: 'text/markdown' }),
+      { metadata: '{"source":"upload"}', chunkSize: '240', chunkOverlap: '20' },
+    )
+    expect(uploaded.status).toBe(303)
+    expect(flash(uploaded).get('ok')).toContain('MARKDOWN')
+
+    const page = await (await get('/console/vectors/knowledge/rag')).text()
+    expect(page).toContain('uploaded-handbook')
+    expect(page).toContain('uploaded-handbook.md')
+    expect(page).toContain('name="file"')
+    expect(page).toContain('enctype="multipart/form-data"')
+    expect(page).toContain('Drag and drop a document here')
+
+    await form('/console/vectors/knowledge/documents/uploaded-handbook/delete', {})
   })
 
   test('documents and the collection can be deleted', async () => {

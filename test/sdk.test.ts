@@ -291,6 +291,19 @@ describe('vectors and RAG', () => {
     expect(answer.sources.length).toBeGreaterThan(0)
     expect(answer.context).toContain('SQLite')
 
+    const uploaded = await vectors.ingestDocument({
+      collectionId: 'sdk-vectors',
+      file: new File(['# SDK upload\n\nFiles are converted to text before embedding.'], 'sdk-upload.md', { type: 'text/markdown' }),
+    })
+    expect(uploaded).toMatchObject({ collectionId: 'sdk-vectors', documentId: 'sdk-upload', format: 'markdown' })
+    expect((await vectors.listDocuments({ collectionId: 'sdk-vectors' })).documents.map((d) => d.documentId)).toContain('sdk-upload')
+
+    const fileIngest = await rag.ingestFile({
+      collectionId: 'sdk-vectors',
+      file: new File(['Plain text from the RAG file helper.'], 'rag-file.txt', { type: 'text/plain' }),
+    })
+    expect(fileIngest).toMatchObject({ documentId: 'rag-file', format: 'text' })
+
     expect((await vectors.deleteDocument({ collectionId: 'sdk-vectors', documentId: 'guide' })).deleted).toBe(ingested.chunks)
     expect((await vectors.listDocumentPoints({ collectionId: 'sdk-vectors', documentId: 'guide' })).total).toBe(0)
     await vectors.deletePoint({ collectionId: 'sdk-vectors', pointId: 'v1' })

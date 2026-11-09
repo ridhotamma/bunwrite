@@ -4,7 +4,7 @@
  * and the console editor with its preview.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { Client, ID, Project } from 'node-appwrite'
+import { Account, Client, ID, Project, ProjectEmailTemplateLocale } from 'node-appwrite'
 
 import { ConsoleAuth } from '~/console/auth'
 import { htmlToText } from '~/mail/templates'
@@ -122,9 +122,40 @@ describe('custom templates through the Project API', () => {
     expect(server.mailer.last('friend@example.com')!.subject).toBe('Grace added you to Crew')
   })
 
+  test('a translation is saved for one locale and other languages keep theirs', async () => {
+    const french = await project.updateEmailTemplate({
+      templateId: 'verification',
+      locale: ProjectEmailTemplateLocale.Fr,
+      subject: 'Vérifiez {{project}}',
+      message: '<p>Bonjour {{user}},</p><p><a href="{{redirect}}">Vérifier mon adresse</a></p>',
+    })
+    expect(french).toMatchObject({ templateId: 'verification', locale: 'fr', subject: 'Vérifiez {{project}}' })
+    expect(await project.getEmailTemplate({ templateId: 'verification', locale: ProjectEmailTemplateLocale.Fr })).toMatchObject({
+      locale: 'fr',
+      subject: 'Vérifiez {{project}}',
+      message: '<p>Bonjour {{user}},</p><p><a href="{{redirect}}">Vérifier mon adresse</a></p>',
+    })
+    expect(await project.getEmailTemplate({ templateId: 'verification', locale: ProjectEmailTemplateLocale.En })).toMatchObject({ subject: 'Confirm your email' })
+    expect((await project.listEmailTemplates()).templates.filter((template: any) => template.templateId === 'verification')).toHaveLength(2)
+  })
+
+  test('the locale header sends the matching verification email', async () => {
+    const user = makeUser(server.db)
+    server.db.sqlite.query('UPDATE _users SET name = ? WHERE id = ?').run('Ada', user.id)
+    const client = new Client().setEndpoint(server.endpoint).setProject(PROJECT).setSession(user.secret).setLocale('fr')
+    await new Account(client).createVerification({ url: REDIRECT })
+    const mail = server.mailer.last(`${user.id}@example.com`)!
+    expect(mail.subject).toBe('Vérifiez Test Project')
+    expect(mail.html).toContain('Bonjour Ada,')
+    expect(mail.text).toContain('Vérifier mon adresse: http://localhost/verify?userId=')
+  })
+
   test('bad input is refused', async () => {
-    expect(await failure(project.updateEmailTemplate({ templateId: 'verification', locale: 'fr', subject: 'x' }))).toMatchObject({ code: 400, message: expect.stringContaining('"en" locale') })
-    expect(await failure(project.updateEmailTemplate({ templateId: 'magicSession', subject: 'x' }))).toMatchObject({ code: 400, message: expect.stringContaining('not sent by this server') })
+    expect(await failure(project.updateEmailTemplate({ templateId: 'verification', locale: 'xx' as any, subject: 'x' }))).toMatchObject({
+      code: 400,
+      message: expect.stringContaining('locale'),
+    })
+    expect(await failure(project.updateEmailTemplate({ templateId: 'sessionAlert', subject: 'x' }))).toMatchObject({ code: 400, message: expect.stringContaining('not sent by this server') })
     expect(await failure(project.updateEmailTemplate({ templateId: 'verification', senderEmail: 'not-an-email' }))).toMatchObject({ code: 400 })
     expect(await failure(project.updateEmailTemplate({ templateId: 'verification', subject: 'x'.repeat(256) }))).toMatchObject({ code: 400 })
   })
@@ -139,11 +170,34 @@ describe('custom templates through the Project API', () => {
 describe('console editor', () => {
   test('the Email templates tab lists the templates and opens the first', async () => {
     const html = await page('/console/settings/templates')
-    for (const name of ['Verification', 'Reset password', 'OTP session', 'Invite user', 'Console MFA']) expect(html).toContain(name)
-    expect(html).toContain('5 templates')
+    for (const name of ['Verification', 'Magic URL', 'Reset password', 'OTP session', 'Invite user', 'Console MFA']) expect(html).toContain(name)
+    expect(html).toContain('6 templates')
     expect(html).toContain('name="subject"')
+    expect(html).toContain('name="locale"')
     expect(html).toContain('data-copy-var="{{redirect}}"')
     expect(html).toContain('<iframe class="template-frame" sandbox="allow-same-origin"')
+  })
+
+  test('the console saves and opens a template for the chosen language', async () => {
+    const res = await form('/console/settings/templates/verification', {
+      locale: ProjectEmailTemplateLocale.Id,
+      subject: 'Verifikasi {{project}}',
+      message: '<p>Halo {{user}},</p><p><a href="{{redirect}}">Verifikasi email</a></p>',
+      senderName: '',
+      senderEmail: '',
+      replyToName: '',
+      replyToEmail: '',
+    })
+    expect(res.status).toBe(303)
+    const location = new URL(res.headers.get('location')!, base)
+    expect(location.pathname).toBe('/console/settings/templates/verification')
+    expect(location.searchParams.get('locale')).toBe('id')
+
+    const html = await page('/console/settings/templates/verification?locale=id')
+    expect(html).toContain('value="Verifikasi {{project}}"')
+    expect(html).toContain('Halo {{user}}')
+    expect(html).toContain('Indonesian (id)')
+    expect(await project.getEmailTemplate({ templateId: 'verification', locale: ProjectEmailTemplateLocale.Id })).toMatchObject({ locale: ProjectEmailTemplateLocale.Id, subject: 'Verifikasi {{project}}' })
   })
 
   test('saving from the console changes what is sent', async () => {

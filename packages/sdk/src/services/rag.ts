@@ -1,4 +1,5 @@
 import { BunwriteException, Client, type Payload } from '../client';
+import { InputFile } from '../inputFile';
 import type { VectorMatch } from './vectors';
 
 export interface RAGIngestParams {
@@ -14,10 +15,26 @@ export interface RAGIngestParams {
     chunkOverlap?: number;
 }
 
+export interface RAGIngestFileParams {
+    collectionId: string;
+    /** A PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
+    file: File | Blob | InputFile;
+    /** Used when a Blob has no name. */
+    filename?: string;
+    documentId?: string;
+    metadata?: Record<string, unknown>;
+    chunkSize?: number;
+    chunkOverlap?: number;
+}
+
 export interface RAGIngestResult {
     collectionId: string;
     documentId: string;
     chunks: number;
+    characters: number;
+    /** Source format: pdf, markdown, html, docx, text, ... */
+    format: string;
+    pages?: number;
     $createdAt: string;
 }
 
@@ -66,6 +83,25 @@ export class RAG {
         }));
     }
 
+    /** Upload a file, extract its text, chunk and embed it. */
+    async ingestFile(params: RAGIngestFileParams): Promise<RAGIngestResult> {
+        requireString(params?.collectionId, 'collectionId');
+        const file = await fileOf(params.file, params.filename);
+        return this.client.call(
+            'post',
+            new URL(this.client.config.endpoint + '/rag/ingest'),
+            { 'X-Bunwrite-Project': this.client.config.project, accept: 'application/json', 'content-type': 'multipart/form-data' },
+            clean({
+                collectionId: params.collectionId,
+                file,
+                documentId: params.documentId,
+                metadata: params.metadata,
+                chunkSize: params.chunkSize,
+                chunkOverlap: params.chunkOverlap,
+            }),
+        );
+    }
+
     /** Retrieve relevant chunks, and generate an answer when a chat provider is configured. */
     query(params: RAGQueryParams): Promise<RAGQueryResult> {
         requireString(params?.collectionId, 'collectionId');
@@ -91,6 +127,13 @@ export class RAG {
 
 function requireString(value: unknown, name: string): void {
     if (typeof value !== 'string' || !value) throw new BunwriteException(`Missing required parameter: "${name}"`);
+}
+
+async function fileOf(value: File | Blob | InputFile, filename?: string): Promise<File> {
+    if (value instanceof InputFile) return value.toFile();
+    if (typeof File !== 'undefined' && value instanceof File) return value;
+    if (typeof Blob !== 'undefined' && value instanceof Blob) return new File([value], filename || 'upload', { type: value.type });
+    throw new BunwriteException('Missing required parameter: "file"');
 }
 
 function clean(params: Payload): Payload {

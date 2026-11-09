@@ -18,6 +18,8 @@ import { forwardedHeadersTrusted, parseTrustedProxies, rememberClientIp } from '
 import { logRequest, requestId, truncate } from './lib/log'
 import { originAllowed } from './lib/origins'
 import { Router } from './lib/router'
+import { requestLocale } from './locale/service'
+import { localeRoutes } from './locale/routes'
 import { normalizePath, type RequestObservation } from './observability'
 import type { Socket, SocketData } from './realtime/hub'
 import { schemaRoutes } from './schema/routes'
@@ -44,6 +46,8 @@ export { createServices, type Services } from './services'
 
 export interface AppContext extends Services {
   caller: Caller
+  /** Locale selected by `X-Appwrite-Locale` or `Accept-Language`, used for localized email templates. */
+  locale: string
   /** Git deployments for the whole server (GitHub App, webhooks, repository links). */
   hub: VcsHub
   /** Events of this request's batched writes; published once the handler returns. */
@@ -103,6 +107,8 @@ async function syncServices(services: Services): Promise<void> {
     await services.settings.load()
     await services.access.load()
     await services.observabilitySettings.load()
+    // Template edits made in another worker must be sent by this one too.
+    await services.templates.load()
   }
   if (changed.catalog) {
     await services.proxy.reload()
@@ -131,6 +137,7 @@ export function createApp(source: Services | ProjectResolver) {
   documentRoutes(router)
   transactionRoutes(router)
   schemaRoutes(router)
+  localeRoutes(router)
   accountRoutes(router)
   userRoutes(router)
   teamRoutes(router)
@@ -403,7 +410,8 @@ export function createApp(source: Services | ProjectResolver) {
     }
     services.store.drainEvents()
     const events: DocEvent[] = []
-    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, hub, events } })
+    const locale = requestLocale(request)
+    const response = await match.handler({ request, url, params, path: match.path, ctx: { ...services, caller, locale, hub, events } })
     const published = [...events, ...services.store.drainEvents()]
     services.realtime.publish(published)
     await services.webhooks.dispatch(published, caller)

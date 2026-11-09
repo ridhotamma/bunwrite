@@ -256,10 +256,12 @@ export function vectorPages(router: ConsoleRouter): void {
     const collection = await ctx.services.vectors.getCollection(path.collectionId!)
     const env = envOf(ctx)
     const draft = ingestDraft(ctx)
+    const upload = ctx.form.file
     try {
       const result = await ctx.services.vectors.ingest({
         collectionId: collection.$id,
         documentId: draft.documentId || undefined,
+        file: upload instanceof Blob && upload.size > 0 ? upload : undefined,
         text: draft.text,
         metadata: jsonObject(draft.metadata, 'Metadata'),
         chunkSize: numberOrUndefined(draft.chunkSize),
@@ -267,7 +269,7 @@ export function vectorPages(router: ConsoleRouter): void {
       })
       return ctx.go(`${collectionUrl(collection.$id)}/rag`, {
         tone: 'success',
-        text: `Ingested ${result.chunks} chunk${result.chunks === 1 ? '' : 's'}`,
+        text: `Ingested ${result.chunks} chunk${result.chunks === 1 ? '' : 's'} from ${result.format.toUpperCase()}`,
       })
     } catch (error) {
       if (!(error instanceof BunwriteError)) throw error

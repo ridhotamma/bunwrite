@@ -531,7 +531,11 @@ function settingsNav(active: SettingsTab): Html {
   </nav>`
 }
 
-export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, options: { template?: TemplateId; fields?: TemplateFields } = {}): Promise<Html> {
+export async function settingsView(
+  ctx: ConsoleContext,
+  tab: SettingsTab,
+  options: { template?: TemplateId; fields?: TemplateFields; locale?: string } = {},
+): Promise<Html> {
   let body: Html
   switch (tab) {
     case 'general':
@@ -541,7 +545,7 @@ export async function settingsView(ctx: ConsoleContext, tab: SettingsTab, option
       body = emailCards(ctx)
       break
     case 'templates':
-      body = templatesView(ctx, options.template ?? 'verification', options.fields)
+      body = templatesView(ctx, options.template ?? 'verification', options.locale, options.fields)
       break
     case 'storage':
       body = storageCard(ctx)

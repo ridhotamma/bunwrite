@@ -51,7 +51,7 @@ await new Storage(client).createFile({ bucketId: 'invoices', fileId: ID.unique()
 Without a bundler, load `dist/bunwrite.iife.js` and use `window.Bunwrite`:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.3.0/dist/bunwrite.iife.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@bunwrite/sdk@0.4.0/dist/bunwrite.iife.js"></script>
 <script>
   const client = new Bunwrite.Client().setEndpoint('https://api.example.com/v1').setProject('your-project-id')
 </script>
@@ -65,12 +65,12 @@ deprecated.
 
 | Service | What it covers |
 | --- | --- |
-| `Account` | Sign-up, email + password and email OTP sessions, token sessions, Google OAuth2 token flow, JWTs, recovery, email verification, name, email, password, prefs, sessions |
+| `Account` | Sign-up, email + password, email OTP and magic URL sessions, token sessions, Google OAuth2 token flow, JWTs, recovery, email verification, name, email, password, prefs, sessions |
 | `Databases` | Databases, collections, attributes, indexes, documents (one and bulk), increment/decrement, transactions |
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
-| `Vectors` | Bunwrite extension: vector collections, point upsert/list/get/delete, similarity search and document chunks |
-| `RAG` | Bunwrite extension: chunk/embed/ingest text, retrieve context and optionally generate answers |
+| `Vectors` | Bunwrite extension: vector collections, point upsert/list/get/delete, similarity search, document upload/ingest and document chunks |
+| `RAG` | Bunwrite extension: chunk/embed/ingest text or files, retrieve context and optionally generate answers |
 | `Functions` | Functions, deployments, executions, variables |
 | `Sites` | Static sites, deployments, custom domains and variables |
 | `Teams` | Teams, prefs, memberships and invitations |
@@ -78,7 +78,8 @@ deprecated.
 | `Messaging` | Topics |
 | `Webhooks` | Webhooks and their secrets |
 | `Proxy` | Custom domains for sites and functions, as Appwrite proxy rules |
-| `Project` | Services, protocols, sign-in methods, policies, email templates, mock phone numbers and global variables (API key) |
+| `Project` | Services, protocols, sign-in methods, policies, per-language email templates, mock phone numbers and global variables (API key) |
+| `Locale` | Countries, continents, currencies, languages, phone codes and locale codes, localized by `setLocale()` |
 | `Organization` | Projects of the organization (console sign-in) |
 | `Realtime` | Subscriptions over WebSocket, in browsers and on servers |
 | `Health` | Is the server up, and which API version it speaks |
