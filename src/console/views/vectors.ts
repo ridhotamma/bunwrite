@@ -563,7 +563,7 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
         <div class="foot" style="justify-content:flex-start">
           <a class="btn" href="${VECTOR_SETTINGS}">Open Vectors &amp; RAG settings</a>
           <form method="post" action="${base}/reindex" data-confirm="Re-embed every point in this collection with the active embedder?" data-confirm-label="Re-index" data-confirm-tone="critical">
-            <button class="plain">Re-index all points</button>
+            <button>Re-index all points</button>
           </form>
         </div>`,
       )}
@@ -583,7 +583,7 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
                 data-confirm-label="Rebuild index"
                 class="foot"
               >
-                <button class="plain">Rebuild external index</button>
+                <button>Rebuild external index</button>
               </form>`
             : html`<p class="help">Search scans the collection in-process. Configure Qdrant in the project's Vectors &amp; RAG settings to use an external index.</p>`}`,
       )}
@@ -591,7 +591,7 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
         'Delete collection',
         'Removes every point and removes the collection from search and RAG. This cannot be undone.',
         html`<p class="hint" style="margin:0 0 12px">${plural(collection.points, 'point')} will be deleted with it.</p>
-          ${destroy(`${base}/delete`, 'Delete collection', `Delete ${collection.name} and all its points?`)}`,
+          ${destroy(`${base}/delete`, 'Delete collection', `Delete ${collection.name} and all its points?`, {}, { asButton: true })}`,
       )}`,
   )
 }

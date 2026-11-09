@@ -181,7 +181,8 @@ main{padding:20px 32px 48px;max-width:1100px;width:100%;margin:0 auto}
 .card{background:var(--surface);border-radius:12px;box-shadow:var(--shadow);padding:16px;margin-bottom:16px}
 .card.flush{padding:0;overflow:hidden}.card h2{font-size:14px;font-weight:650;margin:0 0 12px}
 .card .hint{color:var(--subdued);margin:-8px 0 12px}
-.card .foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.card .foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:4px;flex-wrap:wrap}
+.card .foot form{display:flex;align-items:center}
 .card form>textarea{width:100%}
 .card-head{display:flex;align-items:center;gap:8px;margin-bottom:12px}.card-head h2{margin:0}.card-head-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 .layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px}@media(max-width:960px){.layout{grid-template-columns:minmax(0,1fr)}}
