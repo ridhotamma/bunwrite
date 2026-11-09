@@ -315,6 +315,28 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Embedding settings saved' })
   })
 
+  router.post(`${SETTINGS}/vectors/index`, async ({ ctx }) => {
+    const f = ctx.form
+    const current = ctx.services.config.vectors
+    const annProvider = value(f, 'annProvider') === 'qdrant' ? 'qdrant' : 'builtin'
+    const annUrl = value(f, 'annUrl').replace(/\/+$/, '')
+    if (annProvider === 'qdrant') {
+      if (!annUrl) throw err('general_argument_invalid', 'Enter the Qdrant endpoint.')
+      httpUrl(annUrl, 'The Qdrant endpoint')
+    }
+    await saveVectors(ctx, {
+      annProvider,
+      annUrl,
+      annApiKey: String(f.annApiKey ?? '').trim() || current.annApiKey,
+      annTimeoutMs: wholeSetting(f, 'annTimeoutMs', 'Index timeout', 1_000, 120_000),
+      annFallback: checked(f.annFallback),
+    })
+    return ctx.go(tabPath('vectors'), {
+      tone: 'success',
+      text: annProvider === 'qdrant' ? 'External index saved; rebuild each collection' : 'Built-in vector scan selected',
+    })
+  })
+
   router.post(`${SETTINGS}/vectors/answers`, async ({ ctx }) => {
     const f = ctx.form
     const current = ctx.services.config.vectors

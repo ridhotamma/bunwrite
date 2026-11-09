@@ -307,6 +307,43 @@ describe('vector store', () => {
     expect(reranked.points).toHaveLength(1)
   })
 
+  test('an unavailable external index falls back to the built-in scan', async () => {
+    const vectors = server.services.vectors
+    const original = server.services.config.vectors
+    try {
+      await server.services.settings.set('vectors', {
+        ...original,
+        annProvider: 'qdrant',
+        annUrl: 'http://127.0.0.1:9',
+        annTimeoutMs: 1_000,
+        annFallback: true,
+      })
+      await vectors.createCollection({ id: 'ann-fallback', dimension: 4 })
+      await vectors.upsertPoints('ann-fallback', [{ id: 'a', vector: [1, 0, 0, 0], content: 'fallback point' }])
+      expect((await vectors.search('ann-fallback', { vector: [1, 0, 0, 0], topK: 1 })).points[0]!.$id).toBe('a')
+      expect(await vectors.indexStatus('ann-fallback')).toMatchObject({
+        provider: 'qdrant',
+        configured: true,
+        healthy: false,
+        sqlPoints: 1,
+        status: 'error',
+      })
+      await server.services.settings.set('vectors', {
+        ...original,
+        annProvider: 'qdrant',
+        annUrl: 'http://127.0.0.1:9',
+        annTimeoutMs: 1_000,
+        annFallback: false,
+      })
+      expect(await vectors.search('ann-fallback', { vector: [1, 0, 0, 0], topK: 1 }).catch((error) => error)).toMatchObject({
+        type: 'general_unknown',
+      })
+    } finally {
+      await server.services.settings.reset('vectors')
+      await vectors.deleteCollection('ann-fallback').catch(() => undefined)
+    }
+  })
+
   test('query redacts context, reports suspicious sources and writes an audit row', async () => {
     const vectors = server.services.vectors
     await vectors.createCollection({ id: 'guard', dimension: 64 })

@@ -146,6 +146,31 @@ export interface VectorReindexResult {
     points: number;
     embedder: string;
     dimension: number;
+    /** Points mirrored to the external index, when one is configured. */
+    indexed?: number | null;
+    /** Why the external index could not be rebuilt; the SQL vectors are still updated. */
+    indexError?: string;
+}
+
+export interface VectorIndexStatus {
+    provider: 'builtin' | 'qdrant';
+    configured: boolean;
+    healthy: boolean;
+    collectionId: string;
+    sqlPoints: number;
+    indexPoints: number | null;
+    missing: number | null;
+    status: 'builtin' | 'current' | 'missing' | 'stale' | 'error';
+    blocked?: string | null;
+    version?: string;
+    latencyMs?: number;
+    error?: string;
+}
+
+export interface VectorIndexRebuildResult {
+    collectionId: string;
+    provider: 'builtin' | 'qdrant';
+    points: number;
 }
 
 export interface VectorIngestResult {
@@ -220,6 +245,18 @@ export class Vectors {
     reindex(params: { collectionId: string }): Promise<VectorReindexResult> {
         requireString(params?.collectionId, 'collectionId');
         return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/reindex`);
+    }
+
+    /** Compare the SQL point count with the configured external index. */
+    indexStatus(params: { collectionId: string }): Promise<VectorIndexStatus> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('get', `/vectors/${encodeURIComponent(params.collectionId)}/index`);
+    }
+
+    /** Recreate and refill the external index from the SQL points. */
+    rebuildIndex(params: { collectionId: string }): Promise<VectorIndexRebuildResult> {
+        requireString(params?.collectionId, 'collectionId');
+        return this._call('post', `/vectors/${encodeURIComponent(params.collectionId)}/index/rebuild`);
     }
 
     /** List points, optionally only those belonging to one document. */

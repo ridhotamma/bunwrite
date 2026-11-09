@@ -7,6 +7,7 @@ export interface VectorCollectionRow {
   dimension: number
   metric: string
   embedder: string
+  index_epoch: string
   created_at: string
   updated_at: string
 }
@@ -164,6 +165,10 @@ export interface ReindexResult {
   points: number
   embedder: string
   dimension: number
+  /** Points mirrored to the external index, when one is configured. */
+  indexed?: number | null
+  /** Why the external index could not be rebuilt; the SQL vectors are still updated. */
+  indexError?: string
 }
 
 export interface QueryInput extends IngestInput {

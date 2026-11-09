@@ -128,6 +128,12 @@ export const vectorCollections = sqliteTable(
     dimension: integer('dimension').notNull(),
     metric: text('metric').notNull().default('cosine'),
     embedder: text('embedder').notNull(),
+    /**
+     * Identifies this collection incarnation to an external index. Recreating a
+     * collection with the same ID gets a fresh epoch, so stale provider points
+     * can never leak into the new collection.
+     */
+    indexEpoch: text('index_epoch').notNull().default(''),
     ...timestamps,
   },
   (t) => [uniqueIndex('_vector_collections_id').on(t.id)],

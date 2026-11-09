@@ -21,6 +21,7 @@ import {
   when,
 } from '~/console/ui'
 import type { VectorCollection, VectorDocument, VectorMatch, VectorPoint } from '~/vectors/types'
+import type { VectorIndexProvider } from '~/vectors/config'
 import { MAX_FILE_BYTES } from '~/vectors/limits'
 
 export const VECTORS = '/console/vectors'
@@ -42,6 +43,9 @@ export interface VectorEnv {
   hybrid: boolean
   rerank: boolean
   reranker: string
+  indexProvider: VectorIndexProvider
+  indexConfigured: boolean
+  indexLabel: string
 }
 
 export interface CollectionDraft {
@@ -562,6 +566,26 @@ export function collectionSettingsView(env: VectorEnv, collection: VectorCollect
             <button class="plain">Re-index all points</button>
           </form>
         </div>`,
+      )}
+      ${settingsSection(
+        'External index',
+        'SQL is the source of truth. An external index mirrors the vectors for approximate nearest-neighbour search.',
+        html`<ul class="list">
+            <li><span class="subdued">Provider</span><span>${env.indexLabel}</span></li>
+            <li><span class="subdued">Hybrid lexical</span><span>${env.indexProvider === 'qdrant' && env.indexConfigured ? 'Sparse vectors in the index' : 'Built-in BM25 scan'}</span></li>
+          </ul>
+          ${env.indexProvider === 'qdrant' && env.indexConfigured
+            ? html`<p class="help">Rebuild after enabling Qdrant, changing the dimension, or any index warning. Rebuilding reads every point from SQL and recreates the provider collection.</p>
+              <form
+                method="post"
+                action="${base}/index/rebuild"
+                data-confirm="Recreate and refill this collection's external index from SQL?"
+                data-confirm-label="Rebuild index"
+                class="foot"
+              >
+                <button class="plain">Rebuild external index</button>
+              </form>`
+            : html`<p class="help">Search scans the collection in-process. Configure Qdrant in the project's Vectors &amp; RAG settings to use an external index.</p>`}`,
       )}
       ${settingsSection(
         'Delete collection',

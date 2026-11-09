@@ -6,6 +6,8 @@
  *   GET    /vectors/:collectionId                    collection details
  *   DELETE /vectors/:collectionId                    drop a collection and its points
  *   POST   /vectors/:collectionId/reindex            re-embed every point with the active embedder
+ *   GET    /vectors/:collectionId/index               external index status and counts
+ *   POST   /vectors/:collectionId/index/rebuild       recreate and refill the external index
  *
  *   GET    /vectors/:collectionId/points             list points
  *   POST   /vectors/:collectionId/points             upsert one point or a batch
@@ -154,6 +156,16 @@ export function vectorRoutes(router: Router<AppContext>): void {
   router.post('/vectors/:collectionId/reindex', async ({ ctx, path }) => {
     requireKey(ctx, 'vectorsdb.documents.write')
     return json(await ctx.vectors.reindex(path.collectionId!))
+  })
+
+  router.get('/vectors/:collectionId/index', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.collections.read')
+    return json(await ctx.vectors.indexStatus(path.collectionId!))
+  })
+
+  router.post('/vectors/:collectionId/index/rebuild', async ({ ctx, path }) => {
+    requireKey(ctx, 'vectorsdb.documents.write')
+    return json(await ctx.vectors.rebuildIndex(path.collectionId!))
   })
 
   router.get('/vectors/:collectionId/points', async ({ ctx, path, params }) => {

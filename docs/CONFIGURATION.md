@@ -473,9 +473,10 @@ There are no environment variables for them.
 
 The built-in vector store and retrieval-augmented generation endpoints. Local
 embeddings are the default and need no network; any OpenAI-compatible endpoint
-can be used instead. Embeddings, answer generation, chunking and limits are
-edited at **Console → Settings → Vectors & RAG**. There are no environment
-variables for them. See [VECTORS.md](VECTORS.md) for the API and limits.
+can be used instead. Embeddings, answer generation, the optional Qdrant ANN
+index, chunking and limits are edited at **Console → Settings → Vectors & RAG**.
+There are no environment variables for them. See [VECTORS.md](VECTORS.md) for
+the API and limits.
 
 ## HTML rendering
 

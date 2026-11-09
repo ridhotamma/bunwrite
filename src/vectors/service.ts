@@ -18,7 +18,6 @@ import { resolveId, uniqueId } from '~/lib/ids'
 import { chunkMarkdown, chunkText } from './chunk'
 import type { ChatProvider } from './chat'
 import { HttpChat } from './chat'
-import type { VectorsConfig } from './config'
 import type { EmbeddingProvider } from './embedder'
 import { HttpEmbedding, LocalEmbedding } from './embedder'
 import { average, keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from './eval'
@@ -38,12 +37,22 @@ import {
   SCAN_BATCH,
 } from './limits'
 import { answerPrompt, buildContext } from './rag'
-import { TopK } from './rank'
+import { TopK, type Scored } from './rank'
 import { QueueService } from '~/queue/service'
 import { HttpReranker, LocalReranker, type RerankProvider } from './rerank'
 import { injectionSignals, redactPii } from './security'
 import { parseRowMetadata, parseRowPermissions, pointModel } from './rows'
 import { norm, parseMetric, parseVector, score, type VectorMetric } from './similarity'
+import {
+  annCollectionOf,
+  makeVectorAnnIndex,
+  supportsAnnFilter,
+  type AnnRebuildResult,
+  type AnnSearchResult,
+  type AnnStatus,
+  type VectorAnnIndex,
+} from './ann'
+import type { VectorsConfig, VectorIndexProvider } from './config'
 import { VectorStore } from './store'
 import type {
   CreateCollectionInput,
@@ -98,6 +107,28 @@ interface SearchCandidate {
   fused: number
 }
 
+interface SearchContext {
+  collection: VectorCollectionRow
+  queryText: string | undefined
+  vector: number[]
+  queryNorm: number
+  metric: VectorMetric
+  topK: number
+  alpha: number
+  useHybrid: boolean
+  useRerank: boolean
+  candidateLimit: number
+  filter: unknown
+  access?: VectorReadAccess
+}
+
+interface CandidateSet {
+  total: number
+  vector: Scored<VectorPointRow>[]
+  lexical: Scored<VectorPointRow>[]
+  hybrid: boolean
+}
+
 interface ScoreBounds {
   min: number
   max: number
@@ -116,7 +147,7 @@ function bounds(values: readonly number[]): ScoreBounds | null {
 
 function normalize(value: number, range: ScoreBounds | null): number {
   if (!range) return 0
-  if (range.max === range.min) return range.max > 0 ? 0.5 : 0
+  if (range.max === range.min) return range.max > 0 && value > 0 ? 0.5 : 0
   return (value - range.min) / (range.max - range.min)
 }
 
@@ -174,8 +205,11 @@ export class VectorService {
   private embedder: EmbeddingProvider
   private chat: ChatProvider | null
   private reranker: RerankProvider
+  private ann: VectorAnnIndex | null
   private readonly localReranker = new LocalReranker()
   private readonly jobs: QueueService
+  private readonly annBlocked = new Map<string, string>()
+  private readonly annWarnings = new Map<string, number>()
   private draining = false
   private readonly store: VectorStore
 
@@ -188,6 +222,7 @@ export class VectorService {
     this.embedder = this.makeEmbedder()
     this.chat = this.makeChat()
     this.reranker = this.makeReranker()
+    this.ann = this.makeAnn()
   }
 
   /** Apply settings saved in the console without restarting the server. */
@@ -196,6 +231,16 @@ export class VectorService {
     this.embedder = this.makeEmbedder()
     this.chat = this.makeChat()
     this.reranker = this.makeReranker()
+    this.ann = this.makeAnn()
+    this.annWarnings.clear()
+  }
+
+  private makeAnn(): VectorAnnIndex | null {
+    const ann = makeVectorAnnIndex(this.config)
+    if (!ann && this.config.annProvider === 'qdrant') {
+      console.warn('[vectors] Qdrant is selected but no endpoint is configured; using the built-in scan.')
+    }
+    return ann
   }
 
   private makeEmbedder(): EmbeddingProvider {
@@ -253,6 +298,21 @@ export class VectorService {
     return this.reranker.name
   }
 
+  get indexProvider(): VectorIndexProvider {
+    return this.config.annProvider
+  }
+
+  get indexConfigured(): boolean {
+    return this.ann !== null
+  }
+
+  /** A human-readable index label for the console. */
+  get indexLabel(): string {
+    if (this.ann) return this.ann.label
+    if (this.config.annProvider === 'qdrant') return 'Qdrant (not configured)'
+    return 'Built-in scan'
+  }
+
   get canAnswer(): boolean {
     return this.chat !== null
   }
@@ -289,6 +349,15 @@ export class VectorService {
       embedder: this.embedder.name,
     })
     if (!created) throw err('collection_already_exists', undefined, [id])
+    if (this.ann) {
+      const row = await this.collectionRow(id)
+      try {
+        await this.ann.recreateCollection(annCollectionOf(row))
+        this.annBlocked.delete(id)
+      } catch (error) {
+        await this.blockAnn(id, error)
+      }
+    }
     return this.getCollection(id)
   }
 
@@ -296,6 +365,14 @@ export class VectorService {
     const collectionId = pathId(id, 'Collection ID')
     const deleted = await this.store.transaction((tx) => this.store.deleteCollection(collectionId, tx))
     if (!deleted) throw err('collection_not_found', undefined, [collectionId])
+    if (this.ann) {
+      try {
+        await this.ann.deleteCollection(collectionId)
+      } catch (error) {
+        this.warnAnn(`delete-collection:${collectionId}`, `could not remove "${collectionId}" from the external index: ${messageOf(error)}`)
+      }
+    }
+    this.annBlocked.delete(collectionId)
   }
 
   private async collectionRow(id: string): Promise<VectorCollectionRow> {
@@ -417,6 +494,7 @@ export class VectorService {
       await this.assertCapacity(tx, collection, points)
       await this.store.insertPoints(tx, collection.id, points)
     })
+    await this.mirrorUpsert(collection, points)
     return this.store.pointsByIds(
       collection.id,
       points.map((point) => point.id),
@@ -437,7 +515,12 @@ export class VectorService {
     }
     if (rows.length === 0) {
       await this.store.transaction((tx) => this.store.updateCollectionEmbedder(tx, collection.id, this.embedder.name, this.config.dimension))
-      return { collectionId: collection.id, points: 0, embedder: this.embedder.name, dimension: this.config.dimension }
+      return this.withRebuiltIndex(collection.id, {
+        collectionId: collection.id,
+        points: 0,
+        embedder: this.embedder.name,
+        dimension: this.config.dimension,
+      })
     }
     let dimension = 0
     let vectors: number[][]
@@ -460,18 +543,146 @@ export class VectorService {
       )
       await this.store.updateCollectionEmbedder(tx, collection.id, this.embedder.name, dimension)
     })
-    return { collectionId: collection.id, points: rows.length, embedder: this.embedder.name, dimension }
+    return this.withRebuiltIndex(collection.id, {
+      collectionId: collection.id,
+      points: rows.length,
+      embedder: this.embedder.name,
+      dimension,
+    })
+  }
+
+  private async withRebuiltIndex(collectionId: string, result: ReindexResult): Promise<ReindexResult> {
+    if (!this.ann) return result
+    try {
+      const collection = await this.collectionRow(collectionId)
+      const indexed = await this.rebuildIndexInternal(collection)
+      return { ...result, indexed }
+    } catch (error) {
+      await this.blockAnn(collectionId, error)
+      return { ...result, indexed: null, indexError: messageOf(error) }
+    }
+  }
+
+  /** Recreate and refill the external index from the SQL points. */
+  async rebuildIndex(collectionId: string): Promise<AnnRebuildResult> {
+    if (!this.ann) throw invalid('No external vector index is configured. Set the vector index provider to Qdrant first.')
+    const collection = await this.collectionRow(collectionId)
+    try {
+      const points = await this.rebuildIndexInternal(collection)
+      return { collectionId: collection.id, provider: this.ann.provider, points }
+    } catch (error) {
+      await this.blockAnn(collection.id, error)
+      throw err('general_unknown', `Could not rebuild the external index: ${messageOf(error)}`)
+    }
+  }
+
+  /** Compare the SQL collection with the external index, for the API and console. */
+  async indexStatus(collectionId: string): Promise<AnnStatus> {
+    const collection = await this.collectionRow(collectionId)
+    const sqlPoints = await this.store.countPoints(collection.id)
+    if (!this.ann) {
+      const selected = this.config.annProvider === 'qdrant'
+      return {
+        provider: this.config.annProvider,
+        configured: false,
+        healthy: !selected,
+        collectionId: collection.id,
+        sqlPoints,
+        indexPoints: null,
+        missing: null,
+        status: selected ? 'error' : 'builtin',
+        blocked: null,
+        ...(selected ? { error: 'Qdrant is selected but no endpoint is configured.' } : {}),
+      }
+    }
+    const health = await this.ann.health()
+    let indexPoints: number | null = null
+    let error = health.error
+    try {
+      indexPoints = await this.ann.count(annCollectionOf(collection), { ensure: false })
+    } catch (cause) {
+      error = messageOf(cause)
+    }
+    const blocked = this.annBlocked.get(collection.id) ?? null
+    const missing = indexPoints === null ? null : Math.max(0, sqlPoints - indexPoints)
+    const status: AnnStatus['status'] =
+      !health.ok || error
+        ? 'error'
+        : blocked
+          ? 'stale'
+          : indexPoints === null
+            ? 'error'
+            : indexPoints === sqlPoints
+              ? 'current'
+              : indexPoints < sqlPoints
+                ? 'missing'
+                : 'stale'
+    return {
+      provider: this.ann.provider,
+      configured: true,
+      healthy: health.ok,
+      collectionId: collection.id,
+      sqlPoints,
+      indexPoints,
+      missing,
+      status,
+      blocked,
+      ...(health.version ? { version: health.version } : {}),
+      latencyMs: health.latencyMs,
+      ...(error ? { error } : {}),
+    }
+  }
+
+  private async rebuildIndexInternal(collection: VectorCollectionRow): Promise<number> {
+    if (!this.ann) throw invalid('No external vector index is configured.')
+    await this.ann.recreateCollection(annCollectionOf(collection))
+    let points = 0
+    let afterSeq = 0
+    for (;;) {
+      const batch = await this.store.scanPoints(collection.id, afterSeq, SCAN_BATCH)
+      if (batch.length === 0) break
+      const stored: StoredPoint[] = []
+      for (const row of batch) {
+        let vector: number[]
+        try {
+          vector = parseVector(JSON.parse(row.embedding))
+        } catch {
+          continue
+        }
+        stored.push({
+          id: row.id,
+          documentId: row.document_id,
+          chunkIndex: Number(row.chunk_index),
+          content: row.content,
+          metadata: parseRowMetadata(row.metadata),
+          permissions: parseRowPermissions(row.permissions),
+          vector,
+        })
+      }
+      if (stored.length > 0) {
+        await this.ann.upsert(annCollectionOf(collection), stored)
+        points += stored.length
+      }
+      afterSeq = Number(batch[batch.length - 1]!.seq)
+      if (batch.length < SCAN_BATCH) break
+    }
+    this.annBlocked.delete(collection.id)
+    return points
   }
 
   async deletePoint(collectionId: string, pointId: string): Promise<void> {
     const collection = await this.collectionRow(collectionId)
     const id = pathId(pointId, 'Point ID')
     if (!(await this.store.deletePoint(collection.id, id))) throw err('document_not_found', undefined, [id])
+    await this.mirrorDeletePoints(collection, [id])
   }
 
   async deleteDocument(collectionId: string, documentId: string): Promise<number> {
     const collection = await this.collectionRow(collectionId)
-    return this.store.deleteDocument(collection.id, pathId(documentId, 'Document ID'))
+    const id = pathId(documentId, 'Document ID')
+    const deleted = await this.store.deleteDocument(collection.id, id)
+    await this.mirrorDeleteDocument(collection, id)
+    return deleted
   }
 
   private preparePoint(input: PointInput, collection: VectorCollectionRow): PendingPoint {
@@ -518,6 +729,58 @@ export class VectorService {
     if (existing - updates.size + points.length > this.config.maxPoints) {
       throw invalid(`Collection "${collection.id}" would exceed the configured point limit (${this.config.maxPoints}).`)
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // External index mirror
+  // ---------------------------------------------------------------------------
+
+  private async mirrorUpsert(collection: VectorCollectionRow, points: StoredPoint[]): Promise<void> {
+    if (!this.ann || points.length === 0 || this.annBlocked.has(collection.id)) return
+    try {
+      await this.ann.upsert(annCollectionOf(collection), points)
+    } catch (error) {
+      await this.blockAnn(collection.id, error)
+    }
+  }
+
+  private async mirrorDeletePoints(collection: VectorCollectionRow, pointIds: string[]): Promise<void> {
+    if (!this.ann || pointIds.length === 0 || this.annBlocked.has(collection.id)) return
+    try {
+      await this.ann.deletePoints(annCollectionOf(collection), pointIds)
+    } catch (error) {
+      await this.blockAnn(collection.id, error)
+    }
+  }
+
+  private async mirrorDeleteDocument(collection: VectorCollectionRow, documentId: string): Promise<void> {
+    if (!this.ann || this.annBlocked.has(collection.id)) return
+    try {
+      await this.ann.deleteDocument(annCollectionOf(collection), documentId)
+    } catch (error) {
+      await this.blockAnn(collection.id, error)
+    }
+  }
+
+  private async blockAnn(collectionId: string, error: unknown): Promise<void> {
+    this.annBlocked.set(collectionId, messageOf(error))
+    this.warnAnn(
+      `stale:${collectionId}`,
+      `external index for "${collectionId}" is stale (${messageOf(error)}); ${this.config.annFallback ? 'searches use the built-in scan' : 'searches will fail'} until it is rebuilt`,
+    )
+    try {
+      await this.store.rotateIndexEpoch(collectionId)
+    } catch (cause) {
+      this.warnAnn(`epoch:${collectionId}`, `could not invalidate the external index for "${collectionId}": ${messageOf(cause)}`)
+    }
+  }
+
+  private warnAnn(key: string, message: string): void {
+    const nowMs = Date.now()
+    const last = this.annWarnings.get(key) ?? 0
+    if (nowMs - last < 60_000) return
+    this.annWarnings.set(key, nowMs)
+    console.warn(`[vectors] ${message}`)
   }
 
   // ---------------------------------------------------------------------------
@@ -637,8 +900,34 @@ export class VectorService {
     const useRerank = queryText !== undefined && booleanParam(input.rerank, this.config.rerank, 'rerank')
     const configuredCandidates = this.config.rerankCandidates > 0 ? this.config.rerankCandidates : Math.max(topK * 4, 20)
     const candidateLimit = Math.min(MAX_HYBRID_CANDIDATES, Math.max(topK, useHybrid || useRerank ? configuredCandidates : topK))
+    const context: SearchContext = { collection, queryText, vector, queryNorm, metric, topK, alpha, useHybrid, useRerank, candidateLimit, filter: input.filter, access }
 
-    const stats = useHybrid ? await this.hybridStats(collection, input.filter, queryText!, access) : null
+    if (!this.ann && this.config.annProvider === 'qdrant' && !this.config.annFallback) {
+      throw err('general_unknown', 'Qdrant is selected but no endpoint is configured.')
+    }
+
+    let candidates: CandidateSet | null = null
+    if (this.ann && supportsAnnFilter(input.filter)) {
+      const blocked = this.annBlocked.get(collection.id)
+      if (blocked) {
+        if (!this.config.annFallback) {
+          throw err('general_unknown', `The external vector index for "${collection.id}" is stale: ${blocked}. Rebuild it or enable the fallback scan.`)
+        }
+      } else {
+        candidates = await this.searchAnn(context)
+        if (!candidates && !this.config.annFallback) {
+          throw err('general_unknown', `The external vector index for "${collection.id}" is unavailable or incomplete. Rebuild it or enable the fallback scan.`)
+        }
+      }
+    }
+    if (!candidates) candidates = await this.searchScan(context)
+    return this.finishSearch(context, candidates)
+  }
+
+  /** The portable path: scan SQL, score vectors and optionally BM25 in-process. */
+  private async searchScan(context: SearchContext): Promise<CandidateSet> {
+    const { collection, queryText, vector, queryNorm, metric, candidateLimit, filter, access, useHybrid } = context
+    const stats = useHybrid ? await this.hybridStats(collection, filter, queryText!, access) : null
     const vectorRanker = new TopK<VectorPointRow>(candidateLimit)
     const lexicalRanker = stats ? new TopK<VectorPointRow>(candidateLimit) : null
     let total = stats?.total ?? 0
@@ -648,7 +937,7 @@ export class VectorService {
       if (batch.length === 0) break
       for (const row of batch) {
         if (!canReadPoint(parseRowPermissions(row.permissions), access)) continue
-        if (!matchesFilter(parseRowMetadata(row.metadata), input.filter)) continue
+        if (!matchesFilter(parseRowMetadata(row.metadata), filter)) continue
         let embedding: number[]
         try {
           embedding = parseVector(JSON.parse(row.embedding))
@@ -668,36 +957,141 @@ export class VectorService {
       afterSeq = Number(batch[batch.length - 1]!.seq)
       if (batch.length < SCAN_BATCH) break
     }
-
-    const vectorEntries = vectorRanker.values()
-    const lexicalEntries = lexicalRanker?.values() ?? []
-    const candidates = new Map<string, SearchCandidate>()
-    for (const entry of vectorEntries) {
-      candidates.set(entry.item.id, { row: entry.item, vector: entry.score, text: 0, fused: entry.score })
+    return {
+      total,
+      vector: vectorRanker.values(),
+      lexical: lexicalRanker?.values() ?? [],
+      hybrid: useHybrid,
     }
-    for (const entry of lexicalEntries) {
-      const existing = candidates.get(entry.item.id)
+  }
+
+  /** BM25 candidates only; used when the provider has no sparse lexical vectors. */
+  private async lexicalScan(context: SearchContext): Promise<Scored<VectorPointRow>[]> {
+    const stats = await this.hybridStats(context.collection, context.filter, context.queryText!, context.access)
+    const ranker = new TopK<VectorPointRow>(context.candidateLimit)
+    let afterSeq = 0
+    for (;;) {
+      const batch = await this.store.scanPoints(context.collection.id, afterSeq, SCAN_BATCH)
+      if (batch.length === 0) break
+      for (const row of batch) {
+        if (!canReadPoint(parseRowPermissions(row.permissions), context.access)) continue
+        if (!matchesFilter(parseRowMetadata(row.metadata), context.filter)) continue
+        const lexical = bm25Score(stats.model, row.content)
+        if (lexical > 0) ranker.push(row, lexical)
+      }
+      afterSeq = Number(batch[batch.length - 1]!.seq)
+      if (batch.length < SCAN_BATCH) break
+    }
+    return ranker.values()
+  }
+
+  /** Filtered ANN candidates from the external index, hydrated and checked in SQL. */
+  private async searchAnn(context: SearchContext): Promise<CandidateSet | null> {
+    const ann = this.ann
+    if (!ann) return null
+    let result: AnnSearchResult
+    try {
+      result = await ann.search({
+        collection: annCollectionOf(context.collection),
+        vector: context.vector,
+        limit: context.candidateLimit,
+        filter: context.filter,
+        access: context.access,
+        text: context.useHybrid ? context.queryText : undefined,
+      })
+    } catch (error) {
+      this.warnAnn(
+        `search:${context.collection.id}`,
+        `external index search failed for "${context.collection.id}" (${messageOf(error)}); ${this.config.annFallback ? 'using the built-in scan' : 'the query will fail'}`,
+      )
+      return null
+    }
+
+    const sqlPoints = await this.store.countPoints(context.collection.id)
+    if (sqlPoints === 0) return { total: 0, vector: [], lexical: [], hybrid: context.useHybrid }
+    if (result.collectionTotal !== sqlPoints) {
+      this.warnAnn(
+        `incomplete:${context.collection.id}`,
+        `external index for "${context.collection.id}" has ${result.collectionTotal} of ${sqlPoints} points; using the built-in scan until it is rebuilt`,
+      )
+      return null
+    }
+
+    const ids = [...new Set([...result.vector.map((hit) => hit.pointId), ...result.text.map((hit) => hit.pointId)])]
+    const rows = await this.store.rowsByIds(context.collection.id, ids)
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    const usable = (row: VectorPointRow | undefined): row is VectorPointRow =>
+      row !== undefined && canReadPoint(parseRowPermissions(row.permissions), context.access) && matchesFilter(parseRowMetadata(row.metadata), context.filter)
+
+    const vectorRanker = new TopK<VectorPointRow>(context.candidateLimit)
+    for (const hit of result.vector) {
+      const row = byId.get(hit.pointId)
+      if (!usable(row)) continue
+      let embedding: number[]
+      try {
+        embedding = parseVector(JSON.parse(row.embedding))
+      } catch {
+        continue
+      }
+      if (embedding.length !== context.vector.length) continue
+      const value = score(context.metric, context.vector, embedding, Number(row.norm) || norm(embedding), context.queryNorm)
+      if (Number.isFinite(value)) vectorRanker.push(row, value)
+    }
+
+    let lexical: Scored<VectorPointRow>[] = []
+    if (context.useHybrid) {
+      const lexicalRanker = new TopK<VectorPointRow>(context.candidateLimit)
+      for (const hit of result.text) {
+        const row = byId.get(hit.pointId)
+        if (!usable(row) || hit.score <= 0) continue
+        lexicalRanker.push(row, hit.score)
+      }
+      lexical = lexicalRanker.values()
+      if (lexical.length === 0 && (!result.sparse || result.textError || result.text.length > 0)) {
+        lexical = await this.lexicalScan(context)
+      }
+    }
+
+    const vector = vectorRanker.values()
+    if (result.total > 0 && vector.length === 0 && lexical.length === 0) {
+      this.warnAnn(
+        `stale:${context.collection.id}`,
+        `external index for "${context.collection.id}" returned no usable rows; using the built-in scan until it is rebuilt`,
+      )
+      return null
+    }
+    return { total: result.total, vector, lexical, hybrid: context.useHybrid }
+  }
+
+  private async finishSearch(context: SearchContext, candidates: CandidateSet): Promise<{ total: number; points: VectorMatch[] }> {
+    const { vector, lexical, hybrid, total } = candidates
+    const byId = new Map<string, SearchCandidate>()
+    for (const entry of vector) {
+      byId.set(entry.item.id, { row: entry.item, vector: entry.score, text: 0, fused: entry.score })
+    }
+    for (const entry of lexical) {
+      const existing = byId.get(entry.item.id)
       if (existing) existing.text = entry.score
-      else candidates.set(entry.item.id, { row: entry.item, vector: 0, text: entry.score, fused: 0 })
+      else byId.set(entry.item.id, { row: entry.item, vector: 0, text: entry.score, fused: 0 })
     }
 
-    let ordered = [...candidates.values()]
-    if (stats) {
-      const vectorBounds = bounds(vectorEntries.map((entry) => entry.score))
-      const lexicalBounds = bounds(lexicalEntries.map((entry) => entry.score))
+    let ordered = [...byId.values()]
+    if (hybrid) {
+      const vectorBounds = bounds(vector.map((entry) => entry.score))
+      const lexicalBounds = bounds(lexical.map((entry) => entry.score))
       for (const candidate of ordered) {
-        candidate.fused = alpha * normalize(candidate.vector, vectorBounds) + (1 - alpha) * normalize(candidate.text, lexicalBounds)
+        candidate.fused = context.alpha * normalize(candidate.vector, vectorBounds) + (1 - context.alpha) * normalize(candidate.text, lexicalBounds)
       }
       ordered.sort((a, b) => b.fused - a.fused || b.vector - a.vector || a.row.id.localeCompare(b.row.id))
     } else {
       ordered.sort((a, b) => b.fused - a.fused || a.row.id.localeCompare(b.row.id))
     }
 
-    if (useRerank && queryText !== undefined) ordered = await this.rerank(queryText, ordered)
+    if (context.useRerank && context.queryText !== undefined) ordered = await this.rerank(context.queryText, ordered)
 
     return {
       total,
-      points: ordered.slice(0, topK).map((candidate) => ({ ...pointModel(candidate.row), score: candidate.fused })),
+      points: ordered.slice(0, context.topK).map((candidate) => ({ ...pointModel(candidate.row), score: candidate.fused })),
     }
   }
 
@@ -785,6 +1179,10 @@ export class VectorService {
       await this.assertCapacity(tx, collection, points)
       await this.store.insertPoints(tx, collection.id, points)
     })
+    // Replacing a document can leave fewer chunks than before; remove the old
+    // provider points before adding the new set so the index count stays exact.
+    await this.mirrorDeleteDocument(collection, prepared.documentId)
+    await this.mirrorUpsert(collection, points)
     return {
       collectionId: collection.id,
       documentId: prepared.documentId,
@@ -1148,6 +1546,10 @@ export class VectorService {
   async deleteEvaluation(id: string): Promise<void> {
     if (!(await this.store.deleteEvaluation(pathId(id, 'Evaluation ID')))) throw err('document_not_found', undefined, [id])
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function regressionAgainst(current: EvaluateResult, baseline: EvaluationRun): EvaluationRegression {

@@ -825,6 +825,23 @@ export const CATALOG: Operation[] = [
     },
   }),
   op({
+    name: 'vectors_index_status',
+    title: 'Get vector index status',
+    description: 'Compare the SQL point count with the configured external ANN index.',
+    group: 'vectors',
+    input: object({ collectionId: VECTOR_COLLECTION }, ['collectionId']),
+    run: (services, args) => services.vectors.indexStatus({ collectionId: args.collectionId }),
+  }),
+  op({
+    name: 'vectors_index_rebuild',
+    title: 'Rebuild vector index',
+    description: 'Recreate and refill the external ANN index from the SQL points. SQL remains the source of truth.',
+    group: 'vectors',
+    write: true,
+    input: object({ collectionId: VECTOR_COLLECTION }, ['collectionId']),
+    run: (services, args) => services.vectors.rebuildIndex({ collectionId: args.collectionId }),
+  }),
+  op({
     name: 'vectors_points_list',
     title: 'List vector points',
     description: 'List points in a collection, optionally only one document. Always pass a limit for large collections.',

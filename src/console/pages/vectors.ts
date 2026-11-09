@@ -40,6 +40,9 @@ function envOf(ctx: ConsoleContext): VectorEnv {
     hybrid: config.hybridSearch,
     rerank: config.rerank,
     reranker: ctx.services.vectors.rerankerName,
+    indexProvider: ctx.services.vectors.indexProvider,
+    indexConfigured: ctx.services.vectors.indexConfigured,
+    indexLabel: ctx.services.vectors.indexLabel,
   }
 }
 
@@ -306,11 +309,25 @@ export function vectorPages(router: ConsoleRouter): void {
     return ctx.go(collectionUrl(path.collectionId!), { tone: 'success', text: 'Point deleted' })
   })
 
+  router.post(`${VECTORS}/:collectionId/index/rebuild`, async ({ ctx, path }) => {
+    try {
+      const result = await ctx.services.vectors.rebuildIndex(path.collectionId!)
+      return ctx.go(`${collectionUrl(path.collectionId!)}/settings`, {
+        tone: 'success',
+        text: `Rebuilt the ${result.provider} index with ${result.points} point${result.points === 1 ? '' : 's'}`,
+      })
+    } catch (error) {
+      if (!(error instanceof BunwriteError)) throw error
+      return ctx.go(`${collectionUrl(path.collectionId!)}/settings`, { tone: 'critical', text: error.message })
+    }
+  })
+
   router.post(`${VECTORS}/:collectionId/reindex`, async ({ ctx, path }) => {
     const result = await ctx.services.vectors.reindex(path.collectionId!)
+    const index = result.indexError ? `; external index: ${result.indexError}` : result.indexed !== null && result.indexed !== undefined ? `; indexed ${result.indexed}` : ''
     return ctx.go(`${collectionUrl(path.collectionId!)}/settings`, {
-      tone: 'success',
-      text: `Re-embedded ${result.points} point${result.points === 1 ? '' : 's'} at ${result.dimension} dimensions`,
+      tone: result.indexError ? 'critical' : 'success',
+      text: `Re-embedded ${result.points} point${result.points === 1 ? '' : 's'} at ${result.dimension} dimensions${index}`,
     })
   })
 

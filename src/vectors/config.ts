@@ -12,6 +12,7 @@
  */
 
 export type VectorEmbedderKind = 'local' | 'http'
+export type VectorIndexProvider = 'builtin' | 'qdrant'
 
 export interface VectorsConfig {
   /** `local` runs offline; `http` calls an OpenAI-compatible embeddings API. */
@@ -59,6 +60,16 @@ export interface VectorsConfig {
   multiHop: boolean
   /** Maximum planned queries; the original question is always included. */
   multiHopQueries: number
+  /** Built-in SQL scan, or an external approximate nearest-neighbour index. */
+  annProvider: VectorIndexProvider
+  /** Qdrant REST endpoint, for example http://localhost:6333. */
+  annUrl: string
+  /** Qdrant API key; required by Qdrant Cloud and optional for a local server. */
+  annApiKey: string
+  /** Outbound index request timeout. */
+  annTimeoutMs: number
+  /** Fall back to the built-in SQL scan when the external index is unavailable or stale. */
+  annFallback: boolean
   /** Refuse new points beyond this per collection. */
   maxPoints: number
   /** Default chunk size for `POST /rag/ingest`. */
@@ -98,6 +109,11 @@ export const DEFAULT_VECTORS: VectorsConfig = {
   auditQueries: false,
   multiHop: false,
   multiHopQueries: 3,
+  annProvider: 'builtin',
+  annUrl: '',
+  annApiKey: '',
+  annTimeoutMs: 5_000,
+  annFallback: true,
   maxPoints: 50_000,
   chunkSize: 1000,
   chunkOverlap: 200,

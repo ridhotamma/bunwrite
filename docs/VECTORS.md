@@ -3,9 +3,9 @@
 Bunwrite includes a small vector store and a retrieval-augmented generation
 (RAG) endpoint. It is a Bunwrite extension, not part of the Appwrite API.
 
-The design goal is the same as the rest of Bunwrite: **no second service and no
-native database extension.** Points live in two ordinary tables, so the same
-code runs on SQLite and Postgres:
+The default design goal is the same as the rest of Bunwrite: **no second
+service and no native database extension.** Points live in two ordinary tables,
+so the same code runs on SQLite and Postgres:
 
 - `_vector_collections` — collection ID, name, dimension, metric, embedder.
 - `_vector_points` — one vector, its text and metadata, grouped by collection and
@@ -13,8 +13,9 @@ code runs on SQLite and Postgres:
 
 Search ranks a bounded set of points in the Bun process. That is a brute-force
 scan, which is predictable and fast enough for a small knowledge base (tens of
-thousands of chunks). It is not an HNSW/IVF index; for millions of vectors use a
-dedicated vector database.
+thousands of chunks). For larger collections, configure the optional **Qdrant
+external ANN index** (see below); SQL stays the source of truth, while Qdrant
+stores the dense vectors and sparse lexical vectors used to find candidates.
 
 ## Embeddings
 
@@ -47,8 +48,9 @@ Open **Vectors** in the project sidebar. It has:
   ingested documents, ask a question, and review the generated answer, sources
   and context.
 - **Settings** — inspect the collection's fixed facts, open the project's
-  Vectors & RAG settings for hybrid search, reranking, embeddings, answers and
-  limits, and delete the collection.
+  Vectors & RAG settings for embeddings, answers, the external ANN index, hybrid
+  search, reranking and limits, rebuild the external index, and delete the
+  collection.
 
 Embedding, answer generation, ingest defaults and limits are edited in
 **Settings → Vectors & RAG** and stored in the project database, so no restart
@@ -71,6 +73,11 @@ The built-in defaults are:
 | Send dimensions | off | Send `dimensions` in the request (OpenAI v3 models); leave off for gateways that reject unknown fields. |
 | Embedding batch size | `64` | Texts per embeddings request (1–256). |
 | Request timeout | `30000` ms | Outbound embeddings/chat timeout. |
+| Vector index | `builtin` | `builtin` scans SQL; `qdrant` uses an external approximate-nearest-neighbour index. |
+| Qdrant URL | unset | Qdrant REST endpoint, for example `http://localhost:6333`. |
+| Qdrant API key | unset | Required by Qdrant Cloud; optional for a local server. |
+| Index timeout | `5000` ms | Outbound Qdrant request timeout. |
+| Index fallback | on | Scan SQL when the external index is unavailable, stale or incomplete. |
 | Maximum points | `50000` | Maximum points per collection. |
 | Chat URL | unset | OpenAI-compatible chat completions endpoint; empty means no generated answer. |
 | Chat model | `gpt-4o-mini` | Chat model name. |
@@ -127,9 +134,61 @@ Every search accepts per-request overrides:
 ```
 
 Set `hybrid` to `false` for vector-only retrieval, `rerank` to `false` to keep
-the fused order, or `alpha` to `0`/`1` for pure lexical/vector ranking. Hybrid
-search makes one extra statistics pass over the filtered collection; the
-default point cap keeps that predictable.
+the fused order, or `alpha` to `0`/`1` for pure lexical/vector ranking. With the
+built-in store, hybrid search makes one extra statistics pass over the filtered
+collection; the default point cap keeps that predictable. With Qdrant, the
+lexical side comes from sparse vectors in the index.
+
+### External ANN index (Qdrant)
+
+For collections that should not be scanned in-process, Bunwrite can mirror each
+collection into **Qdrant 1.10 or newer**. SQL stays the source of truth: Qdrant
+finds candidate point IDs, then Bunwrite hydrates them from SQL and applies the
+same ACL and metadata checks again.
+
+Start Qdrant and point the console at it:
+
+```bash
+docker run --rm -p 6333:6333 qdrant/qdrant
+```
+
+1. Open **Console → Settings → Vectors & RAG → Vector index**.
+2. Choose **Qdrant**, enter `http://localhost:6333` (and an API key for Qdrant
+   Cloud), then save.
+3. Open each collection's **Settings** tab and click **Rebuild external index**
+   once, so points created before the switch are mirrored.
+
+The API equivalents are:
+
+```bash
+curl "$API/vectors/handbook/index" ...                       # counts and status
+curl -X POST "$API/vectors/handbook/index/rebuild" ...       # recreate/refill
+```
+
+How it behaves:
+
+- Each Bunwrite collection maps to a deterministic Qdrant collection. Writes,
+  document deletes and point deletes are mirrored after the SQL commit.
+- The index stores the dense vector plus a sparse term-frequency vector. Hybrid
+  search runs a dense ANN query and a sparse lexical query, then fuses both
+  candidate sets with the same vector weight and reranker as the built-in path.
+- Metadata equality filters and point ACL roles are translated into Qdrant
+  payload filters. Rows are checked again after hydration, so a stale or
+  over-broad provider result can never bypass SQL permissions.
+- If Qdrant is unreachable, a write mirror fails, or the index is incomplete,
+  search uses the built-in SQL scan when **Index fallback** is on. The
+  collection is marked stale until it is rebuilt. Turn fallback off for
+  fail-closed behaviour.
+- `reindex` updates the SQL vectors and then rebuilds the external index. A
+  collection delete removes its Qdrant collection.
+- Back up Qdrant separately. Bunwrite's database backups do not include the
+  external index; it can always be rebuilt from SQL.
+- Qdrant receives the chunk text, metadata and permission strings for every
+  indexed point. Use a trusted endpoint and encrypt network traffic outside a
+  local host.
+
+Qdrant is the first adapter. The `VectorAnnIndex` interface in
+`src/vectors/ann.ts` keeps pgvector, OpenSearch and Vespa additive later.
 
 ### Multi-hop query planning
 
@@ -239,8 +298,9 @@ hybrid/rerank settings before changing models.
 
 ## HTTP API
 
-All routes are under `/v1`, need an API key, and are available on SQLite and
-Postgres. Scopes:
+All routes are under `/v1` and are available on SQLite and Postgres. Writes need
+an API key with the scope; reads accept a key with the scope, or a signed-in user
+whose point permissions grant read. Scopes:
 
 - `vectorsdb.collections.read` / `vectorsdb.collections.write`
 - `vectorsdb.documents.read` / `vectorsdb.documents.write`
@@ -265,6 +325,17 @@ curl -X DELETE "$API/vectors/handbook" -H "x-appwrite-project: $PROJECT" -H "x-a
 Metrics are `cosine` (default), `dot` and `euclidean`. Search scores are always
 "higher is better": cosine similarity, the raw dot product, and
 `1 / (1 + euclideanDistance)`.
+
+External index status and rebuild:
+
+```bash
+curl "$API/vectors/handbook/index" -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY"
+curl -X POST "$API/vectors/handbook/index/rebuild" -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY"
+```
+
+`index` reports the provider, SQL and external point counts, missing points,
+health and whether a previous mirror failure marked the collection stale.
+`rebuild` recreates the provider collection and streams every SQL point into it.
 
 ### Points
 
@@ -485,6 +556,8 @@ await vectors.upsertPoints({
   points: [{ id: 'intro', content: 'Bunwrite runs on Bun.' }],
 })
 const matches = await vectors.search({ collectionId: 'handbook', text: 'what does it run on?', topK: 5, hybrid: true, rerank: true })
+const index = await vectors.indexStatus({ collectionId: 'handbook' })
+if (index.missing) await vectors.rebuildIndex({ collectionId: 'handbook' })
 
 const rag = new RAG(client)
 await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
@@ -533,15 +606,21 @@ The MCP catalog includes `vectors_*` and `rag_*` operations.
 - Point ACLs are applied to every chunk created by one ingest. Manually added
   points can have different permissions, but there is no separate document ACL
   object or permission inheritance beyond that.
-- The built-in store still uses a bounded scan; an external ANN adapter
-  (pgvector, Qdrant, OpenSearch or Vespa) is not implemented yet.
-- Vectors are stored as JSON text. A 384-dimension vector is a few kilobytes;
-  the default local embedder keeps collections small.
+- The built-in store uses a bounded SQL scan. Set the vector index provider to
+  Qdrant to use external ANN; SQL remains authoritative and search falls back to
+  the scan when the index is unavailable or stale.
+- Qdrant data is not part of Bunwrite's database backups. Keep a separate Qdrant
+  backup or rebuild the index from SQL.
+- With Qdrant, hybrid lexical retrieval uses a sparse vector query with IDF.
+  When that fails or the provider collection has no sparse vector, Bunwrite
+  falls back to the local BM25 scan for the lexical side.
+- Vectors are stored as JSON text in SQL. A 384-dimension vector is a few
+  kilobytes; the default local embedder keeps collections small.
 - Writes are transactional. Ingest embeds first, then replaces a document's
   points in one transaction, so a failed provider call never leaves half a
-  document behind.
-- There is no background re-index job. Change the embedder/model, then ingest
-  the documents again.
+  document behind. The external index mirror happens after that commit.
+- `reindex` is synchronous. For large collections, run it during a maintenance
+  window; it also rebuilds the external index.
 - The feature is deliberately not an Appwrite VectorsDB implementation. It is a
   separate `/vectors` and `/rag` extension, like `/queue` and `/pdf`; the SDK
   exposes it as `Vectors` and `RAG`.

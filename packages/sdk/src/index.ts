@@ -71,6 +71,8 @@ export type {
     VectorCollectionList,
     VectorDocument,
     VectorDocumentList,
+    VectorIndexRebuildResult,
+    VectorIndexStatus,
     VectorIngestDocumentParams,
     VectorIngestResult,
     VectorListParams,

@@ -231,6 +231,8 @@ describe('vectors console', () => {
 
     const settings = await (await get('/console/vectors/knowledge/settings')).text()
     expect(settings).toContain('Collection')
+    expect(settings).toContain('External index')
+    expect(settings).toContain('Built-in scan')
     expect(settings).toContain('Delete collection')
     expect(settings).toContain('local:64')
     expect(settings).toContain('2 / 50,000')
@@ -255,10 +257,12 @@ describe('vectors console', () => {
   test('Vectors & RAG settings are editable in the console and apply live', async () => {
     const page = await (await get('/console/settings/vectors')).text()
     expect(page).toContain('Embeddings')
+    expect(page).toContain('Vector index (ANN)')
     expect(page).toContain('Answer generation')
     expect(page).toContain('Retrieval and reranking')
     expect(page).toContain('Ingestion and limits')
     expect(page).toContain('action="/console/settings/vectors/embedding"')
+    expect(page).toContain('action="/console/settings/vectors/index"')
     expect(page).toContain('action="/console/settings/vectors/answers"')
     expect(page).toContain('action="/console/settings/vectors/retrieval"')
     expect(page).toContain('action="/console/settings/vectors/guardrails"')
@@ -288,6 +292,24 @@ describe('vectors console', () => {
       multiHopQueries: 4,
     })
     expect(server.services.vectors.rerankerName).toBe('http:rerank-test')
+
+    const index = await form('/console/settings/vectors/index', {
+      annProvider: 'qdrant',
+      annUrl: 'http://127.0.0.1:6333',
+      annApiKey: 'ann-key',
+      annTimeoutMs: '4000',
+      annFallback: 'on',
+    })
+    expect(index.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({
+      annProvider: 'qdrant',
+      annUrl: 'http://127.0.0.1:6333',
+      annApiKey: 'ann-key',
+      annTimeoutMs: 4000,
+      annFallback: true,
+    })
+    expect(server.services.vectors.indexConfigured).toBe(true)
+    expect(server.services.vectors.indexLabel).toBe('Qdrant')
 
     const guardrails = await form('/console/settings/vectors/guardrails', { redactPii: 'on', promptInjectionGuard: 'on', auditQueries: 'on' })
     expect(guardrails.status).toBe(303)
@@ -346,6 +368,7 @@ describe('vectors console', () => {
     expect(saved).not.toContain('embed-key')
     expect(saved).not.toContain('chat-key')
     expect(saved).not.toContain('rerank-key')
+    expect(saved).not.toContain('ann-key')
 
     await form('/console/settings/vectors/reset', {})
     expect(server.config.vectors).toMatchObject({
@@ -365,8 +388,15 @@ describe('vectors console', () => {
       auditQueries: false,
       multiHop: false,
       multiHopQueries: 3,
+      annProvider: 'builtin',
+      annUrl: '',
+      annApiKey: '',
+      annTimeoutMs: 5000,
+      annFallback: true,
     })
     expect(server.services.vectors.canAnswer).toBe(false)
     expect(server.services.vectors.embedderName).toBe('local:64')
+    expect(server.services.vectors.indexConfigured).toBe(false)
+    expect(server.services.vectors.indexLabel).toBe('Built-in scan')
   })
 })

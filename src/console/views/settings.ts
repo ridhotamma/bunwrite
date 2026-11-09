@@ -280,6 +280,41 @@ function vectorsCards(ctx: ConsoleContext): Html {
   )}
   ${card(
     ctx,
+    'vectors-index',
+    'Vector index (ANN)',
+    'vectors',
+    'SQL stays the source of truth. Qdrant mirrors dense and sparse vectors for filtered approximate nearest-neighbour search.',
+    html` <form method="post" action="${SETTINGS}/vectors/index">
+      <label
+        >Provider<select name="annProvider">
+          <option value="builtin" ${c.annProvider === 'qdrant' ? '' : 'selected'}>Built-in SQL scan</option>
+          <option value="qdrant" ${c.annProvider === 'qdrant' ? 'selected' : ''}>Qdrant (external ANN)</option>
+        </select>
+        <small>Switch to Qdrant for large collections, then rebuild each collection's index.</small></label
+      >
+      <label
+        >Qdrant endpoint<input name="annUrl" class="mono" value="${c.annUrl}" placeholder="http://localhost:6333" /><small
+          >REST endpoint, including a path prefix if your gateway uses one.</small
+        ></label
+      >
+      <div class="fields">
+        <label
+          >API key<input name="annApiKey" type="password" placeholder="${c.annApiKey ? 'Unchanged' : 'Optional'}" autocomplete="new-password" /><small
+            >Leave blank to keep the saved key.</small
+          ></label
+        >
+        <label>Timeout (ms)<input name="annTimeoutMs" type="number" min="1000" max="120000" value="${c.annTimeoutMs}" required /><small>Applies to index requests.</small></label>
+      </div>
+      <label class="check"
+        ><input type="checkbox" name="annFallback" ${c.annFallback ? 'checked' : ''} /><span>Fall back to the built-in scan</span
+        ><small>When the external index is unavailable or stale, search scans SQL instead of failing.</small></label
+      >
+      <p class="help">Qdrant must be reachable from this server. Point and document writes are mirrored after the SQL commit; rebuild after switching providers or changing a collection's dimension.</p>
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
+  )}
+  ${card(
+    ctx,
     'vectors-answers',
     'Answer generation',
     null,

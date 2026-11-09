@@ -211,6 +211,13 @@
       "when": 1794190155089,
       "tag": "0029_chemical_talon",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1794192894694,
+      "tag": "0030_youthful_ronan",
+      "breakpoints": true
     }
   ]
 }

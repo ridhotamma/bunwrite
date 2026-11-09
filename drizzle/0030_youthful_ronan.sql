@@ -1,0 +1,1 @@
+ALTER TABLE `_vector_collections` ADD `index_epoch` text DEFAULT '' NOT NULL;

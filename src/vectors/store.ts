@@ -7,6 +7,7 @@
  */
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { now } from '~/lib/datetime'
+import { uniqueId } from '~/lib/ids'
 import { compact, norm } from './similarity'
 import type {
   EvaluationRun,
@@ -120,9 +121,9 @@ export class VectorStore {
   async insertCollection(record: CollectionRecord): Promise<boolean> {
     const stamp = now()
     const result = await this.db.driver.run(
-      `INSERT INTO _vector_collections (id, name, dimension, metric, embedder, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-      [record.id, record.name, record.dimension, record.metric, record.embedder, stamp, stamp],
+      `INSERT INTO _vector_collections (id, name, dimension, metric, embedder, index_epoch, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+      [record.id, record.name, record.dimension, record.metric, record.embedder, uniqueId(), stamp, stamp],
     )
     return Number(result.changes) > 0
   }
@@ -191,6 +192,17 @@ export class VectorStore {
     await exec.run('UPDATE _vector_collections SET embedder = ?, dimension = ?, updated_at = ? WHERE id = ?', [embedder, dimension, now(), collectionId])
   }
 
+  /**
+   * Invalidate every point currently in the external index for a collection.
+   * Used after a mirror failure so a restart cannot treat a partially updated
+   * provider collection as current.
+   */
+  async rotateIndexEpoch(collectionId: string): Promise<string> {
+    const epoch = uniqueId()
+    await this.db.driver.run('UPDATE _vector_collections SET index_epoch = ?, updated_at = ? WHERE id = ?', [epoch, now(), collectionId])
+    return epoch
+  }
+
   async existingPointIds(collectionId: string, ids: string[], exec: SqlExecutor = this.db.driver): Promise<Set<string>> {
     if (ids.length === 0) return new Set()
     const marks = ids.map(() => '?').join(', ')
@@ -214,6 +226,22 @@ export class VectorStore {
       [collectionId, ...ids],
     )
     return rows.map(pointModel)
+  }
+
+  /** Raw rows for hydrating external ANN hits; IDs are chunked for SQLite's variable limit. */
+  async rowsByIds(collectionId: string, ids: string[]): Promise<VectorPointRow[]> {
+    const rows: VectorPointRow[] = []
+    for (let index = 0; index < ids.length; index += 500) {
+      const chunk = ids.slice(index, index + 500)
+      const marks = chunk.map(() => '?').join(', ')
+      rows.push(
+        ...(await this.db.driver.all<VectorPointRow>(
+          `SELECT * FROM _vector_points WHERE collection_id = ? AND id IN (${marks})`,
+          [collectionId, ...chunk],
+        )),
+      )
+    }
+    return rows
   }
 
   /** One page of a search scan, in insertion order. The ranker keeps only the best K. */

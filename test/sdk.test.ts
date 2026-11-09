@@ -252,6 +252,14 @@ describe('vectors and RAG', () => {
     expect(collection).toMatchObject({ $id: 'sdk-vectors', name: 'SDK knowledge', dimension: 64, metric: 'cosine', points: 0 })
     expect((await vectors.listCollections()).collections.map((c) => c.$id)).toContain('sdk-vectors')
     expect((await vectors.getCollection({ collectionId: 'sdk-vectors' })).$id).toBe('sdk-vectors')
+    expect(await vectors.indexStatus({ collectionId: 'sdk-vectors' })).toMatchObject({
+      provider: 'builtin',
+      configured: false,
+      indexPoints: null,
+      status: 'builtin',
+      sqlPoints: 0,
+    })
+    expect(await vectors.rebuildIndex({ collectionId: 'sdk-vectors' }).catch((error) => error)).toMatchObject({ type: 'general_argument_invalid' })
 
     const batch = await vectors.upsertPoints({
       collectionId: 'sdk-vectors',
