@@ -86,6 +86,7 @@ jobs:
               --dump-dom "data:text/html,<h1>render-ok</h1>" | grep -q render-ok
             python3 --version
             tesseract --version
+            tesseract --list-langs 2>/dev/null | grep -q '^eng$'
             litestream version
             docker --version
             docker compose version
