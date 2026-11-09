@@ -58,7 +58,7 @@ Deployment, upgrade, backups, TLS and production tuning:
   sites, realtime, webhooks and the console.
 - **Localization** with Appwrite's Locale API, plus per-language email
   templates and magic URL sign-in.
-- **SQLite by default**, with Postgres supported through the same service layer.
+- **SQLite by default**, with Postgres supported through the same service layer and an offline `migrate:postgres` command.
 - **Functions** for Node.js and Python, with builds, schedules, executions and
   custom domains.
 - **Sites**, static or server-rendered, with Git deployments, previews and custom

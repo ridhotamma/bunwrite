@@ -23,6 +23,7 @@ Usage:
   bunwrite upgrade [options]   Update an existing installation to this image
   bunwrite schema:push ...     Apply a project config file
   bunwrite migrate ...         Import an Appwrite project
+  bunwrite migrate:postgres    Move this SQLite install to Postgres
   bunwrite autotune [--json]   Show the auto-tuned resource limits
   bunwrite autotune --shell    Print startup-only env (JSC heap, malloc arenas)
   bunwrite health              Exit 0 when the local server answers /v1/health
@@ -83,6 +84,10 @@ switch (command) {
   case 'migrate':
     runCli(...args)
     await import('./cli/migrate')
+    break
+  case 'migrate:postgres':
+    runCli(...args)
+    await import('./cli/migrate-postgres')
     break
   case 'autotune': {
     const [{ reportAutotune }, { clusterConfig }] = await Promise.all([

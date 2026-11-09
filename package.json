@@ -25,6 +25,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "migrate": "bun src/cli/migrate.ts",
+    "migrate:postgres": "bun src/cli/migrate-postgres.ts",
     "db:check": "bun src/cli/db.ts check",
     "db:migrate": "bun src/cli/db.ts migrate",
     "db:ping": "bun src/cli/db.ts ping",

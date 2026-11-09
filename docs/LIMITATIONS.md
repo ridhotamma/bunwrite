@@ -1,14 +1,15 @@
 # Limitations and production gaps
 
-Status: 2026-10-31.
+Status: 2026-11-10 (Bunwrite 0.7.0).
 
 This is the honest list of what Bunwrite is **not** yet, separate from bugs in
 the issue tracker. It is written for people deciding whether to run Bunwrite in
 production, and for contributors choosing what to work on next.
 
-Bunwrite is a single-node, Appwrite-compatible backend on Bun and SQLite. The
-core API, permissions, tests and SQLite tuning are solid. The gaps below are
-mostly architectural and compatibility limits, not small missing endpoints.
+Bunwrite is a single-host, Appwrite-compatible backend on Bun with SQLite or
+Postgres. The core API, permissions, tests, SQLite tuning and the optional
+vector/RAG extension are solid. The gaps below are mostly architectural,
+operational and compatibility limits, not small missing endpoints.
 
 Related documents:
 
@@ -16,17 +17,18 @@ Related documents:
 - [CONFIGURATION.md](CONFIGURATION.md) — every runtime setting
 - [DEPLOY.md](DEPLOY.md) — deployment, backups and operations
 - [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md) — measured bottlenecks and tuning
-- [SITES.md](SITES.md), [GIT.md](GIT.md), [QUEUE.md](QUEUE.md), [RENDER.md](RENDER.md)
+- [SITES.md](SITES.md), [GIT.md](GIT.md), [QUEUE.md](QUEUE.md),
+  [RENDER.md](RENDER.md), [VECTORS.md](VECTORS.md)
 
 ## At a glance
 
 | Area | Current state | Risk |
 | --- | --- | --- |
-| High availability | One host, one SQLite writer; Litestream DR but no automatic multi-host failover | **High** |
-| Database backends | SQLite and Postgres serve the API and console (Postgres per-project schemas) | **Medium** |
+| High availability | One Bunwrite host; SQLite single writer or external Postgres, but no automatic app-level failover | **High** |
+| Database backends | SQLite default; Postgres serves the API and console with per-project schemas; offline `migrate:postgres` | **Medium** |
 | API key permissions | Console keys can be scoped per API group; old keys without scopes stay full access | **Low/Medium** |
-| Backups | Off by default; whole-instance archives plus optional Litestream PITR | **High/Medium** |
-| Function isolation | Shared CPU/memory/network, no quotas | **High** |
+| Backups | Off by default; database archives/PITR, but uploads and external indexes are separate | **High/Medium** |
+| Function isolation | Shared CPU/memory/network by default; optional cgroup quotas and bubblewrap sandbox | **High** |
 | Console authentication | Password plus optional email MFA; no hardware keys or admin audit trail | **Medium** |
 | Appwrite compatibility | Partial; some settings are stored but not applied | **High/Medium** |
 | Deployments and migrations | Restart-based, startup migrations, live DDL | **Medium** |
@@ -34,41 +36,45 @@ Related documents:
 | Observability | Console pages with bounded local telemetry; optional OTLP/Datadog/PostHog export; no Prometheus scrape endpoint or built-in alerting | **Low/Medium** |
 | Realtime | SQLite: cross-process event table + polling; Postgres: `LISTEN`/`NOTIFY` | **Medium** |
 | Multi-tenancy | Per-project databases/schemas; SQLite control writes share one writer | **Low/Medium** |
+| Vector / RAG | Built-in SQL scan with ACLs; optional Qdrant ANN; OCR, evaluation and guardrails | **Low/Medium** |
 | Public HTTP caching | Opt-in; default off, with a multi-project caveat | **Low/Medium** |
 
 ## P0 — can cause a breach, outage or data loss
 
-### 1. Single-node SQLite, no high availability
+### 1. Single-host deployment with no automatic failover
 
-There is one SQLite writer per database file and one host. There is no
-automatic multi-host failover, no read replica and no multi-writer mode.
-Litestream can continuously replicate the databases to S3-compatible storage
-and `bunwrite failover` restores them onto a replacement host, but the
-promotion is still manual and the old host must be stopped first.
+Bunwrite runs the API, console, queue and schedulers on one Bunwrite host.
+SQLite adds a single-writer database file; Postgres moves storage to a shared
+database, but Bunwrite still has no leader election, read replica or automatic
+application failover. Litestream can continuously replicate SQLite databases to
+S3-compatible storage and `bunwrite failover` restores them onto a replacement
+host, but the promotion is still manual and the old host must be stopped first.
 
-- If the host or disk fails, Bunwrite is down until the machine is rebuilt and
-  a backup is restored.
+- If the Bunwrite host or its disk fails, Bunwrite is down until the machine is
+  rebuilt and a backup is restored.
+- On SQLite, one writer handles each database file. `WRITER_SHARDS` spreads
+  different projects across writer processes, but a single hot project still
+  has one writer.
+- Running a SQLite database on NFS/SMB or another network filesystem is not
+  safe; SQLite locking depends on a local filesystem.
+- A Postgres deployment can use a managed HA database, read replicas and PITR,
+  but the Bunwrite application host remains a single point of failure until it
+  is replaced.
+- The backend is per instance. `bunwrite migrate:postgres` copies a stopped
+  SQLite install into Postgres; there is no dual-write or live cross-backend
+  replication.
 - The supervisor restarts crashed worker processes, but only on the same host.
 - `WORKERS` gives more HTTP processes, not more machines.
-- Running the database on NFS/SMB or another network filesystem is not safe;
-  SQLite locking depends on a local filesystem.
-- More than one machine is listed as future work in
+- More than one Bunwrite machine is listed as future work in
   [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md#later-more-than-one-machine), not an
   implemented feature.
 
-Mitigations: keep the database on local disk, monitor disk health, use
+Mitigations: keep the SQLite database on local disk, monitor disk health, use
 Litestream plus `bunwrite failover` for host-loss recovery, and plan a
 replicated-SQLite design (for example LiteFS) if automatic failover is
-required.
-
-A database port now exists under the data layer (`src/db/driver.ts`) with a
-working Postgres driver, runtime schema bootstrap and integration tests against
-a real server. Postgres serves the API request path and the console, including
-one schema per project and Postgres schema DDL. The scheduler lease and
-cross-worker realtime fan-out also work there. Writer sharding and the local
-archive/Litestream snapshot flow stay SQLite-only by design; Postgres uses
-periodic `pg_dump` backups from the Backups page, or managed PITR. See
-[DATABASE.md](DATABASE.md) for the current state and the migration order.
+required. For Postgres, use a managed HA endpoint with provider PITR and still
+plan how to replace the application host. See [DATABASE.md](DATABASE.md) for
+the backend details and migration order.
 
 ### 2. API key scopes are available, but legacy full-access keys bypass them
 
@@ -89,17 +95,20 @@ so older keys keep working.
 Legacy full-access keys are the remaining reason this is not fully closed.
 Create scoped keys for new integrations and remove unused full-access keys.
 
-### 3. Backups are off by default and are not point-in-time recovery
+### 3. Backups are off by default; PITR is optional
 
-`backups.enabled` defaults to `false`. When enabled, Bunwrite writes one archive
-of the control database and every project database. The optional Litestream
+`backups.enabled` defaults to `false`. On SQLite, Bunwrite writes one archive of
+the control database and every project database. The optional Litestream
 integration provides continuous WAL replication and point-in-time restore to
-object storage, but it is not enabled by default and covers databases only, not
-uploaded files.
+object storage, but it is not enabled by default and covers databases only.
+With Postgres, the Backups page produces periodic `pg_dump` dumps; PITR depends
+on the provider.
 
-- Without Litestream, losing the host loses everything written since the last archive.
-- Archives do not include uploaded files, function code or site builds; back up
-  `STORAGE_PATH` and the functions/sites folders separately.
+- Without Litestream or provider PITR, losing the host loses everything written
+  since the last archive.
+- Archives do not include uploaded files, function code, site builds or the
+  optional Qdrant vector index; back up `STORAGE_PATH`, the functions/sites
+  folders and Qdrant separately, or rebuild the index from SQL.
 - Backup encryption is optional (`BACKUP_ENCRYPTION_KEY`). Without it, archives
   are plaintext; if the key is lost, encrypted archives cannot be opened.
 - Restore is offline: upload an archive in **Organization → Backups** and restart
@@ -108,7 +117,8 @@ uploaded files.
 - There is no scheduled restore drill; `restore --dry-run` checks an archive but
   does not run automatically.
 
-See [DEPLOY.md](DEPLOY.md) for the backup and restore procedure.
+See [DEPLOY.md](DEPLOY.md) for the backup and restore procedure. For vectors,
+see [VECTORS.md](VECTORS.md#external-ann-index-qdrant).
 
 ### 4. Functions and site builds share the host
 
@@ -188,9 +198,10 @@ feature look enabled when it is not enforced.
 
 Current known gaps:
 
-- Queries: `regex`, geo, vector and `exists` are not implemented. Bunwrite has a
-  separate built-in `/vectors` and `/rag` extension (see
-  [VECTORS.md](VECTORS.md)); Appwrite's VectorsDB endpoints are not implemented.
+- Queries: `regex`, geo and `exists` are not implemented in the document query
+  language. Appwrite's VectorsDB endpoints are not implemented either; Bunwrite
+  has a separate `/vectors` and `/rag` extension with point ACLs, hybrid search,
+  optional Qdrant ANN, evaluation and OCR (see [VECTORS.md](VECTORS.md)).
 - Auth: project-user MFA (TOTP or email) and phone/SMS sign-in are not
   implemented. Console admins have optional email MFA. Magic URL sign-in and
   per-language email templates are supported.
@@ -204,14 +215,15 @@ Current known gaps:
   back but not applied.
 - Bucket `encryption`, `antivirus` and `compression` settings are stored as set;
   files are kept as uploaded.
-- Sorting and full-text search differ from PostgreSQL/Appwrite: accented first
-  letters sort after `Z`, and English stop words are kept.
+- On SQLite, sorting and full-text search differ from PostgreSQL/Appwrite:
+  accented first letters sort after `Z`, and English stop words are kept.
+  Postgres uses GIN/`tsvector` indexes, but query semantics still differ from
+  Appwrite's implementation.
 - Every document exposes `$revision`; Appwrite's SDK types do not declare it.
 - HEIC output previews are unsupported by the bundled libvips build.
 
-See the “Known differences from Appwrite” section in the
-[README](../README.md#known-differences-from-appwrite) for the version this doc
-was written against.
+See [README](../README.md#features) for the implemented surface and this
+document for the remaining gaps.
 
 ### 8. Public HTTP caching has a multi-project caveat
 
@@ -249,27 +261,36 @@ request by default. `CACHE_CHECK_MS` can throttle the check.
 Default `0` is safest; `100–250` is a reasonable performance trade-off for many
 deployments.
 
-### 10. Logs, rate limits and real application data share SQLite
+### 10. Logs, rate limits and control data share the control database
 
 Request logs are stored in `_request_logs`, rate limits in `_rate_limits`, and
-the application data in the same database file.
+project registry/settings data in the control database. Document rows live in
+each project's own database or schema.
 
 - Request logging is on by default; at high traffic this adds stdout and
-  batched SQLite writes.
+  batched database writes.
 - Log retention adds pruning work and disk usage.
 - Login and token rate limits are database writes.
-- These writes compete with document writes on the same project's writer.
+- On SQLite, control-database writes share the console writer; project document
+  writes use their project writer. On Postgres, both paths use the connection
+  pool. A busy control database can still slow console and registry operations.
+- The vector/RAG tables (`_vector_points`, `_vector_collections`, evaluation and
+  audit rows) live in the project database, so ingest, evaluation and audit
+  writes compete with project writes. Qdrant only offloads ANN search.
 
 For throughput-sensitive deployments, turn request logging off or sample it,
 and prune aggressively.
 
 ### 11. Multi-tenancy is logical, not isolated at the infrastructure level
 
-Each additional project has its own SQLite file, storage folder and backups, but
-all projects share the same host and the same console.
+Each additional project has its own SQLite file or Postgres schema, storage
+folder and logical backup set, but all projects share the same host and the
+same console.
 
-- Every process opens the project registry, so a large number of projects costs
-  a connection and mmap per project in every process.
+- On SQLite, every process opens each project database, so a large number of
+  projects costs a connection and mmap per project in every process. Postgres
+  shares the pool across schemas, but every project still has its own services
+  cache and schema.
 - On SQLite, write traffic is sharded by project ID: `WRITER_SHARDS` (default:
   one writer per two public workers, capped at 8) starts a pool of writer
   processes, and a public worker forwards a project's short writes to the
@@ -277,24 +298,27 @@ all projects share the same host and the same console.
   projects on its own shard, not with every project on the instance, and a
   stalled writer only affects writes for its shard. A single hot project still
   has one writer. Postgres does not use writer shards or forwarding.
-- Console forms follow the selected project to its shard. Project-list,
-  organization and other control-database pages use the writer that owns the
-  synthetic `console` identity, because the console reads `_projects`, console
-  sessions and organization data from the separate control database.
+- On SQLite, console forms follow the selected project to its writer shard.
+  Project-list, organization and other control-database pages use the writer
+  that owns the synthetic `console` identity, because the console reads
+  `_projects`, console sessions and organization data from the separate control
+  database. Postgres routes all of these through the pool.
 - Console admins can access every project on the instance.
 - File permissions are enforced by the sandbox/user model, not by separate
   containers.
 
 For strong tenant isolation, run separate Bunwrite instances per trust boundary.
-The writer pool removes the shared write bottleneck; it does not turn one
-instance into a hard multi-tenant boundary.
+The SQLite writer pool removes the shared write bottleneck; neither it nor
+Postgres schemas turn one instance into a hard multi-tenant boundary.
 
 ### 12. Realtime is not a distributed message bus
 
-Realtime writes events to `_realtime_events`; other workers poll that table and
-deliver to their own WebSocket clients.
+Realtime writes events to `_realtime_events` and each worker delivers them to
+its own WebSocket clients. SQLite workers poll the table; Postgres workers use
+`LISTEN`/`NOTIFY`.
 
-- Cross-process delivery depends on SQLite polling.
+- Cross-process delivery on SQLite depends on polling; Postgres uses
+  notifications but still on one application host.
 - The event table is pruned, but high fan-out adds database load.
 - Socket limits depend on file descriptors and per-process backpressure.
 - The documented 10k-socket target is a design goal, not a CI-verified
@@ -303,31 +327,36 @@ deliver to their own WebSocket clients.
 
 ## P2 — performance, operations and maintenance
 
-### 13. Performance has a hard write ceiling and unsafe defaults
+### 13. SQLite has a hard write ceiling; Postgres moves the bottleneck
 
 SQLite has one writer per file. `WRITE_BATCH_MS`, `BEGIN IMMEDIATE`, WAL and the
 writer pool reduce contention, but they do not create parallel writers for the
-same database.
+same database. Postgres removes the single-file writer and writer-shard hop,
+but a hot row/index and the connection pool still limit one project.
 
 - 10k cached read requests/s is a realistic target after tuning on a multi-core
   host; 10k writes/s on one project is not.
-- `bun:sqlite` is synchronous; a long query, checkpoint or busy wait blocks the
-  worker's event loop.
-- All short writes go through a writer process over a loopback HTTP hop. The
-  pool is selected by project ID (`WRITER_SHARDS`), so different projects write
-  on different writers; the same project always uses one writer. If that writer
-  stalls, public workers retry and then fall back to local writes.
-- `WORKERS=auto` on 4 vCPU starts 3 public workers plus 1 writer; the
-  supervisor and Caddy add two more processes on the same cores.
+- On SQLite, `bun:sqlite` is synchronous; a long query, checkpoint or busy wait
+  blocks the worker's event loop. Postgres uses an async pool.
+- On SQLite, all short writes go through a writer process over a loopback HTTP
+  hop. The pool is selected by project ID (`WRITER_SHARDS`), so different
+  projects write on different writers; the same project always uses one writer.
+  If that writer stalls, public workers retry and then fall back to local
+  writes. Postgres writes directly through the pool.
+- `WORKERS=auto` on 4 vCPU starts 3 public workers plus 1 SQLite writer; the
+  supervisor and Caddy add two more processes on the same cores. Postgres does
+  not start writer processes.
 - Defaults that commonly need tuning: `CACHE_CHECK_MS=0`,
-  `MAX_INFLIGHT=200`, `COMPRESSION` depending on the proxy.
+  `MAX_INFLIGHT=200`, `COMPRESSION` depending on the proxy, and the Postgres
+  pool size when running many workers.
 
 See [PERFORMANCE_PLAN.md](PERFORMANCE_PLAN.md) for the measurement plan and
 known tuning.
 
 ### 14. Observability is opt-in and export-only
 
-- `/health` is a ping, not a database/disk readiness check.
+- `/health` is a ping, not a database/disk readiness check. It does not check
+  Tesseract OCR availability, the Qdrant external index or the ingestion queue.
 - The console's Observability pages keep a bounded local copy (per-minute
   metrics, sampled spans and document events); traces, metrics and request logs
   can also be exported over OTLP, Datadog or PostHog
@@ -335,7 +364,9 @@ known tuning.
   and no database query span.
 - Request logs and the console remain the main built-in diagnostics.
 - There is no built-in alerting for disk space, WAL growth, backup failure,
-  writer failure, queue depth or realtime lag.
+  writer failure, queue depth, realtime lag, a stale vector index or OCR
+  failures. `GET /vectors/:collectionId/index` reports counts and health, and
+  the console can rebuild an index, but neither is a monitored health check.
 - Exporters are best-effort: a provider outage drops the oldest queued events
   instead of slowing the API.
 - Multi-process issues require correlating stdout or traces from several
@@ -346,12 +377,17 @@ database/backup check.
 
 ### 15. Testing is broad but not a production safety net
 
-The test suite is substantial and CI runs typecheck, tests, the build, and the
-SDK/CLI packages. It is not the same as production validation.
+The suite has roughly 950 tests. CI runs typecheck, formatting, lint, the test
+suite, the server build, and the SDK/CLI/MCP typechecks and builds. It is not the
+same as production validation.
 
 - No HA/failover/chaos tests.
 - No security audit or fuzzing.
 - No sustained soak or performance regression gate in CI.
+- CI provisions Postgres for the driver and SQLite-to-Postgres migration tests.
+  Qdrant tests run only when `QDRANT_URL` points at a live server, and OCR tests
+  skip when Tesseract is not installed; run those integrations in staging or a
+  dedicated job.
 - Stress scripts exist but are manual.
 - Linux CI and macOS local runs can use different SQLite builds and query
   fallbacks (`RETURNING` is disabled on macOS).
@@ -367,13 +403,19 @@ messaging and backups.
   updated when they change.
 - Raw SQL and schema triggers make some database changes harder to port to
   another engine.
+- The optional Qdrant index, OCR/Tesseract host dependency and embedding/chat
+  providers add operational surface beyond one Bun process and one database.
 - The project is small; plan for bus-factor and upgrade testing.
 
 ### 17. Encryption at rest is the operator's responsibility
 
-- SQLite files and local storage are not encrypted by Bunwrite.
+- SQLite files, Postgres storage and local/S3 storage are not encrypted by
+  Bunwrite itself.
 - Backup encryption is optional and only covers backups created with a key.
-- S3 encryption, disk encryption and key management are outside the app.
+- External Qdrant payloads contain chunk text, metadata and permission strings;
+  encrypt its disk and network traffic separately.
+- S3 encryption, disk encryption, Postgres provider encryption and key
+  management are outside the app.
 - TLS protects traffic, not data at rest.
 
 Use full-disk encryption, encrypted volumes, or an encrypted S3 bucket as
@@ -383,6 +425,20 @@ appropriate.
 
 Some limits are documented in their own guides rather than here:
 
+- Vectors/RAG: the built-in store uses a bounded in-process scan, so the point
+  cap matters. Qdrant is the only external ANN adapter; pgvector, OpenSearch and
+  Vespa are not implemented. Qdrant is a separate service and is not included in
+  Bunwrite database backups. The index must be rebuilt after switching providers
+  or changing a collection's dimension. Point ACLs exist per chunk; there is no
+  separate document ACL or permission inheritance. Evaluation is synchronous,
+  multi-hop planning is optional, and guardrails are advisory rather than a
+  compliance control. The local embedder is lexical, not semantic.
+- OCR/tables: Tesseract and its language data must be installed on the host (or
+  enabled in the Docker build). OCR is limited to 20 scanned pages per document
+  by default, images above 40 megapixels are rejected, and PDF pages are
+  rendered at most at 2000×3000 pixels. Table reconstruction handles simple
+  aligned rows, not merged cells, rotated scans or complex financial layouts.
+  See [VECTORS.md](VECTORS.md#ocr-tables-and-structure).
 - Sites: no WebSocket/HTTP upgrades into SSR apps and no background workers that
   outlive a request; uploaded archives with `node_modules` are not supported.
   See [SITES.md](SITES.md#not-supported).
@@ -397,12 +453,15 @@ Some limits are documented in their own guides rather than here:
 Reasonable today:
 
 - one team or a small number of trusted projects,
-- several projects whose combined write load is spread across the writer pool,
-- one VPS with local disk,
+- SQLite on local disk, or Postgres against a managed database,
+- several projects whose combined SQLite write load is spread across the writer
+  pool,
 - read-heavy or moderate-write traffic,
 - trusted function code,
 - continuous backup or periodic backups, monitoring and an external proxy
   managed by the operator,
+- RAG over trusted documents, with Qdrant treated as an optional external
+  service and Tesseract installed where OCR is used,
 - accepting a manual restore (minutes of downtime) after a host failure.
 
 Not a safe drop-in for:
@@ -410,22 +469,29 @@ Not a safe drop-in for:
 - multi-tenant SaaS running untrusted function code,
 - deployments that require HA or zero-downtime,
 - apps that depend on full Appwrite behavior, project-user MFA or messaging,
-- one hot project that needs more than one SQLite writer.
+- one hot project that needs more than one SQLite writer,
+- RAG over hostile documents or untrusted uploads without an independent
+  security review, prompt-injection controls and source review,
+- an external index or OCR deployment without monitoring and a rebuild plan.
 
 ## Suggested order of work
 
 1. **Scoped API keys and console MFA.** Console keys can be scoped and admins
    can opt into email MFA. Remaining work: add TOTP/recovery codes and an admin
    audit log.
-2. **Backups: PITR, restore drills, storage backup guidance.** Make data loss
-   recoverable before scaling traffic.
+2. **Backups: PITR, restore drills, storage and Qdrant guidance.** Make data
+   loss recoverable before scaling traffic, including uploads and any external
+   vector index.
 3. **Function resource isolation.** Optional cgroup v2 CPU/memory/PID limits
    and the bubblewrap process sandbox now ship; remaining work is per-function
    network policy, seccomp profiles, and an external runner for hostile code.
-4. **HA and write scaling for one hot project.** A replicated-SQLite design
-   (for example LiteFS) for automatic failover. Multi-project write scaling
-   already ships as the project-sharded writer pool (`WRITER_SHARDS`); a single
-   hot project still has one writer.
-5. **Observability.** Metrics, readiness checks, disk/WAL/backup alerts.
-6. **Compatibility gaps.** Query operators, messaging, webhooks, GraphQL, and
-   the stored-but-not-applied policies.
+4. **HA and write scaling.** A replicated-SQLite design (for example LiteFS)
+   for automatic failover. Postgres provider HA covers the database but not the
+   Bunwrite application host. Multi-project SQLite write scaling already ships
+   as the project-sharded writer pool (`WRITER_SHARDS`); a single hot project
+   still has one writer.
+5. **Observability.** Metrics, readiness checks, disk/WAL/backup alerts, and
+   health/queue metrics for OCR and the external vector index.
+6. **Compatibility and retrieval breadth.** Query operators, messaging,
+   webhooks, GraphQL, stored-but-not-applied policies, pgvector/OpenSearch/
+   Vespa adapters, and better OCR/table handling.

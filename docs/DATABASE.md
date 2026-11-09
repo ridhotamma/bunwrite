@@ -1,6 +1,6 @@
 # Database abstraction
 
-Status: 2026-11-01.
+Status: 2026-11-10.
 
 Bunwrite started as a SQLite-only backend and still defaults to it. This
 document describes the database port that lets the same code run on SQLite and
@@ -53,11 +53,12 @@ tool does not move Bunwrite off SQLite. An unknown value fails at startup instea
 of silently falling back. The `db:*` CLI can also infer the backend from
 `--url` when `--driver` is omitted.
 
-For Postgres, `DATABASE_SCHEMA` creates and uses the control schema
-(`CREATE SCHEMA IF NOT EXISTS`); every pooled connection is opened with
-`search_path=<schema>, public`, not with a one-off `SET`. Each additional
-Bunwrite project gets a sibling schema named `<DATABASE_SCHEMA>_<project-id>`
-(sanitized to 63 bytes and hashed when the ID is long).
+For Postgres, `DATABASE_SCHEMA` is the base schema. The first/legacy project
+uses that schema directly; the control store uses `CONTROL_DATABASE_SCHEMA`
+(default `<base>_console`); every additional project gets a sibling schema named
+`<base>_<project-id>` (sanitized to 63 bytes and hashed when the ID is long).
+Every pooled connection opens with `search_path=<schema>` only, not a one-off
+`SET`, so a missing table cannot silently resolve to another project's schema.
 
 ## Operations CLI
 
@@ -70,6 +71,9 @@ bun run db:check --driver postgres --url postgres://localhost/bunwrite --databas
 
 # Apply a project config (collections, buckets, functions) to the backend.
 bun run db:migrate --schema appwrite.config.json --prune
+
+# Move a stopped SQLite install to Postgres (dry-run first).
+bun run migrate:postgres --url postgres://user@localhost:5432/bunwrite --dry-run
 ```
 
 The CLI reads the same environment variables as the server. `--no-bootstrap`
@@ -90,6 +94,107 @@ S3 bucket. Restore it with `bunwrite backup:open` and `pg_restore`; see
 opens the control schema, runs the instance bootstrap through the driver, loads
 every service cache with `services.ready()`, and opens each project in its own
 schema.
+
+## Moving from SQLite to Postgres
+
+The migration is offline and one-way per run. Start this Bunwrite version once
+on the existing SQLite install (then stop it) so the latest schema migrations
+and the separate control store are in place. Keep the SQLite files, then copy
+the control store and every project into a set of Postgres schemas:
+
+```bash
+# 1. Preview the projects and target schemas. No writes.
+bun run migrate:postgres \
+  --url postgres://user:password@localhost:5432/bunwrite \
+  --schema bunwrite \
+  --dry-run
+
+# 2. Copy the data. The target schemas must be empty unless --force is given.
+bun run migrate:postgres \
+  --url postgres://user:password@localhost:5432/bunwrite \
+  --schema bunwrite
+
+# 3. Start Bunwrite on Postgres.
+DB_DRIVER=postgres \
+DATABASE_URL=postgres://user:password@localhost:5432/bunwrite \
+DATABASE_SCHEMA=bunwrite \
+CONTROL_DATABASE_SCHEMA=bunwrite_console \
+bun run start
+```
+
+From a source checkout use `bun run migrate:postgres`; in the compiled binary or
+Docker image use `bunwrite migrate:postgres`. Run it with the same environment and
+volumes as the server so it can see the SQLite files. For Compose:
+
+```bash
+docker compose stop bunwrite
+docker compose run --rm bunwrite migrate:postgres \
+  --url postgres://user:password@db.example.com/bunwrite --dry-run
+```
+
+The command:
+
+- Reads `DATABASE_PATH` and `control/bunwrite.sqlite` (override with `--source`
+  and `--control`).
+- Handles both the current separate control store and the older single-database
+  layout.
+- Creates the control schema and every project schema, then copies system
+  tables, dynamic collection tables (including permissions), vector/RAG tables
+  and settings.
+- Recreates collection indexes and cache-version triggers, and advances every
+  identity sequence past the copied rows.
+- Verifies source and target row counts and exits non-zero on a mismatch.
+- Leaves SQLite untouched, so rollback is simply unsetting `DB_DRIVER` and
+  restarting on SQLite.
+
+Useful options:
+
+| Option | Meaning |
+| --- | --- |
+| `--ssl` | Require TLS for the Postgres connection. Defaults to `DATABASE_SSL`. |
+| `--schema <name>` | Base Postgres schema. Defaults to `DATABASE_SCHEMA` or `bunwrite`. |
+| `--control-schema <name>` | Control schema. Defaults to `CONTROL_DATABASE_SCHEMA` or `<base>_console`. |
+| `--source <path>` / `--control <path>` | Explicit SQLite files. |
+| `--data-dir <path>` | Folder containing `projects/`; defaults to the source database's folder. |
+| `--skip-logs` | Skip request logs and telemetry tables. |
+| `--force` | Replace non-empty non-public target schemas. |
+| `--dry-run` | Print projects, source table counts and target schemas without writing. |
+| `--json` | Machine-readable report. |
+
+After the switch, `bunwrite snapshot`, `restore` and `failover` are unavailable;
+use **Organization → Backups** (`pg_dump`) or managed Postgres PITR. If the
+Postgres host is new, copy `STORAGE_PATH`, function code and site files as well.
+The optional Qdrant vector index can be rebuilt from the migrated SQL data.
+
+The command does not publish or modify `.env`; set `DB_DRIVER`,
+`DATABASE_URL`, `DATABASE_SCHEMA` and `CONTROL_DATABASE_SCHEMA` explicitly.
+Use a dedicated non-`public` schema for a clean migration.
+
+### Scaling after the move
+
+Postgres removes SQLite's single-writer and writer-shard hop, but it does not
+remove database limits. Size the pool for the worker count and the server's
+connection limit:
+
+```dotenv
+WORKERS=4
+DATABASE_POOL_MAX=10
+```
+
+- Every worker opens a pool for the control schema and one for each project, so
+  budget roughly `WORKERS * (projects + 1) * DATABASE_POOL_MAX`. Keep that below
+  the Postgres `max_connections` limit, leaving room for migrations, backups and
+  operators. A transaction-mode pooler such as PgBouncer can sit in front, but
+  the server must support the session behavior the driver uses.
+- Bunwrite uses one Postgres URL and does not split reads to replicas. A managed
+  HA primary plus provider PITR is the supported production shape.
+- More projects use more schemas, not more databases. Monitor connections,
+  autovacuum, index bloat and per-schema disk use.
+- Backups move from archives/Litestream to the **Organization → Backups**
+  `pg_dump` job or provider PITR. The legacy `snapshot`, `restore` and `failover`
+  commands refuse to run on Postgres.
+- Vector search can stay in SQL for small collections or move to Qdrant; the
+  migration copies the SQL vector tables, and Qdrant can be rebuilt from them.
 
 ## The port
 
@@ -325,7 +430,7 @@ bun test test/database-drivers.test.ts
 
 # Run the integration tests against a real server:
 BUNWRITE_TEST_POSTGRES_URL=postgres://user@localhost:5432/postgres \
-bun test test/database-drivers.test.ts
+bun test test/database-drivers.test.ts test/postgres-migrate.test.ts
 ```
 
 The Postgres test creates a random schema, bootstraps the full schema, runs
@@ -334,5 +439,6 @@ CRUD, a rolled-back transaction, a savepoint and the cache triggers, then boots
 project in its own schema, writes a document there, deletes the project and
 drops both schemas. It also runs the schema admin (create, dry-run import,
 export, delete) and the VCS stores (installations, links, comments, GitHub App
-credentials) against Postgres. Without `BUNWRITE_TEST_POSTGRES_URL` the
-integration suite is skipped.
+credentials) against Postgres. The test workflow provisions Postgres 16 and sets
+`BUNWRITE_TEST_POSTGRES_URL`, so these run in CI; locally, without the variable,
+the integration suites are skipped.

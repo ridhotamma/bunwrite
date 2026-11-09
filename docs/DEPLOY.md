@@ -376,7 +376,9 @@ processes only. The supervisor does not start writer shards or loopback writer
 ports, and requests are not forwarded: every worker uses the Postgres pool.
 The scheduler lease and realtime fan-out still work across workers
 (`_cluster_leases` and `LISTEN`/`NOTIFY`). Keep `WRITER_PORT` unset or `0` for
-clarity; it is ignored on Postgres.
+clarity; it is ignored on Postgres. To move an existing SQLite install to
+Postgres, use `bunwrite migrate:postgres`; see
+[DATABASE.md](DATABASE.md#moving-from-sqlite-to-postgres).
 
 **Scaling beyond one host (SQLite).** Bunwrite uses SQLite. Do not point two
 containers or two machines at the same database file over a network

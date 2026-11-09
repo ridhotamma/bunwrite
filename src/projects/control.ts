@@ -25,7 +25,7 @@ export const CONTROL_STATE_KEY = 'control'
 export const CONTROL_STATE_VERSION = 1
 
 /** Tables that belong to the console/organization rather than to a project. */
-const CONTROL_TABLES = [
+export const CONTROL_TABLES = [
   '_organizations',
   '_organization_members',
   '_console_admins',
