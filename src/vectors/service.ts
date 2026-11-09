@@ -21,7 +21,7 @@ import { HttpChat } from './chat'
 import type { EmbeddingProvider } from './embedder'
 import { HttpEmbedding, LocalEmbedding } from './embedder'
 import { average, keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from './eval'
-import { extractDocument, type DocumentFormat } from './extract'
+import { extractDocument, readUpload, type DocumentFormat, type ExtractionOptions, type ExtractedDocument } from './extract'
 import { addBm25Document, bm25Score, createBm25, finalizeBm25, tokenize, type Bm25Model } from './lexical'
 import {
   DEFAULT_LIST_LIMIT,
@@ -41,6 +41,7 @@ import { TopK, type Scored } from './rank'
 import { QueueService } from '~/queue/service'
 import { HttpReranker, LocalReranker, type RerankProvider } from './rerank'
 import { injectionSignals, redactPii } from './security'
+import { ocrAvailable } from './ocr'
 import { parseRowMetadata, parseRowPermissions, pointModel } from './rows'
 import { norm, parseMetric, parseVector, score, type VectorMetric } from './similarity'
 import {
@@ -86,6 +87,12 @@ interface PendingPoint extends Omit<StoredPoint, 'vector'> {
   vector: number[] | null
 }
 
+interface PreparedFile {
+  name: string
+  mimeType: string
+  base64: string
+}
+
 interface PreparedIngest {
   collectionId: string
   documentId: string
@@ -93,11 +100,16 @@ interface PreparedIngest {
   format: DocumentFormat
   characters: number
   pages?: number
+  ocrPages?: number[]
+  tables?: number
+  structured?: boolean
   source: Record<string, unknown>
   metadata: Record<string, unknown>
   permissions: string[]
   chunkSize: number
   chunkOverlap: number
+  /** An async job carries the upload until the worker can extract/OCR it. */
+  file?: PreparedFile
 }
 
 interface SearchCandidate {
@@ -315,6 +327,11 @@ export class VectorService {
 
   get canAnswer(): boolean {
     return this.chat !== null
+  }
+
+  /** Whether the local OCR binary is available, for the console's ingestion summary. */
+  get ocrAvailable(): boolean {
+    return ocrAvailable()
   }
 
   // ---------------------------------------------------------------------------
@@ -1099,29 +1116,62 @@ export class VectorService {
   // RAG
   // ---------------------------------------------------------------------------
 
-  private async prepareIngest(input: IngestInput): Promise<PreparedIngest> {
+  private extractionOptions(): ExtractionOptions {
+    return {
+      ocr: this.config.ocr,
+      ocrLanguages: this.config.ocrLanguages,
+      ocrMaxPages: this.config.ocrMaxPages,
+      ocrMinConfidence: this.config.ocrMinConfidence,
+      tableExtraction: this.config.tableExtraction,
+    }
+  }
+
+  private sourceOf(extracted: ExtractedDocument): Record<string, unknown> {
+    return {
+      source: extracted.name,
+      filename: extracted.name,
+      mimeType: extracted.mimeType,
+      format: extracted.format,
+      size: extracted.size,
+      ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),
+      ...(extracted.ocrPages ? { ocrPages: extracted.ocrPages } : {}),
+      ...(extracted.tables ? { tables: extracted.tables } : {}),
+    }
+  }
+
+  private async prepareIngest(input: IngestInput, deferFile = false): Promise<PreparedIngest> {
     const collection = await this.collectionRow(typeof input.collectionId === 'string' ? input.collectionId : '')
-    let text: string
+    let text = ''
     let format: DocumentFormat = 'text'
-    let characters: number
+    let characters = 0
     let pages: number | undefined
+    let ocrPages: number[] | undefined
+    let tables: number | undefined
+    let structured = false
     let source: Record<string, unknown> = {}
+    let file: PreparedFile | undefined
     if (input.file !== undefined && input.file !== null) {
-      const extracted = await extractDocument(input.file)
-      if (extracted.characters > MAX_INGEST_TEXT) {
-        throw invalid(`The extracted text has ${extracted.characters.toLocaleString('en-US')} characters; the limit is ${MAX_INGEST_TEXT.toLocaleString('en-US')}.`)
-      }
-      text = extracted.text
-      characters = extracted.characters
-      format = extracted.format
-      pages = extracted.pages
-      source = {
-        source: extracted.name,
-        filename: extracted.name,
-        mimeType: extracted.mimeType,
-        format: extracted.format,
-        size: extracted.size,
-        ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),
+      if (deferFile) {
+        const upload = await readUpload(input.file)
+        file = {
+          name: upload.name,
+          mimeType: upload.mimeType,
+          base64: Buffer.from(upload.bytes).toString('base64'),
+        }
+        source = { source: upload.name, filename: upload.name, mimeType: upload.mimeType, size: upload.size }
+      } else {
+        const extracted = await extractDocument(input.file, 'upload', this.extractionOptions())
+        if (extracted.characters > MAX_INGEST_TEXT) {
+          throw invalid(`The extracted text has ${extracted.characters.toLocaleString('en-US')} characters; the limit is ${MAX_INGEST_TEXT.toLocaleString('en-US')}.`)
+        }
+        text = extracted.text
+        format = extracted.format
+        characters = extracted.characters
+        pages = extracted.pages
+        ocrPages = extracted.ocrPages
+        tables = extracted.tables
+        structured = Boolean(extracted.structured)
+        source = this.sourceOf(extracted)
       }
     } else {
       text = textOf(input.text, 'text', MAX_INGEST_TEXT)
@@ -1141,20 +1191,47 @@ export class VectorService {
       format,
       characters,
       ...(pages !== undefined ? { pages } : {}),
+      ...(ocrPages ? { ocrPages } : {}),
+      ...(tables ? { tables } : {}),
+      ...(structured ? { structured } : {}),
       source,
       metadata: metadataOf(input.metadata),
       permissions: permissionsOf(input.permissions),
       chunkSize,
       chunkOverlap: integer(input.chunkOverlap, this.config.chunkOverlap, 0, Math.floor(chunkSize / 2), 'chunkOverlap'),
+      ...(file ? { file } : {}),
     }
   }
 
   private async storePrepared(prepared: PreparedIngest): Promise<IngestResult> {
+    let text = prepared.text
+    let format = prepared.format
+    let characters = prepared.characters
+    let pages = prepared.pages
+    let ocrPages = prepared.ocrPages
+    let tables = prepared.tables
+    let structured = prepared.structured ?? prepared.format === 'markdown'
+    let source = prepared.source
+    if (prepared.file) {
+      const bytes = Buffer.from(prepared.file.base64, 'base64')
+      const file = new File([bytes], prepared.file.name, { type: prepared.file.mimeType })
+      const extracted = await extractDocument(file, prepared.file.name, this.extractionOptions())
+      if (extracted.characters > MAX_INGEST_TEXT) {
+        throw invalid(`The extracted text has ${extracted.characters.toLocaleString('en-US')} characters; the limit is ${MAX_INGEST_TEXT.toLocaleString('en-US')}.`)
+      }
+      text = extracted.text
+      format = extracted.format
+      characters = extracted.characters
+      pages = extracted.pages
+      ocrPages = extracted.ocrPages
+      tables = extracted.tables
+      structured = Boolean(extracted.structured)
+      source = this.sourceOf(extracted)
+    }
     const collection = await this.collectionRow(prepared.collectionId)
-    const chunks =
-      prepared.format === 'markdown'
-        ? chunkMarkdown(prepared.text, { size: prepared.chunkSize, overlap: prepared.chunkOverlap })
-        : chunkText(prepared.text, { size: prepared.chunkSize, overlap: prepared.chunkOverlap })
+    const chunks = structured
+      ? chunkMarkdown(text, { size: prepared.chunkSize, overlap: prepared.chunkOverlap })
+      : chunkText(text, { size: prepared.chunkSize, overlap: prepared.chunkOverlap })
     if (chunks.length === 0) throw invalid('Param "text" does not contain any words.')
     if (chunks.length > MAX_BATCH * 50) throw invalid('The document is too large; split it into smaller ingest requests.')
 
@@ -1168,7 +1245,7 @@ export class VectorService {
       documentId: prepared.documentId,
       chunkIndex: index,
       content: chunk.text,
-      metadata: { ...prepared.source, ...prepared.metadata, documentId: prepared.documentId, chunkIndex: index, ...(chunk.section ? { section: chunk.section } : {}) },
+      metadata: { ...source, ...prepared.metadata, documentId: prepared.documentId, chunkIndex: index, ...(chunk.section ? { section: chunk.section } : {}) },
       permissions: prepared.permissions,
       vector: vectors[index]!,
     }))
@@ -1187,9 +1264,11 @@ export class VectorService {
       collectionId: collection.id,
       documentId: prepared.documentId,
       chunks: points.length,
-      characters: prepared.characters,
-      format: prepared.format,
-      ...(prepared.pages !== undefined ? { pages: prepared.pages } : {}),
+      characters,
+      format,
+      ...(pages !== undefined ? { pages } : {}),
+      ...(ocrPages ? { ocrPages } : {}),
+      ...(tables ? { tables } : {}),
       $createdAt: now(),
     }
   }
@@ -1198,9 +1277,9 @@ export class VectorService {
     return this.storePrepared(await this.prepareIngest(input))
   }
 
-  /** Extract now, then queue chunking/embedding; returns the queue job. */
+  /** Extract (including OCR) in the worker, then chunk, embed and store. */
   async queueIngest(input: IngestInput): Promise<{ jobId: string; status: string; collectionId: string; documentId: string }> {
-    const prepared = await this.prepareIngest(input)
+    const prepared = await this.prepareIngest(input, true)
     const { message } = await this.jobs.enqueue('_vector_ingest', { data: prepared })
     void this.runJobs().catch((error) => console.warn(`[vectors] ingestion worker failed: ${error instanceof Error ? error.message : String(error)}`))
     return { jobId: message.id, status: message.status, collectionId: prepared.collectionId, documentId: prepared.documentId }

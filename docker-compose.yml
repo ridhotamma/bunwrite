@@ -20,6 +20,9 @@ services:
         # The published GHCR image already includes it; then enable rendering in
         # Console > Settings > HTML rendering.
         WITH_CHROMIUM: ${BUNWRITE_WITH_CHROMIUM:-false}
+        # Local build: set to true for scanned PDF/image OCR (adds Tesseract).
+        # Then enable OCR in Console > Settings > Vectors & RAG.
+        WITH_OCR: ${BUNWRITE_WITH_OCR:-false}
         LITESTREAM_VERSION: ${LITESTREAM_VERSION:-0.5.17}
     image: bunwrite:latest
     restart: unless-stopped

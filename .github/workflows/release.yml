@@ -63,9 +63,10 @@ jobs:
           build-args: |
             BUNWRITE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
             BUNWRITE_VERSION=${{ steps.meta.outputs.version }}
-            # Released images are feature-complete: Python functions and HTML rendering.
+            # Released images are feature-complete: Python functions, HTML rendering and OCR.
             WITH_PYTHON=true
             WITH_CHROMIUM=true
+            WITH_OCR=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -84,6 +85,7 @@ jobs:
             chromium --headless --no-sandbox --disable-gpu --disable-dev-shm-usage \
               --dump-dom "data:text/html,<h1>render-ok</h1>" | grep -q render-ok
             python3 --version
+            tesseract --version
             litestream version
             docker --version
             docker compose version

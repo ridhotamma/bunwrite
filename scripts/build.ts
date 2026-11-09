@@ -1,6 +1,7 @@
 /**
  * Build a standalone Bunwrite executable with the migrations and static assets
- * embedded. Run on the target OS/arch so native dependencies (sharp) match.
+ * embedded. Run on the target OS/arch so native dependencies (sharp, canvas)
+ * match.
  *
  *   bun scripts/build.ts [target] [outfile]
  *   bun run build
@@ -14,6 +15,8 @@ process.chdir(resolve(import.meta.dir, '..'))
 
 // sharp and its runtime dependencies (@img holds @img/colour and the native addon).
 const sharpAssets = ['sharp', '@img', 'detect-libc', 'semver']
+// PDF page rendering for OCR; the platform package lives under @napi-rs.
+const canvasAssets = ['@napi-rs']
 
 const target = process.argv[2] as Bun.Build.CompileTarget | undefined
 const outfile = resolve(process.argv[3] ?? (target ? `dist/bunwrite-${target}` : 'dist/bunwrite'))
@@ -25,7 +28,7 @@ const result = await Bun.build({
   compile: {
     outfile,
     ...(target ? { target } : {}),
-    assets: ['./drizzle', ...sharpAssets.map((name) => `./node_modules/${name}`)],
+    assets: ['./drizzle', ...sharpAssets.map((name) => `./node_modules/${name}`), ...canvasAssets.map((name) => `./node_modules/${name}`)],
   },
 })
 

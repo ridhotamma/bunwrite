@@ -76,6 +76,16 @@ export interface VectorsConfig {
   chunkSize: number
   /** Default overlap between chunks. */
   chunkOverlap: number
+  /** OCR scanned PDF pages and image uploads with Tesseract. */
+  ocr: boolean
+  /** Tesseract language list, for example `eng` or `eng+ind`. */
+  ocrLanguages: string
+  /** Maximum scanned pages to OCR per document. */
+  ocrMaxPages: number
+  /** Drop OCR words below this confidence (0-100). */
+  ocrMinConfidence: number
+  /** Reconstruct headings and aligned tables from PDF/OCR positions. */
+  tableExtraction: boolean
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -117,6 +127,11 @@ export const DEFAULT_VECTORS: VectorsConfig = {
   maxPoints: 50_000,
   chunkSize: 1000,
   chunkOverlap: 200,
+  ocr: false,
+  ocrLanguages: 'eng',
+  ocrMaxPages: 20,
+  ocrMinConfidence: 30,
+  tableExtraction: true,
 }
 
 export function defaultVectorsConfig(overrides: Partial<VectorsConfig> = {}): VectorsConfig {

@@ -555,6 +555,12 @@ Notes:
   HTML rendering**. This makes the image about 960 MB on disk (roughly 350 MB
   without it; the one-command installer's Docker CLI and compose plugin account
   for about 120 MB). See [RENDER.md](RENDER.md).
+- OCR for scanned PDFs and images: the published image includes Tesseract with
+  English data. A local image needs `WITH_OCR=true`: set
+  `BUNWRITE_WITH_OCR=true` in `.env`, run `docker compose up -d --build`, then
+  enable OCR in **Console → Settings → Vectors & RAG → OCR and tables**. This
+  adds roughly 60–100 MB. Add other Tesseract language packages with
+  `apt-get install tesseract-ocr-<lang>` in a derived image.
 - Each function run is a separate process: about 10 MB for a trivial one, more
   with heavy dependencies. Many large functions running at once are what can
   push a small container to its limit.

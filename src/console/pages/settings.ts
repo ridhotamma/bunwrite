@@ -413,6 +413,22 @@ export function settingsPages(router: ConsoleRouter): void {
     return ctx.go(tabPath('vectors'), { tone: 'success', text: 'Ingestion limits saved' })
   })
 
+  router.post(`${SETTINGS}/vectors/ocr`, async ({ ctx }) => {
+    const f = ctx.form
+    const languages = value(f, 'ocrLanguages').trim() || 'eng'
+    if (!/^[A-Za-z0-9_+-]+$/.test(languages)) {
+      throw err('general_argument_invalid', 'OCR languages may contain letters, numbers, underscores, hyphens and + only.')
+    }
+    await saveVectors(ctx, {
+      ocr: checked(f.ocr),
+      ocrLanguages: languages,
+      ocrMaxPages: wholeSetting(f, 'ocrMaxPages', 'Maximum OCR pages', 1, 500),
+      ocrMinConfidence: wholeSetting(f, 'ocrMinConfidence', 'Minimum OCR confidence', 0, 100),
+      tableExtraction: checked(f.tableExtraction),
+    })
+    return ctx.go(tabPath('vectors'), { tone: 'success', text: 'OCR and table settings saved' })
+  })
+
   router.post(`${SETTINGS}/:key/reset`, async ({ ctx, path }) => {
     const key = path.key as SettingKey
     if (!SETTING_KEYS.includes(key)) throw err('general_argument_invalid', 'Unknown setting.')

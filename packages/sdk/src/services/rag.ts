@@ -19,7 +19,7 @@ export interface RAGIngestParams {
 
 export interface RAGIngestFileParams {
     collectionId: string;
-    /** A PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
+    /** A PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
     file: File | Blob | InputFile;
     /** Used when a Blob has no name. */
     filename?: string;
@@ -38,6 +38,10 @@ export interface RAGIngestResult {
     /** Source format: pdf, markdown, html, docx, text, ... */
     format: string;
     pages?: number;
+    /** PDF pages that were OCR'd. */
+    ocrPages?: number[];
+    /** Markdown tables found during extraction. */
+    tables?: number;
     $createdAt: string;
 }
 
@@ -235,6 +239,27 @@ export class RAG {
     getJob(params: { jobId: string }): Promise<RAGJobStatus> {
         requireString(params?.jobId, 'jobId');
         return this._request('get', `/rag/jobs/${encodeURIComponent(params.jobId)}`);
+    }
+
+    /** Queue a file ingest; extraction/OCR runs in the worker. */
+    async enqueueIngestFile(params: RAGIngestFileParams): Promise<RAGIngestJob> {
+        requireString(params?.collectionId, 'collectionId');
+        const file = await fileOf(params.file, params.filename);
+        return this.client.call(
+            'post',
+            new URL(this.client.config.endpoint + '/rag/ingest'),
+            { 'X-Bunwrite-Project': this.client.config.project, accept: 'application/json', 'content-type': 'multipart/form-data' },
+            clean({
+                collectionId: params.collectionId,
+                file,
+                documentId: params.documentId,
+                metadata: params.metadata,
+                permissions: params.permissions,
+                chunkSize: params.chunkSize,
+                chunkOverlap: params.chunkOverlap,
+                async: true,
+            }),
+        );
     }
 
     /** Upload a file, extract its text, chunk and embed it. */

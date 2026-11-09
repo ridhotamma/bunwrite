@@ -58,23 +58,110 @@ export function chunkText(text: string, options: Partial<ChunkOptions> = {}): Ch
   return chunks
 }
 
+const tableLine = (line: string) => line.includes('|') && line.trim().split('|').length >= 2
+const tableSeparator = (line: string) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+const fenceStart = (line: string) => /^\s*(```|~~~)/.test(line)
+
+/** Split a body into plain text and tables, so tables are never cut in half. */
+function splitBlocks(body: string): { kind: 'text' | 'table'; lines: string[] }[] {
+  const lines = body.split('\n')
+  const blocks: { kind: 'text' | 'table'; lines: string[] }[] = []
+  let index = 0
+  while (index < lines.length) {
+    const line = lines[index]!
+    if (tableLine(line) && index + 1 < lines.length && tableSeparator(lines[index + 1]!)) {
+      const table: string[] = [line, lines[index + 1]!]
+      index += 2
+      while (index < lines.length && tableLine(lines[index]!)) table.push(lines[index++]!)
+      blocks.push({ kind: 'table', lines: table })
+      continue
+    }
+    if (fenceStart(line)) {
+      const text: string[] = [line]
+      index++
+      while (index < lines.length) {
+        text.push(lines[index]!)
+        if (fenceStart(lines[index]!)) {
+          index++
+          break
+        }
+        index++
+      }
+      blocks.push({ kind: 'text', lines: text })
+      continue
+    }
+    const text: string[] = []
+    while (index < lines.length) {
+      if (lines[index]!.trim() === '') {
+        text.push(lines[index++]!)
+        break
+      }
+      if (text.length > 0) {
+        const next = lines[index]!
+        if (next.trim() === '' || (tableLine(next) && index + 1 < lines.length && tableSeparator(lines[index + 1]!)) || fenceStart(next)) break
+      }
+      text.push(lines[index++]!)
+    }
+    if (text.length > 0) blocks.push({ kind: 'text', lines: text })
+  }
+  return blocks
+}
+
+/** Keep Markdown tables in one chunk; split large tables by rows and repeat the header. */
+function chunkTable(lines: string[], options: Partial<ChunkOptions>): string[] {
+  const size = Math.max(64, Math.min(MAX_SIZE, Math.round(options.size ?? DEFAULT_SIZE)))
+  const whole = lines.join('\n').trim()
+  if (whole.length <= size) return [whole]
+  const header = [lines[0]!, lines[1]!]
+  const rows = lines.slice(2)
+  if (rows.length === 0) return [whole]
+
+  const chunks: string[] = []
+  let current = [...header]
+  let length = header.join('\n').length
+  for (const row of rows) {
+    const rowLength = row.length + 1
+    if (current.length > header.length && length + rowLength > size) {
+      chunks.push(current.join('\n'))
+      current = [...header]
+      length = header.join('\n').length
+    }
+    current.push(row)
+    length += rowLength
+  }
+  if (current.length > header.length) chunks.push(current.join('\n'))
+  return chunks
+}
+
 /**
- * Heading-aware chunking for Markdown. Each chunk carries its heading path so
- * retrieved chunks remain self-describing and a section does not lose context
- * when it is split.
+ * Heading-aware chunking for Markdown and extracted structure (HTML, PDF,
+ * DOCX, ODT, EPUB, CSV). Headings become a section path on every chunk, and
+ * tables are kept together (or split by rows with the header repeated).
  */
 export function chunkMarkdown(text: string, options: Partial<ChunkOptions> = {}): Chunk[] {
   const normalized = text.replace(/\r\n?/g, '\n')
   const sections: { heading: string; body: string }[] = []
   const stack: { level: number; title: string }[] = []
   let body: string[] = []
+  let fence: string | null = null
   const flush = () => {
     const content = body.join('\n').trim()
     if (content) sections.push({ heading: stack.map((entry) => entry.title).join(' / '), body: content })
     body = []
   }
   for (const line of normalized.split('\n')) {
-    const heading = /^(#{1,6})\s+(.+?)\s*#*$/.exec(line)
+    const opening = /^\s*(```|~~~)/.exec(line)
+    if (opening && fence === null) {
+      fence = opening[1]!
+      body.push(line)
+      continue
+    }
+    if (fence !== null) {
+      body.push(line)
+      if (line.trimStart().startsWith(fence)) fence = null
+      continue
+    }
+    const heading = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*$/.exec(line)
     if (!heading) {
       body.push(line)
       continue
@@ -85,16 +172,34 @@ export function chunkMarkdown(text: string, options: Partial<ChunkOptions> = {})
     stack.push({ level, title: heading[2]!.trim() })
   }
   flush()
-  if (sections.length === 0) return chunkText(text, options)
+  if (sections.length === 0) {
+    sections.push({ heading: '', body: normalized.trim() })
+  }
 
   const chunks: Chunk[] = []
+  const push = (value: string, heading: string) => {
+    const text = value.trim()
+    if (!text) return
+    chunks.push({
+      text: heading ? `${heading}\n${text}` : text,
+      index: chunks.length,
+      ...(heading ? { section: heading } : {}),
+    })
+  }
   for (const section of sections) {
-    for (const chunk of chunkText(section.body, options)) {
-      chunks.push({
-        text: section.heading ? `${section.heading}\n${chunk.text}` : chunk.text,
-        index: chunks.length,
-        ...(section.heading ? { section: section.heading } : {}),
-      })
+    const blocks = splitBlocks(section.body)
+    const merged: { kind: 'text' | 'table'; lines: string[] }[] = []
+    for (const block of blocks) {
+      const previous = merged[merged.length - 1]
+      if (block.kind === 'text' && previous?.kind === 'text') previous.lines.push(...block.lines)
+      else merged.push({ kind: block.kind, lines: [...block.lines] })
+    }
+    for (const block of merged) {
+      if (block.kind === 'table') {
+        for (const table of chunkTable(block.lines, options)) push(table, section.heading)
+      } else {
+        for (const chunk of chunkText(block.lines.join('\n'), options)) push(chunk.text, section.heading)
+      }
     }
   }
   return chunks

@@ -69,8 +69,8 @@ deprecated.
 | `Databases` | Databases, collections, attributes, indexes, documents (one and bulk), increment/decrement, transactions |
 | `TablesDB` | Databases, tables, columns and indexes (schema only, see below) |
 | `Storage` | Buckets, files including chunked uploads, view/download/preview |
-| `Vectors` | Bunwrite extension: vector collections, point ACLs, point upsert/list/get/delete, hybrid BM25 + vector search with optional reranking, external Qdrant index status/rebuild, re-indexing, audit rows, document upload/ingest and document chunks |
-| `RAG` | Bunwrite extension: chunk/embed/ingest text or files, async ingest jobs, hybrid retrieval, reranking, query planning, PII/injection guardrails, persisted retrieval-and-answer evaluation, context and optional answers |
+| `Vectors` | Bunwrite extension: vector collections, point ACLs, point upsert/list/get/delete, hybrid BM25 + vector search with optional reranking, external Qdrant index status/rebuild, re-indexing, audit rows, document upload/ingest (including OCR and table extraction) and document chunks |
+| `RAG` | Bunwrite extension: chunk/embed/ingest text or files, async ingest jobs with OCR, hybrid retrieval, reranking, query planning, PII/injection guardrails, persisted retrieval-and-answer evaluation, context and optional answers |
 | `Functions` | Functions, deployments, executions, variables |
 | `Sites` | Static sites, deployments, custom domains and variables |
 | `Teams` | Teams, prefs, memberships and invitations |

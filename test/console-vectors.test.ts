@@ -261,12 +261,14 @@ describe('vectors console', () => {
     expect(page).toContain('Answer generation')
     expect(page).toContain('Retrieval and reranking')
     expect(page).toContain('Ingestion and limits')
+    expect(page).toContain('OCR and tables')
     expect(page).toContain('action="/console/settings/vectors/embedding"')
     expect(page).toContain('action="/console/settings/vectors/index"')
     expect(page).toContain('action="/console/settings/vectors/answers"')
     expect(page).toContain('action="/console/settings/vectors/retrieval"')
     expect(page).toContain('action="/console/settings/vectors/guardrails"')
     expect(page).toContain('action="/console/settings/vectors/limits"')
+    expect(page).toContain('action="/console/settings/vectors/ocr"')
 
     const retrieval = await form('/console/settings/vectors/retrieval', {
       hybridSearch: 'on',
@@ -318,6 +320,22 @@ describe('vectors console', () => {
     const limits = await form('/console/settings/vectors/limits', { maxPoints: '1200', chunkSize: '600', chunkOverlap: '100' })
     expect(limits.status).toBe(303)
     expect(server.config.vectors).toMatchObject({ maxPoints: 1200, chunkSize: 600, chunkOverlap: 100 })
+
+    const ocr = await form('/console/settings/vectors/ocr', {
+      ocr: 'on',
+      ocrLanguages: 'eng+ind',
+      ocrMaxPages: '12',
+      ocrMinConfidence: '40',
+      tableExtraction: 'on',
+    })
+    expect(ocr.status).toBe(303)
+    expect(server.config.vectors).toMatchObject({
+      ocr: true,
+      ocrLanguages: 'eng+ind',
+      ocrMaxPages: 12,
+      ocrMinConfidence: 40,
+      tableExtraction: true,
+    })
 
     const answers = await form('/console/settings/vectors/answers', {
       enabled: 'on',
@@ -377,6 +395,11 @@ describe('vectors console', () => {
       maxPoints: 50000,
       chunkSize: 1000,
       chunkOverlap: 200,
+      ocr: false,
+      ocrLanguages: 'eng',
+      ocrMaxPages: 20,
+      ocrMinConfidence: 30,
+      tableExtraction: true,
       chatUrl: '',
       hybridSearch: true,
       hybridAlpha: 0.55,

@@ -43,14 +43,14 @@ Open **Vectors** in the project sidebar. It has:
 - **Points** — browse and search, add a text point or an explicit vector, open a
   point to see its content and metadata, and delete it. Search uses hybrid
   retrieval and reranking by default.
-- **RAG** — upload a PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON,
+- **RAG** — upload a PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON,
   CSV, XML, YAML or text file (or paste text) to chunk/embed a document, see
   ingested documents, ask a question, and review the generated answer, sources
   and context.
 - **Settings** — inspect the collection's fixed facts, open the project's
-  Vectors & RAG settings for embeddings, answers, the external ANN index, hybrid
-  search, reranking and limits, rebuild the external index, and delete the
-  collection.
+  Vectors & RAG settings for embeddings, answers, the external ANN index, OCR,
+  table reconstruction, hybrid search, reranking and limits, rebuild the
+  external index, and delete the collection.
 
 Embedding, answer generation, ingest defaults and limits are edited in
 **Settings → Vectors & RAG** and stored in the project database, so no restart
@@ -97,6 +97,11 @@ The built-in defaults are:
 | Planned queries | `3` | Maximum queries, including the original question. |
 | Chunk size | `1000` | Default characters per ingested chunk (64–8000). |
 | Chunk overlap | `200` | Default overlap between chunks. |
+| OCR | off | OCR scanned PDF pages and image uploads with Tesseract. |
+| OCR languages | `eng` | Tesseract language list, for example `eng`, `ind` or `eng+ind`. |
+| Maximum OCR pages | `20` | Scanned pages OCR'd per document. |
+| Minimum OCR confidence | `30` | OCR words below this confidence are dropped (0–100). |
+| Table extraction | on | Reconstruct headings and aligned tables from PDF/OCR positions. Markup formats keep their own headings and tables. |
 
 The default prompt is a grounding baseline, not a compliance control. For
 medical, legal, financial or other high-stakes workflows, write the domain
@@ -189,6 +194,31 @@ How it behaves:
 
 Qdrant is the first adapter. The `VectorAnnIndex` interface in
 `src/vectors/ann.ts` keeps pgvector, OpenSearch and Vespa additive later.
+
+### OCR, tables and structure
+
+Ingestion keeps document structure when the format exposes it:
+
+- **HTML, Markdown, DOCX, ODT, EPUB and CSV** become Markdown-like text.
+  Headings, lists and tables survive, so the chunker can attach a heading path
+  and keep a table in one chunk.
+- **PDF** text is rebuilt from positioned fragments. Larger fonts become
+  headings, and consecutive rows with aligned columns become Markdown tables.
+- **Scanned PDFs and images** can be OCR'd with
+  [Tesseract](https://tesseract-ocr.github.io/). Install the `tesseract`
+  executable and the language data on the server, then enable **OCR scanned
+  pages and images** in **Settings → Vectors & RAG → OCR and tables**. The
+  response and async job result include `ocrPages`.
+- Large PDFs can be limited with **Maximum OCR pages**. The default is 20 per
+  document; raise it for a trusted batch or split the PDF.
+- **Table extraction** is heuristic. It handles simple aligned tables, not
+  merged cells, rotated scans or complex financial layouts. It is enabled by
+  default and can be turned off.
+
+OCR and extraction in an `async: true` ingest run in the queue worker, so the
+HTTP response returns before the expensive work starts. Poll
+`GET /rag/jobs/:jobId` for the extracted format, page count, OCR pages, table
+count and indexed chunk count.
 
 ### Multi-hop query planning
 
@@ -429,7 +459,7 @@ curl -X POST "$API/rag/ingest" \
     "chunkOverlap":200
   }'
 
-# A file: PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text
+# A file: PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text
 curl -X POST "$API/rag/ingest" \
   -H "x-appwrite-project: $PROJECT" -H "x-appwrite-key: $KEY" \
   -F collectionId=handbook \
@@ -453,16 +483,19 @@ Response:
   "characters": 11480,
   "format": "pdf",
   "pages": 8,
+  "ocrPages": [8],
+  "tables": 2,
   "$createdAt": "2026-01-01T00:00:00.000+00:00"
 }
 ```
 
 When no `documentId` is given for a file, it is derived from the file name, so
 uploading `handbook.pdf` again replaces the previous `handbook` document. File
-metadata (`source`, `filename`, `mimeType`, `format`, `size`, and `pages` for
-PDFs) is stored with each chunk unless the request's `metadata` overrides it.
-Uploads are limited to 25 MB and PDFs to 1000 pages. A scanned PDF without a
-text layer is refused; run OCR first.
+metadata (`source`, `filename`, `mimeType`, `format`, `size`, `pages` for PDFs,
+`ocrPages` when OCR ran, and `tables`) is stored with each chunk unless the
+request's `metadata` overrides it. Uploads are limited to 25 MB and PDFs to 1000
+pages. A scanned PDF without a text layer needs OCR enabled; images need OCR
+too.
 
 The document routes are equivalent and make CRUD clearer:
 
@@ -474,9 +507,11 @@ curl "$API/vectors/handbook/documents/guide" ...               # chunks of one d
 curl -X DELETE "$API/vectors/handbook/documents/guide" ...     # delete its chunks
 ```
 
-Markdown ingestion is heading-aware: each chunk records a `section` metadata
-path such as `Handbook / Deploy`, and the heading path is included in the text
-sent to the embedder. This keeps section context after a long section is split.
+Markdown, HTML, DOCX, ODT, EPUB, CSV and PDF ingestion is structure-aware:
+headings become a `section` metadata path such as `Handbook / Deploy` and are
+included in the embedded text, while tables stay in one chunk (or are split by
+rows with the header repeated). This keeps section and table context after a
+long document is chunked.
 
 After changing the embedder or dimension, re-embed every point in place:
 
@@ -495,11 +530,13 @@ curl -X POST "$API/rag/ingest" ... -d '{..., "async":true}'
 curl "$API/rag/jobs/<job-id>" ...
 ```
 
-The API extracts text synchronously, queues chunking/embedding, and works
-through jobs in the leader process. Jobs survive a restart through the durable
-queue. The console's **Upload** form always uses synchronous ingestion.
+The API validates and queues the upload, extracts text and runs OCR in the queue
+worker, then chunks and embeds. Jobs work through the leader process and survive
+a restart through the durable queue. The console's **Upload** form uses
+synchronous ingestion, so the page waits for extraction and OCR to finish.
 
-The SDK mirrors this with `RAG.enqueueIngest()` and `RAG.getJob()`.
+The SDK mirrors this with `RAG.enqueueIngest()` and
+`RAG.enqueueIngestFile()`; poll either job with `RAG.getJob()`.
 
 ### RAG query
 
@@ -571,11 +608,14 @@ const evaluation = await rag.evaluate({
 })
 
 // Upload a file and let the server extract, chunk and embed its text.
+const largeScan = new File([bytes], 'scan.pdf', { type: 'application/pdf' })
 await vectors.ingestDocument({
   collectionId: 'handbook',
   file: new File([bytes], 'handbook.pdf', { type: 'application/pdf' }),
 })
 await rag.ingestFile({ collectionId: 'handbook', file: fileFromAnInput })
+const job = await rag.enqueueIngestFile({ collectionId: 'handbook', file: largeScan })
+const state = await rag.getJob({ jobId: job.jobId })
 ```
 
 The `bunwrite vectors ...` and `bunwrite rag ...` CLI commands call the same
@@ -593,21 +633,23 @@ The MCP catalog includes `vectors_*` and `rag_*` operations.
 - Search scans every point in the collection in pages and keeps only the best
   `topK` in memory. The point cap in **Settings → Vectors & RAG** (default
   50,000) keeps the scan bounded. Hybrid search makes an extra statistics pass
-  for BM25. For larger corpora, lower the cap or use a dedicated vector database.
+  for BM25. For larger corpora, use the Qdrant external index or lower the cap.
 - Evaluation is synchronous: each case performs its own retrieval and optional
   chat request. Keep golden sets small enough for the request timeout, or run
   them from the CLI where a long-running process is expected.
 - User-session reads scan points in memory to enforce point ACLs before
   pagination. API keys and console admins keep the SQL-paged path.
-- Async ingestion queues chunking and embedding, but text extraction stays in the
-  request so invalid files fail immediately. There is no OCR or PDF table
-  extraction yet; scanned PDFs without a text layer are refused and should be
-  OCR'd before upload. Re-indexing is synchronous.
+- Async ingestion queues extraction, OCR, chunking and embedding; without
+  `async: true` all of that runs in the request. OCR needs Tesseract and its
+  language packs on the host. Table reconstruction is heuristic and does not
+  handle merged cells or complex layouts. Image OCR rejects images above 40
+  megapixels, and rendered PDF pages are capped at 2000×3000 pixels.
+  Re-indexing is synchronous.
 - Point ACLs are applied to every chunk created by one ingest. Manually added
   points can have different permissions, but there is no separate document ACL
   object or permission inheritance beyond that.
 - The built-in store uses a bounded SQL scan. Set the vector index provider to
-  Qdrant to use external ANN; SQL remains authoritative and search falls back to
+  Qdrant for external ANN; SQL remains authoritative and search falls back to
   the scan when the index is unavailable or stale.
 - Qdrant data is not part of Bunwrite's database backups. Keep a separate Qdrant
   backup or rebuild the index from SQL.

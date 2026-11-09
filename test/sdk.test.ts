@@ -328,6 +328,19 @@ describe('vectors and RAG', () => {
     })
     expect(fileIngest).toMatchObject({ documentId: 'rag-file', format: 'text' })
 
+    const queued = await rag.enqueueIngestFile({
+      collectionId: 'sdk-vectors',
+      file: new File(['Queued file text from the SDK.'], 'queued.txt', { type: 'text/plain' }),
+    })
+    expect(queued).toMatchObject({ collectionId: 'sdk-vectors', documentId: 'queued' })
+    let status = await rag.getJob({ jobId: queued.jobId })
+    for (let attempt = 0; attempt < 50 && status.status !== 'completed'; attempt++) {
+      await Bun.sleep(10)
+      status = await rag.getJob({ jobId: queued.jobId })
+    }
+    expect(status).toMatchObject({ status: 'completed' })
+    expect((await vectors.listDocuments({ collectionId: 'sdk-vectors' })).documents.map((document) => document.documentId)).toContain('queued')
+
     expect((await vectors.deleteDocument({ collectionId: 'sdk-vectors', documentId: 'guide' })).deleted).toBe(ingested.chunks)
     expect((await vectors.listDocumentPoints({ collectionId: 'sdk-vectors', documentId: 'guide' })).total).toBe(0)
     await vectors.deletePoint({ collectionId: 'sdk-vectors', pointId: 'v1' })

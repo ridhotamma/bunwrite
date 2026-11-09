@@ -157,6 +157,10 @@ export interface IngestResult {
   characters: number
   format: string
   pages?: number
+  /** PDF pages that were OCR'd. */
+  ocrPages?: number[]
+  /** Markdown tables found during extraction. */
+  tables?: number
   $createdAt: string
 }
 

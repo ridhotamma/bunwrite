@@ -181,12 +181,16 @@ export interface VectorIngestResult {
     /** Source format: pdf, markdown, html, docx, text, ... */
     format: string;
     pages?: number;
+    /** PDF pages that were OCR'd. */
+    ocrPages?: number[];
+    /** Markdown tables found during extraction. */
+    tables?: number;
     $createdAt: string;
 }
 
 export interface VectorIngestDocumentParams {
     collectionId: string;
-    /** A PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
+    /** A PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text file. */
     file: File | Blob | InputFile;
     /** Used when a Blob has no name. */
     filename?: string;

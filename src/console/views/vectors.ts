@@ -504,10 +504,10 @@ export function ragView(env: VectorEnv, options: RagOptions): Html {
           ${fileField({
             name: 'file',
             label: 'File',
-            accept: '.pdf,.md,.markdown,.txt,.html,.htm,.docx,.odt,.epub,.rtf,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.log',
+            accept: '.pdf,.md,.markdown,.txt,.html,.htm,.docx,.odt,.epub,.rtf,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.log,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.gif',
             title: 'Drag and drop a document here',
-            hint: `PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text — up to ${MAX_FILE_BYTES / 1024 / 1024} MB`,
-            help: 'Or paste text below. A file takes precedence when both are provided.',
+            hint: `PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML, YAML or text — up to ${MAX_FILE_BYTES / 1024 / 1024} MB`,
+            help: 'Or paste text below. A file takes precedence when both are provided. Scanned PDFs and images need OCR enabled in Vectors & RAG settings.',
           })}
           <label>Text<textarea name="text" rows="8" placeholder="Paste a handbook section, support article or notes…">${options.ingest.text}</textarea></label>
           <div class="fields">

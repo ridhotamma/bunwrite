@@ -474,9 +474,10 @@ There are no environment variables for them.
 The built-in vector store and retrieval-augmented generation endpoints. Local
 embeddings are the default and need no network; any OpenAI-compatible endpoint
 can be used instead. Embeddings, answer generation, the optional Qdrant ANN
-index, chunking and limits are edited at **Console → Settings → Vectors & RAG**.
-There are no environment variables for them. See [VECTORS.md](VECTORS.md) for
-the API and limits.
+index, OCR/table extraction, chunking and limits are edited at **Console →
+Settings → Vectors & RAG**. There are no environment variables for them. OCR
+uses the `tesseract` executable, which must be installed on the host with the
+language data you need. See [VECTORS.md](VECTORS.md) for the API and limits.
 
 ## HTML rendering
 
@@ -503,6 +504,7 @@ Change them, then rebuild with `docker compose up -d --build`.
 | --- | --- | --- |
 | `BUNWRITE_WITH_PYTHON` | `false` | Include python3 for `python-*` functions (~50 MB). |
 | `BUNWRITE_WITH_CHROMIUM` | `false` | Include Chromium and fonts for HTML rendering (~730 MB more on disk). |
+| `BUNWRITE_WITH_OCR` | `false` | Include Tesseract and English data for scanned PDF/image OCR. |
 
 The published GHCR image is built with both set to `true`. These defaults apply
 to local images built with `docker compose`.

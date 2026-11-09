@@ -353,7 +353,7 @@ export function vectorPages(router: ConsoleRouter): void {
       })
       return ctx.go(`${collectionUrl(collection.$id)}/rag`, {
         tone: 'success',
-        text: `Ingested ${result.chunks} chunk${result.chunks === 1 ? '' : 's'} from ${result.format.toUpperCase()}`,
+        text: `Ingested ${result.chunks} chunk${result.chunks === 1 ? '' : 's'} from ${result.format.toUpperCase()}${result.ocrPages?.length ? ` · OCR ${result.ocrPages.length} page${result.ocrPages.length === 1 ? '' : 's'}` : ''}`,
       })
     } catch (error) {
       if (!(error instanceof BunwriteError)) throw error

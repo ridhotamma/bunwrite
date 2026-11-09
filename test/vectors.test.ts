@@ -3,6 +3,7 @@
  * embeddings, chunked ingest, and the HTTP extension.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createCanvas } from '@napi-rs/canvas'
 import { strToU8, zipSync } from 'fflate'
 
 import { postgresSystemIndexStatements, postgresSystemStatements } from '~/db/postgres-schema'
@@ -10,7 +11,7 @@ import { chunkMarkdown, chunkText } from '~/vectors/chunk'
 import { defaultVectorsConfig } from '~/vectors/config'
 import { localVector } from '~/vectors/embedder'
 import { keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from '~/vectors/eval'
-import { extractDocument } from '~/vectors/extract'
+import { DEFAULT_EXTRACTION, extractDocument } from '~/vectors/extract'
 import { addBm25Document, bm25Score, createBm25, finalizeBm25, localRerankScore } from '~/vectors/lexical'
 import { TopK } from '~/vectors/rank'
 import { LocalReranker } from '~/vectors/rerank'
@@ -57,6 +58,81 @@ function pdfWithText(text: string): Uint8Array {
   return new TextEncoder().encode(body)
 }
 
+function pdfWithContent(content: string, width = 400, height = 800): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>`,
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let body = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((object, index) => {
+    offsets.push(body.length)
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`
+  })
+  const xref = body.length
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const offset of offsets) body += `${String(offset).padStart(10, '0')} 00000 n \n`
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return new TextEncoder().encode(body)
+}
+
+async function textImage(lines: string[][]): Promise<Uint8Array> {
+  const canvas = createCanvas(1200, 300 + lines.length * 90)
+  const context = canvas.getContext('2d')
+  context.fillStyle = 'white'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = 'black'
+  context.font = '64px sans-serif'
+  lines.forEach((line, row) => line.forEach((cell, column) => context.fillText(cell, 60 + column * 360, 120 + row * 90)))
+  return new Uint8Array(await canvas.encode('png'))
+}
+
+function pdfWithImage(jpeg: Uint8Array, width: number, height: number): Uint8Array {
+  const content = `q ${width} 0 0 ${height} 0 0 cm /Im0 Do Q`
+  const objects: Buffer[] = [
+    Buffer.from('<< /Type /Catalog /Pages 2 0 R >>'),
+    Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+    Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>`),
+    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`), Buffer.from(content), Buffer.from('\nendstream')]),
+    Buffer.concat([
+      Buffer.from(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
+      ),
+      jpeg,
+      Buffer.from('\nendstream'),
+    ]),
+  ]
+  const parts: Buffer[] = [Buffer.from('%PDF-1.4\n')]
+  const offsets: number[] = []
+  let length = parts[0]!.length
+  objects.forEach((object, index) => {
+    offsets.push(length)
+    const part = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`), object, Buffer.from('\nendobj\n')])
+    parts.push(part)
+    length += part.length
+  })
+  const xref = length
+  const tail = [Buffer.from(`xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`)]
+  for (const offset of offsets) tail.push(Buffer.from(`${String(offset).padStart(10, '0')} 00000 n \n`))
+  tail.push(Buffer.from(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`))
+  return new Uint8Array(Buffer.concat([...parts, ...tail]))
+}
+
+async function scannedPdf(lines: string[][]): Promise<Uint8Array> {
+  const canvas = createCanvas(1200, 300 + lines.length * 90)
+  const context = canvas.getContext('2d')
+  context.fillStyle = 'white'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = 'black'
+  context.font = '64px sans-serif'
+  lines.forEach((line, row) => line.forEach((cell, column) => context.fillText(cell, 60 + column * 360, 120 + row * 90)))
+  const jpeg = await canvas.encode('jpeg', 95)
+  return pdfWithImage(jpeg, 1200, 300 + lines.length * 90)
+}
+
 function docxWithText(text: string): Uint8Array {
   const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p><w:p><w:r><w:t>Second paragraph</w:t></w:r></w:p></w:body></w:document>`
   return zipSync({ 'word/document.xml': strToU8(xml) })
@@ -95,6 +171,17 @@ describe('vector helpers', () => {
     const chunks = chunkMarkdown('# Handbook\nIntro text.\n\n## Deploy\nUse Docker.\n\n## Pricing\nStarts at five dollars.', { size: 80, overlap: 0 })
     expect(chunks.map((chunk) => chunk.section)).toEqual(['Handbook', 'Handbook / Deploy', 'Handbook / Pricing'])
     expect(chunks[1]!.text).toContain('Handbook / Deploy')
+  })
+
+  test('markdown tables stay together and repeat their header when split', () => {
+    const rows = Array.from({ length: 20 }, (_, index) => `| item-${index} | ${'value '.repeat(5)}${index} |`).join('\n')
+    const chunks = chunkMarkdown(`# Inventory\n\n| Name | Value |\n| --- | --- |\n${rows}`, { size: 160, overlap: 0 })
+    expect(chunks.length).toBeGreaterThan(1)
+    for (const chunk of chunks) {
+      expect(chunk.section).toBe('Inventory')
+      expect(chunk.text).toContain('| Name | Value |')
+      expect(chunk.text).toContain('| --- | --- |')
+    }
   })
 
   test('BM25 prefers documents that contain the query terms', () => {
@@ -175,12 +262,12 @@ describe('vector helpers', () => {
     expect(pdf.text).toBe('Hello PDF extraction')
 
     const markdown = await extractDocument(new File(['# Title\n\nSome **bold** text and [a link](https://example.com).'], 'guide.md', { type: 'text/markdown' }))
-    expect(markdown).toMatchObject({ format: 'markdown' })
-    expect(markdown.text).toBe('Title\n\nSome bold text and a link.')
+    expect(markdown).toMatchObject({ format: 'markdown', structured: true })
+    expect(markdown.text).toBe('# Title\n\nSome bold text and a link.')
 
     const html = await extractDocument(new File(['<h1>Hello</h1><p>World &amp; <b>friends</b></p>'], 'page.html', { type: 'text/html' }))
-    expect(html).toMatchObject({ format: 'html' })
-    expect(html.text).toBe('Hello\n\nWorld & friends')
+    expect(html).toMatchObject({ format: 'html', structured: true })
+    expect(html.text).toBe('# Hello\n\nWorld & friends')
 
     const json = await extractDocument(new File(['{"name":"Bunwrite","kind":"backend"}'], 'data.json', { type: 'application/json' }))
     expect(json.format).toBe('json')
@@ -193,6 +280,104 @@ describe('vector helpers', () => {
     expect(await extractDocument(new File([new Uint8Array([0, 1, 2, 3])], 'binary.bin', { type: 'application/octet-stream' })).catch((error) => error)).toMatchObject({
       type: 'general_argument_invalid',
     })
+  })
+
+  test('structure-aware extraction keeps headings and tables', async () => {
+    const html = await extractDocument(
+      new File(
+        [
+          '<h1>Team</h1><table><tr><th>Name</th><th>Role</th></tr><tr><td>Alice</td><td>Engineer</td></tr><tr><td>Bob</td><td>Designer</td></tr></table>',
+        ],
+        'team.html',
+        { type: 'text/html' },
+      ),
+    )
+    expect(html).toMatchObject({ format: 'html', structured: true, tables: 1 })
+    expect(html.text).toContain('# Team')
+    expect(html.text).toContain('| Name | Role |')
+    expect(html.text).toContain('| Alice | Engineer |')
+
+    const csv = await extractDocument(new File(['Name,Role\nAlice,Engineer\nBob,Designer'], 'team.csv', { type: 'text/csv' }))
+    expect(csv).toMatchObject({ format: 'csv', structured: true, tables: 1 })
+    expect(csv.text).toContain('| Name | Role |')
+    expect(csv.text).toContain('| Bob | Designer |')
+
+    const docx = await extractDocument(
+      new File(
+        [
+          zipSync({
+            'word/document.xml': strToU8(
+              '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Team</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:t>Name</w:t></w:tc><w:tc><w:t>Role</w:t></w:tc></w:tr><w:tr><w:tc><w:t>Alice</w:t></w:tc><w:tc><w:t>Engineer</w:t></w:tc></w:tr></w:tbl></w:body></w:document>',
+            ),
+          }),
+        ],
+        'team.docx',
+        { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      ),
+    )
+    expect(docx).toMatchObject({ format: 'docx', structured: true, tables: 1 })
+    expect(docx.text).toContain('# Team')
+    expect(docx.text).toContain('| Name | Role |')
+
+    const odt = await extractDocument(
+      new File(
+        [
+          zipSync({
+            mimetype: strToU8('application/vnd.oasis.opendocument.text'),
+            'content.xml': strToU8(
+              '<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"><office:body><office:text><text:h text:outline-level="1">Team</text:h><table:table><table:table-row><table:table-cell><text:p>Name</text:p></table:table-cell><table:table-cell><text:p>Role</text:p></table:table-cell></table:table-row><table:table-row><table:table-cell><text:p>Alice</text:p></table:table-cell><table:table-cell><text:p>Engineer</text:p></table:table-cell></table:table-row></table:table></office:text></office:body></office:document-content>',
+            ),
+          }),
+        ],
+        'team.odt',
+        { type: 'application/vnd.oasis.opendocument.text' },
+      ),
+    )
+    expect(odt).toMatchObject({ format: 'odt', structured: true, tables: 1 })
+    expect(odt.text).toContain('# Team')
+    expect(odt.text).toContain('| Name | Role |')
+  })
+
+  test('PDF layout reconstructs headings and aligned tables', async () => {
+    const content = `BT /F1 28 Tf
+1 0 0 1 50 760 Tm (Team) Tj
+/F1 12 Tf
+1 0 0 1 50 700 Tm (Name) Tj
+1 0 0 1 180 700 Tm (Role) Tj
+1 0 0 1 300 700 Tm (Score) Tj
+1 0 0 1 50 680 Tm (Alice) Tj
+1 0 0 1 180 680 Tm (Engineer) Tj
+1 0 0 1 300 680 Tm (95) Tj
+1 0 0 1 50 660 Tm (Bob) Tj
+1 0 0 1 180 660 Tm (Designer) Tj
+1 0 0 1 300 660 Tm (87) Tj
+ET`
+    const pdf = await extractDocument(new File([pdfWithContent(content)], 'table.pdf', { type: 'application/pdf' }), 'table.pdf')
+    expect(pdf).toMatchObject({ format: 'pdf', pages: 1, tables: 1, structured: true })
+    expect(pdf.text).toContain('# Team')
+    expect(pdf.text).toContain('| Name | Role | Score |')
+    expect(pdf.text).toContain('| Alice | Engineer | 95 |')
+  })
+
+  test.skipIf(!Bun.which('tesseract'))('OCR reads scanned PDFs and image uploads', async () => {
+    const options = { ...DEFAULT_EXTRACTION, ocr: true, ocrMinConfidence: 20 }
+    const image = await extractDocument(new File([await textImage([['SCANNED', 'INVOICE', '12345']])], 'scan.png', { type: 'image/png' }), 'scan.png', options)
+    expect(image).toMatchObject({ format: 'image', pages: 1, ocrPages: [1] })
+    expect(image.text).toContain('SCANNED')
+    expect(image.text).toContain('12345')
+
+    const table = await extractDocument(
+      new File([await textImage([['Name', 'Role', 'Score'], ['Alice', 'Engineer', '95'], ['Bob', 'Designer', '87']])], 'table.png', { type: 'image/png' }),
+      'table.png',
+      options,
+    )
+    expect(table.tables).toBe(1)
+    expect(table.text).toContain('| Name | Role | Score |')
+    expect(table.text).toContain('| Alice | Engineer | 95 |')
+
+    const pdf = await extractDocument(new File([await scannedPdf([['SCANNED', 'INVOICE', '12345']])], 'scan.pdf', { type: 'application/pdf' }), 'scan.pdf', options)
+    expect(pdf).toMatchObject({ format: 'pdf', pages: 1, ocrPages: [1] })
+    expect(pdf.text).toContain('SCANNED')
   })
 })
 
@@ -486,6 +671,34 @@ describe('RAG', () => {
     }
     expect(await vectors.job(job.jobId)).toMatchObject({ status: 'completed' })
     expect((await vectors.search('async', { text: 'asynchronous ingestion' })).points[0]!.documentId).toBe('queued')
+  })
+
+  test.skipIf(!Bun.which('tesseract'))('async ingestion defers PDF and image OCR to the worker', async () => {
+    const vectors = server.services.vectors
+    const original = server.services.config.vectors
+    await vectors.createCollection({ id: 'async-ocr', dimension: 64 })
+    try {
+      await server.services.settings.set('vectors', { ...original, ocr: true, ocrLanguages: 'eng', ocrMinConfidence: 20 })
+      const job = await vectors.queueIngest({
+        collectionId: 'async-ocr',
+        documentId: 'scan',
+        file: new File([await textImage([['ASYNC', 'OCR', '777']])], 'scan.png', { type: 'image/png' }),
+      })
+      for (let index = 0; index < 100; index++) {
+        await vectors.runJobs()
+        const state = await vectors.job(job.jobId)
+        if (state.status === 'completed') break
+        if (state.status === 'failed') throw new Error(state.errors)
+        await Bun.sleep(20)
+      }
+      const state = await vectors.job(job.jobId)
+      expect(state).toMatchObject({ status: 'completed' })
+      expect(state.result).toMatchObject({ format: 'image', ocrPages: [1] })
+      expect((await vectors.search('async-ocr', { text: 'ASYNC OCR 777', topK: 1 })).points[0]!.documentId).toBe('scan')
+    } finally {
+      await server.services.settings.reset('vectors')
+      await vectors.deleteCollection('async-ocr')
+    }
   })
 
   test('query returns context and sources without a chat provider', async () => {

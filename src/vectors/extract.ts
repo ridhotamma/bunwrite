@@ -1,20 +1,47 @@
 /**
- * Turn an uploaded document into the plain text that gets chunked and
- * embedded. Text formats are read directly; PDF, DOCX, ODT and EPUB use small
- * pure-JavaScript extractors, so ingestion works on the same Bun process
- * without an external converter.
+ * Turn an uploaded document into text that gets chunked and embedded.
+ *
+ * Text formats are read directly; PDF, DOCX, ODT and EPUB use small
+ * pure-JavaScript extractors. PDF layout is reconstructed from positioned text
+ * so headings and simple tables survive, and scanned pages can be OCR'd with
+ * the optional Tesseract executable.
  *
  * The extraction is deliberately conservative: a scanned PDF with no text
- * layer is refused with a message asking for OCR instead of storing an empty
- * document. Size and page limits are checked before work starts, because PDFs
- * and ZIP containers are attacker-controlled input.
+ * layer is refused unless OCR is enabled, and size/page limits are checked
+ * before work starts because PDFs and ZIP containers are attacker-controlled.
  */
 import { strFromU8, unzipSync } from 'fflate'
+import sharp from 'sharp'
 import { BunwriteError } from '~/lib/errors'
 import { MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_FILE_BYTES, MAX_PDF_PAGES } from './limits'
+import { layoutToMarkdown, type LayoutItem } from './layout'
+import { csvToMarkdown, countMarkdownTables, docxToMarkdown, htmlToMarkdown, markdownToStructured, odtToMarkdown } from './markup'
+import { ocrImage } from './ocr'
+import { decodeEntities, normalizeText } from './text'
 import { invalid } from './validate'
 
-export type DocumentFormat = 'pdf' | 'docx' | 'odt' | 'epub' | 'html' | 'markdown' | 'json' | 'csv' | 'xml' | 'rtf' | 'text'
+export type DocumentFormat = 'pdf' | 'docx' | 'odt' | 'epub' | 'html' | 'markdown' | 'json' | 'csv' | 'xml' | 'rtf' | 'text' | 'image'
+
+export interface ExtractionOptions {
+  /** OCR scanned PDF pages and image uploads with Tesseract. */
+  ocr: boolean
+  /** Tesseract language list, for example `eng` or `eng+ind`. */
+  ocrLanguages: string
+  /** Maximum scanned pages to OCR per document. */
+  ocrMaxPages: number
+  /** Drop OCR words below this confidence (0-100). */
+  ocrMinConfidence: number
+  /** Reconstruct headings and aligned tables from PDF/OCR positions. */
+  tableExtraction: boolean
+}
+
+export const DEFAULT_EXTRACTION: ExtractionOptions = {
+  ocr: false,
+  ocrLanguages: 'eng',
+  ocrMaxPages: 20,
+  ocrMinConfidence: 30,
+  tableExtraction: true,
+}
 
 export interface ExtractedDocument {
   /** Original file name, when the upload had one. */
@@ -24,11 +51,17 @@ export interface ExtractedDocument {
   format: DocumentFormat
   /** Size of the uploaded bytes. */
   size: number
-  /** Extracted plain text, normalised but not chunked. */
+  /** Extracted text, normalised but not chunked. */
   text: string
   characters: number
   /** PDF page count, when the document is a PDF. */
   pages?: number
+  /** 1-based PDF pages that were OCR'd. */
+  ocrPages?: number[]
+  /** Markdown tables found during extraction. */
+  tables?: number
+  /** Whether the text carries headings/tables for structure-aware chunking. */
+  structured?: boolean
 }
 
 const TEXT_EXTENSIONS = new Set(['txt', 'text', 'log', 'yaml', 'yml', 'toml', 'ini', 'conf', 'env'])
@@ -37,6 +70,7 @@ const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown', 'mkd'])
 const JSON_EXTENSIONS = new Set(['json', 'jsonl', 'ndjson'])
 const CSV_EXTENSIONS = new Set(['csv', 'tsv'])
 const XML_EXTENSIONS = new Set(['xml', 'xsl', 'xsd', 'svg'])
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp', 'gif'])
 const ZIP_EXTENSIONS = new Set(['docx', 'odt', 'epub', 'zip'])
 
 function extensionOf(name: string): string {
@@ -64,91 +98,17 @@ const ZIP = [0x50, 0x4b, 0x03, 0x04]
 const PDF = [0x25, 0x50, 0x44, 0x46] // %PDF
 const RTF = [0x7b, 0x5c, 0x72, 0x74, 0x66] // {\rtf
 
-const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
-
-function decodeEntities(value: string): string {
-  const codePoint = (number: number) => (number >= 0 && number <= 0x10ffff ? String.fromCodePoint(number) : '')
-  return value
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => codePoint(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, number: string) => codePoint(Number(number)))
-    .replace(/&([a-z]+);/gi, (match, name: string) => ENTITIES[name.toLowerCase()] ?? match)
-}
-
-function normalize(value: string): string {
-  return value
-    .replace(/\r\n?/g, '\n')
-    .replaceAll('\u0000', '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
-
-function htmlToText(source: string): string {
-  return decodeEntities(
-    source
-      .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<(script|style|head|nav|footer|noscript)[^>]*>[\s\S]*?<\/\1>/gi, '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<li[^>]*>/gi, '\n- ')
-      .replace(/<\/(p|div|h[1-6]|li|tr|section|article|blockquote|pre)>/gi, '\n\n')
-      .replace(/<[^>]+>/g, ''),
-  )
-}
-
-function markdownToText(source: string): string {
-  return decodeEntities(
-    source
-      .replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '')
-      .replace(/```[^\n]*\n([\s\S]*?)```/g, '$1')
-      .replace(/~~~[^\n]*\n([\s\S]*?)~~~/g, '$1')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-      .replace(/^\s{0,3}>\s?/gm, '')
-      .replace(/^\s{0,3}(?:[-*+]|\d+[.)])\s+/gm, '')
-      .replace(/[*_~]{1,3}/g, '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/^\s*\|?[\s:-]+\|[\s|:-]*$/gm, '')
-      .replace(/\|/g, ' '),
-  )
-}
-
-/** Word `.docx` stores paragraphs in `word/document.xml`. */
-function docxToText(xml: string): string {
-  return decodeEntities(
-    xml
-      .replace(/<w:tab[^>]*\/>/gi, '\t')
-      .replace(/<w:br[^>]*\/>/gi, '\n')
-      .replace(/<\/w:p>/gi, '\n\n')
-      .replace(/<[^>]+>/g, ''),
-  )
-}
-
-/** OpenDocument text stores paragraphs and headings in `content.xml`. */
-function odtToText(xml: string): string {
-  return decodeEntities(
-    xml
-      .replace(/<text:tab[^>]*\/>/gi, '\t')
-      .replace(/<text:line-break[^>]*\/>/gi, '\n')
-      .replace(/<\/(text:p|text:h|text:list-item)>/gi, '\n\n')
-      .replace(/<[^>]+>/g, ''),
-  )
-}
-
-/** EPUB is a ZIP of XHTML documents; read the reading order from the container when possible. */
-function epubToText(files: Record<string, Uint8Array>): string {
-  const html = Object.entries(files)
+function epubToMarkdown(files: Record<string, Uint8Array>): string {
+  return Object.entries(files)
     .filter(([name]) => /\.(x?html?|xml)$/i.test(name) && !/META-INF|container\.xml/i.test(name))
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([, bytes]) => htmlToText(strFromU8(bytes)))
+    .map(([, bytes]) => htmlToMarkdown(strFromU8(bytes)))
     .filter(Boolean)
-  return html.join('\n\n')
+    .join('\n\n')
 }
 
 function rtfToText(source: string): string {
-  return normalize(
+  return normalizeText(
     decodeEntities(
       source
         .replace(/\\'([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
@@ -163,11 +123,13 @@ function rtfToText(source: string): string {
 }
 
 function xmlToText(source: string): string {
-  return decodeEntities(
-    source
-      .replace(/<\?xml[^>]*\?>/gi, '')
-      .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
-      .replace(/<[^>]+>/g, ' '),
+  return normalizeText(
+    decodeEntities(
+      source
+        .replace(/<\?xml[^>]*\?>/gi, '')
+        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
+        .replace(/<[^>]+>/g, ' '),
+    ),
   )
 }
 
@@ -182,7 +144,48 @@ function jsonToText(source: string): string {
 
 const loadPdfjs = () => import('unpdf')
 
-async function pdfToText(bytes: Uint8Array): Promise<{ text: string; pages: number }> {
+interface PdfExtraction {
+  text: string
+  pages: number
+  ocrPages: number[]
+  tables: number
+  structured: boolean
+}
+
+function pdfItem(item: { str: string; x: number; y: number; width: number; height: number; fontSize: number }): LayoutItem {
+  return {
+    text: item.str,
+    left: item.x,
+    // PDF coordinates start at the bottom-left; negating y makes the sort
+    // top-to-bottom, matching Tesseract's coordinates.
+    top: -item.y,
+    width: item.width,
+    height: item.fontSize || item.height,
+    fontSize: item.fontSize || item.height,
+  }
+}
+
+function patchBrowserGlobals(): void {
+  // Some test hosts and embedders define a partial `window`. PDF.js then takes
+  // the browser path and expects animation-frame methods while rendering.
+  const scope = globalThis as {
+    window?: {
+      requestAnimationFrame?: (callback: (time: number) => void) => number
+      cancelAnimationFrame?: (id: number) => void
+    }
+  }
+  if (scope.window && typeof scope.window.requestAnimationFrame !== 'function') {
+    try {
+      scope.window.requestAnimationFrame = (callback) => Number(setTimeout(() => callback(performance.now()), 16))
+      scope.window.cancelAnimationFrame = (id) => clearTimeout(id)
+    } catch {
+      // A frozen or exotic window object is left alone; rendering reports its
+      // own error with the page number.
+    }
+  }
+}
+
+async function pdfToText(bytes: Uint8Array, options: ExtractionOptions): Promise<PdfExtraction> {
   // PDF.js is only needed for PDF uploads; load it when the first one arrives
   // instead of on every server start.
   let pdfjs: Awaited<ReturnType<typeof loadPdfjs>>
@@ -197,12 +200,97 @@ async function pdfToText(bytes: Uint8Array): Promise<{ text: string; pages: numb
   if (pdf.numPages > MAX_PDF_PAGES) {
     throw invalid(`The PDF has ${pdf.numPages.toLocaleString('en-US')} pages; the limit is ${MAX_PDF_PAGES.toLocaleString('en-US')}.`)
   }
+
+  let inspections: Awaited<ReturnType<typeof pdfjs.inspectPages>>
+  let extracted: Awaited<ReturnType<typeof pdfjs.extractTextItems>>
   try {
-    const { text } = await pdfjs.extractText(pdf, { mergePages: true })
-    return { text, pages: pdf.numPages }
+    ;[inspections, extracted] = await Promise.all([pdfjs.inspectPages(pdf), pdfjs.extractTextItems(pdf)])
   } catch {
     throw invalid('Could not extract text from the PDF.')
   }
+
+  const pageTexts: string[] = []
+  const ocrPages: number[] = []
+  let tables = 0
+  let structured = false
+  const scanned = new Set<number>()
+  inspections.pages.forEach((inspection, index) => {
+    if ((inspection.textLength ?? 0) < 20 && (inspection.imageCoverage ?? 0) > 0.15) scanned.add(index + 1)
+  })
+  const maxOcrPages = Number.isFinite(options.ocrMaxPages) ? Math.max(1, Math.round(options.ocrMaxPages)) : 20
+  if (options.ocr && scanned.size > maxOcrPages) {
+    throw invalid(`The PDF has ${scanned.size} scanned pages; the OCR limit is ${maxOcrPages}. Raise the OCR page limit or split the PDF before uploading.`)
+  }
+  for (let page = 0; page < pdf.numPages; page++) {
+    const items = extracted.items[page] ?? []
+    const isScanned = scanned.has(page + 1)
+    if (isScanned && options.ocr) {
+      let image: Uint8Array
+      try {
+        patchBrowserGlobals()
+        const rendered = await pdfjs.renderPageAsImage(pdf, page + 1, {
+          width: 2_000,
+          height: 3_000,
+          format: 'png',
+          canvasImport: () => import('@napi-rs/canvas'),
+        })
+        image = typeof rendered === 'string' ? new TextEncoder().encode(rendered) : rendered
+      } catch (error) {
+        throw invalid(`Could not render PDF page ${page + 1} for OCR: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      const result = await ocrImage(image, {
+        languages: options.ocrLanguages,
+        minConfidence: options.ocrMinConfidence,
+        tableExtraction: options.tableExtraction,
+      })
+      pageTexts.push(result.text)
+      tables += result.tables
+      if (result.tables > 0) structured = true
+      ocrPages.push(page + 1)
+      continue
+    }
+    if (isScanned && !options.ocr) {
+      pageTexts.push('')
+      continue
+    }
+    const layout = layoutToMarkdown(items.map(pdfItem), {
+      tableExtraction: options.tableExtraction,
+      headingDetection: true,
+    })
+    pageTexts.push(layout.text)
+    tables += layout.tables
+    if (layout.tables > 0 || layout.headings > 0) structured = true
+  }
+
+  const text = normalizeText(pageTexts.join('\n\n'))
+  if (!text && scanned.size > 0) {
+    throw invalid(
+      options.ocr
+        ? 'No readable text was found in the PDF after OCR. Try a higher-resolution scan or a different OCR language.'
+        : `No text was found in the PDF; ${scanned.size} page${scanned.size === 1 ? ' is' : 's are'} scanned. Enable OCR in Vectors & RAG settings or upload a PDF with a text layer.`,
+    )
+  }
+  if (!text) throw invalid('Could not extract text from the PDF.')
+  return { text, pages: pdf.numPages, ocrPages, tables, structured }
+}
+
+async function imageToText(
+  bytes: Uint8Array,
+  options: ExtractionOptions,
+): Promise<{ text: string; tables: number; ocrPages: number[]; structured: boolean }> {
+  if (!options.ocr) throw invalid('Image uploads need OCR. Enable OCR in Vectors & RAG settings first.')
+  const metadata = await sharp(bytes, { limitInputPixels: false })
+    .metadata()
+    .catch(() => null)
+  if (metadata?.width && metadata.height && metadata.width * metadata.height > 40_000_000) {
+    throw invalid('The image is too large for OCR. Resize it below 40 megapixels and upload it again.')
+  }
+  const result = await ocrImage(bytes, {
+    languages: options.ocrLanguages,
+    minConfidence: options.ocrMinConfidence,
+    tableExtraction: options.tableExtraction,
+  })
+  return { text: result.text, tables: result.tables, ocrPages: [1], structured: result.tables > 0 }
 }
 
 function zipKind(files: Record<string, Uint8Array>, extension: string, mimeType: string): DocumentFormat | null {
@@ -247,7 +335,7 @@ export async function readUpload(value: unknown, fallbackName = 'upload'): Promi
 }
 
 /** Extract readable text from an uploaded file. */
-export async function extractDocument(value: unknown, fallbackName = 'upload'): Promise<ExtractedDocument> {
+export async function extractDocument(value: unknown, fallbackName = 'upload', options: ExtractionOptions = DEFAULT_EXTRACTION): Promise<ExtractedDocument> {
   const upload = await readUpload(value, fallbackName)
   const extension = extensionOf(upload.name)
   const mime = upload.mimeType.toLowerCase().split(';')[0]!.trim()
@@ -256,12 +344,18 @@ export async function extractDocument(value: unknown, fallbackName = 'upload'): 
   let format: DocumentFormat
   let text: string
   let pages: number | undefined
+  let ocrPages: number[] | undefined
+  let structured = false
+  let tableCount = 0
 
   if (startsWith(bytes, PDF) || extension === 'pdf' || mime === 'application/pdf') {
     format = 'pdf'
-    const extracted = await pdfToText(bytes)
+    const extracted = await pdfToText(bytes, options)
     text = extracted.text
     pages = extracted.pages
+    ocrPages = extracted.ocrPages.length > 0 ? extracted.ocrPages : undefined
+    structured = extracted.structured
+    tableCount = extracted.tables
   } else if (startsWith(bytes, ZIP) || ZIP_EXTENSIONS.has(extension)) {
     let files: Record<string, Uint8Array>
     try {
@@ -275,30 +369,42 @@ export async function extractDocument(value: unknown, fallbackName = 'upload'): 
       throw invalid('ZIP archives are not supported directly. Upload a .docx, .odt or .epub file, or extract the text first.')
     }
     format = kind
+    structured = true
     if (kind === 'docx') {
       const document = files['word/document.xml']
       if (!document) throw invalid('The .docx file does not contain word/document.xml.')
-      text = docxToText(strFromU8(document))
+      text = docxToMarkdown(strFromU8(document))
     } else if (kind === 'odt') {
       const content = files['content.xml']
       if (!content) throw invalid('The .odt file does not contain content.xml.')
-      text = odtToText(strFromU8(content))
-    } else text = epubToText(files)
+      text = odtToMarkdown(strFromU8(content))
+    } else text = epubToMarkdown(files)
+  } else if (IMAGE_EXTENSIONS.has(extension) || (mime.startsWith('image/') && mime !== 'image/svg+xml')) {
+    format = 'image'
+    const extracted = await imageToText(bytes, options)
+    text = extracted.text
+    pages = 1
+    ocrPages = extracted.ocrPages
+    structured = extracted.structured
+    tableCount = extracted.tables
   } else if (startsWith(bytes, RTF) || extension === 'rtf' || mime === 'application/rtf' || mime === 'text/rtf') {
     format = 'rtf'
     text = rtfToText(strFromU8(bytes))
   } else if (HTML_EXTENSIONS.has(extension) || mime === 'text/html' || mime === 'application/xhtml+xml') {
     format = 'html'
-    text = htmlToText(strFromU8(bytes))
+    text = htmlToMarkdown(strFromU8(bytes))
+    structured = true
   } else if (MARKDOWN_EXTENSIONS.has(extension) || mime === 'text/markdown') {
     format = 'markdown'
-    text = markdownToText(strFromU8(bytes))
+    text = markdownToStructured(strFromU8(bytes))
+    structured = true
   } else if (JSON_EXTENSIONS.has(extension) || mime === 'application/json' || mime.endsWith('+json')) {
     format = 'json'
     text = jsonToText(strFromU8(bytes))
   } else if (CSV_EXTENSIONS.has(extension) || mime === 'text/csv' || mime === 'text/tab-separated-values') {
     format = 'csv'
-    text = strFromU8(bytes)
+    text = csvToMarkdown(strFromU8(bytes), extension)
+    structured = true
   } else if (XML_EXTENSIONS.has(extension) || mime === 'application/xml' || mime.endsWith('+xml')) {
     format = 'xml'
     text = xmlToText(strFromU8(bytes))
@@ -306,16 +412,30 @@ export async function extractDocument(value: unknown, fallbackName = 'upload'): 
     format = 'text'
     text = strFromU8(bytes)
   } else {
-    throw invalid('That file type is not supported. Use PDF, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML or plain text.')
+    throw invalid('That file type is not supported. Use PDF, image, Markdown, HTML, DOCX, ODT, EPUB, RTF, JSON, CSV, XML or plain text.')
   }
 
-  const cleaned = normalize(text)
+  const cleaned = normalizeText(text)
   if (!cleaned) {
     throw invalid(
       format === 'pdf'
-        ? 'No text was found in the PDF. Scanned pages need OCR first; export a PDF with a text layer or upload the source text.'
-        : 'No readable text was found in the file.',
+        ? 'No text was found in the PDF. Enable OCR or upload a PDF with a text layer.'
+        : format === 'image'
+          ? 'No readable text was found in the image.'
+          : 'No readable text was found in the file.',
     )
   }
-  return { name: upload.name, mimeType: upload.mimeType, format, size: upload.size, text: cleaned, characters: cleaned.length, pages }
+  const tables = tableCount || countMarkdownTables(cleaned)
+  return {
+    name: upload.name,
+    mimeType: upload.mimeType,
+    format,
+    size: upload.size,
+    text: cleaned,
+    characters: cleaned.length,
+    ...(pages !== undefined ? { pages } : {}),
+    ...(ocrPages ? { ocrPages } : {}),
+    ...(tables > 0 ? { tables } : {}),
+    ...(structured ? { structured } : {}),
+  }
 }

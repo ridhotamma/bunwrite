@@ -417,6 +417,32 @@ function vectorsCards(ctx: ConsoleContext): Html {
       </div>
       <div class="foot"><button class="primary">Save</button></div>
     </form>`,
+  )}
+  ${card(
+    ctx,
+    'vectors-ocr',
+    'OCR and tables',
+    null,
+    'Scanned PDFs and image uploads can be OCR’d with Tesseract. Headings and simple aligned tables are reconstructed from page positions.',
+    html` <form method="post" action="${SETTINGS}/vectors/ocr">
+      <label class="check"
+        ><input type="checkbox" name="ocr" ${c.ocr ? 'checked' : ''} /><span>OCR scanned pages and images</span
+        ><small
+          >Tesseract is ${ctx.services.vectors.ocrAvailable ? badge('available', 'success') : badge('not found', 'critical')}. Install the
+          <span class="mono">tesseract</span> executable on the host to enable OCR.</small
+        ></label
+      >
+      <div class="fields">
+        <label>OCR languages<input name="ocrLanguages" class="mono" value="${c.ocrLanguages}" placeholder="eng" required /><small>One or more Tesseract language codes, for example eng+ind.</small></label>
+        <label>Maximum OCR pages<input name="ocrMaxPages" type="number" min="1" max="500" value="${c.ocrMaxPages}" required /><small>Per document; protects the worker from very large scans.</small></label>
+        <label>Minimum confidence<input name="ocrMinConfidence" type="number" min="0" max="100" value="${c.ocrMinConfidence}" required /><small>Words below this score are dropped.</small></label>
+      </div>
+      <label class="check"
+        ><input type="checkbox" name="tableExtraction" ${c.tableExtraction ? 'checked' : ''} /><span>Reconstruct tables and headings</span
+        ><small>Uses font sizes and aligned text columns. OCR output uses aligned word boxes; results are heuristic.</small></label
+      >
+      <div class="foot"><button class="primary">Save</button></div>
+    </form>`,
   )}`
 }
 

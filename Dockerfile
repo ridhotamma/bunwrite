@@ -2,7 +2,7 @@
 #
 #   docker compose up -d --build
 #
-# Build and run on the same architecture so sharp's native addon matches.
+# Build and run on the same architecture so sharp/canvas native addons match.
 
 # ---- Build the standalone binary ----
 FROM oven/bun:1.4.4-debian AS build
@@ -54,15 +54,18 @@ FROM debian:trixie-slim
 ARG BUNWRITE_IMAGE=bunwrite:latest
 ARG BUNWRITE_VERSION=dev
 # Optional extras, off by default to keep local images small. Release builds pass
-# both as true so the published GHCR image is feature-complete:
+# them as true so the published GHCR image is feature-complete:
 #   WITH_PYTHON=true    python3 and pip for python-* functions (~70 MB)
 #   WITH_CHROMIUM=true  Chromium + fonts for HTML to PDF and images (~730 MB more on disk)
+#   WITH_OCR=true       Tesseract + English language data for scanned PDFs/images
 ARG WITH_PYTHON=false
 ARG WITH_CHROMIUM=false
+ARG WITH_OCR=false
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates libcap2-bin bubblewrap \
  && if [ "$WITH_PYTHON" = "true" ]; then apt-get install -y --no-install-recommends python3 python3-pip; fi \
  && if [ "$WITH_CHROMIUM" = "true" ]; then apt-get install -y --no-install-recommends chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji; fi \
+ && if [ "$WITH_OCR" = "true" ]; then apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng fonts-dejavu-core libfontconfig1; fi \
  && useradd --uid 10001 --create-home --home-dir /home/bunwrite bunwrite \
  # Function isolation (src/functions/sandbox.ts): each function builds and runs
  # as its own user. setpriv may switch users, and only the server's group may

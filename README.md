@@ -67,8 +67,9 @@ Deployment, upgrade, backups, TLS and production tuning:
 - **Vectors and RAG** with local or OpenAI-compatible embeddings, hybrid
   BM25 + vector retrieval, an optional Qdrant ANN index, local or HTTP
   reranking, point-level ACLs, persisted golden-set evaluation, PII redaction,
-  prompt-injection signals and audit trails. PDF, Markdown and office documents
-  are converted to text before embedding.
+  prompt-injection signals and audit trails. PDF, image, Markdown and office
+  documents are converted to text before embedding; scanned pages can be OCR'd
+  with Tesseract and simple tables are preserved.
 - **HTML to PDF or image** with headless Chromium.
 - **Console, queue, request logs, traces, metrics and feature flags** built in.
 
