@@ -59,6 +59,14 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .nav{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px;padding:12px 10px;overflow:auto}
 /* Keep items at full size; a short window scrolls the sidebar instead of squeezing it. */
 .nav>*{flex-shrink:0}
+/* Sidebar scrollbar: thin and rounded, hidden until the sidebar is hovered or focused. The gutter is reserved so links never shift. */
+.nav{overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:transparent transparent}
+.nav:hover,.nav:focus-within{scrollbar-color:var(--border-strong) transparent}
+.nav::-webkit-scrollbar{width:6px}
+.nav::-webkit-scrollbar-track{background:transparent}
+.nav::-webkit-scrollbar-thumb{border-radius:6px;background:transparent}
+.nav:hover::-webkit-scrollbar-thumb,.nav:focus-within::-webkit-scrollbar-thumb{background:var(--border-strong)}
+.nav::-webkit-scrollbar-thumb:hover{background:var(--subdued)}
 .nav-head{position:relative;display:flex;align-items:center;gap:4px;padding:0 0 10px;margin-bottom:6px;border-bottom:1px solid var(--border)}
 .nav>a{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--subdued);font-weight:500}
 .nav>a:hover{background:var(--hover);color:var(--text);text-decoration:none}
