@@ -142,7 +142,7 @@ function exportGroups(all: Record<string, unknown>[], databases: Map<string, str
 export function configurationView(options: { schemaPath?: string; fileName: string }): Html {
   const path = options.schemaPath
   const file = options.fileName
-  return html`${header('Schema')}${schemaTabs('configuration')}
+  return html`${header('Schema', { description: 'Import, export and review the project schema as a config file.' })}${schemaTabs('configuration')}
   ${alert('info', html`Databases, collections, buckets and functions can be described in <code>${file}</code>, the file your project keeps in its repo. Edits made in this console change the database directly; export them to keep the file in step.`)}
   ${settingsSection(
     'Import from a file',
@@ -210,7 +210,7 @@ export function exportView(options: ExportView): Html {
         <div class="empty" data-export-none hidden><h3>No matches</h3><p>No collection name or ID matches your search.</p></div>
       </div>`
     : emptyState('No collections', 'Create a collection first.')
-  return html`${header('Schema')}${schemaTabs('export')}
+  return html`${header('Schema', { description: 'Import, export and review the project schema as a config file.' })}${schemaTabs('export')}
   <p class="subdued" style="margin:-8px 0 16px">Pick the collections to export. The JSON can be imported on another instance from <a href="${SCHEMA}/import">Import collections</a>.</p>
   <form id="export-form" method="get" action="${SCHEMA}/export" hx-get="${SCHEMA}/export" hx-target="#export-panel" hx-select="#export-panel" hx-swap="outerHTML" hx-push-url="true" hx-trigger="change, submit">
     <input type="hidden" name="selected" value="1">
@@ -245,7 +245,7 @@ export function exportView(options: ExportView): Html {
 
 export function importView(values: { json?: string; error?: string; prune?: boolean } = {}): Html {
   const prune = values.prune ?? true
-  return html`${header('Schema')}${schemaTabs('import')}
+  return html`${header('Schema', { description: 'Import, export and review the project schema as a config file.' })}${schemaTabs('import')}
   ${values.error ? alert('critical', html`${values.error}`) : ''}
   ${settingsSection(
     'Import collections',
@@ -275,7 +275,7 @@ export interface ImportReviewView {
 
 export function importReviewView(options: ImportReviewView): Html {
   const { changes, names, collectionsJson, prune, danger } = options
-  return html`${header('Schema')}${schemaTabs('import')}
+  return html`${header('Schema', { description: 'Import, export and review the project schema as a config file.' })}${schemaTabs('import')}
   ${settingsSection(
     `${changes.length} change${changes.length === 1 ? '' : 's'} to import`,
     names,

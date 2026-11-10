@@ -314,7 +314,7 @@ export function sitePages(router: ConsoleRouter): void {
     return ctx.render(
       'Sites',
       'sites',
-      html`${header('Sites', { actions: sites.length ? create : undefined })}
+      html`${header('Sites', { description: 'Static and server-rendered web apps deployed from this project.', actions: sites.length ? create : undefined })}
       ${listCard('sites', {
         toolbar: sites.length
           ? html`<div class="toolbar">

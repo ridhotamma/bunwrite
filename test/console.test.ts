@@ -1290,7 +1290,7 @@ describe('pages outside the API', () => {
     const page = await (await fetch(`${base}/nope`, { headers: html })).text()
     expect(page).toContain('font-family:"Neue Montreal"')
     expect(page).toContain('url("/fonts/NeueMontreal-Regular.otf")')
-    expect(page).toContain('font:13px/20px "Neue Montreal"')
+    expect(page).toContain('font:14px/1.5 "Neue Montreal"')
   })
 
   test('a browser gets a 404 page; SDK calls and /v1 keep the JSON error', async () => {

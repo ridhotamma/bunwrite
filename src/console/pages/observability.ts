@@ -143,7 +143,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     ])
     const eventCount = events.reduce((sum, event) => sum + event.n, 0)
     const errorRate = summary.requests > 0 ? (summary.errors / summary.requests) * 100 : 0
-    const body = html`${header('Observability')} ${tabs(OBS_TABS, 'overview')}
+    const body = html`${header('Observability', { description: 'Traces, product analytics and feature flags.' })} ${tabs(OBS_TABS, 'overview')}
       ${!ctx.services.config.logRequests ? alert('warning', html`Request logging is off, so the traffic cards stay empty. <a href="/console/settings/logs">Turn it on in Settings</a>, or rely on the exported metrics.`) : ''}
       ${!ctx.observability.config.console ? alert('info', html`The local console trace store is off. Turn it on in <a href="${OBS}/settings">Observability settings</a>; external exporters are unaffected.`) : ''}
       <div class="stats" style="margin:16px 0">
@@ -225,7 +225,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     return ctx.render(
       'Traces',
       'observability',
-      html`${header('Traces', {
+      html`${header('Traces', { description: 'Traces, product analytics and feature flags.',
           actions: menu(destroy(`${TRACES}/delete`, 'Clear traces', 'Delete every console trace for this project?'), { label: 'More actions' }),
         })}
         ${tabs(OBS_TABS, 'traces')}
@@ -325,7 +325,7 @@ export function observabilityPages(router: ConsoleRouter): void {
           search || eventFilter ? 'Try a different filter.' : 'Document writes are captured as document.created, document.updated and document.deleted.',
           search || eventFilter ? html`<a class="btn" href="${ANALYTICS}">Clear filters</a>` : undefined,
         )
-    const body = html`${header('Product analytics', {
+    const body = html`${header('Product analytics', { description: 'Traces, product analytics and feature flags.',
         actions: menu(destroy(`${ANALYTICS}/delete`, 'Clear analytics', 'Delete every product analytics event for this project?'), { label: 'More actions' }),
       })}
       ${tabs(OBS_TABS, 'analytics')}
@@ -431,7 +431,7 @@ export function observabilityPages(router: ConsoleRouter): void {
     const feedback = submitted && external
       ? html`<p class="help">Evaluated <code>${subject}</code>: ${names.length ? plural(names.length, 'flag') : 'no flags'} returned.</p>`
       : ''
-    const body = html`${header('Feature flags')} ${tabs(OBS_TABS, 'flags')}
+    const body = html`${header('Feature flags', { description: 'Traces, product analytics and feature flags.' })} ${tabs(OBS_TABS, 'flags')}
       ${configured
         ? ''
         : alert(

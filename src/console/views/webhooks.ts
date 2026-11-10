@@ -63,7 +63,7 @@ function generalFields(draft: WebhookDraft, hasPassword: boolean, idField?: Html
 
 export function webhooksView(hooks: WebhookRow[]): Html {
   const create = html`<a class="btn primary" href="${WEBHOOKS}/new">${icon('plus')}<span>Create webhook</span></a>`
-  return html`${header('Webhooks', { actions: hooks.length ? create : undefined })}
+  return html`${header('Webhooks', { description: 'Call your own endpoints when events happen in this project.', actions: hooks.length ? create : undefined })}
     <div class="card flush">
       ${hooks.length
         ? html`<div class="scroll"><table><thead><tr><th>Webhook</th><th class="hide-sm">Endpoint</th><th class="num">Events</th><th class="num">Failures</th><th>Status</th></tr></thead><tbody>

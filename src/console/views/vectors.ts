@@ -198,7 +198,7 @@ export function vectorsView(collections: VectorCollection[]): Html {
         'Create a collection to store embeddings for semantic search, recommendations or RAG.',
         create,
       )
-  return html`${header('Vectors', { actions: html`${settings}${collections.length ? create : ''}` })}
+  return html`${header('Vectors', { description: 'Embedding collections for semantic search and RAG.', actions: html`${settings}${collections.length ? create : ''}` })}
     ${listCard('vectors', { body })}`
 }
 

@@ -76,7 +76,7 @@ export function teamPages(router: ConsoleRouter): void {
     return ctx.render(
       'Teams',
       'teams',
-      html`${header('Teams', { actions: teams.length || search ? create : undefined })}
+      html`${header('Teams', { description: 'Groups of users that share access to documents and files.', actions: teams.length || search ? create : undefined })}
       ${listCard('teams', {
         toolbar: searchForm({ action: TEAMS, target: 'teams', name: 'search', value: search, placeholder: 'Search teams' }),
         body,

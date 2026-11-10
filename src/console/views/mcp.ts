@@ -81,7 +81,7 @@ export function mcpView(ctx: ConsoleContext): Html {
   const actions = html`<a class="btn" href="${MCP_GUIDE}" target="_blank" rel="noreferrer">${icon('info')}<span>Guide</span></a>
     <a class="btn primary" href="${API}">${icon('key')}<span>API keys</span></a>`
 
-  return html`${header('MCP', { actions })}
+  return html`${header('MCP', { description: 'Let AI agents work with this project through the Model Context Protocol.', actions })}
     ${settingsSection(
       'Connection',
       'The MCP server calls this project through its REST API. It uses a server-side API key, not a browser session.',

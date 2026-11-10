@@ -37,9 +37,9 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
   const outbound = hours.map((hour) => hourly.get(hour)?.outbound ?? 0)
   const totalBytes = [...inbound, ...outbound].reduce((sum, value) => sum + value, 0)
   const consumers = await services.requestLogs.topConsumers(since, 6)
-  const traffic = html`<div class="layout" style="margin-bottom:16px">
+  const traffic = html`<div class="layout">
     <div class="card">
-      ${cardHead('Bandwidth over time', html`<a class="subdued" href="/console/logs">View request logs</a>`)}
+      ${cardHead('Bandwidth over time', html`<a class="btn small" href="/console/logs">Request logs</a>`)}
       ${
         totalBytes
           ? lineChart({
@@ -49,7 +49,7 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
                 { label: 'Outbound', color: '#db2777', values: outbound },
               ],
             })
-          : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.')
+          : emptyState('No bandwidth yet', 'The chart fills in after some API traffic.', undefined, 'chart-bar')
       }
     </div>
     <div class="card">
@@ -59,25 +59,23 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
           ? html`<ul class="list">
               ${consumers.map((item) => html`<li><span class="mono clip" title="${item.path}">${item.path}</span><span class="subdued">${formatBytes(item.bytes)}</span></li>`)}
             </ul>`
-          : emptyState('No consumers yet', 'Paths appear here after the first requests.')
+          : html`<p class="subdued" style="margin:0">Paths appear here after the first requests.</p>`
       }
     </div>
   </div>`
-  return html` ${header('Home')}
+  return html` ${header('Home', { description: 'Usage, traffic and recent function runs for this project.' })}
     ${smtpOff ? alert('warning', html`Email is not set up, so sign-in codes, password resets and invitations cannot be sent. <a href="/console/settings/email">Set up SMTP</a>`) : ''}
-    <div class="stats" style="margin-bottom:16px">
+    <div class="stats">
       ${stat('Documents', documents.toLocaleString('en-US'), '/console/databases')}
       ${stat('Collections', services.registry.collections.size, '/console/databases')} ${stat('Users', await services.auth.countUsers(), '/console/auth/users')}
-      ${stat('Teams', await services.teams.count(), '/console/auth/teams')} ${stat('Files', `${files.files} · ${formatBytes(files.bytes)}`, '/console/storage')}
-      ${stat('Failed runs, 24h', failed, '/console/functions')}
+      ${stat('Teams', await services.teams.count(), '/console/auth/teams')}
+      ${stat('Files', files.files.toLocaleString('en-US'), { href: '/console/storage', sub: formatBytes(files.bytes) })}
+      ${stat('Failed runs', failed ? html`<span style="color:var(--critical)">${failed}</span>` : 0, { href: '/console/functions', sub: 'last 24 hours' })}
     </div>
     ${traffic}
     <div class="layout">
       <div class="card flush">
-        <div class="toolbar">
-          <h2 style="margin:0">Recent function runs</h2>
-          <a class="subdued" style="margin-left:auto" href="/console/functions">View all</a>
-        </div>
+        ${cardHead('Recent function runs', html`<a class="btn small" href="/console/functions">View all</a>`)}
         ${
           runs.length
             ? html`<div class="scroll">
@@ -105,7 +103,7 @@ async function overview(ctx: ConsoleContext): Promise<Html> {
                   </tbody>
                 </table>
               </div>`
-            : emptyState('No runs yet', 'Scheduled functions show up here after their first run.')
+            : emptyState('No runs yet', 'Scheduled functions show up here after their first run.', undefined, 'lightning')
         }
       </div>
       <div class="card">

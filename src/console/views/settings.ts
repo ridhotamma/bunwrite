@@ -695,7 +695,7 @@ export async function settingsView(
       body = await gitTabView(ctx)
       break
   }
-  return html`${header('Settings')}
+  return html`${header('Settings', { description: 'Project, email, infrastructure and platform configuration.' })}
     <div class="settings-layout">
       ${settingsNav(tab)}
       <div class="settings-content">${body}</div>

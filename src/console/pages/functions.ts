@@ -265,7 +265,7 @@ export function functionPages(router: ConsoleRouter): void {
     return ctx.render(
       'Functions',
       'functions',
-      html`${header('Functions', {
+      html`${header('Functions', { description: 'Server-side code that runs on a schedule, on events or over HTTP.',
         actions: html`<a class="btn" href="/console/settings/functions">Global variables</a>${fns.length ? create : ''}`,
       })}
       ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with the project config file (bunwrite.config.json or appwrite.config.json).`) : ''}

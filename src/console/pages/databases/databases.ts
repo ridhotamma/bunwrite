@@ -26,7 +26,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
     return ctx.render(
       'Databases',
       'databases',
-      html`${header('Databases', { actions: databases.length ? create : undefined })}
+      html`${header('Databases', { description: 'Databases and collections that store this project\'s documents.', actions: databases.length ? create : undefined })}
       ${listCard('databases', {
         body: databases.length
           ? html`<div class="scroll">

@@ -90,7 +90,7 @@ export function userPages(router: ConsoleRouter): void {
     return ctx.render(
       'Users',
       'users',
-      html`${header('Users', { actions: users.length || search ? create : undefined })}
+      html`${header('Users', { description: 'People who have signed up for your apps.', actions: users.length || search ? create : undefined })}
       ${listCard('users', {
         toolbar: searchForm({ action: USERS, target: 'users', name: 'search', value: search, placeholder: 'Search name, email, phone or ID' }),
         body,

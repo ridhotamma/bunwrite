@@ -58,7 +58,7 @@ export function logPages(router: ConsoleRouter): void {
     return ctx.render(
       'Request logs',
       'logs',
-      html`${header('Request logs', {
+      html`${header('Request logs', { description: 'Every API request to this project, newest first.',
         actions: html`<a class="btn" href="${LOG_SETTINGS}">${icon('gear-six')}<span>Settings</span></a>${menu(
           destroy(`${LOGS}/delete`, 'Clear logs', 'Delete every request log for this project?'),
           { label: 'More actions' },

@@ -93,7 +93,7 @@ function keyDialog(secret: string): Html {
 export async function apiView(ctx: ConsoleContext, created?: string): Promise<Html> {
   const keys = await ctx.services.settings.listKeys()
   const create = html`<button class="primary" type="button" data-dialog-open="#api-key-create">${icon('plus')}<span>Create key</span></button>`
-  return html`${header('API', { actions: create })}
+  return html`${header('API', { description: 'Endpoints and keys for calling this project from a server.', actions: create })}
     ${settingsSection(
       'Endpoint',
       'Apps connect with this endpoint and project ID using the Appwrite SDKs or the REST API.',

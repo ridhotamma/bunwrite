@@ -217,7 +217,7 @@ export function storagePages(router: ConsoleRouter): void {
     return ctx.render(
       'Storage',
       'storage',
-      html`${header('Storage', { actions: buckets.length ? create : undefined })}
+      html`${header('Storage', { description: 'Buckets that hold uploaded files.', actions: buckets.length ? create : undefined })}
         <div class="card flush">
           ${
             buckets.length

@@ -15,7 +15,7 @@ export async function realtimeView(ctx: ConsoleContext): Promise<Html> {
   const presence = await ctx.services.realtime.listPresence(100)
   const history = await ctx.services.realtime.listCustomEvents(keyCaller(), { limit: 50 })
 
-  return html`${header('Realtime')}
+  return html`${header('Realtime', { description: 'Publish custom events and see who is connected.' })}
     ${settingsSection(
       'Publish a custom event',
       'Server-published events are delivered to subscribers of the selected custom channels and kept for replay. Channels use custom.public.*, custom.authenticated.*, custom.user.<id>, custom.team.<id> or custom.label.<label>.',

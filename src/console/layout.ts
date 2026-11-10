@@ -1,7 +1,7 @@
 /**
- * Console chrome, after Shopify Polaris: light canvas, one light sidebar,
- * white cards, a page header with a single primary action, index tables,
- * tone badges and short sentence-case copy.
+ * Console chrome: a quiet sidebar, a centred page column, white cards, a page
+ * header with one line of context and at most one primary action, tables that
+ * stack on phones, tone badges and short sentence-case copy.
  */
 import { COMBOBOX_SCRIPT } from './combobox'
 import { confirmDialog, DIALOG_SCRIPT } from './dialog'
@@ -12,6 +12,7 @@ import { html, raw, type Html } from './html'
 import { MENU_SCRIPT } from './menu'
 import { PROGRESS_SCRIPT } from './progress'
 import { CONSOLE_CSS } from './styles'
+import { RESPONSIVE_SCRIPT } from './responsive'
 import { FILE_UPLOAD_SCRIPT } from './upload'
 import { alert, avatar, icon, menu, tile, type IconName } from './ui'
 
@@ -108,7 +109,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
 <script>${raw(PROGRESS_SCRIPT)}</script>
 </head>
 <body hx-boost="true">
-<input type="checkbox" id="nav-toggle" aria-hidden="true">
+<input type="checkbox" id="nav-toggle" aria-hidden="true" tabindex="-1">
 <label for="nav-toggle" class="scrim" aria-hidden="true"></label>
 <div class="topbar"><label for="nav-toggle" aria-label="Menu">${icon('list', 20)}</label><div class="brand">${tile(nav.projectName, nav.currentProject, 'sm')}<span>${nav.projectName}</span></div></div>
 <div class="frame">
@@ -141,6 +142,7 @@ ${confirmDialog()}
 <script>${raw(FILE_UPLOAD_SCRIPT)}</script>
 <script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
+<script>${raw(RESPONSIVE_SCRIPT)}</script>
 </body>
 </html>`
 }
@@ -183,6 +185,7 @@ ${confirmDialog()}
 <script>${raw(FILE_UPLOAD_SCRIPT)}</script>
 <script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
+<script>${raw(RESPONSIVE_SCRIPT)}</script>
 </body>
 </html>`
 }

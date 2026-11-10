@@ -44,13 +44,22 @@ export function icon(name: IconName, size = 16, className = ''): Html {
   return html`<svg class="icon ${className}" viewBox="0 0 256 256" width="${size}" height="${size}" fill="currentColor" aria-hidden="true"><path d="${ICON_PATHS[name]}"/></svg>`
 }
 
-/** Polaris page header: back link, title (with optional context line), status badges, then actions with at most one primary. */
-/** Every page header is the same: an optional back arrow, the page name, and optional actions. */
-export function header(title: string, opts: { back?: string; actions?: Html } = {}): Html {
+export interface HeaderOptions {
+  back?: string
+  actions?: Html
+  /** One short line under the title saying what the page is for. */
+  description?: Html | string
+  /** Badges beside the title, such as a status. */
+  meta?: Html
+}
+
+/** Every page header is the same: an optional back arrow, the title and its line, then actions. */
+export function header(title: string, opts: HeaderOptions = {}): Html {
   return html`<div class="header">
     ${opts.back ? html`<a class="back" href="${opts.back}" aria-label="Back">${icon('arrow-left')}</a>` : ''}
     <div class="header-main">
-      <div class="header-title"><h1>${title}</h1></div>
+      <div class="header-title"><h1 title="${title}">${title}</h1>${opts.meta ?? ''}</div>
+      ${opts.description ? html`<p class="header-sub">${opts.description}</p>` : ''}
     </div>
     ${opts.actions ? html`<div class="actions">${opts.actions}</div>` : ''}
   </div>`
@@ -118,8 +127,8 @@ export function statusBadge(status: string): Html {
   return html`<span class="badge ${tone}">${status[0]!.toUpperCase() + status.slice(1)}</span>`
 }
 
-export function emptyState(heading: string, text: string, action?: Html): Html {
-  return html`<div class="empty"><h3>${heading}</h3><p>${text}</p>${action ?? ''}</div>`
+export function emptyState(heading: string, text: string, action?: Html, iconName: IconName = 'info'): Html {
+  return html`<div class="empty"><span class="empty-icon">${icon(iconName, 20)}</span><h3>${heading}</h3><p>${text}</p>${action ?? ''}</div>`
 }
 
 export const hidden = (fields: Record<string, string>) =>
@@ -152,8 +161,17 @@ export const plural = (n: number, word: string) => `${n.toLocaleString('en-US')}
 
 export const when = (iso: string | null | undefined) => (iso ? iso.slice(0, 16).replace('T', ' ') : '—')
 
-export function stat(label: string, value: string | number, href?: string): Html {
-  return html`<div class="stat"><span>${label}</span><b>${href ? html`<a href="${href}" style="color:inherit">${value}</a>` : value}</b></div>`
+export interface StatOptions {
+  href?: string
+  /** A short line under the value, such as "3 enabled". */
+  sub?: Html | string
+}
+
+/** One cell of a `.stats` strip. With `href` the whole cell is a link. */
+export function stat(label: string, value: Html | string | number, options: string | StatOptions = {}): Html {
+  const { href, sub } = typeof options === 'string' ? { href: options, sub: undefined } : options
+  const inner = html`<span class="stat-label">${label}</span><b class="stat-value">${value}</b>${sub !== undefined ? html`<span class="stat-sub">${sub}</span>` : ''}`
+  return href ? html`<a class="stat" href="${href}">${inner}</a>` : html`<div class="stat">${inner}</div>`
 }
 
 export interface SearchOptions {
