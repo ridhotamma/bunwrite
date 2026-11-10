@@ -23,6 +23,7 @@ import { SettingsService } from './settings/service'
 import { SiteService } from './sites/service'
 import { RenderService } from './render/service'
 import { StorageService } from './storage/service'
+import { loadSharp } from './storage/sharp'
 import { TeamService } from './teams/service'
 import { TransactionService } from './transactions/service'
 import { VariablesService } from './variables/service'
@@ -128,7 +129,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const observability = createObservability(observabilitySettings.config, { projectId: config.projectId })
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
-  const vectors = new VectorService(db, config.vectors)
+  const vectors = new VectorService(db, config.vectors, () => loadSharp(config))
   vectors.startJobs()
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })

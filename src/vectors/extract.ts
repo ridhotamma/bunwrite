@@ -11,8 +11,8 @@
  * before work starts because PDFs and ZIP containers are attacker-controlled.
  */
 import { strFromU8, unzipSync } from 'fflate'
-import sharp from 'sharp'
 import { BunwriteError } from '~/lib/errors'
+import type { SharpModule } from '~/storage/sharp'
 import { MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_FILE_BYTES, MAX_PDF_PAGES } from './limits'
 import { layoutToMarkdown, type LayoutItem } from './layout'
 import { csvToMarkdown, countMarkdownTables, docxToMarkdown, htmlToMarkdown, markdownToStructured, odtToMarkdown } from './markup'
@@ -33,6 +33,8 @@ export interface ExtractionOptions {
   ocrMinConfidence: number
   /** Reconstruct headings and aligned tables from PDF/OCR positions. */
   tableExtraction: boolean
+  /** Lazy sharp loader; compiled builds extract the embedded native runtime. */
+  loadSharp?: () => Promise<SharpModule>
 }
 
 export const DEFAULT_EXTRACTION: ExtractionOptions = {
@@ -279,6 +281,7 @@ async function imageToText(
   options: ExtractionOptions,
 ): Promise<{ text: string; tables: number; ocrPages: number[]; structured: boolean }> {
   if (!options.ocr) throw invalid('Image uploads need OCR. Enable OCR in Vectors & RAG settings first.')
+  const sharp = options.loadSharp ? await options.loadSharp() : (await import('sharp')).default
   const metadata = await sharp(bytes, { limitInputPixels: false })
     .metadata()
     .catch(() => null)

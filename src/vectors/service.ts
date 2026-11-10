@@ -12,6 +12,7 @@
  * chat provider, `/rag/query` returns the retrieved context and sources.
  */
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
+import type { SharpModule } from '~/storage/sharp'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
 import { resolveId, uniqueId } from '~/lib/ids'
@@ -228,6 +229,8 @@ export class VectorService {
   constructor(
     db: SqlDatabase,
     private config: VectorsConfig,
+    /** Compiled builds use the extracted sharp runtime; source runs can omit it. */
+    private readonly loadSharpModule?: () => Promise<SharpModule>,
   ) {
     this.store = new VectorStore(db)
     this.jobs = new QueueService(db)
@@ -1123,6 +1126,7 @@ export class VectorService {
       ocrMaxPages: this.config.ocrMaxPages,
       ocrMinConfidence: this.config.ocrMinConfidence,
       tableExtraction: this.config.tableExtraction,
+      loadSharp: this.loadSharpModule,
     }
   }
 

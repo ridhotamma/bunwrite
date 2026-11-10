@@ -91,3 +91,22 @@ jobs:
             docker --version
             docker compose version
           '
+
+      # `bunwrite --help` does not boot the server. Start it and require a
+      # healthy response so startup-only failures (native modules, migrations)
+      # fail the release instead of shipping a restart loop.
+      - name: Smoke test server boot
+        run: |
+          image="${REGISTRY}/${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
+          docker run -d --rm --name bunwrite-smoke "$image"
+          ok=0
+          for _ in $(seq 1 30); do
+            if docker exec bunwrite-smoke bunwrite health; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != "1" ]; then
+            docker logs bunwrite-smoke
+            docker rm -f bunwrite-smoke
+            exit 1
+          fi
+          docker rm -f bunwrite-smoke
