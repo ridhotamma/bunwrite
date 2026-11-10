@@ -11,7 +11,7 @@ changing the endpoint.
 > Bunwrite is an independent open-source project. It is not affiliated with,
 > endorsed by, or sponsored by Appwrite.
 
-![Bunwrite Console](assets/screenshots/screenshot-2.png)
+![Bunwrite console: project home page](assets/screenshots/home.png)
 
 ## Quick start
 
