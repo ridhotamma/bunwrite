@@ -224,6 +224,8 @@ a.stat:hover{background:var(--surface-2);text-decoration:none}
 .list li:first-child{padding-top:0}.list li:last-child{padding-bottom:0;border:0}
 .list li>:last-child{min-width:0;text-align:right;overflow-wrap:anywhere}
 .list .clip{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A truncated label on the left gives way; the value on the right keeps one line. */
+.list li>.clip:first-child{flex:1 1 auto}.list li>.clip:first-child~:last-child{flex:none;white-space:nowrap}
 .list li.var-row{flex-wrap:wrap;align-items:center}
 .card.flush>.list li{padding:12px 18px}
 
