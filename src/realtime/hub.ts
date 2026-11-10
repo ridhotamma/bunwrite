@@ -61,6 +61,8 @@ const MAX_PRESENCE_METADATA_BYTES = 4 * 1024
 const MAX_PRESENCE_PER_SOCKET = 10
 const MAX_PRESENCE_PERMISSIONS = 100
 const MAX_PRESENCE_SNAPSHOT = 1000
+/** Deflate is roughly a fixed cost per message; below this it saves little bandwidth. */
+const COMPRESS_MIN_BYTES = 1024
 /** The SDK pings every 20s; a minute of silence means the socket is gone. */
 const PRESENCE_TTL_MS = 60_000
 const PRESENCE_SWEEP_MS = 30_000
@@ -237,6 +239,8 @@ export interface RealtimeHubOptions {
   projectId?: string
   /** How long custom events stay available for replay. `0` disables history. */
   realtimeEventRetentionSeconds?: number
+  /** Compress outgoing events of at least 1 kB when the client negotiated permessage-deflate. */
+  websocketCompression?: boolean
   /** Enabled when several processes serve the same project database. */
   bus?: {
     projectId: string
@@ -250,6 +254,7 @@ export class RealtimeHub {
   sockets = new Set<Socket>()
   private readonly projectId: string
   private readonly realtimeEventRetentionSeconds: number
+  private readonly websocketCompression: boolean
   private readonly bus: RealtimeBus | null
   private readonly collectionOf: ((databaseId: string, collectionId: string) => Collection | null) | undefined
 
@@ -278,6 +283,7 @@ export class RealtimeHub {
   ) {
     this.projectId = options.projectId ?? options.bus?.projectId ?? ''
     this.realtimeEventRetentionSeconds = Math.max(0, options.realtimeEventRetentionSeconds ?? 3600)
+    this.websocketCompression = options.websocketCompression ?? false
     this.collectionOf = options.collectionOf
     this.bus = options.bus ? new RealtimeBus(db, options.bus.projectId, options.bus.pollMs, (events) => this.deliver(events)) : null
   }
@@ -817,6 +823,10 @@ export class RealtimeHub {
     return matched
   }
 
+  private shouldCompress(data: string): boolean {
+    return this.websocketCompression && Buffer.byteLength(data) >= COMPRESS_MIN_BYTES
+  }
+
   private emit(
     ws: Socket,
     channels: string[],
@@ -827,7 +837,11 @@ export class RealtimeHub {
     seq?: number,
   ): void {
     if (ws.readyState === 3) return
-    ws.send(JSON.stringify({ type: 'event', data: { events, channels, timestamp, payload, subscriptions, ...(seq === undefined ? {} : { seq }) } }))
+    const text = JSON.stringify({
+      type: 'event',
+      data: { events, channels, timestamp, payload, subscriptions, ...(seq === undefined ? {} : { seq }) },
+    })
+    ws.send(text, this.shouldCompress(text))
   }
 
   private fanoutCustom(e: CustomEvent): void {
@@ -842,6 +856,7 @@ export class RealtimeHub {
     const timestampJson = JSON.stringify(e.timestamp)
     const payloadJson = JSON.stringify(e.payload)
     const seqJson = e.seq === undefined ? '' : `,"seq":${e.seq}`
+    const compress = this.shouldCompress(eventsJson + timestampJson + payloadJson)
     const channelJson = new Map<string, string>()
     for (const ws of targets) {
       if (ws.readyState === 3) continue
@@ -858,7 +873,7 @@ export class RealtimeHub {
         channelJson.set(key, channelsJson)
       }
       const head = `{"type":"event","data":{"events":${eventsJson},"channels":${channelsJson},"timestamp":${timestampJson},"payload":${payloadJson}${seqJson},"subscriptions":`
-      ws.send(head + JSON.stringify(matched) + '}}')
+      ws.send(head + JSON.stringify(matched) + '}}', compress)
     }
   }
 
@@ -904,6 +919,7 @@ export class RealtimeHub {
       ',"payload":' +
       JSON.stringify(e.document) +
       ',"subscriptions":'
+    const compress = this.shouldCompress(head)
     const subscriptionsJson = new Map<string, string>()
 
     for (const ws of targets) {
@@ -927,7 +943,7 @@ export class RealtimeHub {
         suffix = JSON.stringify(matched)
         subscriptionsJson.set(key, suffix)
       }
-      ws.send(head + suffix + '}}')
+      ws.send(head + suffix + '}}', compress)
     }
   }
 

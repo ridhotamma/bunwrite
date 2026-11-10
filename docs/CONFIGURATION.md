@@ -460,7 +460,7 @@ There are no environment variables for them.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `COMPRESSION` | `true` | Compress HTTP responses (Brotli, else gzip). Turn it off when Caddy or another proxy compresses at the edge; `docker-compose.yml` does. |
-| `WEBSOCKET_COMPRESSION` | `true` | Compress realtime WebSocket messages (perMessageDeflate); independent of HTTP compression. |
+| `WEBSOCKET_COMPRESSION` | `true` | Negotiate perMessageDeflate and compress outgoing realtime events of at least 1 kB. Small events and control frames stay uncompressed because deflate costs more CPU than it saves there. Independent of HTTP compression. |
 
 ## Image previews
 

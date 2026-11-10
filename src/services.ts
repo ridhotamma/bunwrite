@@ -112,6 +112,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const realtime = new RealtimeHub(db, {
     projectId: config.projectId,
     realtimeEventRetentionSeconds: config.realtimeEventRetentionSeconds,
+    websocketCompression: config.websocketCompression,
     // SQLite uses `_realtime_events`; Postgres uses LISTEN/NOTIFY.
     bus: config.workers > 1 && db.capabilities.eventBus ? { projectId: config.projectId, pollMs: config.realtimeBusPollMs } : undefined,
     collectionOf: (databaseId, collectionId) => registry.collections.get(`${databaseId}/${collectionId}`) ?? null,

@@ -274,6 +274,38 @@ describe('Realtime', () => {
     }
   })
 
+  test('only large outgoing events are compressed', async () => {
+    const hub = new RealtimeHub(server.db, {
+      projectId: PROJECT,
+      realtimeEventRetentionSeconds: 0,
+      websocketCompression: true,
+    })
+    const calls: Array<{ text: string; compress?: boolean }> = []
+    const socket = {
+      data: {
+        caller: keyCaller(),
+        subscriptions: new Map([['compress', ['custom.public.compress']]]),
+        projectId: PROJECT,
+      },
+      readyState: 1,
+      send: (text: string, compress?: boolean) => calls.push({ text, compress }),
+    } as never
+    hub.open(socket)
+    try {
+      await hub.publishCustom(['custom.public.compress'], { text: 'x'.repeat(2000) })
+      await Bun.sleep(50)
+      expect(calls.find((call) => call.text.includes('x'.repeat(20)))?.compress).toBe(true)
+
+      calls.length = 0
+      await hub.publishCustom(['custom.public.compress'], { text: 'small' })
+      await Bun.sleep(50)
+      expect(calls.find((call) => call.text.includes('"small"'))?.compress).toBe(false)
+    } finally {
+      hub.close(socket)
+      hub.stop()
+    }
+  })
+
   test('custom publishing requires an API key', async () => {
     const { response } = await publish(server, { channels: ['custom.public.news'], payload: {} }, {})
     expect(response.status).toBe(401)
