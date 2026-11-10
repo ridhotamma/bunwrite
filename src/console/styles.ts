@@ -57,6 +57,8 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 /* App frame: sidebar + centred page. The frame draws the sidebar's edge so it runs the full page height. */
 .frame{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh;background:linear-gradient(to right,transparent calc(var(--nav-w) - 1px),var(--border) calc(var(--nav-w) - 1px),var(--border) var(--nav-w),transparent var(--nav-w))}
 .nav{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px;padding:12px 10px;overflow:auto}
+/* Keep items at full size; a short window scrolls the sidebar instead of squeezing it. */
+.nav>*{flex-shrink:0}
 .nav-head{position:relative;display:flex;align-items:center;gap:4px;padding:0 0 10px;margin-bottom:6px;border-bottom:1px solid var(--border)}
 .nav>a{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--subdued);font-weight:500}
 .nav>a:hover{background:var(--hover);color:var(--text);text-decoration:none}
