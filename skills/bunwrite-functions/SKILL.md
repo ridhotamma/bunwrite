@@ -176,6 +176,10 @@ Use the internal key for privileged work only. For a user-scoped action, verify
 the caller first (for example the JWT or the trusted `x-appwrite-user-id` header
 set by Bunwrite) and enforce authorization yourself.
 
+A function that publishes custom realtime events needs the `realtime.write`
+scope (`POST /v1/realtime/publish`). With `FUNCTIONS_SANDBOX=bwrap`, a function
+with no scopes has no API access at all.
+
 ## Deployment
 
 ### Console

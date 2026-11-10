@@ -229,8 +229,10 @@ export async function resolveCaller(db: SqlDatabase, config: Config, request: Re
   }
 
   // A JWT in the query string is accepted for the realtime socket only, as on Appwrite.
+  // `Authorization: Bearer` lets a cross-site SPA avoid third-party cookies.
   const url = new URL(request.url)
-  const jwt = apiHeader(request, 'jwt') ?? (url.pathname.endsWith('/realtime') ? url.searchParams.get('jwt') : null)
+  const bearer = /^Bearer\s+(.+)$/i.exec(request.headers.get('authorization') ?? '')?.[1]?.trim() ?? null
+  const jwt = apiHeader(request, 'jwt') ?? bearer ?? (url.pathname.endsWith('/realtime') ? url.searchParams.get('jwt') : null)
   if (jwt) {
     const caller = await jwtCaller(db, config, jwt)
     if (!caller) throw err('user_jwt_invalid')

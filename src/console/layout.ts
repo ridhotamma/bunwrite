@@ -36,6 +36,7 @@ const MAIN: [string, string, string, IconName][] = [
   ['storage', 'Storage', '/console/storage', 'folder-simple'],
   ['functions', 'Functions', '/console/functions', 'lightning'],
   ['sites', 'Sites', '/console/sites', 'globe'],
+  ['realtime', 'Realtime', '/console/realtime', 'lightning'],
 ]
 const MANAGE: [string, string, string, IconName][] = [
   ['observability', 'Observability', '/console/observability', 'chart-bar'],

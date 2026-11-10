@@ -154,6 +154,9 @@ await account.deleteSession({ sessionId: 'current' })
   `createOAuth2Token({ provider: OAuthProvider.Google, success, failure })` and
   finish with `createSession({ userId, secret })` from the redirect parameters.
 - JWTs for functions and realtime: `account.createJWT()`.
+- Cross-site SPA: send the JWT as `Authorization: Bearer <jwt>` (or
+  `X-Appwrite-JWT`). This avoids third-party cookie blocking; browsers cannot
+  read or copy the HttpOnly session cookie anyway.
 - Server-side impersonation: an API key can use `Users` to create users and
   sessions. Do not pass a user's cookie to a server if a key is enough.
 - Sessions are stored as hashes, passwords use Argon2id, and Appwrite's imported
@@ -275,6 +278,86 @@ and the row equivalents, `files`, `files.<id>`, `executions`, `teams`,
 `memberships` and `account`. Events are only delivered to callers who may read
 the document, so permissions apply to realtime too. In the browser the session
 cookie authenticates the socket; on a server use `setKey` or pass a JWT.
+
+### Custom events (Bunwrite extension)
+
+Browsers subscribe to `custom.*` channels like any other channel:
+
+```ts
+await realtime.subscribe('custom.public.news', (event) => console.log(event.payload))
+```
+
+The channel name carries the ACL:
+
+| Channel | Who may subscribe |
+| --- | --- |
+| `custom.public.<topic>` | Anyone |
+| `custom.authenticated.<topic>` | Signed-in users |
+| `custom.user.<userId>` | That user |
+| `custom.team.<teamId>` | Team members |
+| `custom.label.<label>` | Users with that label |
+
+A server publishes with an API key that holds `realtime.write`:
+
+```bash
+curl -X POST https://api.example.com/v1/realtime/publish \
+  -H 'X-Appwrite-Project: my-project' \
+  -H 'X-Appwrite-Key: standard_...' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "channels": ["custom.team.ops"],
+    "events": ["invoice.paid"],
+    "payload": { "invoiceId": "inv_123" }
+  }'
+```
+
+`payload` is capped at 64 kB, `channels` and `events` at 100 entries. Live
+delivery is at-most-once; there is no ordering guarantee. Publishing is
+server-side only; browsers cannot publish custom events. From TypeScript, use
+`publishRealtimeEvent(client, { channels, payload, events })` from
+`@bunwrite/sdk`; the client needs an API key with `realtime.write`.
+
+Every event gets a `seq` and is kept for replay for
+`REALTIME_EVENT_RETENTION_SECONDS` (default one hour):
+
+```ts
+import { listRealtimeEvents } from '@bunwrite/sdk'
+
+const page = await listRealtimeEvents(client, {
+  channels: ['custom.public.news'],
+  after: lastSeq,
+  limit: 100,
+})
+for (const event of page.events) lastSeq = event.seq
+```
+
+`GET /v1/realtime/events` applies the same channel ACL as a subscription. There
+is no automatic WebSocket resume; a client stores the last `seq` and asks for
+the next page. Publishing is limited per project by `REALTIME_PUBLISH_RATE`
+(default 600 per minute; `0` disables). The console has a **Realtime** page for
+publishing, presence and the replay buffer.
+
+### Presence (Appwrite-compatible)
+
+```ts
+await realtime.upsertPresence({
+  presenceId: 'tab-1',
+  status: 'online',
+  metadata: { typing: false },
+})
+
+const subscription = await realtime.subscribe(Channel.presences(), (event) => {
+  console.log(event.events, event.payload)
+})
+```
+
+Presence requires a signed-in user. `permissions` defaults to
+`read("users")` (any signed-in user); pass `['read("user:<id>")']` to make a row
+private. Rows carry `$id`, `userId`, `status`, `metadata` and `$permissions`.
+They are deleted when the socket closes or after 60 seconds without a client
+ping, and a late subscriber receives a snapshot on subscribe. Subscribe to
+`presences` for all rows or `presences.<presenceId>` for one. API keys need
+`presences.read` to receive presence.
 
 ## Functions
 

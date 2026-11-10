@@ -49,6 +49,8 @@ export type RealtimeResponseEvent<T = any> = {
     timestamp: string;
     payload: T;
     subscriptions: string[]; // Backend-provided subscription IDs
+    /** Bunwrite custom-event sequence, for replay. */
+    seq?: number;
 };
 
 export type RealtimeResponseConnected = {
@@ -855,6 +857,7 @@ export class Realtime {
                 timestamp,
                 payload,
                 subscriptions,
+                seq: data.seq as number | undefined,
             });
         }
     }

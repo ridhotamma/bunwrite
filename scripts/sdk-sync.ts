@@ -350,6 +350,15 @@ for (const spec of SERVICES) {
       /window\.localStorage\.getItem\('cookieFallback'\)/g,
       "(typeof window !== 'undefined' && window.localStorage ? window.localStorage.getItem('cookieFallback') : null)",
     )
+    // Bunwrite custom events carry their replay sequence.
+    .replace(
+      'subscriptions: string[]; // Backend-provided subscription IDs\n};',
+      'subscriptions: string[]; // Backend-provided subscription IDs\n    /** Bunwrite custom-event sequence, for replay. */\n    seq?: number;\n};',
+    )
+    .replace(
+      '                subscriptions,\n            });',
+      '                subscriptions,\n                seq: data.seq as number | undefined,\n            });',
+    )
   write('services/realtime.ts', header(`appwrite ${WEB_VERSION}`) + declareWindow(text))
   summary.push('realtime       WebSocket service')
 }
@@ -378,8 +387,15 @@ for (const file of ['id.ts', 'query.ts', 'permission.ts', 'role.ts', 'operator.t
 const barrel: string[] = []
 for (const name of [...enumsUsed].sort()) {
   const file = `enums/${name}.ts`
-  const text = node.get(file) ?? web.get(file)
+  let text = node.get(file) ?? web.get(file)
   if (!text) throw new Error(`Missing ${file}`)
+  // Bunwrite-only scopes the Appwrite enums do not have.
+  if (name === 'project-key-scopes') {
+    text = text.replace(
+      /\n}\s*$/,
+      `\n    // Bunwrite realtime extensions.\n    RealtimeRead = 'realtime.read',\n    RealtimeWrite = 'realtime.write',\n}\n`,
+    )
+  }
   write(file, text)
   const exported = /export enum (\w+)/.exec(text)?.[1]
   if (exported) barrel.push(`export { ${exported} } from './enums/${name}';`)

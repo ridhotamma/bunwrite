@@ -393,6 +393,15 @@ A site's own addresses are trusted origins for its server. The browser SDK on
 under **Settings → Allowed origins**. They also work as OAuth and email
 redirect targets.
 
+An SPA on a different registrable domain, such as `https://app.example.net`
+calling `https://api.example.com`, must be added under **Settings → Allowed
+origins**. On HTTPS the session cookie is `SameSite=None; Secure`, but browser
+third-party cookie policies can still block it. Prefer a Bunwrite Site or a
+custom domain under the same parent domain; the cookie is host-only by design.
+For a cross-site SPA, use `account.createJWT()` and send
+`Authorization: Bearer <jwt>`; that path needs no cookie and is not affected by
+third-party cookie blocking.
+
 ## Not supported
 
 - WebSockets or HTTP upgrades into an SSR app, and background workers that

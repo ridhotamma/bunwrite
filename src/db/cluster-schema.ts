@@ -48,6 +48,34 @@ const TABLES = [
     \`created_at\` TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS \`_realtime_events_created_at\` ON \`_realtime_events\` (\`created_at\`)`,
+  `CREATE TABLE IF NOT EXISTS \`_realtime_presence\` (
+    \`project_id\` TEXT NOT NULL,
+    \`presence_id\` TEXT NOT NULL,
+    \`user_id\` TEXT NOT NULL,
+    \`user_internal_id\` TEXT NOT NULL,
+    \`socket_id\` TEXT NOT NULL,
+    \`status\` TEXT NOT NULL,
+    \`metadata\` TEXT,
+    \`permissions\` TEXT NOT NULL,
+    \`source\` TEXT NOT NULL,
+    \`created_at\` TEXT NOT NULL,
+    \`updated_at\` TEXT NOT NULL,
+    \`expires_at\` TEXT NOT NULL,
+    PRIMARY KEY (\`project_id\`, \`presence_id\`)
+  )`,
+  `CREATE INDEX IF NOT EXISTS \`_realtime_presence_socket\` ON \`_realtime_presence\` (\`socket_id\`)`,
+  `CREATE INDEX IF NOT EXISTS \`_realtime_presence_expires\` ON \`_realtime_presence\` (\`expires_at\`)`,
+  `CREATE TABLE IF NOT EXISTS \`_realtime_custom_events\` (
+    \`seq\` INTEGER PRIMARY KEY AUTOINCREMENT,
+    \`project_id\` TEXT NOT NULL,
+    \`channels\` TEXT NOT NULL,
+    \`events\` TEXT NOT NULL,
+    \`payload\` TEXT NOT NULL,
+    \`created_at\` TEXT NOT NULL,
+    \`expires_at\` TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS \`_realtime_custom_events_created\` ON \`_realtime_custom_events\` (\`created_at\`)`,
+  `CREATE INDEX IF NOT EXISTS \`_realtime_custom_events_expires\` ON \`_realtime_custom_events\` (\`expires_at\`)`,
 ]
 
 /** `[version counter, table]` for the caches each table feeds. */

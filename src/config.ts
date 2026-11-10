@@ -256,6 +256,10 @@ export interface Config {
   cacheCheckMs: number
   /** How often a worker with WebSocket clients reads the realtime bus. */
   realtimeBusPollMs: number
+  /** Max custom-event publishes per project per minute; `0` disables the limit. */
+  realtimePublishRate: number
+  /** How long custom events are kept for replay; `0` disables history. */
+  realtimeEventRetentionSeconds: number
   /**
    * Names the server sends: `bunwrite` (X-Bunwrite-* webhook headers, bw_session cookies,
    * BUNWRITE_* function variables) or `appwrite`. Both families are always accepted.
@@ -498,6 +502,8 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     sqliteSynchronous: 'NORMAL',
     cacheCheckMs: wholeNumber(env.CACHE_CHECK_MS, 0),
     realtimeBusPollMs: wholeNumber(env.REALTIME_BUS_POLL_MS, 100),
+    realtimePublishRate: wholeNumber(env.REALTIME_PUBLISH_RATE, 600),
+    realtimeEventRetentionSeconds: wholeNumber(env.REALTIME_EVENT_RETENTION_SECONDS, 3600),
     apiCompat: parseApiCompat(env.API_COMPAT),
     oauthStateBinding: env.OAUTH_STATE_BINDING !== 'false',
     hostname: env.HOST || '0.0.0.0',

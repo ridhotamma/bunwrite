@@ -15,18 +15,10 @@
  */
 import type { Database } from 'bun:sqlite'
 
-import type { Doc } from '~/documents/codec'
-import type { DocEvent } from '~/documents/store'
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { sha256 } from '~/lib/ids'
-
-export interface BusEvent {
-  databaseId: string
-  collectionId: string
-  action: DocEvent['action']
-  document: Doc
-}
+import type { BusEvent, CustomBusEvent, DocumentBusEvent, PresenceBusEvent } from './events'
 
 const PRESENCE_HEARTBEAT_MS = 10_000
 const PRESENCE_STALE_MS = 60_000
@@ -34,11 +26,42 @@ const EVENT_RETENTION_MS = 5 * 60_000
 const PRUNE_INTERVAL_MS = 60_000
 const POLL_BATCH = 200
 
-const isBusEvent = (event: unknown): event is BusEvent =>
-  Boolean(event) &&
-  typeof event === 'object' &&
-  typeof (event as BusEvent).databaseId === 'string' &&
-  typeof (event as BusEvent).collectionId === 'string'
+/**
+ * Old workers only published document events and had no `kind` field. Accept
+ * both shapes during a rolling upgrade, then normalize to the new union.
+ */
+function normalizeBusEvent(event: unknown): BusEvent | null {
+  if (!event || typeof event !== 'object') return null
+  const value = event as Record<string, unknown>
+  if (value.kind === 'custom') {
+    return Array.isArray(value.channels) && Array.isArray(value.events) && typeof value.timestamp === 'string'
+      ? (value as unknown as CustomBusEvent)
+      : null
+  }
+  if (value.kind === 'presence') {
+    return (value.action === 'create' || value.action === 'update' || value.action === 'delete') &&
+      value.presence &&
+      typeof value.presence === 'object'
+      ? (value as unknown as PresenceBusEvent)
+      : null
+  }
+  if (
+    typeof value.databaseId === 'string' &&
+    typeof value.collectionId === 'string' &&
+    typeof value.action === 'string' &&
+    value.document &&
+    typeof value.document === 'object'
+  ) {
+    return {
+      kind: 'document',
+      databaseId: value.databaseId,
+      collectionId: value.collectionId,
+      action: value.action as DocumentBusEvent['action'],
+      document: value.document as DocumentBusEvent['document'],
+    }
+  }
+  return null
+}
 
 export class RealtimeBus {
   private readonly id = crypto.randomUUID()
@@ -102,23 +125,17 @@ export class RealtimeBus {
   }
 
   /** Append our events for the other processes, if any of them can use them. */
-  send(events: DocEvent[]): void {
+  send(events: BusEvent[]): void {
     if (events.length === 0 || this.stopped) return
-    const wire = events.map((event) => ({
-      databaseId: event.collection.databaseId,
-      collectionId: event.collection.id,
-      action: event.action,
-      document: event.document,
-    }))
     if (this.postgres) {
-      void this.publishPostgres(wire)
+      void this.publishPostgres(events)
       return
     }
     try {
       if (!this.wanted()) return
       this.sqlite
         .query('INSERT INTO _realtime_events (origin, project_id, payload, created_at) VALUES (?, ?, ?, ?)')
-        .run(this.id, this.projectId, JSON.stringify(wire), now())
+        .run(this.id, this.projectId, JSON.stringify(events), now())
     } catch (error) {
       console.error('[realtime] could not publish to the other processes:', error)
     }
@@ -226,7 +243,8 @@ export class RealtimeBus {
       const events = rows.flatMap((row) => {
         try {
           const parsed = JSON.parse(row.payload) as unknown
-          return Array.isArray(parsed) ? parsed.filter(isBusEvent) : []
+          if (!Array.isArray(parsed)) return []
+          return parsed.map(normalizeBusEvent).filter((event): event is BusEvent => event !== null)
         } catch {
           return []
         }
@@ -291,12 +309,10 @@ export class RealtimeBus {
     for (const row of rows) {
       try {
         const parsed = JSON.parse(row.payload) as unknown
-        if (Array.isArray(parsed)) {
-          for (const event of parsed) {
-            if (event && typeof event === 'object' && typeof (event as BusEvent).databaseId === 'string') {
-              events.push(event as BusEvent)
-            }
-          }
+        if (!Array.isArray(parsed)) continue
+        for (const event of parsed) {
+          const normalized = normalizeBusEvent(event)
+          if (normalized) events.push(normalized)
         }
       } catch {
         /* a truncated row; skip it */

@@ -81,7 +81,7 @@ deprecated.
 | `Project` | Services, protocols, sign-in methods, policies, per-language email templates, mock phone numbers and global variables (API key) |
 | `Locale` | Countries, continents, currencies, languages, phone codes and locale codes, localized by `setLocale()` |
 | `Organization` | Projects of the organization (console sign-in) |
-| `Realtime` | Subscriptions over WebSocket, in browsers and on servers |
+| `Realtime` | Subscriptions over WebSocket in browsers and on servers: document events, `custom.*` channels and presence (`upsertPresence`); server-side publishing uses `POST /v1/realtime/publish` |
 | `Health` | Is the server up, and which API version it speaks |
 | `Render` | Bunwrite only: HTML to PDF or image (API key; see [docs/RENDER.md](../../docs/RENDER.md)) |
 
@@ -107,6 +107,46 @@ const matches = await vectors.search({ collectionId: 'handbook', text: 'what doe
 await rag.ingest({ collectionId: 'handbook', documentId: 'guide', text: 'Long document text...' })
 const result = await rag.query({ collectionId: 'handbook', query: 'What does it run on?', generate: false })
 ```
+
+### Realtime
+
+```ts
+import {
+    Channel,
+    Client,
+    Realtime,
+    listRealtimeEvents,
+    publishRealtimeEvent,
+} from '@bunwrite/sdk'
+
+const client = new Client()
+    .setEndpoint('https://api.example.com/v1')
+    .setProject('my-project')
+
+const realtime = new Realtime(client)
+await realtime.subscribe('custom.public.news', (event) => console.log(event.payload))
+await realtime.upsertPresence({ presenceId: 'tab-1', status: 'online' })
+await realtime.subscribe(Channel.presences(), (event) => console.log(event.events, event.payload))
+
+// Server only: the key needs the realtime.write scope.
+await publishRealtimeEvent(client.setKey(process.env.BUNWRITE_KEY!), {
+    channels: ['custom.public.news'],
+    events: ['news.created'],
+    payload: { title: 'Hello' },
+})
+
+// Replay after a reconnect; same channel ACL as a subscription.
+const replay = await listRealtimeEvents(client, {
+    channels: ['custom.public.news'],
+    after: 0,
+    limit: 100,
+})
+```
+
+`subscribe` accepts document channels, `custom.public.*`, `custom.authenticated.*`,
+`custom.user.<id>`, `custom.team.<id>` and `custom.label.<label>`. Presence uses
+`presences` / `presences.<presenceId>`. Each custom event has a `seq`; store the
+last one and pass it as `after` to resume.
 
 ## Differences from the Appwrite SDKs
 

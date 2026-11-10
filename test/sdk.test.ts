@@ -16,8 +16,11 @@ import {
   Health,
   ID,
   InputFile,
+  listRealtimeEvents,
   Messaging,
   Permission,
+  ProjectKeyScopes,
+  publishRealtimeEvent,
   Query,
   RAG,
   Realtime,
@@ -63,6 +66,11 @@ describe('client', () => {
     const health = new Health(new Client().setEndpoint(server.endpoint))
     expect(await health.get()).toMatchObject({ status: 'pass' })
     expect((await health.getVersion()).version).toBeString()
+  })
+
+  test('realtime API key scopes are typed', () => {
+    expect(String(ProjectKeyScopes.RealtimeRead)).toBe('realtime.read')
+    expect(String(ProjectKeyScopes.RealtimeWrite)).toBe('realtime.write')
   })
 
   test('errors carry a code and type', async () => {
@@ -366,5 +374,40 @@ describe('realtime', () => {
     expect(events.map((e) => e.payload.$id)).toContain('rt-sdk')
     await subscription.close()
     await realtime.disconnect()
+  })
+
+  test('publishRealtimeEvent sends a custom event with the SDK client', async () => {
+    const realtime = new Realtime(admin())
+    const events: any[] = []
+    const subscription = await realtime.subscribe('custom.public.sdk', (event) => events.push(event))
+    try {
+      // The subscription is flushed after the `connected` handshake; give the
+      // socket one turn before publishing, and retry once if it raced.
+      await Bun.sleep(100)
+      let event: any
+      for (let attempt = 0; attempt < 3 && !event; attempt++) {
+        if (attempt > 0) await Bun.sleep(100)
+        const result = await publishRealtimeEvent(admin(), {
+          channels: ['custom.public.sdk'],
+          events: ['sdk.custom'],
+          payload: { from: 'sdk' },
+        })
+        if (attempt === 0) expect(result.channels).toEqual(['custom.public.sdk'])
+        for (let i = 0; i < 10 && !event; i++) {
+          await Bun.sleep(50)
+          event = events.find((entry) => entry.payload?.from === 'sdk')
+        }
+      }
+      expect(event?.events).toContain('sdk.custom')
+      expect(event?.subscriptions?.length).toBeGreaterThan(0)
+      expect(event?.seq).toBeGreaterThan(0)
+
+      const replay = await listRealtimeEvents(admin(), { channels: ['custom.public.sdk'], limit: 10 })
+      expect(replay.events.some((entry) => entry.payload && (entry.payload as any).from === 'sdk')).toBe(true)
+      expect(replay.next).toBeGreaterThan(0)
+    } finally {
+      await subscription.close()
+      await realtime.disconnect()
+    }
   })
 })

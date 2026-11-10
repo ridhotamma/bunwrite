@@ -60,6 +60,8 @@ export type RealtimeResponseEvent<T> = {
     timestamp: string;
     payload: T;
     subscriptions?: string[];
+    /** Bunwrite custom-event sequence, for replay. */
+    seq?: number;
 };
 
 type RealtimeResponseError = {

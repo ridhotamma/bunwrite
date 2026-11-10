@@ -20,7 +20,7 @@ import {
 } from '~/db/postgres-schema'
 import type { PostgresDriver } from '~/db/postgres-driver'
 import type { SqlDatabase } from '~/db/driver'
-import { keyCaller } from '~/auth/caller'
+import { keyCaller, userCaller, type UserRow } from '~/auth/caller'
 import { RequestLogService } from '~/logs/service'
 import { VariablesService } from '~/variables/service'
 import { WebhookService } from '~/webhooks/service'
@@ -38,6 +38,7 @@ import { GithubAppStore } from '~/vcs/credentials'
 import { VcsInstallations } from '~/vcs/installations'
 import { approvedPulls, RepositoryLinks } from '~/vcs/repositories'
 import { RealtimeBus } from '~/realtime/bus'
+import { RealtimeHub } from '~/realtime/hub'
 import { LeaderLease } from '~/cluster/leader'
 import { RateLimiter } from '~/lib/limits'
 import type { Caller } from '~/auth/caller'
@@ -699,7 +700,7 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
     const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
     const peer: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
-    const received: unknown[] = []
+    const received: any[] = []
     const sender = new RealtimeBus(handle, 'pg-realtime', 20, () => {})
     const listener = new RealtimeBus(peer, 'pg-realtime', 20, (events) => received.push(...events))
     try {
@@ -708,20 +709,153 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
       await Bun.sleep(250)
       sender.send([
         {
-          collection: { databaseId: 'main', id: 'items' } as never,
+          kind: 'document',
+          databaseId: 'main',
+          collectionId: 'items',
           action: 'create',
           document: { $id: 'rt-1', $permissions: [] } as never,
         },
+        {
+          kind: 'custom',
+          channels: ['custom.public.pg'],
+          events: ['pg.custom'],
+          payload: { ok: true },
+          timestamp: '2026-01-01T00:00:00.000+00:00',
+        },
+        {
+          kind: 'presence',
+          action: 'create',
+          presence: {
+            $id: 'pg-presence',
+            $createdAt: '2026-01-01T00:00:00.000+00:00',
+            $updatedAt: '2026-01-01T00:00:00.000+00:00',
+            $permissions: ['read("users")'],
+            userInternalId: '1',
+            userId: 'pg-presence-user',
+            status: 'online',
+            source: 'client',
+          },
+        },
       ])
       await Bun.sleep(250)
-      expect(received).toHaveLength(1)
-      expect((received[0] as { document: { $id: string } }).document.$id).toBe('rt-1')
+      expect(received).toHaveLength(3)
+      expect(received[0].document.$id).toBe('rt-1')
+      expect(received[1]).toMatchObject({ kind: 'custom', payload: { ok: true } })
+      expect(received[2]).toMatchObject({ kind: 'presence', action: 'create', presence: { $id: 'pg-presence' } })
     } finally {
       listener.stop()
       sender.stop()
       await other.close()
     }
   })
+
+  test('presence upserts and snapshots through the Postgres schema', async () => {
+    const stamp = '2026-01-01T00:00:00.000+00:00'
+    await driver.run(
+      `INSERT INTO _users (id, name, email, registration, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ['pg-presence-user', 'Presence User', 'pg-presence@example.com', stamp, stamp, stamp],
+    )
+    const user = await driver.get<UserRow>('SELECT * FROM _users WHERE id = ?', ['pg-presence-user'])
+    expect(user).not.toBeNull()
+    const caller = await userCaller(handleDatabase(), user!, null)
+
+    const hub = new RealtimeHub(handleDatabase(), { projectId: 'pg-realtime' })
+    const sent: any[] = []
+    const socket = {
+      data: { caller, subscriptions: new Map([['p', ['presences']]]), projectId: 'pg-realtime' },
+      readyState: 1,
+      send: (text: string) => sent.push(JSON.parse(text)),
+    } as never
+    hub.open(socket)
+    try {
+      await hub.message(socket, JSON.stringify({ type: 'presence', data: { presenceId: 'pg-presence', status: 'online' } }))
+      const row = await driver.get<{ presence_id: string; user_id: string; status: string; permissions: string }>(
+        'SELECT presence_id, user_id, status, permissions FROM _realtime_presence WHERE project_id = ? AND presence_id = ?',
+        ['pg-realtime', 'pg-presence'],
+      )
+      expect(row).toMatchObject({ presence_id: 'pg-presence', user_id: 'pg-presence-user', status: 'online' })
+      expect(JSON.parse(row!.permissions)).toContain('read("users")')
+      expect(sent.some((message) => message.type === 'response' && message.data?.to === 'presence')).toBe(true)
+    } finally {
+      hub.close(socket)
+      hub.stop()
+    }
+  })
+
+  test('presence fans out between Postgres workers', async () => {
+    const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
+    const handle = handleDatabase()
+    const peer: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
+    const sender = new RealtimeHub(handle, {
+      projectId: 'pg-rt-fanout',
+      bus: { projectId: 'pg-rt-fanout', pollMs: 20 },
+    })
+    const receiver = new RealtimeHub(peer, {
+      projectId: 'pg-rt-fanout',
+      bus: { projectId: 'pg-rt-fanout', pollMs: 20 },
+    })
+    const stamp = '2026-01-01T00:00:00.000+00:00'
+    await driver.run(
+      `INSERT INTO _users (id, name, email, registration, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ['pg-fanout-user', 'Fanout User', 'pg-fanout@example.com', stamp, stamp, stamp],
+    )
+    const user = await driver.get<UserRow>('SELECT * FROM _users WHERE id = ?', ['pg-fanout-user'])
+    const caller = await userCaller(handle, user!, null)
+
+    const received: any[] = []
+    const owner = {
+      data: { caller, subscriptions: new Map(), projectId: 'pg-rt-fanout' },
+      readyState: 1,
+      send: () => {},
+    } as never
+    const watcher = {
+      data: { caller: keyCaller(), subscriptions: new Map([['p', ['presences']]]), projectId: 'pg-rt-fanout' },
+      readyState: 1,
+      send: (text: string) => received.push(JSON.parse(text)),
+    } as never
+    sender.open(owner)
+    receiver.open(watcher)
+    try {
+      // LISTEN is established asynchronously on the receiver's connection.
+      await Bun.sleep(300)
+      await sender.message(owner, JSON.stringify({ type: 'presence', data: { presenceId: 'pg-fanout', status: 'online' } }))
+      for (let i = 0; i < 20 && !received.some((message) => message.data?.payload?.$id === 'pg-fanout'); i++) {
+        await Bun.sleep(50)
+      }
+      const event = received.find((message) => message.data?.payload?.$id === 'pg-fanout')
+      expect(event?.data.payload.userId).toBe('pg-fanout-user')
+      expect(event?.data.events).toContain('presences.pg-fanout.create')
+    } finally {
+      sender.close(owner)
+      receiver.close(watcher)
+      sender.stop()
+      receiver.stop()
+      await other.close()
+    }
+  })
+
+  test('custom event history is stored and replayed on Postgres', async () => {
+    const hub = new RealtimeHub(handleDatabase(), { projectId: 'pg-history', realtimeEventRetentionSeconds: 3600 })
+    try {
+      const event = await hub.publishCustom(['custom.public.pg-history'], { ok: true }, ['pg.history'])
+      const seq = event.seq!
+      expect(seq).toBeGreaterThan(0)
+      const replay = await hub.listCustomEvents(keyCaller(), { channels: ['custom.public.pg-history'] })
+      expect(replay.map((entry) => entry.seq)).toContain(seq)
+      expect(replay.find((entry) => entry.seq === seq)?.payload).toEqual({ ok: true })
+      const row = await driver.get<{ seq: number }>(
+        'SELECT seq FROM _realtime_custom_events WHERE project_id = ? AND seq = ?',
+        ['pg-history', seq],
+      )
+      expect(Number(row?.seq)).toBe(seq)
+    } finally {
+      hub.stop()
+    }
+  })
+
+  function handleDatabase(): SqlDatabase {
+    return { driver, dialect: 'postgres', capabilities: driver.capabilities }
+  }
 
   test('the scheduler lease works across Postgres processes', async () => {
     const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })

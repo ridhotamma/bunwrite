@@ -324,6 +324,19 @@ its own WebSocket clients. SQLite workers poll the table; Postgres workers use
 - The documented 10k-socket target is a design goal, not a CI-verified
   production guarantee.
 - Realtime is not replicated across hosts.
+- Custom events are at-most-once for live delivery. They are kept for
+  `REALTIME_EVENT_RETENTION_SECONDS` (default one hour) and can be replayed
+  with `GET /v1/realtime/events`; there is no automatic WebSocket resume, so a
+  client stores its last sequence and asks for the next page. Presence rows
+  expire after 60 seconds without a client ping and are cleaned up on
+  disconnect.
+- Custom publishing is rate-limited per project (`REALTIME_PUBLISH_RATE`,
+  default 600 per minute, `0` disables it). The counter is database-backed and
+  shared by every worker. A leaked `realtime.write` key still shares that
+  project budget.
+- The console has a **Realtime** page for publishing custom events, inspecting
+  active presence and reading the replay buffer. Document-event history and
+  WebSocket resume remain unavailable.
 
 ## P2 — performance, operations and maintenance
 

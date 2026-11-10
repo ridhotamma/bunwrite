@@ -69,6 +69,15 @@ export const API_KEY_SCOPE_GROUPS: ApiKeyScopeGroup[] = [
     ],
   },
   {
+    label: 'Realtime',
+    scopes: [
+      { id: 'realtime.read', label: 'Subscribe to custom realtime channels' },
+      { id: 'realtime.write', label: 'Publish custom realtime events' },
+      { id: 'presences.read', label: 'Read realtime presence' },
+      { id: 'presences.write', label: 'Update realtime presence' },
+    ],
+  },
+  {
     label: 'Messaging and delivery',
     scopes: [
       { id: 'topics.read', label: 'Read topics' },

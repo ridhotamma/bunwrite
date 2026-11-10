@@ -917,6 +917,9 @@ describe('settings through the console', () => {
     expect(page).toContain('id="api-project-id"')
     expect(page).toContain('href="/console/api"')
     expect(page).not.toContain('Console members')
+    expect(page).toContain('Realtime')
+    expect(page).toContain('Publish custom realtime events')
+    expect(page).toContain('Read realtime presence')
 
     const res = await form('/console/api/keys', { name: 'CI', expire: '', full: 'on' })
     const html = await res.text()
@@ -938,6 +941,44 @@ describe('settings through the console', () => {
     const id = (await server.services.settings.listKeys())[0]!.id
     await form(`/console/api/keys/${id}/delete`, {})
     expect(await client.databases.listDocuments({ databaseId: DB, collectionId: 'products' }).catch((e: any) => e.code)).toBe(401)
+  })
+
+  test('Realtime page publishes events, shows presence and replays history', async () => {
+    const page = await (await get('/console/realtime')).text()
+    expect(page).toContain('Publish a custom event')
+    expect(page).toContain('Presence')
+    expect(page).toContain('Recent custom events')
+    expect(page).toContain('class="fields two"')
+    expect(page).toContain('class="form-actions"')
+
+    const published = await form('/console/realtime/publish', {
+      channels: 'custom.public.console',
+      events: 'console.event',
+      payload: '{"ok":true}',
+    })
+    expect(published.status).toBe(303)
+    expect(flash(published).get('ok')).toBe('Custom event published')
+    const after = await (await get('/console/realtime')).text()
+    expect(after).toContain('custom.public.console')
+    expect(after).toContain('console.event')
+
+    const stamp = new Date().toISOString().replace('Z', '+00:00')
+    const expires = new Date(Date.now() + 60_000).toISOString().replace('Z', '+00:00')
+    server.db.sqlite
+      .query(
+        `INSERT INTO _realtime_presence
+           (project_id, presence_id, user_id, user_internal_id, socket_id, status, metadata, permissions, source, created_at, updated_at, expires_at)
+         VALUES (?, ?, ?, '1', 'console-socket', 'online', NULL, ?, 'client', ?, ?, ?)`,
+      )
+      .run(PROJECT, 'console-presence', 'console-user', JSON.stringify(['read("users")']), stamp, stamp, expires)
+    const withPresence = await (await get('/console/realtime')).text()
+    expect(withPresence).toContain('console-presence')
+    expect(withPresence).toContain('online')
+
+    const removed = await form('/console/realtime/presence/console-presence/delete', {})
+    expect(removed.status).toBe(303)
+    const without = await (await get('/console/realtime')).text()
+    expect(without).not.toContain('console-presence')
   })
 
   test('database, user and storage pages read through their services', async () => {

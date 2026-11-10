@@ -26,6 +26,7 @@ import { schemaRoutes } from './schema/routes'
 import type { Services } from './services'
 import { functionHttpResponse } from './functions/http'
 import { functionRoutes } from './functions/routes'
+import { realtimeRoutes } from './realtime/routes'
 import { proxyRoutes } from './proxy/routes'
 import { singleProjectResolver, type ProjectResolver, type ProjectRuntime } from './projects/types'
 import { renderRoutes } from './render/routes'
@@ -87,7 +88,7 @@ const HTMX_RESPONSE_HEADERS =
 /** Bunwrite's and Appwrite's request headers, by short name (see lib/compat). */
 const API_HEADERS = corsHeaderNames(['Project', 'Key', 'Locale', 'Mode', 'JWT', 'Response-Format', 'Timeout', 'ID', 'Timestamp', 'Session', 'Organization'])
 
-const ALLOW_HEADERS = `Accept, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, If-Match, If-None-Match, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
+const ALLOW_HEADERS = `Accept, Authorization, Origin, Cookie, Set-Cookie, Content-Type, Content-Range, If-Match, If-None-Match, ${API_HEADERS}, X-SDK-Version, X-SDK-Name, X-SDK-Language, X-SDK-Platform, X-SDK-GraphQL, Range, Cache-Control, Expires, Pragma, X-Fallback-Cookies, X-Requested-With, X-Forwarded-For, X-Forwarded-User-Agent, ${HTMX_REQUEST_HEADERS}`
 
 const EXPOSE_HEADERS = `X-Bunwrite-Session, X-Appwrite-Session, X-Fallback-Cookies, X-Request-Id, X-Trace-Id, ${HTMX_RESPONSE_HEADERS}`
 
@@ -143,6 +144,7 @@ export function createApp(source: Services | ProjectResolver) {
   teamRoutes(router)
   storageRoutes(router)
   functionRoutes(router)
+  realtimeRoutes(router)
   siteRoutes(router)
   vcsRoutes(router)
   proxyRoutes(router)

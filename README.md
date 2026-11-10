@@ -56,6 +56,9 @@ Deployment, upgrade, backups, TLS and production tuning:
 
 - **Appwrite-compatible API** for documents, users, teams, storage, functions,
   sites, realtime, webhooks and the console.
+- **Realtime** with permission-filtered document events, server-published
+  `custom.*` channels with replay and rate limiting, and Appwrite-style
+  presence.
 - **Localization** with Appwrite's Locale API, plus per-language email
   templates and magic URL sign-in.
 - **SQLite by default**, with Postgres supported through the same service layer and an offline `migrate:postgres` command.

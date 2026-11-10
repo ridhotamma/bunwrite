@@ -39,6 +39,14 @@ export type {
     RealtimeResponse,
     RealtimeResponseConnected,
 } from './services/realtime';
+export { listRealtimeEvents, publishRealtimeEvent } from './realtime-publish';
+export type {
+    ListRealtimeEventsParams,
+    ListRealtimeEventsResult,
+    PublishRealtimeEventParams,
+    PublishRealtimeEventResult,
+    RealtimeEventRecord,
+} from './realtime-publish';
 export { RAG } from './services/rag';
 export type {
     RAGEvalCase,

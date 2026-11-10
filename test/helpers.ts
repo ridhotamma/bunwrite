@@ -103,6 +103,8 @@ export function testConfig(over: Partial<Config> = {}): Config {
     sqliteSynchronous: 'NORMAL',
     cacheCheckMs: 0,
     realtimeBusPollMs: 100,
+    realtimePublishRate: 600,
+    realtimeEventRetentionSeconds: 3600,
     // The suite checks Appwrite compatibility through Appwrite's SDKs; test/compat.test.ts covers Bunwrite's names.
     apiCompat: 'appwrite',
     oauthStateBinding: true,

@@ -231,6 +231,11 @@ describe('JWT (realtime token flow)', () => {
     expect((await asUser.account.get()).$id).toBe('jwtuser')
     const docs = await asUser.databases.listDocuments({ databaseId: DB, collectionId: 'products', queries: [Query.equal('tenantId', 'jwt')] })
     expect(docs.documents.map((d: any) => d.$id)).toEqual(['jwt-doc'])
+    const bearer = await fetch(`${server.endpoint}/account`, {
+      headers: { 'X-Appwrite-Project': PROJECT, authorization: `Bearer ${jwt}` },
+    })
+    expect(bearer.status).toBe(200)
+    expect(((await bearer.json()) as { $id?: string }).$id).toBe('jwtuser')
     const forged = await failure(jwtClient(server.endpoint, jwt.slice(0, -2) + 'xx').account.get())
     expect([forged.code, forged.type]).toEqual([401, 'user_jwt_invalid'])
   })
