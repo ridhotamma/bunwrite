@@ -97,6 +97,9 @@ describe('vectors console', () => {
     expect(point).toContain('id="vector-point-id"')
     expect(point).toContain('source')
     expect(point).toContain('guide')
+    expect(point).toContain('class="foot" style="justify-content:flex-start"')
+    expect(point).toContain('>Add another</a>')
+    expect(point).toContain('>Delete point</button>')
 
     const list = await (await get('/console/vectors/knowledge')).text()
     expect(list).toContain('p1')

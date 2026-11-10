@@ -403,8 +403,10 @@ export function pointView(collection: VectorCollection, point: VectorPoint): Htm
     ${settingsSection(
       'Delete point',
       'Removes this point from search and RAG immediately. This cannot be undone.',
-      html`<div class="foot" style="justify-content:flex-start"><a class="btn" href="${base}/points/new">Add another</a></div>
-        ${destroy(`${base}/points/${encodeURIComponent(point.$id)}/delete`, 'Delete point', `Delete point ${point.$id}?`)}`,
+      html`<div class="foot" style="justify-content:flex-start">
+        <a class="btn" href="${base}/points/new">Add another</a>
+        ${destroy(`${base}/points/${encodeURIComponent(point.$id)}/delete`, 'Delete point', `Delete point ${point.$id}?`)}
+      </div>`,
     )}`,
   )
 }
