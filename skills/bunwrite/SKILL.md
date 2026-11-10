@@ -357,7 +357,9 @@ private. Rows carry `$id`, `userId`, `status`, `metadata` and `$permissions`.
 They are deleted when the socket closes or after 60 seconds without a client
 ping, and a late subscriber receives a snapshot on subscribe. Subscribe to
 `presences` for all rows or `presences.<presenceId>` for one. API keys need
-`presences.read` to receive presence.
+`presences.read` to receive presence. A socket is disconnected after 300
+messages per 10 seconds; presence updates are limited to 60 per 10 seconds, and
+presence ping writes are throttled to once per 10 seconds.
 
 ## Functions
 

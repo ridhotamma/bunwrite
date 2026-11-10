@@ -600,6 +600,35 @@ describe('Realtime', () => {
     }
   })
 
+  test('a socket is limited in presence updates', async () => {
+    const user = makeUser(server.db)
+    const socket = await openSocket(server, { 'X-Appwrite-Session': user.secret })
+    try {
+      for (let i = 0; i < 60; i++) {
+        socket.messages.length = 0
+        socket.send({ type: 'presence', data: { presenceId: 'presence-rate', status: `status-${i}` } })
+        await socket.waitFor((message) => (message.type === 'response' && message.data?.to === 'presence' ? message : undefined))
+      }
+      socket.messages.length = 0
+      socket.send({ type: 'presence', data: { presenceId: 'presence-rate', status: 'too-many' } })
+      const error = await socket.waitFor((message) => (message.type === 'error' ? message : undefined))
+      expect(error.data.message).toContain('Too many presence updates')
+    } finally {
+      socket.close()
+    }
+  })
+
+  test('a socket is disconnected after a WebSocket message flood', async () => {
+    const socket = await openSocket(server, {})
+    try {
+      for (let i = 0; i <= 300; i++) socket.send({ type: 'noop' })
+      const error = await socket.waitFor((message) => (message.type === 'error' && message.data?.code === 1008 ? message : undefined))
+      expect(error.data.message).toContain('Too many WebSocket messages')
+    } finally {
+      socket.close()
+    }
+  })
+
   test('a client ping extends the presence TTL', async () => {
     const user = makeUser(server.db)
     const socket = await openSocket(server, { 'X-Appwrite-Session': user.secret })

@@ -64,6 +64,12 @@ const MAX_PRESENCE_SNAPSHOT = 1000
 /** The SDK pings every 20s; a minute of silence means the socket is gone. */
 const PRESENCE_TTL_MS = 60_000
 const PRESENCE_SWEEP_MS = 30_000
+/** Per-socket abuse limits; a normal SDK sends a handful of messages per minute. */
+const SOCKET_WINDOW_MS = 10_000
+const MAX_SOCKET_MESSAGES = 300
+const MAX_PRESENCE_UPDATES = 60
+/** Do not write the presence row on every ping; the SDK pings every 20s. */
+const PRESENCE_TOUCH_INTERVAL_MS = 10_000
 
 /** A stored presence row, as it sits in `_realtime_presence`. */
 interface PresenceRow {
@@ -81,10 +87,16 @@ interface PresenceRow {
 }
 
 /** Per-socket presence bookkeeping kept outside the public SocketData shape. */
-interface SocketPresence {
+interface SocketState {
   connectionId: string
   ids: Set<string>
   closed: boolean
+  /** Sliding fixed-window counters for per-socket abuse limits. */
+  messageWindowStart: number
+  messageCount: number
+  presenceWindowStart: number
+  presenceCount: number
+  lastPresenceTouch: number
 }
 
 /** Broadcast work budget per event-loop turn, and the safety valve if consumers fall behind. */
@@ -253,7 +265,7 @@ export class RealtimeHub {
   private presenceQueue: PresenceEvent[] = []
   private presenceHead = 0
   private busQueue: BusEvent[] = []
-  private readonly presenceSockets = new WeakMap<Socket, SocketPresence>()
+  private readonly socketStates = new WeakMap<Socket, SocketState>()
   private presenceTimer: ReturnType<typeof setInterval> | null = null
   private drainScheduled = false
   private stopped = false
@@ -280,7 +292,17 @@ export class RealtimeHub {
     // A socket may arrive with subscriptions already populated (or from a test
     // harness), so index them before the first event.
     this.reindex(ws)
-    this.presenceSockets.set(ws, { connectionId: crypto.randomUUID(), ids: new Set(), closed: false })
+    const nowMs = Date.now()
+    this.socketStates.set(ws, {
+      connectionId: crypto.randomUUID(),
+      ids: new Set(),
+      closed: false,
+      messageWindowStart: nowMs,
+      messageCount: 0,
+      presenceWindowStart: nowMs,
+      presenceCount: 0,
+      lastPresenceTouch: 0,
+    })
     this.startPresenceTimer()
     this.bus?.setSockets(this.sockets.size)
     send(ws, 'connected', { channels: [], user: userOf(ws.data.caller) })
@@ -290,7 +312,7 @@ export class RealtimeHub {
     this.sockets.delete(ws)
     this.unindex(ws)
     this.socketChannels.delete(ws)
-    const meta = this.presenceSockets.get(ws)
+    const meta = this.socketStates.get(ws)
     if (meta) {
       meta.closed = true
       void this.removePresence(meta)
@@ -300,6 +322,17 @@ export class RealtimeHub {
   }
 
   async message(ws: Socket, raw: string | Buffer): Promise<void> {
+    const state = this.socketState(ws)
+    const nowMs = Date.now()
+    if (nowMs - state.messageWindowStart >= SOCKET_WINDOW_MS) {
+      state.messageWindowStart = nowMs
+      state.messageCount = 0
+    }
+    if (++state.messageCount > MAX_SOCKET_MESSAGES) {
+      send(ws, 'error', { code: 1008, message: 'Too many WebSocket messages.' })
+      ws.close(1008, 'Too many WebSocket messages.')
+      return
+    }
     let message: { type?: string; data?: unknown }
     try {
       message = JSON.parse(String(raw))
@@ -368,10 +401,14 @@ export class RealtimeHub {
           next.set(row.subscriptionId, channels)
         }
         // Apply only after the whole message passed validation.
+        const presenceBefore = this.presenceChannels(ws)
         for (const [id, channels] of next) ws.data.subscriptions.set(id, channels)
         this.reindex(ws)
         send(ws, 'response', { to: 'subscribe', success: true })
-        void this.sendPresenceSnapshot(ws)
+        const presenceAfter = this.presenceChannels(ws)
+        if ([...presenceAfter].some((channel) => !presenceBefore.has(channel))) {
+          void this.sendPresenceSnapshot(ws)
+        }
         return
       }
       case 'unsubscribe':
@@ -625,7 +662,7 @@ export class RealtimeHub {
     this.stopped = true
     this.bus?.stop()
     for (const ws of this.sockets) {
-      const meta = this.presenceSockets.get(ws)
+      const meta = this.socketStates.get(ws)
       if (meta) {
         meta.closed = true
         void this.removePresence(meta)
@@ -799,14 +836,29 @@ export class RealtimeHub {
       const sockets = this.channelIndex.get(channel)
       if (sockets) for (const ws of sockets) targets.add(ws)
     }
+    // The payload is identical for every socket, so serialize it once and only
+    // append the per-socket channel list and subscription IDs.
+    const eventsJson = JSON.stringify(e.events)
+    const timestampJson = JSON.stringify(e.timestamp)
+    const payloadJson = JSON.stringify(e.payload)
+    const seqJson = e.seq === undefined ? '' : `,"seq":${e.seq}`
+    const channelJson = new Map<string, string>()
     for (const ws of targets) {
+      if (ws.readyState === 3) continue
       // Roles and team membership can change during a long-lived socket; check
       // again at delivery instead of trusting the subscribe-time decision.
       const visible = e.channels.filter((channel) => customChannelAllowed(ws.data.caller, channel))
       if (visible.length === 0) continue
       const matched = this.matchedSubscriptions(ws, new Set(visible))
       if (matched.length === 0) continue
-      this.emit(ws, visible, e.events, e.timestamp, e.payload, matched, e.seq)
+      const key = visible.join('\u0000')
+      let channelsJson = channelJson.get(key)
+      if (channelsJson === undefined) {
+        channelsJson = JSON.stringify(visible)
+        channelJson.set(key, channelsJson)
+      }
+      const head = `{"type":"event","data":{"events":${eventsJson},"channels":${channelsJson},"timestamp":${timestampJson},"payload":${payloadJson}${seqJson},"subscriptions":`
+      ws.send(head + JSON.stringify(matched) + '}}')
     }
   }
 
@@ -881,11 +933,21 @@ export class RealtimeHub {
 
   // ------------------------------------------------------------ presence
 
-  private presenceMeta(ws: Socket): SocketPresence {
-    let meta = this.presenceSockets.get(ws)
+  private socketState(ws: Socket): SocketState {
+    let meta = this.socketStates.get(ws)
     if (!meta) {
-      meta = { connectionId: crypto.randomUUID(), ids: new Set(), closed: false }
-      this.presenceSockets.set(ws, meta)
+      const nowMs = Date.now()
+      meta = {
+        connectionId: crypto.randomUUID(),
+        ids: new Set(),
+        closed: false,
+        messageWindowStart: nowMs,
+        messageCount: 0,
+        presenceWindowStart: nowMs,
+        presenceCount: 0,
+        lastPresenceTouch: 0,
+      }
+      this.socketStates.set(ws, meta)
     }
     return meta
   }
@@ -926,8 +988,17 @@ export class RealtimeHub {
       }
       metadata = data.metadata as Record<string, unknown>
     }
-    const meta = this.presenceMeta(ws)
+    const meta = this.socketState(ws)
     if (meta.closed) return
+    const nowMs = Date.now()
+    if (nowMs - meta.presenceWindowStart >= SOCKET_WINDOW_MS) {
+      meta.presenceWindowStart = nowMs
+      meta.presenceCount = 0
+    }
+    if (++meta.presenceCount > MAX_PRESENCE_UPDATES) {
+      send(ws, 'error', { code: 1008, message: 'Too many presence updates.' })
+      return
+    }
     if (!meta.ids.has(presenceId) && meta.ids.size >= MAX_PRESENCE_PER_SOCKET) {
       send(ws, 'error', { code: 1008, message: `A socket may publish at most ${MAX_PRESENCE_PER_SOCKET} presences.` })
       return
@@ -1009,8 +1080,11 @@ export class RealtimeHub {
   }
 
   private async touchPresence(ws: Socket): Promise<void> {
-    const meta = this.presenceSockets.get(ws)
+    const meta = this.socketStates.get(ws)
     if (!meta || meta.closed || meta.ids.size === 0) return
+    const nowMs = Date.now()
+    if (nowMs - meta.lastPresenceTouch < PRESENCE_TOUCH_INTERVAL_MS) return
+    meta.lastPresenceTouch = nowMs
     const expiresAt = addSeconds(PRESENCE_TTL_MS / 1000)
     try {
       await this.db.driver.run('UPDATE _realtime_presence SET expires_at = ? WHERE project_id = ? AND socket_id = ?', [
@@ -1025,18 +1099,18 @@ export class RealtimeHub {
 
   /** Remove this socket's presence without closing the socket (account switch). */
   private async clearPresence(ws: Socket): Promise<void> {
-    const meta = this.presenceSockets.get(ws)
+    const meta = this.socketStates.get(ws)
     if (!meta) return
     meta.ids.clear()
     await this.deletePresence(meta)
   }
 
-  private async removePresence(meta: SocketPresence): Promise<void> {
+  private async removePresence(meta: SocketState): Promise<void> {
     meta.ids.clear()
     await this.deletePresence(meta)
   }
 
-  private async deletePresence(meta: SocketPresence): Promise<void> {
+  private async deletePresence(meta: SocketState): Promise<void> {
     let rows: PresenceRow[]
     try {
       rows = await this.db.driver.all<PresenceRow>('SELECT * FROM _realtime_presence WHERE project_id = ? AND socket_id = ?', [
@@ -1059,13 +1133,18 @@ export class RealtimeHub {
     }
   }
 
-  private async sendPresenceSnapshot(ws: Socket): Promise<void> {
+  private presenceChannels(ws: Socket): Set<string> {
     const channels = new Set<string>()
     for (const subscribed of ws.data.subscriptions.values()) {
       for (const channel of subscribed) {
         if (channel === 'presences' || channel.startsWith('presences.')) channels.add(channel)
       }
     }
+    return channels
+  }
+
+  private async sendPresenceSnapshot(ws: Socket): Promise<void> {
+    const channels = this.presenceChannels(ws)
     if (channels.size === 0) return
     let rows: PresenceRow[]
     try {

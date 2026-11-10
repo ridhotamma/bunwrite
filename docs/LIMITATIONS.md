@@ -334,6 +334,10 @@ its own WebSocket clients. SQLite workers poll the table; Postgres workers use
   default 600 per minute, `0` disables it). The counter is database-backed and
   shared by every worker. A leaked `realtime.write` key still shares that
   project budget.
+- Per WebSocket, a client is disconnected after 300 messages per 10 seconds;
+  presence updates are limited to 60 per 10 seconds, and presence ping writes
+  are throttled to once per 10 seconds. These are fixed safety limits, not
+  project settings.
 - The console has a **Realtime** page for publishing custom events, inspecting
   active presence and reading the replay buffer. Document-event history and
   WebSocket resume remain unavailable.

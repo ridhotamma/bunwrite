@@ -64,7 +64,7 @@ if (command === '--help' || command === '-h' || command === 'help') {
   usage()
   process.exit(0)
 }
-if (!['connect', 'fanout', 'all'].includes(command)) {
+if (!['connect', 'fanout', 'custom', 'all'].includes(command)) {
   usage()
   process.exit(1)
 }
@@ -469,6 +469,16 @@ function resolveChannels(raw: string | undefined, database: string, collection: 
     .map((value) => (value.includes('.') ? value : channelFor(database, value)))
 }
 
+function resolveCustomChannels(raw: string | undefined): string[] {
+  const channels = (raw ?? 'custom.public.stress')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => (value.startsWith('custom.') ? value : `custom.public.${value}`))
+  if (channels.length === 0) throw new Error('Custom fanout needs at least one custom channel.')
+  return [...new Set(channels)]
+}
+
 interface SocialManifest {
   database?: string
   prefix?: string
@@ -549,7 +559,10 @@ function context(): Context {
       key,
       database,
       collection,
-      channels: resolveChannels(flag('channels'), database, collection),
+      channels:
+        command === 'custom'
+          ? resolveCustomChannels(flag('channels'))
+          : resolveChannels(flag('channels'), database, collection),
       auth,
       authMessage: has('auth-message'),
       uniqueSubscriptions: has('unique-subscriptions'),
@@ -838,6 +851,167 @@ async function fanoutLevel(listeners: number, options: FanoutOptions, sessionSec
   return result
 }
 
+async function customLevel(listeners: number, options: FanoutOptions, sessionSecret: string | undefined): Promise<FanoutLevel> {
+  if (!options.key) throw new Error('Custom fanout needs --key (or STRESS_API_KEY) to publish events.')
+  console.log(`\ncustom fanout level: ${listeners} listeners, ${options.writes} events, ${options.channels.join(', ')}`)
+  const opened = await openClients(listeners, buildOpenOptions(options, sessionSecret), `listeners c=${listeners}`)
+  const clients = opened.clients
+  const runId = Date.now().toString(36)
+  const events = new Map<number, { sentAt: number; ok: boolean }>()
+  const per = clients.map(() => ({
+    receivedAt: new Map<number, number>(),
+    duplicates: 0,
+    unexpected: 0,
+  }))
+  clients.forEach((client, index) => {
+    const record = per[index]!
+    client.onEvent = (data, receivedAt) => {
+      const seq = data?.payload?.seq
+      if (typeof seq !== 'number') return
+      if (record.receivedAt.has(seq)) {
+        record.duplicates++
+        return
+      }
+      record.receivedAt.set(seq, receivedAt)
+    }
+  })
+
+  const publishLatencies: number[] = []
+  const publishErrors: Record<string, number> = {}
+  let writeOk = 0
+  let writeFail = 0
+  let nextSeq = 0
+  const headers: Record<string, string> = {
+    'X-Appwrite-Project': options.project,
+    'content-type': 'application/json',
+    'X-Appwrite-Key': options.key,
+  }
+  const publishUrl = `${options.base}/realtime/publish`
+
+  const publisher = async (): Promise<void> => {
+    while (true) {
+      const seq = nextSeq++
+      if (seq >= options.writes) return
+      const record = { sentAt: performance.now(), ok: false }
+      events.set(seq, record)
+      try {
+        const response = await fetch(publishUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            channels: options.channels,
+            events: ['stress.custom'],
+            payload: { runId, seq },
+          }),
+          signal: AbortSignal.timeout(options.timeoutSec * 1000),
+        })
+        const doneAt = performance.now()
+        if (response.ok) {
+          record.ok = true
+          writeOk++
+          publishLatencies.push(doneAt - record.sentAt)
+        } else {
+          writeFail++
+          const key = `HTTP ${response.status}`
+          publishErrors[key] = (publishErrors[key] ?? 0) + 1
+        }
+        await response.arrayBuffer()
+      } catch (error) {
+        writeFail++
+        const key = errorText(error)
+        publishErrors[key] = (publishErrors[key] ?? 0) + 1
+      }
+    }
+  }
+
+  const publishStarted = performance.now()
+  await Promise.all(
+    Array.from({ length: Math.min(options.writeConcurrency, Math.max(1, options.writes)) }, () => publisher()),
+  )
+  const publishDurationSec = (performance.now() - publishStarted) / 1000
+  console.log(
+    `  events: ${writeOk}/${options.writes} ok, ${writeFail} failed, ${(writeOk / Math.max(0.001, publishDurationSec)).toFixed(0)} rps`,
+  )
+
+  const expectedPerListener = writeOk
+  const expectedTotal = clients.length * expectedPerListener
+  const deliveryStarted = performance.now()
+  let timedOut = false
+  while (expectedTotal > 0) {
+    const seen = per.reduce((sum, record) => sum + record.receivedAt.size, 0)
+    if (seen >= expectedTotal) {
+      await sleep(500)
+      break
+    }
+    if (performance.now() - deliveryStarted > options.deliveryTimeoutSec * 1000) {
+      timedOut = true
+      break
+    }
+    await sleep(100)
+  }
+
+  const allLatencies: number[] = []
+  const receivedPerListener: number[] = []
+  let delivered = 0
+  let duplicateTotal = 0
+  let unexpectedTotal = 0
+  for (const record of per) {
+    let received = 0
+    for (const [seq, receivedAt] of record.receivedAt) {
+      const event = events.get(seq)
+      if (event?.ok) {
+        received++
+        allLatencies.push(receivedAt - event.sentAt)
+      } else {
+        record.unexpected++
+      }
+    }
+    delivered += received
+    duplicateTotal += record.duplicates
+    unexpectedTotal += record.unexpected
+    receivedPerListener.push(received)
+  }
+
+  const missing = Math.max(0, expectedTotal - delivered)
+  const result: FanoutLevel = {
+    listeners: clients.length,
+    attempted: opened.attempted,
+    connected: opened.connected,
+    subscribed: opened.subscribed,
+    failed: opened.failed,
+    errors: opened.errors,
+    writes: options.writes,
+    writeOk,
+    writeFail,
+    writeRps: writeOk / Math.max(0.001, publishDurationSec),
+    writeLatency: stats(publishLatencies),
+    writeErrors: publishErrors,
+    expectedPerListener,
+    expectedTotal,
+    delivered,
+    missing,
+    lossPct: expectedTotal === 0 ? 0 : (missing / expectedTotal) * 100,
+    duplicates: duplicateTotal,
+    unexpected: unexpectedTotal,
+    deliveryLatency: stats(allLatencies),
+    receivedPerListener: stats(receivedPerListener),
+    listenersWithAll:
+      expectedPerListener > 0 ? receivedPerListener.filter((value) => value === expectedPerListener).length : 0,
+    timedOut,
+    permissionFiltered: false,
+  }
+
+  console.log(
+    `  delivered=${result.delivered}/${result.expectedTotal} ` +
+      `loss=${pct(result.lossPct)} latency p50=${ms(result.deliveryLatency.p50)} p95=${ms(result.deliveryLatency.p95)} ` +
+      `p99=${ms(result.deliveryLatency.p99)} listenersWithAll=${result.listenersWithAll}/${result.listeners}`,
+  )
+
+  for (const client of clients) client.close()
+  await sleep(250)
+  return result
+}
+
 interface RealtimeReport {
   kind: 'realtime'
   startedAt: string
@@ -851,6 +1025,7 @@ interface RealtimeReport {
   pingIntervalSec: number
   connectLevels: ConnectLevel[]
   fanoutLevels: FanoutLevel[]
+  customLevels: FanoutLevel[]
 }
 
 function formatErrors(errors: Record<string, number>): string {
@@ -927,11 +1102,38 @@ function markdownReport(report: RealtimeReport): string {
       lines.push('')
     }
   }
+  if (report.customLevels.length > 0) {
+    lines.push('## Custom event fan-out')
+    lines.push('')
+    lines.push('| Listeners (attempted) | Published ok/failed | Publish RPS | Delivered | Expected | Loss | p50 | p95 | p99 | Listeners with all |')
+    lines.push('| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |')
+    for (const level of report.customLevels) {
+      lines.push(
+        `| ${level.listeners} (${level.attempted}) | ${level.writeOk}/${level.writeFail} | ${level.writeRps.toFixed(0)} | ${level.delivered} | ${level.expectedTotal} | ` +
+          `${pct(level.lossPct)} | ${ms(level.deliveryLatency.p50)} | ${ms(level.deliveryLatency.p95)} | ${ms(level.deliveryLatency.p99)} | ` +
+          `${level.listenersWithAll}/${level.listeners} |`,
+      )
+    }
+    lines.push('')
+    for (const level of report.customLevels) {
+      const detail = [
+        level.failed > 0 ? `${level.failed} sockets failed to subscribe (${formatErrors(level.errors)})` : '',
+        level.writeFail > 0 ? `${level.writeFail} publishes failed (${formatErrors(level.writeErrors)})` : '',
+        level.duplicates > 0 ? `${level.duplicates} duplicate deliveries` : '',
+        level.unexpected > 0 ? `${level.unexpected} events for failed publishes` : '',
+        level.timedOut ? 'delivery wait timed out' : '',
+      ].filter(Boolean)
+      if (detail.length > 0) lines.push(`- ${level.listeners} listeners: ${detail.join('; ')}.`)
+    }
+    lines.push('')
+    lines.push('Custom events go through `POST /v1/realtime/publish`, including history persistence and the per-project rate limit. Raise `REALTIME_PUBLISH_RATE` before testing more than 600 events per minute.')
+    lines.push('')
+  }
   lines.push('## Qualification')
   lines.push('')
   lines.push('The load generator runs on a remote client, so numbers include WAN/TLS and local client cost.')
   lines.push('A single Bun process opens every socket; at high connection counts the client can become the bottleneck before the server does.')
-  lines.push('Events are created through the normal REST API and matched by document ID. The test covers document create events; update/delete events use the same fan-out path.')
+  lines.push('Document events are created through the normal REST API and matched by document ID; update/delete events use the same fan-out path. Custom events are published through POST /v1/realtime/publish and include history persistence and the rate limit.')
   lines.push('Compression, HTTP/2 and proxy connection limits are whatever the target host uses in production.')
   return `${lines.join('\n')}\n`
 }
@@ -952,6 +1154,7 @@ function usage(): void {
 Usage:
   bun run stress:realtime connect [options]
   bun run stress:realtime fanout  [options]
+  bun run stress:realtime custom  [options]
   bun run stress:realtime all     [options]
 
 Common:
@@ -984,6 +1187,12 @@ Fanout:
   --prefix <text>              ID prefix, default ${DEFAULT_PREFIX}
   --manifest <path>            Social manifest for post/profile/comment IDs
 
+Custom:
+  Uses the same --fanout-connections, --writes, --write-concurrency and
+  --delivery-timeout flags. --channels defaults to custom.public.stress and is
+  interpreted as custom channels. Publishing needs --key with realtime.write.
+  Raise REALTIME_PUBLISH_RATE for more than 600 events per minute.
+
 Environment:
   STRESS_API_KEY, STRESS_PROJECT, STRESS_BASE, STRESS_SESSION,
   STRESS_RT_AUTH, STRESS_SESSION_PASSWORD
@@ -998,16 +1207,24 @@ Examples:
     --manifest data/stress/social-soc-20261030.json \\
     --fanout-connections 100,500 --writes 200 --write-concurrency 20
 
+  bun run stress:realtime custom \\
+    --base https://bunwrite.example.com/v1 --project my-project \\
+    --channels custom.public.stress \\
+    --fanout-connections 100,500 --writes 200 --write-concurrency 10
+
 Channels:
-  posts, comments, post_likes, comment_likes, reposts, follows,
-  a full channel like databases.<db>.collections.posts.documents,
-  "social" for all six collections, or "all" for the global documents channel.`)
+  Document fanout: posts, comments, post_likes, comment_likes, reposts,
+  follows, a full channel like databases.<db>.collections.posts.documents,
+  "social" for all six collections, or "all" for the global documents channel.
+  Custom fanout: a custom channel or comma-separated list; bare names become
+  custom.public.<name>.`)
 }
 
 function reportFor(
   options: ConnectOptions,
   connectLevels: ConnectLevel[],
   fanoutLevels: FanoutLevel[],
+  customLevels: FanoutLevel[],
 ): RealtimeReport {
   return {
     kind: 'realtime',
@@ -1022,6 +1239,7 @@ function reportFor(
     pingIntervalSec: options.pingIntervalSec,
     connectLevels,
     fanoutLevels,
+    customLevels,
   }
 }
 
@@ -1040,14 +1258,30 @@ async function runFanoutLevels(options: FanoutOptions, sessionSecret: string | u
   return results
 }
 
+async function runCustomLevels(options: FanoutOptions, sessionSecret: string | undefined): Promise<FanoutLevel[]> {
+  const results: FanoutLevel[] = []
+  for (const listeners of levels('fanout-connections', DEFAULT_FANOUT_CONNECTIONS)) {
+    results.push(await customLevel(listeners, options, sessionSecret))
+  }
+  return results
+}
+
 try {
   const { options, manifest } = context()
   const sessionSecret = await resolveSession(options)
   const connectLevels =
-    command === 'fanout' ? [] : await runConnect(levels('connections', DEFAULT_CONNECTIONS), options, sessionSecret)
+    command === 'connect' || command === 'all'
+      ? await runConnect(levels('connections', DEFAULT_CONNECTIONS), options, sessionSecret)
+      : []
   const fanoutLevels =
-    command === 'connect' ? [] : await runFanoutLevels(fanoutOptionsFrom(options, manifest), sessionSecret)
-  emit(reportFor(options, connectLevels, fanoutLevels), options.out)
+    command === 'fanout' || command === 'all'
+      ? await runFanoutLevels(fanoutOptionsFrom(options, manifest), sessionSecret)
+      : []
+  const customLevels =
+    command === 'custom' || command === 'all'
+      ? await runCustomLevels(fanoutOptionsFrom(options, manifest), sessionSecret)
+      : []
+  emit(reportFor(options, connectLevels, fanoutLevels, customLevels), options.out)
 } catch (error) {
   console.error(error instanceof Error ? error.message : error)
   process.exit(1)

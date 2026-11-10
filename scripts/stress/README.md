@@ -174,12 +174,14 @@ bun run stress:social cleanup --yes \
 ## Realtime WebSocket scenario
 
 `bun run stress:realtime` opens real WebSocket clients against
-`/v1/realtime` and measures two things:
+`/v1/realtime` and measures three things:
 
 - `connect`: how many sockets can connect and subscribe, how long the handshake
   takes, and whether they stay alive under a ping cadence.
 - `fanout`: how many document events each subscribed socket receives when REST
   writes are made, plus delivery latency, loss and duplicates.
+- `custom`: the same fan-out measurement for `POST /v1/realtime/publish`,
+  including history persistence and the per-project publish rate limit.
 
 ```bash
 export STRESS_API_KEY=your-api-key
@@ -196,7 +198,20 @@ bun run stress:realtime fanout \
   --project social-media-app \
   --manifest data/stress/social-soc-20261030.json \
   --fanout-connections 100,290 --writes 100 --write-concurrency 10
+
+# Custom event fan-out: N listeners, M POST /realtime/publish calls.
+bun run stress:realtime custom \
+  --base https://bunwrite.example.com/v1 \
+  --project social-media-app \
+  --channels custom.public.stress \
+  --fanout-connections 100,500 --writes 200 --write-concurrency 10
 ```
+
+Custom publishing needs a key with `realtime.write` and is limited to 600 events
+per minute per project by default. Raise `REALTIME_PUBLISH_RATE` before a larger
+run. The custom path also writes replay history, so it is a stricter test than
+document fan-out. A local smoke run (20 listeners × 20 events) delivered 400/400
+with 0% loss and p95 8.3 ms.
 
 The listener channel defaults to `databases.<db>.collections.<collection>.documents`.
 Use `--channels` with collection names (`posts,comments,...`), `social` for all
