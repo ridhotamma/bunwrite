@@ -377,6 +377,7 @@ export class Deployments {
          VALUES (?, ?, ?, ?, 'waiting', ?, ?, ?, ?, 0, ?, ?)`,
         [id, f.id, input.entrypoint, input.commands, total, f.runtime, input.activate ? 1 : 0, chunksFor(total), stamp, stamp],
       )
+      this.functions.deploymentChanged(f.id, id)
       row = await this.get(f.id, id)
       mkdirSync(deploymentDir(this.config, f.id), { recursive: true })
     }
@@ -388,6 +389,7 @@ export class Deployments {
     ))!
     if (counted.chunks_uploaded >= row.chunks_total) {
       await this.db.driver.run("UPDATE _deployments SET status = 'processing', updated_at = ? WHERE id = ?", [now(), row.id])
+      this.functions.deploymentChanged(f.id, row.id)
       this.build(f.id, row.id).catch((e) => console.error(`[functions] ${f.id}: build ${row.id} crashed`, e))
     }
     return this.get(f.id, row.id)
@@ -459,6 +461,7 @@ export class Deployments {
        VALUES (?, ?, ?, ?, 'processing', ?, ?, ?, 1, 1, ?, ?)`,
       [id, f.id, input.entrypoint, input.commands, size, f.runtime, input.activate ? 1 : 0, stamp, stamp],
     )
+    this.functions.deploymentChanged(f.id, id)
     rmSync(dir, { recursive: true, force: true })
     for (const file of input.files) {
       const target = resolve(root, file.path)
@@ -482,6 +485,7 @@ export class Deployments {
        VALUES (?, ?, ?, ?, 'processing', 0, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, f.id, f.entrypoint, f.commands, f.runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp],
     )
+    this.functions.deploymentChanged(f.id, id)
     const dir = deploymentDir(this.config, f.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -491,6 +495,7 @@ export class Deployments {
   /** Mark a deployment failed before its build ran (the code could not be fetched). */
   async fail(functionId: string, id: string, message: string): Promise<DeploymentRow> {
     await this.db.driver.run("UPDATE _deployments SET status = 'failed', build_logs = ?, updated_at = ? WHERE id = ?", [message.slice(-MAX_LOG), now(), id])
+    this.functions.deploymentChanged(functionId, id)
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     return this.get(functionId, id)
   }
@@ -506,14 +511,16 @@ export class Deployments {
     const archive = this.archivePath(functionId, id)
     const dir = deploymentDir(this.config, functionId, id)
     const logs: string[] = []
-    const set = async (status: string) =>
-      this.db.driver.run('UPDATE _deployments SET status = ?, build_logs = ?, build_duration = ?, updated_at = ? WHERE id = ?', [
+    const set = async (status: string) => {
+      await this.db.driver.run('UPDATE _deployments SET status = ?, build_logs = ?, build_duration = ?, updated_at = ? WHERE id = ?', [
         status,
         logs.join('\n').slice(-MAX_LOG),
         (performance.now() - started) / 1000,
         now(),
         id,
       ])
+      this.functions.deploymentChanged(functionId, id)
+    }
     try {
       await set('building')
       if (!options.unpacked) {
@@ -605,6 +612,7 @@ export class Deployments {
     const d = await this.get(functionId, id)
     if (d.status !== 'ready') throw err('build_not_ready')
     await this.db.driver.run('UPDATE _functions SET deployment_id = ?, updated_at = ? WHERE id = ?', [id, now(), functionId])
+    this.functions.deploymentChanged(functionId, id)
     await this.prune(functionId)
     return this.functions.fn(functionId)
   }
@@ -650,6 +658,7 @@ export class Deployments {
       [id, functionId, functionId],
     )
     if (!result.changes) return false
+    this.functions.deploymentChanged(functionId, id)
     removeTree(this.config.functionsSandbox, deploymentDir(this.config, functionId, id))
     rmSync(this.archivePath(functionId, id), { force: true })
     rmSync(this.sourcePath(functionId, id), { force: true })

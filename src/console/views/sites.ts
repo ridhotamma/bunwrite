@@ -1,7 +1,7 @@
 /** Console views for static sites: create, deploy, deployments and settings. */
 import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
-import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
+import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, liveRefresh, menu, pageFooter, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
 import { DEFAULT_RUNTIME, SERVER_BUN, SITE_RUNTIMES } from '~/runtimes/catalog'
 import { FRAMEWORKS, frameworkForSite, frameworkOf } from '~/sites/frameworks'
@@ -265,10 +265,12 @@ export function siteDeploymentsCard(site: SiteRow, deployments: SiteDeploymentRo
   const base = siteUrl(site.id)
   const bulkId = `bulk-site-deployments-${site.id}`
   const deletable = deployments.filter((d) => d.id !== site.deployment_id && !SITE_IN_PROGRESS.includes(d.status))
-  return html`<div class="card flush" id="deployments" ${busy ? poll(`${base}`, 'deployments', 2) : ''}>
+  // The server pushes an event when any of this site's deployments changes
+  // (a build started by a Git push included), and the card re-fetches itself.
+  return html`<div class="card flush" id="deployments" ${liveRefresh(`site:${site.id}`, base, 'deployments', busy)}>
     <div class="toolbar"><h2 style="margin:0">Deployments</h2>
       ${deployments.length
-        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.' })
+        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.', edit: false })
         : ''}
     </div>
     ${deployments.length
@@ -302,7 +304,7 @@ export function siteDeploymentView(site: SiteRow, d: SiteDeploymentRow, runtimeL
   const base = siteUrl(site.id)
   const busy = SITE_IN_PROGRESS.includes(d.status)
   const live = d.id === site.deployment_id
-  return html`<div id="deployment" ${busy ? poll(`${base}/deployments/${d.id}`, 'deployment', 2) : ''}>
+  return html`<div id="deployment" ${busy ? liveRefresh(`site:${site.id}`, `${base}/deployments/${d.id}`, 'deployment', true) : ''}>
     ${header('Deployment', {
       back: base,
       actions: html`${d.status === 'ready' && d.id !== site.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}

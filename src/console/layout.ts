@@ -9,6 +9,7 @@ import { FORM_SCRIPT } from './form-script'
 import { FORM_STATE_SCRIPT } from './form-state'
 import { PERMISSIONS_SCRIPT } from './permissions'
 import { html, raw, type Html } from './html'
+import { LIVE_SCRIPT } from './live-script'
 import { MENU_SCRIPT } from './menu'
 import { PROGRESS_SCRIPT } from './progress'
 import { CONSOLE_CSS } from './styles'
@@ -152,6 +153,7 @@ ${confirmDialog()}
 <script>${raw(FILE_UPLOAD_SCRIPT)}</script>
 <script>${raw(COMBOBOX_SCRIPT)}</script>
 <script>${raw(MENU_SCRIPT)}</script>
+<script>${raw(LIVE_SCRIPT)}</script>
 <script>${raw(RESPONSIVE_SCRIPT)}</script>
 </body>
 </html>`

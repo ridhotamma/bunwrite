@@ -18,7 +18,7 @@ import type { Database } from 'bun:sqlite'
 import type { SqlDatabase } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { sha256 } from '~/lib/ids'
-import type { BusEvent, CustomBusEvent, DocumentBusEvent, PresenceBusEvent } from './events'
+import type { BusEvent, ConsoleBusEvent, CustomBusEvent, DocumentBusEvent, PresenceBusEvent } from './events'
 
 const PRESENCE_HEARTBEAT_MS = 10_000
 const PRESENCE_STALE_MS = 60_000
@@ -37,6 +37,9 @@ function normalizeBusEvent(event: unknown): BusEvent | null {
     return Array.isArray(value.channels) && Array.isArray(value.events) && typeof value.timestamp === 'string'
       ? (value as unknown as CustomBusEvent)
       : null
+  }
+  if (value.kind === 'console') {
+    return typeof value.topic === 'string' && value.data && typeof value.data === 'object' ? (value as unknown as ConsoleBusEvent) : null
   }
   if (value.kind === 'presence') {
     return (value.action === 'create' || value.action === 'update' || value.action === 'delete') &&

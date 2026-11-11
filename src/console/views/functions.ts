@@ -1,7 +1,7 @@
 /** Console views for creating functions and deploying their code. */
 import { gitDeployFields, gitSourceFields, sourceCard, sourceCell, type GitDeploySource } from '~/console/views/vcs'
 import { html, type Html } from '~/console/html'
-import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, menu, pageFooter, poll, settingsSection, when } from '~/console/ui'
+import { badge, bulkDeleteForm, bulkSelectAll, bulkSelectRow, copyableId, destroy, emptyState, formatBytes, header, liveRefresh, menu, pageFooter, settingsSection, when } from '~/console/ui'
 import type { DeploymentRow } from '~/functions/deployments'
 import type { FunctionRow } from '~/functions/service'
 import { defaultEntrypoint, isPython, RUNTIME_OPTIONS, starterCode } from '~/functions/templates'
@@ -159,11 +159,12 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
   const base = `${FN}/${f.id}`
   const bulkId = `bulk-function-deployments-${f.id}`
   const deletable = deployments.filter((d) => d.id !== f.deployment_id && !IN_PROGRESS.includes(d.status))
-  // While a build runs, refresh this card so its status and actions stay current.
-  return html`<div class="card flush" id="deployments" ${live ? poll(`${base}/deployments`, 'deployments', 2) : ''}>
+  // The server pushes an event when any of this function's deployments changes
+  // (a build started by a Git push included), and the card re-fetches itself.
+  return html`<div class="card flush" id="deployments" ${liveRefresh(`function:${f.id}`, `${base}/deployments`, 'deployments', live)}>
     <div class="toolbar"><h2 style="margin:0">Deployments</h2>
       ${deployments.length
-        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.' })
+        ? bulkDeleteForm({ id: bulkId, action: `${base}/deployments/bulk-delete`, confirm: 'Delete the selected deployments and their files? This cannot be undone.', edit: false })
         : ''}
     </div>
     ${deployments.length
@@ -195,7 +196,7 @@ export function deploymentsCard(f: FunctionRow, deployments: DeploymentRow[]): H
 export function deploymentView(f: FunctionRow, d: DeploymentRow): Html {
   const base = `${FN}/${f.id}`
   const live = IN_PROGRESS.includes(d.status)
-  return html`<div id="deployment" ${live ? poll(`${base}/deployments/${d.id}`, 'deployment', 2) : ''}>
+  return html`<div id="deployment" ${live ? liveRefresh(`function:${f.id}`, `${base}/deployments/${d.id}`, 'deployment', true) : ''}>
     ${header('Deployment', {
       back: `${base}/deployments`,
       actions: html`${d.status === 'ready' && d.id !== f.deployment_id ? html`<form method="post" action="${base}/deployments/${d.id}/activate" class="inline"><button class="primary">Make live</button></form>` : ''}

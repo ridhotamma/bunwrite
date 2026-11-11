@@ -63,4 +63,16 @@ export interface PresenceBusEvent extends PresenceEvent {
   kind: 'presence'
 }
 
-export type BusEvent = DocumentBusEvent | CustomBusEvent | PresenceBusEvent
+/**
+ * A console-only change, such as a deployment's status. It travels between
+ * workers so a console tab hears about a build running on another process,
+ * and is never sent to app WebSocket clients.
+ */
+export interface ConsoleBusEvent {
+  kind: 'console'
+  /** What changed, such as `site:<id>` or `function:<id>`. */
+  topic: string
+  data: Record<string, unknown>
+}
+
+export type BusEvent = DocumentBusEvent | CustomBusEvent | PresenceBusEvent | ConsoleBusEvent

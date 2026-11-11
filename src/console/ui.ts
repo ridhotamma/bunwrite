@@ -329,6 +329,16 @@ export function poll(url: string, target: string, seconds: number): Html {
   return html`hx-get="${url}" hx-select="#${target}" hx-target="#${target}" hx-swap="outerHTML" hx-trigger="every ${seconds}s" hx-disinherit="*"`
 }
 
+/**
+ * Attributes that refresh an element when the server reports a change on
+ * `topic` (a server-sent event), instead of polling. `busy` marks a card that
+ * shows work in progress: it refreshes once as the stream opens, so a change
+ * made between rendering and connecting is not missed.
+ */
+export function liveRefresh(topic: string, url: string, target: string, busy = false): Html {
+  return html`data-live="${topic}" ${busy ? html`data-live-busy` : ''} hx-get="${url}" hx-select="#${target}" hx-target="#${target}" hx-swap="outerHTML" hx-trigger="live" hx-disinherit="*"`
+}
+
 const TILE_TONES = ['blue', 'green', 'orange', 'purple', 'pink', 'teal'] as const
 
 /** A square initial tile that gives each project a stable, recognisable colour. */

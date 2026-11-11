@@ -17,6 +17,7 @@ import { ObservabilitySettingsStore, telemetryOptionsOf } from './observability/
 import { TelemetryStore } from './observability/store'
 import { ProxyService } from './proxy/service'
 import { QueueService } from './queue/service'
+import { ConsoleEvents } from './realtime/console-events'
 import { RealtimeHub } from './realtime/hub'
 import { Registry } from './schema/registry'
 import { SettingsService } from './settings/service'
@@ -51,6 +52,8 @@ export interface Services {
   /** Console mail: sign-in codes, MFA codes and organization invitations. */
   consoleMailer: Mailer
   realtime: RealtimeHub
+  /** Console-only change notifications (deployment status), shared across workers. */
+  consoleEvents: ConsoleEvents
   storage: StorageService
   functions: FunctionService
   /** Project and site environment variables. */
@@ -123,6 +126,15 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     functionEnv: readEnvFile(config.functionsEnvFile),
     projectVariables: (context) => variables.projectEnvironment(context),
   })
+  // Deployment changes reach console tabs on this worker directly and on the others over the bus.
+  const consoleEvents = new ConsoleEvents()
+  consoleEvents.relay = {
+    publish: (topic, data) => realtime.publishConsole(topic, data),
+    listeners: (count) => realtime.setConsoleListeners(count),
+  }
+  realtime.onConsole = (event) => consoleEvents.receive(event.topic, event.data)
+  sites.onDeploymentChange = (siteId, deploymentId) => consoleEvents.emit(`site:${siteId}`, { deploymentId })
+  functions.onDeploymentChange = (functionId, deploymentId) => consoleEvents.emit(`function:${functionId}`, { deploymentId })
   const requestLogs = new RequestLogService(db, config)
   const observabilitySettings = new ObservabilitySettingsStore(db)
   const telemetry = new TelemetryStore(db, telemetryOptionsOf(observabilitySettings.config))
@@ -155,6 +167,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
     mailer: overrides.mailer ?? new DisabledMailer(),
     consoleMailer: overrides.consoleMailer ?? new DisabledMailer(),
     realtime,
+    consoleEvents,
     storage,
     functions,
     variables,

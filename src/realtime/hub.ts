@@ -29,6 +29,7 @@ import type { Collection } from '~/schema/types'
 import { RealtimeBus } from './bus'
 import type {
   BusEvent,
+  ConsoleBusEvent,
   CustomEvent,
   DocumentBusEvent,
   PresenceEvent,
@@ -275,6 +276,10 @@ export class RealtimeHub {
   private drainScheduled = false
   private stopped = false
   private droppedEvents = 0
+  /** Open console event streams in this process; they keep the bus listening like sockets do. */
+  private consoleListeners = 0
+  /** Receives console events published by other processes. */
+  onConsole: ((event: ConsoleBusEvent) => void) | null = null
   private lastDropWarning = 0
 
   constructor(
@@ -310,7 +315,7 @@ export class RealtimeHub {
       lastPresenceTouch: 0,
     })
     this.startPresenceTimer()
-    this.bus?.setSockets(this.sockets.size)
+    this.syncBus()
     send(ws, 'connected', { channels: [], user: userOf(ws.data.caller) })
   }
 
@@ -324,7 +329,7 @@ export class RealtimeHub {
       void this.removePresence(meta)
     }
     if (this.sockets.size === 0) this.stopPresenceTimer()
-    this.bus?.setSockets(this.sockets.size)
+    this.syncBus()
   }
 
   async message(ws: Socket, raw: string | Buffer): Promise<void> {
@@ -432,6 +437,26 @@ export class RealtimeHub {
       default:
         send(ws, 'error', { code: 1003, message: 'Message type is not valid.' })
     }
+  }
+
+  /**
+   * Send a console-only event (a deployment changed) to the other processes.
+   * The caller delivers it to this process's own listeners.
+   */
+  publishConsole(topic: string, data: Record<string, unknown>): void {
+    if (this.stopped) return
+    this.busQueue.push({ kind: 'console', topic, data })
+    this.scheduleDrain()
+  }
+
+  /** How many console streams this process has open. */
+  setConsoleListeners(count: number): void {
+    this.consoleListeners = Math.max(0, count)
+    this.syncBus()
+  }
+
+  private syncBus(): void {
+    this.bus?.setSockets(this.sockets.size + this.consoleListeners)
   }
 
   publish(events: DocEvent[]): void {
@@ -641,6 +666,10 @@ export class RealtimeHub {
   private deliver(events: BusEvent[]): void {
     const local: DocEvent[] = []
     for (const event of events) {
+      if (event.kind === 'console') {
+        this.onConsole?.(event)
+        continue
+      }
       if (event.kind === 'custom') {
         this.enqueueCustom({
           channels: event.channels,

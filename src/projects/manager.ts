@@ -422,6 +422,7 @@ export class ProjectManager implements ProjectResolver {
         services.queue.stop()
         services.render.stop()
         services.realtime.stop()
+        services.consoleEvents.stop()
       }
       await database?.close().catch(() => {})
       if (this.databaseOptions.backend !== 'sqlite') await dropDatabase(this.projectOptions(id)).catch(() => {})
@@ -483,6 +484,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.render.stop()
       runtime.services.render.shutdown()
       runtime.services.realtime.stop()
+      runtime.services.consoleEvents.stop()
       // The runtime is going away; close the connection once its buffered logs are safe.
       await runtime.services.requestLogs.flush()
       await runtime.services.observability.close()
@@ -512,6 +514,7 @@ export class ProjectManager implements ProjectResolver {
     runtime.services.render.stop()
     runtime.services.render.shutdown()
     runtime.services.realtime.stop()
+    runtime.services.consoleEvents.stop()
 
     // Best effort: remove external objects before the local database goes away.
     for (const bucket of await runtime.services.storage.buckets()) {
@@ -624,6 +627,7 @@ export class ProjectManager implements ProjectResolver {
       runtime.services.queue.stop()
       runtime.services.render.stop()
       runtime.services.realtime.stop()
+      runtime.services.consoleEvents.stop()
     }
     await Promise.all(closing.map(([, runtime]) => runtime.services.requestLogs.flush()))
     await flushBackgroundMail()

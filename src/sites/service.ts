@@ -162,6 +162,8 @@ export class SiteService {
   /** Runs `adapter: 'ssr'` apps; lazy and idle-stopped. */
   readonly ssr: SsrRuntime
   private byId: Map<string, SiteRow> | null = null
+  /** Called after a deployment is added, changes status or logs, goes live or is deleted. */
+  onDeploymentChange: ((siteId: string, deploymentId: string) => void) | null = null
 
   constructor(
     private db: SqlDatabase,
@@ -601,6 +603,15 @@ export class SiteService {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, siteId, status, size, startCommand, runtime, activate ? 1 : 0, chunks, uploaded, stamp, stamp],
     )
+    this.changed(siteId, id)
+  }
+
+  private changed(siteId: string, deploymentId: string): void {
+    try {
+      this.onDeploymentChange?.(siteId, deploymentId)
+    } catch (error) {
+      console.error(`[sites] ${siteId}: could not announce a deployment change:`, error)
+    }
   }
 
   /** Store one upload (or one chunk of it). The files go live once every chunk is in. */
@@ -628,6 +639,7 @@ export class SiteService {
     ))!
     if (counted.chunks_uploaded >= row.chunks_total) {
       await this.db.driver.run("UPDATE _site_deployments SET status = 'processing', updated_at = ? WHERE id = ?", [now(), row.id])
+      this.changed(site.id, row.id)
       // Unpacking is quick for static sites; an SSR build may take minutes, so
       // it runs in the background like a function build.
       if (site.adapter === 'ssr') {
@@ -652,6 +664,7 @@ export class SiteService {
        VALUES (?, ?, 'processing', 0, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, site.id, site.start_command, site.build_runtime, activate ? 1 : 0, ...sourceValues(source), stamp, stamp],
     )
+    this.changed(site.id, id)
     const dir = sitesDir(this.config, site.id, id)
     removeTree(this.config.functionsSandbox, dir)
     mkdirSync(dir, { recursive: true })
@@ -665,6 +678,7 @@ export class SiteService {
       now(),
       id,
     ])
+    this.changed(siteId, id)
     removeTree(this.config.functionsSandbox, sitesDir(this.config, siteId, id))
     return this.deployment(siteId, id)
   }
@@ -712,6 +726,7 @@ export class SiteService {
         'UPDATE _site_deployments SET status = ?, build_logs = ?, build_duration = ?, file_count = ?, total_size = ?, updated_at = ? WHERE id = ?',
         [status, logs.join('\n').slice(-MAX_LOG), (performance.now() - started) / 1000, counts.files, counts.bytes, now(), id],
       )
+      this.changed(siteId, id)
     }
     try {
       const site = this.site(siteId)
@@ -1014,6 +1029,7 @@ export class SiteService {
     if (d.status !== 'ready') throw err('build_not_ready')
     const previous = this.site(siteId).deployment_id
     await this.db.driver.run('UPDATE _sites SET deployment_id = ?, updated_at = ? WHERE id = ?', [id, now(), siteId])
+    this.changed(siteId, id)
     await this.reload()
     // The next request starts the new deployment; the old app is stopped now.
     if (previous && previous !== id) this.ssr.stopDeployment(siteId, previous)
@@ -1071,6 +1087,7 @@ export class SiteService {
       [id, siteId, siteId],
     )
     if (!result.changes) return false
+    this.changed(siteId, id)
     this.ssr.stopDeployment(siteId, id)
     // A branch preview that pointed here has nothing left to serve.
     await this.db.driver.run('DELETE FROM _site_branches WHERE site_id = ? AND deployment_id = ?', [siteId, id])

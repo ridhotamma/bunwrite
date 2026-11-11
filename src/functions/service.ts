@@ -330,6 +330,8 @@ function withCallerHeaders(headers: Record<string, string> | undefined, userId: 
 export class FunctionService {
   /** Other projects, so default function hosts do not collide on this server. */
   peers: () => FunctionService[] = () => []
+  /** Called after a deployment is added, changes status or logs, goes live or is deleted. */
+  onDeploymentChange: ((functionId: string, deploymentId: string) => void) | null = null
   private running = new Map<string, number>()
   /** Executions started by this process that have not finished yet. */
   private inflight = new Set<string>()
@@ -352,6 +354,15 @@ export class FunctionService {
       projectVariables?: (context: DeployContext) => Record<string, string> | Promise<Record<string, string>>
     } = {},
   ) {}
+
+  /** Announce a deployment change; never lets a listener break the build that called it. */
+  deploymentChanged(functionId: string, deploymentId: string): void {
+    try {
+      this.onDeploymentChange?.(functionId, deploymentId)
+    } catch (error) {
+      console.error(`[functions] ${functionId}: could not announce a deployment change:`, error)
+    }
+  }
 
   async fn(id: string): Promise<FunctionRow> {
     const row = await this.db.driver.get<FunctionRow>('SELECT * FROM _functions WHERE id = ?', [id])
