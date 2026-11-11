@@ -95,6 +95,8 @@ export interface DocumentBackend {
   preview<T>(fn: () => Promise<T>): Promise<T>
   runBatch<T>(operations: Array<() => Promise<T> | T>): Promise<Array<BatchOutcome<T>>>
   getDocument(caller: Caller, collection: Collection, id: string, rawQueries?: unknown[]): Promise<Doc>
+  /** One document with the row's revision and update time, for its ETag. */
+  readDocument(caller: Caller, collection: Collection, id: string, rawQueries?: unknown[]): Promise<{ doc: Doc; revision: number; updatedAt: string }>
   listDocuments(
     caller: Caller,
     collection: Collection,
@@ -271,6 +273,16 @@ export class DocumentStore implements DocumentBackend {
   }
 
   async getDocument(caller: Caller, collection: Collection, id: string, rawQueries: unknown[] = []): Promise<Doc> {
+    return (await this.readDocument(caller, collection, id, rawQueries)).doc
+  }
+
+  /** One document with its revision and update time, for an ETag that changes only when this row does. */
+  async readDocument(
+    caller: Caller,
+    collection: Collection,
+    id: string,
+    rawQueries: unknown[] = [],
+  ): Promise<{ doc: Doc; revision: number; updatedAt: string }> {
     assertCallerScope(caller, 'documents.read')
     const compiled = compileCached(collection, rawQueries, this.db.dialect)
     if (compiled.where.length || compiled.orders.length || compiled.cursor) {
@@ -280,7 +292,7 @@ export class DocumentStore implements DocumentBackend {
     const filter = readFilter(caller, collection, params)
     const row = await this.exec().get<Row>(`SELECT * FROM ${q(collection.table)} t WHERE t._id = ?${filter ? ` AND ${filter}` : ''}`, params)
     if (!row) throw err('document_not_found', undefined, [id])
-    return decodeRow(collection, row, compiled.select)
+    return { doc: decodeRow(collection, row, compiled.select), revision: Number(row._rev ?? 1), updatedAt: String(row._updatedAt) }
   }
 
   async listDocuments(

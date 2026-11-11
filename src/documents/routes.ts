@@ -116,13 +116,15 @@ export function documentRoutes(router: Router<AppContext>): void {
       const doc = await ctx.transactions.withStaged(ctx.caller, transactionId, () => ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries))
       return json(doc)
     }
-    const version = await ctx.store.collectionVersion(collection)
+    // The tag follows this row's own revision, so a write to another document
+    // in the collection no longer invalidates it, and no version query is needed.
+    const { doc, revision, updatedAt } = await ctx.store.readDocument(ctx.caller, collection, path.documentId!, queries)
     const etag = etagFor(
-      `${ctx.config.projectId}\u0000${collection.table}\u0000${version}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${path.documentId}\u0000${JSON.stringify(queries)}`,
+      `${ctx.config.projectId}\u0000${collection.table}\u0000${collection.updatedAt}\u0000${callerTag(ctx.caller)}\u0000${path.documentId}\u0000${revision}\u0000${updatedAt}\u0000${JSON.stringify(queries)}`,
     )
     const headers = { 'cache-control': cacheControl(ctx, collection), etag, vary: 'X-Bunwrite-Project, X-Appwrite-Project' }
     if (ifNoneMatch(request, etag)) return notModified(etag, { 'cache-control': headers['cache-control'], vary: headers.vary })
-    return json(await ctx.store.getDocument(ctx.caller, collection, path.documentId!, queries), 200, headers)
+    return json(doc, 200, headers)
   })
 
   router.post(DOCS, async ({ ctx, params, path }) => {

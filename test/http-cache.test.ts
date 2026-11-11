@@ -35,14 +35,20 @@ describe('HTTP caching', () => {
     expect((await fetch(`${base}/c1`, { headers: { ...headers(), 'if-none-match': pointEtag } })).status).toBe(304)
   })
 
-  test('a write changes the collection version and invalidates both ETags', async () => {
+  test('a write invalidates the list ETag, but a document ETag only when that document changes', async () => {
     const listEtag = (await fetch(base, { headers: headers() })).headers.get('etag')!
     const pointEtag = (await fetch(`${base}/c1`, { headers: headers() })).headers.get('etag')!
 
     await databases.createDocument({ databaseId: 'main', collectionId: 'products', documentId: 'c2', data: { tenantId: 't', name: 'Two' } })
 
     expect((await fetch(base, { headers: { ...headers(), 'if-none-match': listEtag } })).status).toBe(200)
-    expect((await fetch(`${base}/c1`, { headers: { ...headers(), 'if-none-match': pointEtag } })).status).toBe(200)
+    // c1 itself did not change, so its cached copy is still good.
+    expect((await fetch(`${base}/c1`, { headers: { ...headers(), 'if-none-match': pointEtag } })).status).toBe(304)
+
+    await databases.updateDocument({ databaseId: 'main', collectionId: 'products', documentId: 'c1', data: { name: 'One, renamed' } })
+    const changed = await fetch(`${base}/c1`, { headers: { ...headers(), 'if-none-match': pointEtag } })
+    expect(changed.status).toBe(200)
+    expect(changed.headers.get('etag')).not.toBe(pointEtag)
   })
 
   test('a collection readable by any may be cached publicly when enabled', async () => {
