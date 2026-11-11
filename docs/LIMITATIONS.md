@@ -1,6 +1,6 @@
 # Limitations and production gaps
 
-Status: 2026-11-11 (Bunwrite 0.9.1).
+Status: 2026-11-11 (Bunwrite 0.9.2).
 
 This is the honest list of what Bunwrite is **not** yet, separate from bugs in
 the issue tracker. It is written for people deciding whether to run Bunwrite in
