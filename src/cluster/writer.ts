@@ -100,7 +100,10 @@ function timedOut(error: unknown): boolean {
 
 function unconfirmedWrite(): Response {
   const body = {
-    ...err('general_unknown', 'The write took too long to confirm, so it may or may not have been applied. Read the affected resources back before retrying.').toJSON(),
+    ...err(
+      'general_unknown',
+      'The write took too long to confirm, so it may or may not have been applied. Read the affected resources back before retrying.',
+    ).toJSON(),
     code: 504,
   }
   return new Response(JSON.stringify(body), { status: 504, headers: { 'content-type': 'application/json' } })
