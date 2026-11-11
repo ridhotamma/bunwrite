@@ -86,17 +86,36 @@ function lookup(metadata: Record<string, unknown>, key: string): unknown {
   return current
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+/** JSON with object keys sorted, so `{a,b}` and `{b,a}` compare equal. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'undefined'
+}
 
-/** Metadata equality filters, including dotted paths and array values (match any). */
+const same = (a: unknown, b: unknown) => canonical(a) === canonical(b)
+
+/** One expected value: equal, or an item of an array field (`tags: "faq"` matches `["faq", "billing"]`). */
+function matchesValue(value: unknown, expected: unknown): boolean {
+  return same(value, expected) || (Array.isArray(value) && value.some((item) => same(item, expected)))
+}
+
+/**
+ * Metadata equality filters, including dotted paths. An array in the filter
+ * matches any of its items; an array in the metadata matches when it contains
+ * the expected value. This is how the Qdrant index filters too.
+ */
 export function matchesFilter(metadata: Record<string, unknown>, filter: unknown): boolean {
   if (filter === undefined || filter === null) return true
   if (typeof filter !== 'object' || Array.isArray(filter)) throw invalid('Param "filter" must be an object.')
   for (const [key, expected] of Object.entries(filter as Record<string, unknown>)) {
     const value = lookup(metadata, key)
     if (Array.isArray(expected)) {
-      if (!expected.some((item) => same(value, item))) return false
-    } else if (!same(value, expected)) return false
+      if (!same(value, expected) && !expected.some((item) => matchesValue(value, item))) return false
+    } else if (!matchesValue(value, expected)) return false
   }
   return true
 }

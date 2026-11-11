@@ -95,6 +95,15 @@ keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
   checks are exempt.
 - [x] **Fast reader lock waits.** `SQLITE_READER_BUSY_TIMEOUT_MS` (default
   500 ms) replaces the 5 s wait on public workers; the writer keeps 5 s.
+- [x] **No duplicate forwarded writes.** A forwarded write that times out
+  returns `504` instead of being resent or written locally; only a failed
+  connection is retried.
+- [x] **Request-log sampling defaults to 10% with several workers.** Each worker
+  writes log rows into the project database; logging every request cost about
+  a fifth of single-core read throughput (25.2k → 19.7k req/s on one document).
+- [x] **Vector search cache.** Parsed vectors and term IDs per collection
+  (`VECTOR_SEARCH_CACHE_MB`), invalidated by `_meta` triggers on
+  `_vector_points`; 8–17x faster built-in search at 20k points.
 - [ ] Re-run the booking matrix at 200/300/400 clients with `WORKER_PORTS=true`
   to confirm the tail is gone before treating 300+ as safe.
 

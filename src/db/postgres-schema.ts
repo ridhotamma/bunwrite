@@ -15,7 +15,7 @@
 import { is, SQL, type Column } from 'drizzle-orm'
 import { getTableConfig, type SQLiteTable } from 'drizzle-orm/sqlite-core'
 
-import { collectionVersionKey } from '~/cluster/versions'
+import { collectionVersionKey, VECTOR_VERSION_PREFIX } from '~/cluster/versions'
 import type { PostgresDriver } from './postgres-driver'
 import * as schema from './system-schema'
 import { ftsTableName, permsTableName, type Attribute, type Index } from '~/schema/types'
@@ -249,6 +249,29 @@ BEGIN
 END;
 $$`
 
+/** Bumps `vectors:<collection_id>` from the changed point row; mirrors `cluster-schema.ts`. */
+export const POSTGRES_VECTOR_VERSION_FUNCTION = `CREATE OR REPLACE FUNCTION bunwrite_bump_vector_version() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  target text;
+BEGIN
+  IF TG_OP = 'DELETE' THEN target := OLD."collection_id"; ELSE target := NEW."collection_id"; END IF;
+  INSERT INTO "_meta" ("key", "value") VALUES (${literal(VECTOR_VERSION_PREFIX)} || target, 1)
+  ON CONFLICT ("key") DO UPDATE SET "value" = "_meta"."value" + 1;
+  RETURN NULL;
+END;
+$$`
+
+export function postgresVectorVersionStatements(): string[] {
+  const statements: string[] = []
+  for (const event of ['INSERT', 'UPDATE', 'DELETE']) {
+    const name = `_meta__vector_points_${event.toLowerCase()}`
+    statements.push(`DROP TRIGGER IF EXISTS ${q(name)} ON "_vector_points"`)
+    statements.push(`CREATE TRIGGER ${q(name)} AFTER ${event} ON "_vector_points" FOR EACH ROW EXECUTE FUNCTION bunwrite_bump_vector_version()`)
+  }
+  return statements
+}
+
 /** Triggers that keep the cache counters current on Postgres. */
 export function postgresVersionTriggerStatements(): string[] {
   const statements: string[] = []
@@ -383,6 +406,8 @@ export async function ensurePostgresSchema(driver: PostgresDriver, options: Post
     for (const statement of POSTGRES_VIEW_STATEMENTS) await tx.exec(statement)
     await tx.exec(POSTGRES_VERSION_FUNCTION)
     for (const statement of postgresVersionTriggerStatements()) await tx.exec(statement)
+    await tx.exec(POSTGRES_VECTOR_VERSION_FUNCTION)
+    for (const statement of postgresVectorVersionStatements()) await tx.exec(statement)
     log('postgres schema is current')
   })
   await migratePostgresColumns(driver, options)

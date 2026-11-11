@@ -15,7 +15,7 @@ import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import type { SharpModule } from '~/storage/sharp'
 import { now } from '~/lib/datetime'
 import { err } from '~/lib/errors'
-import { resolveId, uniqueId } from '~/lib/ids'
+import { resolveId, sha256, uniqueId } from '~/lib/ids'
 import { chunkMarkdown, chunkText } from './chunk'
 import type { ChatProvider } from './chat'
 import { HttpChat } from './chat'
@@ -23,7 +23,8 @@ import type { EmbeddingProvider } from './embedder'
 import { HttpEmbedding, LocalEmbedding } from './embedder'
 import { average, keywordCoverage, looksLikeRefusal, ndcgAtK, recallAtK, reciprocalRank } from './eval'
 import { extractDocument, readUpload, type DocumentFormat, type ExtractionOptions, type ExtractedDocument } from './extract'
-import { addBm25Document, bm25Score, createBm25, finalizeBm25, tokenize, type Bm25Model } from './lexical'
+import { addBm25Sequence, bm25ScoreSequence, createBm25Terms, finalizeBm25, termCounts, tokenize, type Bm25Model } from './lexical'
+import { VectorSearchCache, type CachedCollection, type PointParts } from './cache'
 import {
   DEFAULT_LIST_LIMIT,
   MAX_BATCH,
@@ -214,6 +215,107 @@ export function documentIdFromName(name: string): string {
   return id || uniqueId()
 }
 
+/**
+ * The same ID made unique to this exact file name. Used when the plain ID
+ * already belongs to another file, such as `report.pdf` after `report.docx`.
+ */
+export function documentIdForFile(name: string): string {
+  const base = documentIdFromName(name).slice(0, 27).replace(/[._-]+$/, '')
+  return `${base || 'doc'}-${sha256(name).slice(0, 8)}`
+}
+
+/** Bytes of parsed points each process may keep for the built-in search. */
+export const DEFAULT_SEARCH_CACHE_BYTES = 128 * 1024 * 1024
+
+type TermKey = string | number
+
+/** A point as search sees it, from the cache or parsed from one SQL row. */
+interface SearchPoint {
+  readonly row: VectorPointRow
+  readonly metadata: Record<string, unknown>
+  readonly permissions: string[]
+  /** Empty when the stored embedding could not be read. */
+  readonly vector: ArrayLike<number>
+  readonly norm: number
+  readonly terms: ArrayLike<TermKey>
+}
+
+/** Parses one row lazily, so a point skipped by permissions or filter costs no vector parse. */
+class RowPoint implements SearchPoint {
+  private parsed: { vector: number[] | null; metadata?: Record<string, unknown>; permissions?: string[]; terms?: string[] } = { vector: null }
+  private vectorRead = false
+
+  constructor(readonly row: VectorPointRow) {}
+
+  get metadata(): Record<string, unknown> {
+    return (this.parsed.metadata ??= parseRowMetadata(this.row.metadata))
+  }
+
+  get permissions(): string[] {
+    return (this.parsed.permissions ??= parseRowPermissions(this.row.permissions))
+  }
+
+  get vector(): ArrayLike<number> {
+    if (!this.vectorRead) {
+      this.vectorRead = true
+      this.parsed.vector = vectorOfRow(this.row)
+    }
+    return this.parsed.vector ?? []
+  }
+
+  get norm(): number {
+    return Number(this.row.norm) || norm(this.vector)
+  }
+
+  get terms(): string[] {
+    return (this.parsed.terms ??= tokenize(this.row.content))
+  }
+}
+
+function vectorOfRow(row: VectorPointRow): number[] | null {
+  try {
+    return parseVector(JSON.parse(row.embedding))
+  } catch {
+    return null
+  }
+}
+
+function pointParts(row: VectorPointRow): PointParts {
+  const vector = vectorOfRow(row)
+  return {
+    vector,
+    norm: Number(row.norm) || (vector ? norm(vector) : 0),
+    metadata: parseRowMetadata(row.metadata),
+    permissions: parseRowPermissions(row.permissions),
+  }
+}
+
+/** Where search reads points from: the parsed cache, or a streaming SQL scan for collections that do not fit. */
+interface PointSource {
+  readonly cached: boolean
+  forEach(visit: (point: SearchPoint) => void): Promise<void>
+  /** Query terms in the same keys as `point.terms`. */
+  queryTerms(query: string): Map<TermKey, number>
+}
+
+function cachedSource(cache: CachedCollection): PointSource {
+  return {
+    cached: true,
+    async forEach(visit) {
+      for (const point of cache.points) visit(point)
+    },
+    queryTerms(query) {
+      const terms = new Map<TermKey, number>()
+      // A word no point contains cannot match; leaving it out changes no score.
+      for (const [word, count] of termCounts(tokenize(query))) {
+        const id = cache.dictionary.get(word)
+        if (id !== undefined) terms.set(id, count)
+      }
+      return terms
+    },
+  }
+}
+
 export class VectorService {
   private embedder: EmbeddingProvider
   private chat: ChatProvider | null
@@ -225,14 +327,17 @@ export class VectorService {
   private readonly annWarnings = new Map<string, number>()
   private draining = false
   private readonly store: VectorStore
+  private readonly searchCache: VectorSearchCache
 
   constructor(
     db: SqlDatabase,
     private config: VectorsConfig,
     /** Compiled builds use the extracted sharp runtime; source runs can omit it. */
     private readonly loadSharpModule?: () => Promise<SharpModule>,
+    options: { searchCacheBytes?: number } = {},
   ) {
     this.store = new VectorStore(db)
+    this.searchCache = new VectorSearchCache(options.searchCacheBytes ?? DEFAULT_SEARCH_CACHE_BYTES)
     this.jobs = new QueueService(db)
     this.embedder = this.makeEmbedder()
     this.chat = this.makeChat()
@@ -385,6 +490,7 @@ export class VectorService {
     const collectionId = pathId(id, 'Collection ID')
     const deleted = await this.store.transaction((tx) => this.store.deleteCollection(collectionId, tx))
     if (!deleted) throw err('collection_not_found', undefined, [collectionId])
+    this.searchCache.drop(collectionId)
     if (this.ann) {
       try {
         await this.ann.deleteCollection(collectionId)
@@ -413,21 +519,44 @@ export class VectorService {
     return point
   }
 
-  private async accessibleRows(collectionId: string, access: VectorReadAccess, documentId?: string): Promise<VectorPointRow[]> {
+  private async accessibleRows(collection: VectorCollectionRow, access: VectorReadAccess, documentId?: string): Promise<VectorPointRow[]> {
     const rows: VectorPointRow[] = []
+    const source = await this.pointSource(collection)
+    await source.forEach((point) => {
+      if (documentId !== undefined && point.row.document_id !== documentId) return
+      if (canReadPoint(point.permissions, access)) rows.push(point.row)
+    })
+    return rows
+  }
+
+  /** The parsed cache when the collection fits the budget, otherwise a streaming scan. */
+  private async pointSource(collection: VectorCollectionRow): Promise<PointSource> {
+    const version = await this.store.vectorVersion(collection.id)
+    const cached = await this.searchCache.get(
+      collection.id,
+      version,
+      async () => (await this.store.countPoints(collection.id)) * (Number(collection.dimension) * 8 + 400),
+      (visit) => this.scanRows(collection.id, visit),
+      pointParts,
+    )
+    if (cached) return cachedSource(cached)
+    return {
+      cached: false,
+      forEach: (visit) => this.scanRows(collection.id, (row) => visit(new RowPoint(row))),
+      queryTerms: (query) => termCounts(tokenize(query)),
+    }
+  }
+
+  /** Every row in insertion order, a page at a time; `visit` returns false to stop. */
+  private async scanRows(collectionId: string, visit: (row: VectorPointRow) => boolean | void): Promise<void> {
     let afterSeq = 0
     for (;;) {
       const batch = await this.store.scanPoints(collectionId, afterSeq, SCAN_BATCH)
-      if (batch.length === 0) break
-      for (const row of batch) {
-        if (documentId !== undefined && row.document_id !== documentId) continue
-        if (!canReadPoint(parseRowPermissions(row.permissions), access)) continue
-        rows.push(row)
-      }
+      if (batch.length === 0) return
+      for (const row of batch) if (visit(row) === false) return
       afterSeq = Number(batch[batch.length - 1]!.seq)
-      if (batch.length < SCAN_BATCH) break
+      if (batch.length < SCAN_BATCH) return
     }
-    return rows
   }
 
   async listPoints(
@@ -440,7 +569,7 @@ export class VectorService {
     const offset = integer(options.offset, 0, 0, Number.MAX_SAFE_INTEGER, 'offset')
     const documentId = options.documentId ? pathId(options.documentId, 'Document ID') : undefined
     if (access) {
-      const rows = await this.accessibleRows(collection.id, access, documentId)
+      const rows = await this.accessibleRows(collection, access, documentId)
       return { total: rows.length, points: rows.slice(offset, offset + limit).map(pointModel) }
     }
     const page = await this.store.listPoints(collection.id, { documentId, limit, offset })
@@ -462,7 +591,7 @@ export class VectorService {
     const pageSize = integer(limit, 100, 1, 1000, 'limit')
     if (!access) return this.store.listDocuments(collection.id, pageSize)
 
-    const rows = await this.accessibleRows(collection.id, access)
+    const rows = await this.accessibleRows(collection, access)
     const documents = new Map<string, VectorDocument>()
     for (const row of rows) {
       if (!row.document_id) continue
@@ -844,29 +973,27 @@ export class VectorService {
     return vector
   }
 
-  /** One BM25 statistics pass over the filtered points; the scoring pass follows. */
+  /**
+   * One BM25 statistics pass over the readable, filtered points. With a cached
+   * source it also returns those points, so the scoring pass skips the checks.
+   */
   private async hybridStats(
-    collection: VectorCollectionRow,
+    source: PointSource,
     filter: unknown,
     query: string,
     access?: VectorReadAccess,
-  ): Promise<{ model: Bm25Model; total: number }> {
-    const state = createBm25(query)!
+  ): Promise<{ model: Bm25Model<TermKey>; total: number; eligible: SearchPoint[] | null }> {
+    const state = createBm25Terms(source.queryTerms(query))
+    const eligible: SearchPoint[] | null = source.cached ? [] : null
     let total = 0
-    let afterSeq = 0
-    for (;;) {
-      const batch = await this.store.scanPoints(collection.id, afterSeq, SCAN_BATCH)
-      if (batch.length === 0) break
-      for (const row of batch) {
-        if (!canReadPoint(parseRowPermissions(row.permissions), access)) continue
-        if (!matchesFilter(parseRowMetadata(row.metadata), filter)) continue
-        total++
-        addBm25Document(state, row.content)
-      }
-      afterSeq = Number(batch[batch.length - 1]!.seq)
-      if (batch.length < SCAN_BATCH) break
-    }
-    return { model: finalizeBm25(state), total }
+    await source.forEach((point) => {
+      if (!canReadPoint(point.permissions, access)) return
+      if (!matchesFilter(point.metadata, filter)) return
+      total++
+      eligible?.push(point)
+      addBm25Sequence(state, point.terms)
+    })
+    return { model: finalizeBm25(state), total, eligible }
   }
 
   private async rerank(query: string, candidates: SearchCandidate[]): Promise<SearchCandidate[]> {
@@ -922,6 +1049,12 @@ export class VectorService {
     const candidateLimit = Math.min(MAX_HYBRID_CANDIDATES, Math.max(topK, useHybrid || useRerank ? configuredCandidates : topK))
     const context: SearchContext = { collection, queryText, vector, queryNorm, metric, topK, alpha, useHybrid, useRerank, candidateLimit, filter: input.filter, access }
 
+    // A zero vector (for example a query with no letters or digits through the
+    // built-in embedder) is equally similar to everything. Without a lexical
+    // signal there is nothing to rank, so return no matches instead of an
+    // arbitrary top K that RAG would then answer from.
+    if (queryNorm === 0 && metric !== 'euclidean' && !useHybrid) return { total: 0, points: [] }
+
     if (!this.ann && this.config.annProvider === 'qdrant' && !this.config.annFallback) {
       throw err('general_unknown', 'Qdrant is selected but no endpoint is configured.')
     }
@@ -944,39 +1077,33 @@ export class VectorService {
     return this.finishSearch(context, candidates)
   }
 
-  /** The portable path: scan SQL, score vectors and optionally BM25 in-process. */
+  /** The portable path: score vectors and optionally BM25 in-process, from the cache or a SQL scan. */
   private async searchScan(context: SearchContext): Promise<CandidateSet> {
     const { collection, queryText, vector, queryNorm, metric, candidateLimit, filter, access, useHybrid } = context
-    const stats = useHybrid ? await this.hybridStats(collection, filter, queryText!, access) : null
+    const source = await this.pointSource(collection)
+    const stats = useHybrid ? await this.hybridStats(source, filter, queryText!, access) : null
     const vectorRanker = new TopK<VectorPointRow>(candidateLimit)
     const lexicalRanker = stats ? new TopK<VectorPointRow>(candidateLimit) : null
     let total = stats?.total ?? 0
-    let afterSeq = 0
-    for (;;) {
-      const batch = await this.store.scanPoints(collection.id, afterSeq, SCAN_BATCH)
-      if (batch.length === 0) break
-      for (const row of batch) {
-        if (!canReadPoint(parseRowPermissions(row.permissions), access)) continue
-        if (!matchesFilter(parseRowMetadata(row.metadata), filter)) continue
-        let embedding: number[]
-        try {
-          embedding = parseVector(JSON.parse(row.embedding))
-        } catch {
-          continue
-        }
-        if (embedding.length !== vector.length) continue
-        const value = score(metric, vector, embedding, Number(row.norm) || norm(embedding), queryNorm)
-        if (Number.isFinite(value)) vectorRanker.push(row, value)
-        if (!stats) {
-          total++
-        } else if (lexicalRanker) {
-          const lexical = bm25Score(stats.model, row.content)
-          if (lexical > 0) lexicalRanker.push(row, lexical)
-        }
+    const visit = (point: SearchPoint, checked: boolean) => {
+      if (!checked) {
+        if (!canReadPoint(point.permissions, access)) return
+        if (!matchesFilter(point.metadata, filter)) return
       }
-      afterSeq = Number(batch[batch.length - 1]!.seq)
-      if (batch.length < SCAN_BATCH) break
+      // A point whose stored vector is unreadable or another size is skipped entirely, as before.
+      const embedding = point.vector
+      if (embedding.length !== vector.length) return
+      const value = score(metric, vector, embedding, point.norm, queryNorm)
+      if (Number.isFinite(value)) vectorRanker.push(point.row, value)
+      if (!stats) {
+        total++
+      } else if (lexicalRanker) {
+        const lexical = bm25ScoreSequence(stats.model, point.terms)
+        if (lexical > 0) lexicalRanker.push(point.row, lexical)
+      }
     }
+    if (stats?.eligible) for (const point of stats.eligible) visit(point, true)
+    else await source.forEach((point) => visit(point, false))
     return {
       total,
       vector: vectorRanker.values(),
@@ -987,21 +1114,19 @@ export class VectorService {
 
   /** BM25 candidates only; used when the provider has no sparse lexical vectors. */
   private async lexicalScan(context: SearchContext): Promise<Scored<VectorPointRow>[]> {
-    const stats = await this.hybridStats(context.collection, context.filter, context.queryText!, context.access)
+    const source = await this.pointSource(context.collection)
+    const stats = await this.hybridStats(source, context.filter, context.queryText!, context.access)
     const ranker = new TopK<VectorPointRow>(context.candidateLimit)
-    let afterSeq = 0
-    for (;;) {
-      const batch = await this.store.scanPoints(context.collection.id, afterSeq, SCAN_BATCH)
-      if (batch.length === 0) break
-      for (const row of batch) {
-        if (!canReadPoint(parseRowPermissions(row.permissions), context.access)) continue
-        if (!matchesFilter(parseRowMetadata(row.metadata), context.filter)) continue
-        const lexical = bm25Score(stats.model, row.content)
-        if (lexical > 0) ranker.push(row, lexical)
+    const visit = (point: SearchPoint, checked: boolean) => {
+      if (!checked) {
+        if (!canReadPoint(point.permissions, context.access)) return
+        if (!matchesFilter(point.metadata, context.filter)) return
       }
-      afterSeq = Number(batch[batch.length - 1]!.seq)
-      if (batch.length < SCAN_BATCH) break
+      const lexical = bm25ScoreSequence(stats.model, point.terms)
+      if (lexical > 0) ranker.push(point.row, lexical)
     }
+    if (stats.eligible) for (const point of stats.eligible) visit(point, true)
+    else await source.forEach((point) => visit(point, false))
     return ranker.values()
   }
 
@@ -1184,7 +1309,7 @@ export class VectorService {
     const documentId =
       input.documentId === undefined || input.documentId === null || input.documentId === ''
         ? typeof source.filename === 'string'
-          ? documentIdFromName(source.filename)
+          ? await this.documentIdFor(collection.id, source.filename)
           : uniqueId()
         : resolveId(input.documentId, 'Document ID')
     const chunkSize = integer(input.chunkSize, this.config.chunkSize, 64, 8000, 'chunkSize')
@@ -1205,6 +1330,17 @@ export class VectorService {
       chunkOverlap: integer(input.chunkOverlap, this.config.chunkOverlap, 0, Math.floor(chunkSize / 2), 'chunkOverlap'),
       ...(file ? { file } : {}),
     }
+  }
+
+  /**
+   * A document ID for an upload with no explicit ID. Re-uploading the same file
+   * replaces its earlier version; a different file whose name maps to the same
+   * ID gets its own ID instead of silently replacing the other document.
+   */
+  private async documentIdFor(collectionId: string, filename: string): Promise<string> {
+    const plain = documentIdFromName(filename)
+    const owner = await this.store.documentSource(collectionId, plain)
+    return owner === null || owner === filename ? plain : documentIdForFile(filename)
   }
 
   private async storePrepared(prepared: PreparedIngest): Promise<IngestResult> {

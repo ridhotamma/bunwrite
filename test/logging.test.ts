@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 
 import { ConsoleAuth } from '~/console/auth'
-import { configFromEnv } from '~/config'
+import { configFromEnv, defaultLogSampleRate } from '~/config'
 import { formatRequestLog } from '~/lib/log'
 import { PROJECT, startServer, type TestServer } from './helpers'
 
@@ -153,4 +153,12 @@ test('request log environment variables are ignored', () => {
     LOG_IP: 'false',
   })
   expect(config).toMatchObject({ logRequests: true, logSampleRate: 1, logFormat: 'text', logRetentionDays: 7, logIp: true })
+})
+
+test('several workers sample successful requests at 10% by default', () => {
+  expect(defaultLogSampleRate(4)).toBe(0.1)
+  expect(defaultLogSampleRate(1)).toBe(1)
+  // The default follows the worker count this platform actually runs.
+  const config = configFromEnv({ WORKERS: '4' })
+  expect(config.logSampleRate).toBe(defaultLogSampleRate(config.workers))
 })

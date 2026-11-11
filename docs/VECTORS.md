@@ -140,8 +140,12 @@ Every search accepts per-request overrides:
 
 Set `hybrid` to `false` for vector-only retrieval, `rerank` to `false` to keep
 the fused order, or `alpha` to `0`/`1` for pure lexical/vector ranking. With the
-built-in store, hybrid search makes one extra statistics pass over the filtered
-collection; the default point cap keeps that predictable. With Qdrant, the
+built-in store, each process keeps the collection's parsed vectors and terms in
+memory (`VECTOR_SEARCH_CACHE_MB`, 128 MB by default), so a search does not re-read
+and re-parse the collection; a write from any process refreshes it on the next
+search. At 20k points that took vector search from about 60 ms to 4 ms and
+hybrid search with reranking from about 250 ms to 15 ms on one core. A
+collection too large for the budget is scanned from SQL as before. With Qdrant, the
 lexical side comes from sparse vectors in the index.
 
 ### External ANN index (Qdrant)
@@ -389,8 +393,14 @@ curl -X POST "$API/vectors/handbook/search" \
   -d '{"text":"where is data stored?","topK":5,"filter":{"topic":"storage"}}'
 ```
 
-`filter` compares metadata fields for equality. A value may be an array (matches
-any item) and a key may be a dotted path (`{"author.role":"admin"}`).
+`filter` compares metadata fields for equality. A filter value may be an array
+(matches any item), a key may be a dotted path (`{"author.role":"admin"}`), and
+an array field in the metadata matches when it contains the value
+(`{"tags":"faq"}` matches `"tags": ["faq", "billing"]`). Object values compare
+regardless of key order.
+
+A query with no letters or digits gives the built-in embedder nothing to work
+with, so it returns no matches rather than an arbitrary top K.
 
 List, read and delete points:
 
@@ -443,7 +453,9 @@ curl -X POST "$API/vectors/handbook/search" \
 
 `POST /rag/ingest` accepts JSON text, a multipart `file`, or a raw request body.
 It splits the text on word boundaries, embeds each chunk and stores it in the
-collection. Re-ingesting the same `documentId` replaces its chunks.
+collection. Re-ingesting the same `documentId` replaces its chunks. A run with
+no spaces that is longer than the chunk size (Chinese, Japanese or Thai text,
+a long URL, base64) is cut into pieces so no chunk exceeds `chunkSize`.
 
 ```bash
 # Text in JSON
@@ -490,7 +502,10 @@ Response:
 ```
 
 When no `documentId` is given for a file, it is derived from the file name, so
-uploading `handbook.pdf` again replaces the previous `handbook` document. File
+uploading `handbook.pdf` again replaces the previous `handbook` document. A
+different file whose name maps to the same ID (`handbook.docx`, `Handbook!.pdf`)
+gets its own ID with a short suffix instead of replacing it; pass `documentId`
+to choose the ID yourself. File
 metadata (`source`, `filename`, `mimeType`, `format`, `size`, `pages` for PDFs,
 `ocrPages` when OCR ran, and `tables`) is stored with each chunk unless the
 request's `metadata` overrides it. Uploads are limited to 25 MB and PDFs to 1000

@@ -5,6 +5,7 @@
  * row-shape details, and leaves room for a future native index (pgvector or
  * sqlite-vec) without changing the service or the HTTP API.
  */
+import { vectorVersionKey } from '~/cluster/versions'
 import type { SqlDatabase, SqlExecutor } from '~/db/driver'
 import { now } from '~/lib/datetime'
 import { uniqueId } from '~/lib/ids'
@@ -420,6 +421,26 @@ export class VectorStore {
   async deleteEvaluation(id: string): Promise<boolean> {
     const result = await this.db.driver.run('DELETE FROM _vector_evaluation_runs WHERE id = ?', [id])
     return Number(result.changes) > 0
+  }
+
+  /**
+   * The file a document was ingested from: its `filename` metadata, '' when it
+   * came from text, or null when the document does not exist.
+   */
+  async documentSource(collectionId: string, documentId: string): Promise<string | null> {
+    const row = await this.db.driver.get<{ metadata: string }>(
+      'SELECT metadata FROM _vector_points WHERE collection_id = ? AND document_id = ? ORDER BY chunk_index, id LIMIT 1',
+      [collectionId, documentId],
+    )
+    if (!row) return null
+    const metadata = parsed<Record<string, unknown>>(row.metadata, {})
+    return typeof metadata.filename === 'string' ? metadata.filename : ''
+  }
+
+  /** The collection's point-write counter, bumped by triggers from any process; 0 before the first write. */
+  async vectorVersion(collectionId: string): Promise<number> {
+    const row = await this.db.driver.get<{ value: number }>('SELECT value FROM _meta WHERE key = ?', [vectorVersionKey(collectionId)])
+    return Number(row?.value) || 0
   }
 
   async deletePoint(collectionId: string, pointId: string): Promise<boolean> {

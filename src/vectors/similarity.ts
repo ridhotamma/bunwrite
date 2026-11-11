@@ -31,20 +31,20 @@ export function parseVector(value: unknown): number[] {
 }
 
 /** L2 norm. A zero norm means every similarity against this vector is zero. */
-export function norm(vector: readonly number[]): number {
+export function norm(vector: ArrayLike<number>): number {
   let sum = 0
-  for (const value of vector) sum += value * value
+  for (let i = 0; i < vector.length; i++) sum += vector[i]! * vector[i]!
   return Math.sqrt(sum)
 }
 
-export function dot(a: readonly number[], b: readonly number[]): number {
+export function dot(a: ArrayLike<number>, b: ArrayLike<number>): number {
   const length = Math.min(a.length, b.length)
   let sum = 0
   for (let i = 0; i < length; i++) sum += a[i]! * b[i]!
   return sum
 }
 
-export function score(metric: VectorMetric, query: readonly number[], point: readonly number[], pointNorm: number, queryNorm: number): number {
+export function score(metric: VectorMetric, query: ArrayLike<number>, point: ArrayLike<number>, pointNorm: number, queryNorm: number): number {
   if (query.length !== point.length) return Number.NEGATIVE_INFINITY
   switch (metric) {
     case 'dot':

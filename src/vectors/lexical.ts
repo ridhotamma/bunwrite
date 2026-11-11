@@ -30,24 +30,26 @@ export function termCounts(tokens: readonly string[]): Map<string, number> {
   return counts
 }
 
-export interface Bm25Accumulator {
+/**
+ * BM25 works on any term key: words, or the integer term IDs the search cache
+ * stores instead of re-tokenizing every point on every query.
+ */
+export interface Bm25Accumulator<K = string> {
   /** Query terms and their frequency in the query, used for document frequency and qtf. */
-  terms: Map<string, number>
+  terms: Map<K, number>
   documents: number
   totalLength: number
-  documentFrequency: Map<string, number>
+  documentFrequency: Map<K, number>
 }
 
-export interface Bm25Model {
-  terms: Map<string, number>
-  idf: Map<string, number>
+export interface Bm25Model<K = string> {
+  terms: Map<K, number>
+  idf: Map<K, number>
   documents: number
   averageLength: number
 }
 
-export function createBm25(query: string): Bm25Accumulator | null {
-  const terms = termCounts(tokenize(query))
-  if (terms.size === 0) return null
+export function createBm25Terms<K>(terms: Map<K, number>): Bm25Accumulator<K> {
   return {
     terms,
     documents: 0,
@@ -56,21 +58,32 @@ export function createBm25(query: string): Bm25Accumulator | null {
   }
 }
 
-export function addBm25Document(state: Bm25Accumulator, content: string): void {
-  const tokens = tokenize(content)
+export function createBm25(query: string): Bm25Accumulator | null {
+  const terms = termCounts(tokenize(query))
+  if (terms.size === 0) return null
+  return createBm25Terms(terms)
+}
+
+export function addBm25Sequence<K>(state: Bm25Accumulator<K>, tokens: ArrayLike<K>): void {
   state.documents++
   state.totalLength += tokens.length
-  const seen = new Set<string>()
-  for (const token of tokens) {
+  if (state.terms.size === 0) return
+  const seen = new Set<K>()
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
     if (!state.terms.has(token) || seen.has(token)) continue
     seen.add(token)
     state.documentFrequency.set(token, (state.documentFrequency.get(token) ?? 0) + 1)
   }
 }
 
-export function finalizeBm25(state: Bm25Accumulator): Bm25Model {
+export function addBm25Document(state: Bm25Accumulator, content: string): void {
+  addBm25Sequence(state, tokenize(content))
+}
+
+export function finalizeBm25<K>(state: Bm25Accumulator<K>): Bm25Model<K> {
   const averageLength = state.documents > 0 ? state.totalLength / state.documents : 0
-  const idf = new Map<string, number>()
+  const idf = new Map<K, number>()
   for (const [term, queryFrequency] of state.terms) {
     const frequency = state.documentFrequency.get(term) ?? 0
     // BM25's positive IDF variant; a term in every document contributes little.
@@ -80,13 +93,12 @@ export function finalizeBm25(state: Bm25Accumulator): Bm25Model {
   return { terms: state.terms, idf, documents: state.documents, averageLength }
 }
 
-/** BM25 score for one document. Higher is better; zero means no query term matched. */
-export function bm25Score(model: Bm25Model, content: string): number {
-  if (model.documents === 0) return 0
-  const tokens = tokenize(content)
-  if (tokens.length === 0) return 0
-  const counts = new Map<string, number>()
-  for (const token of tokens) {
+/** BM25 score for one document's terms. Higher is better; zero means no query term matched. */
+export function bm25ScoreSequence<K>(model: Bm25Model<K>, tokens: ArrayLike<K>): number {
+  if (model.documents === 0 || tokens.length === 0 || model.terms.size === 0) return 0
+  const counts = new Map<K, number>()
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
     if (model.terms.has(token)) counts.set(token, (counts.get(token) ?? 0) + 1)
   }
   if (counts.size === 0) return 0
@@ -101,6 +113,12 @@ export function bm25Score(model: Bm25Model, content: string): number {
     score += (queryFrequency * (model.idf.get(term) ?? 0) * frequency * (K1 + 1)) / denominator
   }
   return score
+}
+
+/** BM25 score for one document. Higher is better; zero means no query term matched. */
+export function bm25Score(model: Bm25Model, content: string): number {
+  if (model.documents === 0) return 0
+  return bm25ScoreSequence(model, tokenize(content))
 }
 
 /** Lower-case, punctuation-light text used for exact phrase checks. */

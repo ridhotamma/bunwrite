@@ -289,6 +289,12 @@ configured per project in **Console → Settings → Request logs**. The values 
 stored in that project's database and apply without a restart. There are no
 `LOG_*` environment variables.
 
+Until a project saves its own value, successful requests are sampled at 100%
+on a single process and 10% when `WORKERS` runs more than one process. Errors
+(status 400 and above) are always recorded. Every logged request costs a log
+line and a database row; on one core, logging every request cut document-read
+throughput by about a fifth.
+
 `TRUSTED_PROXIES` is server configuration for resolving client addresses:
 
 | Variable | Default | Meaning |
@@ -440,6 +446,7 @@ Explicit values always win.
 | `SQLITE_WAL_AUTOCHECKPOINT` | `10000` | WAL pages before an automatic checkpoint; `0` turns automatic checkpoints off. A larger WAL means fewer synchronous checkpoints on the writer. |
 | `SQLITE_BUSY_TIMEOUT_MS` | `5000` | How long the writer waits for SQLite's lock before failing. |
 | `SQLITE_READER_BUSY_TIMEOUT_MS` | `500` | How long a public worker waits for a lock before failing fast. Keep this short: a synchronous wait blocks that process's event loop. |
+| `VECTOR_SEARCH_CACHE_MB` | `128` | Parsed vector points each process keeps in memory for the built-in vector search, so a query does not re-read and re-parse the collection. A collection that does not fit uses the streaming scan. `0` turns the cache off. |
 | `MAX_REQUEST_BODY_MB` | auto, 16–256 | Largest accepted HTTP request body. |
 | `BUN_JSC_forceRAMSize` | unset | JS heap size in bytes. Startup-only; the Docker entrypoint and systemd wrapper set it. |
 | `MALLOC_ARENA_MAX` | unset | glibc malloc arena count. Startup-only; set by the deployment wrapper. |

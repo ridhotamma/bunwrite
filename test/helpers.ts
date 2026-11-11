@@ -139,6 +139,7 @@ export function testConfig(over: Partial<Config> = {}): Config {
     functionsDir: process.cwd(),
     functionsBuildCommands: true,
     functionsConcurrency: 4,
+    vectorSearchCacheMb: 128,
     functionMaxAttempts: 1,
     consoleEnabled: true,
     schemaSyncOnStart: false,

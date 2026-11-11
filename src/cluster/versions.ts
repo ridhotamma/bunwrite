@@ -12,6 +12,9 @@ export type VersionChanges = Record<VersionKey, boolean>
 
 /** The `_meta` key a collection's document triggers bump on every write. */
 export const collectionVersionKey = (databaseId: string, collectionId: string): string => `collection:${databaseId}/${collectionId}`
+/** Bumped by triggers on every write to one vector collection's points; search caches key off it. */
+export const VECTOR_VERSION_PREFIX = 'vectors:'
+export const vectorVersionKey = (collectionId: string): string => `${VECTOR_VERSION_PREFIX}${collectionId}`
 
 const NO_CHANGES: VersionChanges = {
   schema: false,

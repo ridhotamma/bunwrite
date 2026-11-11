@@ -22,37 +22,71 @@ const DEFAULT_SIZE = 1000
 const DEFAULT_OVERLAP = 200
 const MAX_SIZE = 8000
 
+/** A word, or a piece of one that was too long; `glued` pieces join without a space. */
+interface Token {
+  text: string
+  glued: boolean
+}
+
+/**
+ * Words, with any word longer than the window cut into pieces. Text with no
+ * spaces (Chinese, Japanese, Thai) or a long URL, hash or minified line would
+ * otherwise become one chunk of any size. Pieces are cut by code point, so a
+ * surrogate pair is never split, and a quarter window keeps overlap possible.
+ */
+function tokensOf(text: string, size: number): Token[] {
+  const piece = Math.max(16, Math.floor(size / 4))
+  const tokens: Token[] = []
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue
+    if (word.length <= size) {
+      tokens.push({ text: word, glued: false })
+      continue
+    }
+    const points = Array.from(word)
+    for (let i = 0; i < points.length; i += piece) tokens.push({ text: points.slice(i, i + piece).join(''), glued: i > 0 })
+  }
+  return tokens
+}
+
+function joinTokens(tokens: Token[]): string {
+  let text = ''
+  for (let i = 0; i < tokens.length; i++) text += (i > 0 && !tokens[i]!.glued ? ' ' : '') + tokens[i]!.text
+  return text
+}
+
 export function chunkText(text: string, options: Partial<ChunkOptions> = {}): Chunk[] {
   const size = Math.max(64, Math.min(MAX_SIZE, Math.round(options.size ?? DEFAULT_SIZE)))
   const overlap = Math.max(0, Math.min(Math.floor(size / 2), Math.round(options.overlap ?? Math.min(DEFAULT_OVERLAP, Math.floor(size / 4)))))
   const normalized = text.replace(/\r\n?/g, '\n').trim()
   if (!normalized) return []
 
-  const words = normalized.split(/\s+/)
+  const words = tokensOf(normalized, size)
+  const gap = (index: number, length: number) => (length > 0 && !words[index]!.glued ? 1 : 0)
   const chunks: Chunk[] = []
   let start = 0
   while (start < words.length) {
     let end = start
     let length = 0
     while (end < words.length) {
-      const next = words[end]!.length + (length > 0 ? 1 : 0)
+      const next = words[end]!.text.length + gap(end, length)
       if (length > 0 && length + next > size) break
       length += next
       end++
     }
-    // A single word longer than the window still has to make progress.
+    // Every token fits the window, but keep the loop safe against a zero step.
     if (end === start) end = start + 1
-    chunks.push({ text: words.slice(start, end).join(' '), index: chunks.length })
+    chunks.push({ text: joinTokens(words.slice(start, end)), index: chunks.length })
 
     if (end >= words.length) break
-    // Step back by whole words until the tail is within the overlap budget.
+    // Step back by whole tokens until the tail is within the overlap budget.
     let next = end
     let tail = 0
     while (next > start && tail < overlap) {
       next--
-      tail += (tail > 0 ? 1 : 0) + words[next]!.length
+      tail += (tail > 0 ? 1 : 0) + words[next]!.text.length
     }
-    // Always move forward, even when one word is larger than the overlap.
+    // Always move forward, even when one token is larger than the overlap.
     start = next > start ? next : end
   }
   return chunks

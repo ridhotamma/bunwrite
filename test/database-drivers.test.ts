@@ -29,6 +29,8 @@ import { AccessService } from '~/settings/access'
 import { Registry } from '~/schema/registry'
 import { VersionMonitor } from '~/cluster/versions'
 import { DocumentStore } from '~/documents/store'
+import { VectorService } from '~/vectors/service'
+import { defaultVectorsConfig } from '~/vectors/config'
 import { TransactionService } from '~/transactions/service'
 import { normalizeAttribute, normalizeIndex, permsTableName, tableName, type Collection } from '~/schema/types'
 import { compileQueries } from '~/documents/query'
@@ -694,6 +696,28 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     expect(apps.stored()).toBe(true)
     expect(await apps.remove()).toBe(true)
     expect(apps.get()).toBeNull()
+  })
+
+  test('a vector write on one connection refreshes the search cache on another', async () => {
+    const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const peer: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
+    const config = { ...defaultVectorsConfig(), dimension: 64 }
+    const reader = new VectorService(handle, config)
+    const writer = new VectorService(peer, config)
+    try {
+      await reader.createCollection({ id: 'pg-cache' })
+      await reader.upsertPoints('pg-cache', [{ id: 'one', content: 'apples and pears' }])
+      expect((await reader.search('pg-cache', { text: 'bananas', topK: 5 })).points.map((p) => p.$id)).toEqual(['one'])
+      // The trigger bumps vectors:<collection> for a write from any connection.
+      await writer.upsertPoints('pg-cache', [{ id: 'two', content: 'bananas and mangoes' }])
+      expect((await driver.get<{ value: number }>(`SELECT value FROM _meta WHERE key = 'vectors:pg-cache'`))?.value).toBeGreaterThanOrEqual(2)
+      expect((await reader.search('pg-cache', { text: 'bananas', topK: 1 })).points[0]?.$id).toBe('two')
+      await writer.deletePoint('pg-cache', 'two')
+      expect((await reader.search('pg-cache', { text: 'bananas', topK: 5 })).points.map((p) => p.$id)).toEqual(['one'])
+    } finally {
+      await other.close?.()
+    }
   })
 
   test('realtime events fan out through Postgres LISTEN/NOTIFY', async () => {

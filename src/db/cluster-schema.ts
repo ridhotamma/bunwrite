@@ -10,7 +10,7 @@
  */
 import type { Database } from 'bun:sqlite'
 
-import { collectionVersionKey } from '~/cluster/versions'
+import { collectionVersionKey, VECTOR_VERSION_PREFIX } from '~/cluster/versions'
 import { tableName } from '~/schema/types'
 
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`
@@ -104,6 +104,21 @@ const TRIGGERS = VERSIONED.flatMap(([version, table]) =>
 )
 
 /**
+ * A version row per vector collection (`vectors:<id>`), so a search cache in
+ * any process notices a point written by another. The key comes from the row,
+ * so one set of triggers covers every collection.
+ */
+const VECTOR_TRIGGERS = (['INSERT', 'UPDATE', 'DELETE'] as const).map((event) => {
+  const row = event === 'DELETE' ? 'OLD' : 'NEW'
+  return `CREATE TRIGGER IF NOT EXISTS \`_meta__vector_points_${event.toLowerCase()}\`
+      AFTER ${event} ON \`_vector_points\`
+      BEGIN
+        INSERT INTO \`_meta\` (\`key\`, \`value\`) VALUES (${literal(VECTOR_VERSION_PREFIX)} || ${row}.\`collection_id\`, 1)
+        ON CONFLICT(\`key\`) DO UPDATE SET \`value\` = \`value\` + 1;
+      END`
+})
+
+/**
  * A version row per collection, bumped by the document table's own triggers.
  * List caches and ETags key off it, so every worker sees a write immediately
  * without putting document writes through `_collections` (which would reload
@@ -157,7 +172,7 @@ function ensureDocumentRevisions(sqlite: Database): void {
 export function ensureClusterSchema(sqlite: Database): void {
   sqlite
     .transaction(() => {
-      for (const statement of [...TABLES, ...TRIGGERS]) sqlite.run(statement)
+      for (const statement of [...TABLES, ...TRIGGERS, ...VECTOR_TRIGGERS]) sqlite.run(statement)
       ensureCollectionVersionTriggers(sqlite)
       ensureDocumentRevisions(sqlite)
     })

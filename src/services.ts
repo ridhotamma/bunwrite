@@ -141,7 +141,7 @@ export function createServices(config: Config, db: SqlDatabase, overrides: Parti
   const observability = createObservability(observabilitySettings.config, { projectId: config.projectId })
   const backups = new BackupService(config, db.capabilities.localFile)
   const queue = new QueueService(db)
-  const vectors = new VectorService(db, config.vectors, () => loadSharp(config))
+  const vectors = new VectorService(db, config.vectors, () => loadSharp(config), { searchCacheBytes: config.vectorSearchCacheMb * 1024 * 1024 })
   vectors.startJobs()
   // Async renders are jobs in the queue, saved to storage when done.
   const render = new RenderService(config, { queue, storage })

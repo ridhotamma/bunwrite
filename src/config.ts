@@ -335,6 +335,8 @@ export interface Config {
   functionsBuildCommands: boolean
   /** Function runs allowed at once (FUNCTIONS_CONCURRENCY); async and scheduled runs wait their turn. */
   functionsConcurrency: number
+  /** Parsed vector points each process keeps for the built-in search, in MB; 0 turns the cache off. */
+  vectorSearchCacheMb: number
   /** Attempts a failed asynchronous function run gets (FUNCTIONS_MAX_ATTEMPTS); default 1, no retry. */
   functionMaxAttempts: number
   /** Each function builds and runs as its own user (functions/sandbox.ts); null when off. */
@@ -460,6 +462,22 @@ function databaseConfig(
  * (ORG_ID, PROJECT_ID, SECRET) is seeded once by `bootstrapInstance`, and
  * `index.ts` fills those fields before services are created.
  */
+/**
+ * Share of successful requests logged until a project saves its own value.
+ * Each worker writes its log rows into the project database, so several
+ * workers keep 10% by default; errors are always kept.
+ */
+/** A number of at least zero, or the fallback when unset or invalid. */
+function nonNegative(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+export function defaultLogSampleRate(workers: number): number {
+  return workers > 1 ? 0.1 : 1
+}
+
 export function configFromEnv(env: Record<string, string | undefined> = process.env): Config {
   const port = Number(env.PORT ?? 8080)
   const cluster = clusterConfig(env)
@@ -532,6 +550,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     functionsDir: resolve(env.FUNCTIONS_DIR || (env.SCHEMA_PATH ? dirname(resolve(env.SCHEMA_PATH)) : '.')),
     functionsBuildCommands: env.FUNCTIONS_BUILD_COMMANDS !== 'false',
     functionsConcurrency: Math.max(1, Number(env.FUNCTIONS_CONCURRENCY) || 4),
+    vectorSearchCacheMb: nonNegative(env.VECTOR_SEARCH_CACHE_MB, 128),
     functionMaxAttempts: Math.max(1, Number(env.FUNCTIONS_MAX_ATTEMPTS) || 1),
     sitesDomain,
     functionsDomain,
@@ -551,7 +570,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     consoleEnabled: env.CONSOLE_ENABLED !== 'false',
     schemaSyncOnStart: env.SCHEMA_SYNC_ON_START === 'true',
     logRequests: true,
-    logSampleRate: 1,
+    logSampleRate: defaultLogSampleRate(cluster.workers),
     logFormat: 'text',
     logRetentionDays: 7,
     logIp: true,
