@@ -70,6 +70,14 @@ function and WebSocket traffic does not use this path.
   nothing is appended while realtime is unused. On Postgres, the same hub uses
   `LISTEN`/`NOTIFY` on a per-project channel; large batches are split to fit the
   8 kB payload limit.
+  A worker that falls behind reads the backlog in pages until it catches up,
+  and a notification that arrives during a read is not dropped.
+- **Realtime re-authorization** — a socket keeps the credentials it connected
+  with. When `_meta.auth` or `_meta.keys` changes (a session, user, membership,
+  team or API key changed), and at least once a minute, each signed-in socket
+  is resolved again; if its identity or roles changed, or its session, JWT or
+  key no longer works, it is closed with code `1008` and the SDK reconnects
+  with its current permissions.
 - **Cache versions** — triggers on `_settings`, `_databases`, `_collections`,
   `_sites`, `_proxy_rules`, `_projects`, `_sessions`/`_users`/`_memberships`/
   `_teams` and `_api_keys` bump counters in `_meta`. Each worker compares them

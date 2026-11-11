@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 
 import { keyCaller, sessionCaller } from '~/auth/caller'
+import { RealtimeBus } from '~/realtime/bus'
 import { RealtimeHub } from '~/realtime/hub'
 import { addMembership, adminClient, DB, KEY, makeUser, PROJECT, startServer, type TestServer } from './helpers'
 
@@ -11,6 +12,8 @@ interface RtMessage {
 
 interface RtSocket {
   messages: RtMessage[]
+  /** Set when the server closes the socket. */
+  closeCode?: number
   send(message: unknown): void
   waitFor(check: (message: RtMessage) => unknown, timeoutMs?: number): Promise<RtMessage>
   close(): void
@@ -48,6 +51,9 @@ function openSocket(server: TestServer, headers: Record<string, string> = { 'X-A
         }, 10)
       }),
     close: () => ws.close(),
+  }
+  ws.onclose = (event) => {
+    socket.closeCode = event.code
   }
   return new Promise<RtSocket>((resolve, reject) => {
     ws.onopen = () => resolve(socket)
@@ -461,6 +467,23 @@ describe('Realtime', () => {
       expect(error.data).toMatchObject({ code: 1008 })
     } finally {
       socket.close()
+    }
+  })
+
+  test('a burst on the bus is drained in one poll, not 200 rows per tick', async () => {
+    const received: unknown[] = []
+    const sender = new RealtimeBus(server.db, 'bus-burst', 100, () => {})
+    const listener = new RealtimeBus(server.db, 'bus-burst', 100, (events) => received.push(...events))
+    try {
+      listener.setSockets(1)
+      for (let i = 0; i < 1000; i++) {
+        sender.send([{ kind: 'console', topic: `burst:${i}`, data: {} }])
+      }
+      await Bun.sleep(350)
+      expect(received).toHaveLength(1000)
+    } finally {
+      sender.stop()
+      listener.stop()
     }
   })
 
@@ -989,3 +1012,73 @@ describe('Realtime', () => {
     120_000,
   )
 })
+
+describe('realtime re-authorization', () => {
+  let server: TestServer
+  beforeAll(() => {
+    server = startServer()
+  })
+  afterAll(() => server.stop())
+  const channel = 'databases.main.collections.products.documents'
+  const create = (id: string, permissions: string[]) =>
+    fetch(`${server.endpoint}/databases/main/collections/products/documents`, {
+      method: 'POST',
+      headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ documentId: id, data: { tenantId: 't', name: id, price: 1 }, permissions }),
+    })
+  const eventsFor = (socket: RtSocket, id: string) => socket.messages.filter((m) => m.type === 'event' && m.data?.payload?.$id === id).length
+
+  test('a revoked session is disconnected and stops receiving private events', async () => {
+    const alice = makeUser(server.db)
+    const socket = await openSocket(server, { 'X-Appwrite-Session': alice.secret })
+    await subscribe(socket, [channel])
+    await create('reauth-a1', [`read("user:${alice.id}")`])
+    await socket.waitFor((m) => (m.type === 'event' && m.data?.payload?.$id === 'reauth-a1' ? m : undefined))
+
+    server.db.sqlite.query('DELETE FROM _sessions WHERE user_id = ?').run(alice.id)
+    expect(await server.services.realtime.revalidate()).toBeGreaterThanOrEqual(1)
+    await Bun.sleep(100)
+    expect(socket.closeCode).toBe(1008)
+    await create('reauth-a2', [`read("user:${alice.id}")`])
+    await Bun.sleep(150)
+    expect(eventsFor(socket, 'reauth-a2')).toBe(0)
+  })
+
+  test('a user removed from a team is disconnected', async () => {
+    const bob = makeUser(server.db)
+    addMembership(server.db, 'team-reauth', bob.id)
+    const socket = await openSocket(server, { 'X-Appwrite-Session': bob.secret })
+    await subscribe(socket, [channel])
+    server.db.sqlite.query('DELETE FROM _memberships WHERE user_id = ?').run(bob.id)
+    await server.services.realtime.revalidate()
+    await Bun.sleep(100)
+    expect(socket.closeCode).toBe(1008)
+    await create('reauth-b1', ['read("team:team-reauth")'])
+    await Bun.sleep(150)
+    expect(eventsFor(socket, 'reauth-b1')).toBe(0)
+  })
+
+  test('sockets whose access did not change stay open', async () => {
+    const carol = makeUser(server.db)
+    const dave = makeUser(server.db)
+    const kept = await openSocket(server, { 'X-Appwrite-Session': carol.secret })
+    await subscribe(kept, [channel])
+    // Another user's change bumps the shared auth counter too.
+    server.db.sqlite.query('DELETE FROM _sessions WHERE user_id = ?').run(dave.id)
+    await server.services.realtime.revalidate()
+    await create('reauth-c1', [`read("user:${carol.id}")`])
+    await kept.waitFor((m) => (m.type === 'event' && m.data?.payload?.$id === 'reauth-c1' ? m : undefined))
+    expect(kept.closeCode).toBeUndefined()
+    kept.close()
+  })
+
+  test('the hub notices an auth change on its own', async () => {
+    const erin = makeUser(server.db)
+    const socket = await openSocket(server, { 'X-Appwrite-Session': erin.secret })
+    await subscribe(socket, [channel])
+    server.db.sqlite.query('DELETE FROM _sessions WHERE user_id = ?').run(erin.id)
+    for (let i = 0; i < 60 && socket.closeCode === undefined; i++) await Bun.sleep(100)
+    expect(socket.closeCode).toBe(1008)
+  })
+})
+

@@ -720,6 +720,27 @@ describe.skipIf(!postgresUrl)('postgres driver (integration)', () => {
     }
   })
 
+  test('a Postgres bus burst is fully delivered', async () => {
+    const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
+    const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }
+    const peer: SqlDatabase = { driver: other.sql as PostgresDriver, dialect: 'postgres', capabilities: other.capabilities }
+    const received: unknown[] = []
+    const sender = new RealtimeBus(handle, 'pg-burst', 20, () => {})
+    const listener = new RealtimeBus(peer, 'pg-burst', 20, (events) => received.push(...events))
+    try {
+      listener.setSockets(1)
+      await Bun.sleep(250)
+      // Notifications that land while a read is running must not be dropped.
+      await Promise.all(Array.from({ length: 600 }, (_, i) => (sender as any).publishPostgres([{ kind: 'console', topic: `burst:${i}`, data: {} }])))
+      for (let i = 0; i < 40 && received.length < 600; i++) await Bun.sleep(50)
+      expect(received).toHaveLength(600)
+    } finally {
+      sender.stop()
+      listener.stop()
+      await other.close()
+    }
+  })
+
   test('realtime events fan out through Postgres LISTEN/NOTIFY', async () => {
     const other = await openDatabase({ backend: 'postgres', url: postgresUrl!, namespace, bootstrap: false })
     const handle: SqlDatabase = { driver, dialect: 'postgres', capabilities: driver.capabilities }

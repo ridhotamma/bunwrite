@@ -18,7 +18,7 @@
  */
 import type { ServerWebSocket } from 'bun'
 
-import { callerHasScope, sessionCaller, type Caller } from '~/auth/caller'
+import { callerHasScope, guestCaller, sessionCaller, type Caller } from '~/auth/caller'
 import { accountModel, type UserRowFull } from '~/auth/models'
 import { formatPermission, grants, parsePermission } from '~/auth/permissions'
 import type { SqlDatabase } from '~/db/driver'
@@ -42,6 +42,12 @@ export interface SocketData {
   caller: Caller
   subscriptions: Map<string, string[]>
   projectId: string
+  /**
+   * Resolves the caller again from the credentials the socket connected with.
+   * Without it the socket keeps its first caller, which is fine for guests and
+   * test harnesses.
+   */
+  reauth?: () => Promise<Caller>
 }
 
 export type Socket = ServerWebSocket<SocketData>
@@ -104,6 +110,12 @@ interface SocketState {
 
 /** Broadcast work budget per event-loop turn, and the safety valve if consumers fall behind. */
 const DRAIN_BUDGET_MS = 8
+/** How often a hub with signed-in sockets checks whether sessions, users, teams or keys changed. */
+const AUTH_CHECK_MS = 2_000
+/** Re-check every signed-in socket at least this often, so an expired session or JWT stops receiving. */
+const AUTH_SWEEP_MS = 60_000
+/** Close code for a socket whose session ended or whose permissions changed; clients reconnect. */
+const AUTH_CHANGED_CLOSE = 1008
 const MAX_QUEUED_EVENTS = 10_000
 
 const send = (ws: Socket, type: string, data: unknown) => ws.send(JSON.stringify({ type, data }))
@@ -138,6 +150,17 @@ function channelsOf(e: DocEvent): string[] {
     `databases.${db}.tables.${coll}.rows`,
     `databases.${db}.tables.${coll}.rows.${doc}`,
   ]
+}
+
+/** Same identity and the same grants: the socket may keep its subscriptions. */
+function sameAccess(before: Caller, after: Caller): boolean {
+  if (before.kind !== after.kind || before.privileged !== after.privileged) return false
+  if ((before.user?.id ?? null) !== (after.user?.id ?? null)) return false
+  if (before.roles.size !== after.roles.size || [...before.roles].some((role) => !after.roles.has(role))) return false
+  const a = before.scopes
+  const b = after.scopes
+  if (a === null || b === null) return a === b
+  return a.size === b.size && [...a].every((scope) => b.has(scope))
 }
 
 function canRead(caller: Caller, e: DocEvent): boolean {
@@ -276,6 +299,12 @@ export class RealtimeHub {
   private drainScheduled = false
   private stopped = false
   private droppedEvents = 0
+  private authTimer: ReturnType<typeof setInterval> | null = null
+  private authVersion = ''
+  private lastAuthSweep = 0
+  private reauthing = false
+  /** Brings this process's caches up to date before sockets are re-checked; set by the app. */
+  prepareReauth: (() => Promise<void>) | null = null
   /** Open console event streams in this process; they keep the bus listening like sockets do. */
   private consoleListeners = 0
   /** Receives console events published by other processes. */
@@ -315,6 +344,7 @@ export class RealtimeHub {
       lastPresenceTouch: 0,
     })
     this.startPresenceTimer()
+    this.startAuthTimer()
     this.syncBus()
     send(ws, 'connected', { channels: [], user: userOf(ws.data.caller) })
   }
@@ -328,7 +358,10 @@ export class RealtimeHub {
       meta.closed = true
       void this.removePresence(meta)
     }
-    if (this.sockets.size === 0) this.stopPresenceTimer()
+    if (this.sockets.size === 0) {
+      this.stopPresenceTimer()
+      this.stopAuthTimer()
+    }
     this.syncBus()
   }
 
@@ -368,6 +401,9 @@ export class RealtimeHub {
         // presence alive under the new identity.
         const previous = ws.data.caller.user?.id
         ws.data.caller = caller
+        // From now on the socket is re-checked against this session, not its handshake credentials.
+        ws.data.reauth = async () => (await sessionCaller(this.db, secret as string)) ?? guestCaller()
+        this.startAuthTimer()
         if (previous && previous !== caller.user?.id) void this.clearPresence(ws)
         send(ws, 'response', { to: 'authentication', success: true, user: userOf(ws.data.caller) })
         return
@@ -695,6 +731,7 @@ export class RealtimeHub {
   /** Stop timers and release every socket reference; called when a project runtime closes. */
   stop(): void {
     this.stopped = true
+    this.stopAuthTimer()
     this.bus?.stop()
     for (const ws of this.sockets) {
       const meta = this.socketStates.get(ws)
@@ -1239,6 +1276,75 @@ export class RealtimeHub {
     const event: PresenceEvent = { action, presence }
     this.busQueue.push({ kind: 'presence', ...event })
     this.enqueuePresence(event)
+  }
+
+  private startAuthTimer(): void {
+    if (this.authTimer || this.stopped) return
+    this.lastAuthSweep = Date.now()
+    this.authTimer = setInterval(() => void this.checkAuth(), AUTH_CHECK_MS)
+    this.authTimer.unref?.()
+  }
+
+  private stopAuthTimer(): void {
+    if (!this.authTimer) return
+    clearInterval(this.authTimer)
+    this.authTimer = null
+  }
+
+  /**
+   * Sessions, users, memberships, teams and API keys bump `_meta` counters
+   * from any process. When they move, or once a minute for expiry, re-check
+   * every socket that is not a guest.
+   */
+  private async checkAuth(): Promise<void> {
+    if (this.reauthing || this.stopped) return
+    let version: string
+    try {
+      const rows = await this.db.driver.all<{ key: string; value: number }>("SELECT key, value FROM _meta WHERE key IN ('auth', 'keys') ORDER BY key")
+      version = rows.map((row) => `${row.key}:${row.value}`).join(',')
+    } catch {
+      return
+    }
+    const changed = version !== this.authVersion
+    this.authVersion = version
+    if (!changed && Date.now() - this.lastAuthSweep < AUTH_SWEEP_MS) return
+    this.lastAuthSweep = Date.now()
+    await this.revalidate()
+  }
+
+  /** Re-resolve each signed-in socket; close the ones whose identity or roles changed. */
+  async revalidate(): Promise<number> {
+    if (this.reauthing) return 0
+    this.reauthing = true
+    let closed = 0
+    try {
+      const sockets = [...this.sockets].filter((ws) => ws.data.reauth && ws.data.caller.kind !== 'guest')
+      if (sockets.length === 0) return 0
+      await this.prepareReauth?.().catch(() => undefined)
+      for (const ws of sockets) {
+        if (!this.sockets.has(ws)) continue
+        let next: Caller | null
+        try {
+          next = await ws.data.reauth!()
+        } catch {
+          // An invalid key, JWT or blocked user: the credentials no longer work.
+          next = null
+        }
+        if (next && sameAccess(ws.data.caller, next)) {
+          ws.data.caller = next
+          continue
+        }
+        closed++
+        try {
+          ws.close(AUTH_CHANGED_CLOSE, 'Your session or permissions changed. Reconnect to continue.')
+        } catch {
+          /* already closing */
+        }
+      }
+      return closed
+    } finally {
+      this.reauthing = false
+    }
   }
 
   private startPresenceTimer(): void {

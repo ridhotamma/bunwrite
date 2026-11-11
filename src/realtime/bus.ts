@@ -25,6 +25,12 @@ const PRESENCE_STALE_MS = 60_000
 const EVENT_RETENTION_MS = 5 * 60_000
 const PRUNE_INTERVAL_MS = 60_000
 const POLL_BATCH = 200
+/**
+ * Pages read per poll while behind. A burst larger than one page is drained
+ * now instead of 200 rows per tick, which could fall further behind than the
+ * event retention and lose rows.
+ */
+const MAX_POLL_PAGES = 50
 
 /**
  * Old workers only published document events and had no `kind` field. Accept
@@ -66,6 +72,17 @@ function normalizeBusEvent(event: unknown): BusEvent | null {
   return null
 }
 
+/** One `_realtime_events` row: a JSON array of events. A truncated row yields nothing. */
+function parseEvents(payload: string): BusEvent[] {
+  try {
+    const parsed = JSON.parse(payload) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.map(normalizeBusEvent).filter((event): event is BusEvent => event !== null)
+  } catch {
+    return []
+  }
+}
+
 export class RealtimeBus {
   private readonly id = crypto.randomUUID()
   private readonly startedAt = now()
@@ -80,6 +97,8 @@ export class RealtimeBus {
   private listening: Promise<void> | null = null
   private unsubscribe: (() => Promise<void>) | null = null
   private polling = false
+  /** A notification arrived while a Postgres read was running; read again when it ends. */
+  private notified = false
 
   constructor(
     private db: SqlDatabase,
@@ -234,25 +253,28 @@ export class RealtimeBus {
   }
 
   private async pollPostgres(): Promise<void> {
-    if (this.polling || this.stopped) return
+    if (this.stopped) return
+    if (this.polling) {
+      // Do not drop it: the running read may have started before this row.
+      this.notified = true
+      return
+    }
     this.polling = true
     try {
-      const rows = await this.db.driver.all<{ seq: number; payload: string }>(
-        'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
-        [this.lastSeq, this.id, POLL_BATCH],
-      )
-      if (rows.length === 0) return
-      this.lastSeq = rows[rows.length - 1]!.seq
-      const events = rows.flatMap((row) => {
-        try {
-          const parsed = JSON.parse(row.payload) as unknown
-          if (!Array.isArray(parsed)) return []
-          return parsed.map(normalizeBusEvent).filter((event): event is BusEvent => event !== null)
-        } catch {
-          return []
+      do {
+        this.notified = false
+        for (let page = 0; page < MAX_POLL_PAGES && !this.stopped; page++) {
+          const rows = await this.db.driver.all<{ seq: number; payload: string }>(
+            'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
+            [this.lastSeq, this.id, POLL_BATCH],
+          )
+          if (rows.length === 0) break
+          this.lastSeq = rows[rows.length - 1]!.seq
+          const events = rows.flatMap((row) => parseEvents(row.payload))
+          if (events.length) this.onEvents(events)
+          if (rows.length < POLL_BATCH) break
         }
-      })
-      if (events.length) this.onEvents(events)
+      } while (this.notified && !this.stopped)
     } catch (error) {
       console.error('[realtime] could not read the Postgres notification:', error)
     } finally {
@@ -294,34 +316,24 @@ export class RealtimeBus {
     if (stamp - this.lastHeartbeat >= PRESENCE_HEARTBEAT_MS) this.presence()
     if (stamp - this.lastPrune >= PRUNE_INTERVAL_MS) this.prune()
 
-    let rows: { seq: number; payload: string }[]
-    try {
-      rows = this.sqlite
-        .query<{ seq: number; payload: string }, [number, string, number]>(
-          'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
-        )
-        .all(this.lastSeq, this.id, POLL_BATCH)
-    } catch (error) {
-      console.error('[realtime] could not read events from the other processes:', error)
-      return
-    }
-    if (rows.length === 0) return
-    this.lastSeq = rows[rows.length - 1]!.seq
-
-    const events: BusEvent[] = []
-    for (const row of rows) {
+    for (let page = 0; page < MAX_POLL_PAGES; page++) {
+      let rows: { seq: number; payload: string }[]
       try {
-        const parsed = JSON.parse(row.payload) as unknown
-        if (!Array.isArray(parsed)) continue
-        for (const event of parsed) {
-          const normalized = normalizeBusEvent(event)
-          if (normalized) events.push(normalized)
-        }
-      } catch {
-        /* a truncated row; skip it */
+        rows = this.sqlite
+          .query<{ seq: number; payload: string }, [number, string, number]>(
+            'SELECT seq, payload FROM _realtime_events WHERE seq > ? AND origin != ? ORDER BY seq LIMIT ?',
+          )
+          .all(this.lastSeq, this.id, POLL_BATCH)
+      } catch (error) {
+        console.error('[realtime] could not read events from the other processes:', error)
+        return
       }
+      if (rows.length === 0) return
+      this.lastSeq = rows[rows.length - 1]!.seq
+      const events = rows.flatMap((row) => parseEvents(row.payload))
+      if (events.length) this.onEvents(events)
+      if (rows.length < POLL_BATCH) return
     }
-    if (events.length) this.onEvents(events)
   }
 
   private stopPolling(): void {

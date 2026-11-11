@@ -375,7 +375,12 @@ export function createApp(source: Services | ProjectResolver) {
       }
       const caller = await callerOf(services, request, meta)
       if (!caller.privileged) services.access.assertProtocol('websocket')
-      if (server?.upgrade(request, { data: { caller, subscriptions: new Map(), projectId: runtime.info.id } })) return undefined
+      // Keep only what identifies the caller, so the hub can re-check it when
+      // sessions, memberships or keys change (or a session or JWT expires).
+      const credentials = new Request(request.url, { headers: request.headers })
+      const reauth = () => callerOf(services, credentials, {} as RequestMeta)
+      services.realtime.prepareReauth ??= () => syncServices(services)
+      if (server?.upgrade(request, { data: { caller, subscriptions: new Map(), projectId: runtime.info.id, reauth } })) return undefined
       throw err('general_argument_invalid', 'Realtime needs a WebSocket upgrade.')
     }
 
