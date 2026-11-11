@@ -121,6 +121,16 @@ export function createApp(source: Services | ProjectResolver) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const control = projects.control
   const trustedProxies = parseTrustedProxies(control.config.trustedProxies)
+  /**
+   * Requests still arrive with no project at all, for example when the last
+   * project has been deleted. Those requests (health checks, unknown paths)
+   * run against the control services instead of failing with project_not_found.
+   */
+  const noProjectRuntime = (): ProjectRuntime => ({
+    info: { id: '', name: control.config.projectName, orgId: control.config.orgId, createdAt: '', updatedAt: '' },
+    services: control,
+  })
+  const defaultRuntime = (): ProjectRuntime => (projects.list().length ? projects.defaultProject() : noProjectRuntime())
   const hub = new VcsHub(projects)
   // Observability is per project: each runtime owns its exporters, sampling,
   // feature flags and local telemetry limits. Console pages and requests use
@@ -315,20 +325,20 @@ export function createApp(source: Services | ProjectResolver) {
           if (runtime.services.config.allowedOrigins.includes('*')) return runtime
         }
       }
-      return projects.defaultProject()
+      return defaultRuntime()
     }
     if (pathname === '/health' || pathname.startsWith('/health/')) {
       // Health answers without a project; when one is named, its key is the one
       // to validate, so `GET /health` can prove a second project's credentials.
       // The Appwrite CLI sends its pseudo-project `console` while probing.
       const projectId = projectOf(request, url)
-      if (!projectId || projectId === CONSOLE_PROJECT) return projects.defaultProject()
+      if (!projectId || projectId === CONSOLE_PROJECT) return defaultRuntime()
       const project = projects.get(projectId)
       if (!project) throw err('project_not_found')
       return project
     }
     // `appwrite push functions` reads this as the "console" project.
-    if (pathname === '/console/variables') return projects.defaultProject()
+    if (pathname === '/console/variables') return defaultRuntime()
 
     // OAuth callbacks carry the project ID in the path.
     const oauth = /^\/account\/sessions\/oauth2\/callback\/[^/]+\/([^/]+)$/.exec(pathname)
@@ -342,7 +352,7 @@ export function createApp(source: Services | ProjectResolver) {
     if (!projectId) {
       // Let unknown paths fall through to the HTML 404 page; known API routes
       // still need a project header.
-      if (!router.match(request.method, pathname)) return projects.defaultProject()
+      if (!router.match(request.method, pathname)) return defaultRuntime()
       throw err('project_not_found')
     }
     const project = projects.get(projectId)
@@ -549,9 +559,7 @@ export function createApp(source: Services | ProjectResolver) {
       startObservation(control)
       return control.config.consoleEnabled ? new Response(null, { status: 302, headers: { location: '/console' } }) : apiHomePage(control.config.projectName)
     }
-    let runtime: ProjectRuntime = projects.list().length
-      ? projects.defaultProject()
-      : { info: { id: '', name: control.config.projectName, orgId: control.config.orgId, createdAt: '', updatedAt: '' }, services: control }
+    let runtime: ProjectRuntime = defaultRuntime()
     let response: Response | undefined
     try {
       // The Appwrite CLI's console calls (login, organizations, projects).

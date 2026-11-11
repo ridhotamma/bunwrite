@@ -561,5 +561,16 @@ describe('multiple projects', () => {
     const empty = await (await fetch(`${base}/console`, { headers: { cookie } })).text()
     expect(empty).toContain('No projects yet')
     expect(empty).toContain('Create project')
+
+    // Container health checks must keep passing while the instance has no
+    // projects; otherwise Docker and Caddy mark a perfectly healthy server down.
+    const health = await fetch(`${endpoint}/health`)
+    expect(health.status).toBe(200)
+    expect(await health.json()).toMatchObject({ status: 'pass' })
+    expect((await fetch(`${endpoint}/health/version`)).status).toBe(200)
+    expect((await fetch(`${base}/v1/health`)).status).toBe(200)
+
+    // A stale project ID still reports the project as missing.
+    expect((await fetch(`${endpoint}/health`, { headers: { 'x-appwrite-project': PROJECT } })).status).toBe(404)
   })
 })
