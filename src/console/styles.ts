@@ -252,6 +252,10 @@ th.role-col,td.role-col{width:160px}th.date-col{width:140px}th.actions-col{width
 .toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
 .toolbar input{flex:1;margin:0}.toolbar select{flex:0 0 auto;min-width:150px}
 .bulk-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.list-toolbar{flex-wrap:wrap}
+.toolbar-search{display:flex;flex:1 1 260px;gap:8px;min-width:0;max-width:440px;margin:0}
+.toolbar-search input{flex:1;min-width:0;margin:0}
+.btn[aria-disabled=true]{opacity:.5;cursor:not-allowed;pointer-events:none;box-shadow:none}
 .bulk-actions .subdued{font-size:12.5px;white-space:nowrap}
 .pager{display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;border-top:1px solid var(--border)}
 

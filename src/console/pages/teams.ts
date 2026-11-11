@@ -2,10 +2,29 @@ import { keyCaller } from '~/auth/caller'
 import { membershipModel } from '~/auth/models'
 import type { ConsoleRouter } from '~/console/context'
 import { dialog } from '~/console/dialog'
-import { lines, parseJsonObject, value } from '~/console/forms'
+import { arrayOf, lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
-import { avatar, badge, destroy, emptyState, header, icon, listCard, pageFooter, pager, plural, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import {
+  avatar,
+  badge,
+  bulkRemove,
+  bulkSelectAll,
+  bulkSelectRow,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  listToolbar,
+  noMatches,
+  pageFooter,
+  pager,
+  plural,
+  settingsSection,
+  tabs,
+  when,
+} from '~/console/ui'
 
 const USERS = '/console/auth/users'
 const TEAMS = '/console/auth/teams'
@@ -45,11 +64,13 @@ export function teamPages(router: ConsoleRouter): void {
     const { total, teams } = await ctx.services.teams.list(keyCaller(), listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
     const create = html`<a class="btn primary" href="${TEAMS}/new">${icon('plus')}<span>Create team</span></a>`
+    const bulkId = 'bulk-teams'
     const body = teams.length
       ? html`<div class="scroll">
           <table>
             <thead>
               <tr>
+                <th class="select-col">${bulkSelectAll(bulkId)}</th>
                 <th>Team</th>
                 <th class="num">Members</th>
                 <th class="hide-sm">Created</th>
@@ -59,6 +80,7 @@ export function teamPages(router: ConsoleRouter): void {
               ${teams.map(
                 (t) =>
                   html`<tr class="row-link" onclick="location='${teamUrl(t.id)}'">
+                    <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, t.id, `Select ${t.name}`, false, `${teamUrl(t.id)}/settings`)}</td>
                     <td>
                       <a href="${teamUrl(t.id)}">${t.name}</a>
                       <div class="mono subdued cell-sub">${t.id}</div>
@@ -71,18 +93,28 @@ export function teamPages(router: ConsoleRouter): void {
           </table>
         </div>`
       : search
-        ? emptyState('No teams match', 'Try another name or ID.', html`<a class="btn" href="${TEAMS}">Clear search</a>`)
+        ? noMatches('teams', TEAMS)
         : emptyState('No teams yet', 'Teams group users and give them roles across your apps.', create)
     return ctx.render(
       'Teams',
       'teams',
       html`${header('Teams', { description: 'Groups of users that share access to documents and files.', actions: teams.length || search ? create : undefined })}
       ${listCard('teams', {
-        toolbar: searchForm({ action: TEAMS, target: 'teams', name: 'search', value: search, placeholder: 'Search teams' }),
+        toolbar: listToolbar({
+          search: { action: TEAMS, target: 'teams', name: 'search', value: search, placeholder: 'Search name or ID' },
+          bulk: { id: bulkId, action: `${TEAMS}/bulk-delete`, confirm: 'Delete the selected teams? Their memberships are removed too. This cannot be undone.' },
+        }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'team')}` }),
       })}`,
     )
+  })
+
+  // Before /:id, which would otherwise read "bulk-delete" as a team ID.
+  router.post(`${TEAMS}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.teams.delete(id))
+    if (!removed) return ctx.go(TEAMS, { tone: 'warning', text: 'No teams were deleted.' })
+    return ctx.go(TEAMS, { tone: 'success', text: `${plural(removed, 'team')} deleted` })
   })
 
   router.get(`${TEAMS}/new`, ({ ctx }) =>

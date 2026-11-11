@@ -10,7 +10,6 @@ import { arrayOf, checked, value, wholeNumber } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import {
   alert,
-  bulkDeleteForm,
   bulkSelectAll,
   bulkSelectRow,
   copyableId,
@@ -19,7 +18,10 @@ import {
   header,
   icon,
   listCard,
+  listToolbar,
+  matches,
   menu,
+  noMatches,
   plural,
   settingsSection,
   tabs,
@@ -307,20 +309,22 @@ export function sitePages(router: ConsoleRouter): void {
   router.get(SITES, async ({ ctx, url }) => {
     // Old links opened a dialog; creating now has its own page.
     if (url.searchParams.get('create') === '1') return ctx.go(`${SITES}/new`)
-    const sites = ctx.services.sites.list()
+    const search = url.searchParams.get('search') ?? ''
+    const all = ctx.services.sites.list()
+    const sites = all.filter((s) => matches(search, s.name, s.id, ...ctx.services.proxy.domainsFor('site', s.id)))
     const latests = new Map(await Promise.all(sites.map(async (s) => [s.id, await ctx.services.sites.latest(s.id)] as const)))
     const create = html`<a class="btn primary" href="${SITES}/new">${icon('plus')}<span>Create site</span></a>`
     const bulkId = 'bulk-sites'
     return ctx.render(
       'Sites',
       'sites',
-      html`${header('Sites', { description: 'Static and server-rendered web apps deployed from this project.', actions: sites.length ? create : undefined })}
+      html`${header('Sites', { description: 'Static and server-rendered web apps deployed from this project.', actions: all.length ? create : undefined })}
       ${listCard('sites', {
-        toolbar: sites.length
-          ? html`<div class="toolbar">
-              <span class="subdued">Select sites to delete</span
-              >${bulkDeleteForm({ id: bulkId, action: `${SITES}/bulk-delete`, confirm: 'Delete the selected sites? Their deployments and files are removed too. This cannot be undone.' })}
-            </div>`
+        toolbar: all.length
+          ? listToolbar({
+              search: { action: SITES, target: 'sites', name: 'search', value: search, placeholder: 'Search name, ID or domain' },
+              bulk: { id: bulkId, action: `${SITES}/bulk-delete`, confirm: 'Delete the selected sites? Their deployments and files are removed too. This cannot be undone.' },
+            })
           : undefined,
         body: sites.length
           ? html`<div class="scroll">
@@ -337,16 +341,17 @@ export function sitePages(router: ConsoleRouter): void {
                 <tbody>
                   ${sites.map((s) => {
                     const latest = latests.get(s.id) ?? null
-                    const address = ctx.services.sites.url(s)
-                    const domain = ctx.services.proxy.domainsFor('site', s.id)[0]
+                    // A custom domain wins over the default address.
+                    const urls = ctx.services.sites.urls(s)
+                    const address = urls[1] ?? urls[0]!
                     return html`<tr class="row-link" onclick="location='${siteUrl(s.id)}'">
-                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, s.id, `Select ${s.name}`)}</td>
+                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, s.id, `Select ${s.name}`, false, `${siteUrl(s.id)}/settings`)}</td>
                       <td>
                         <a href="${siteUrl(s.id)}">${s.name}</a>
                         <div class="mono subdued cell-sub">${s.id}</div>
                       </td>
                       <td class="mono clip">
-                        <a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${domain || new URL(address).host}</a>
+                        <a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${new URL(address).host}</a>
                       </td>
                       <td>${siteStatus(s, latest)}</td>
                       <td class="subdued hide-sm">${when(latest?.created_at ?? s.updated_at)}</td>
@@ -355,7 +360,9 @@ export function sitePages(router: ConsoleRouter): void {
                 </tbody>
               </table>
             </div>`
-          : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
+          : search
+            ? noMatches('sites', SITES)
+            : emptyState('No sites yet', 'Host plain HTML, htmx pages, a built single-page app, or an SSR app that this server builds and runs.', create),
       })}`,
     )
   })

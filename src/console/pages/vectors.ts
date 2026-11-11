@@ -1,6 +1,7 @@
 /** Vectors and RAG console pages. Markup lives in console/views/vectors. */
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
-import { checked, numberOrUndefined, parseJsonObject, value } from '~/console/forms'
+import { arrayOf, checked, numberOrUndefined, parseJsonObject, value } from '~/console/forms'
+import { bulkRemove, plural } from '~/console/ui'
 import { pageCount, pageParams } from '~/console/query'
 import { emptyEvaluationDraft, evaluationView, type EvaluationDraft } from '~/console/views/evaluation'
 import { err, BunwriteError } from '~/lib/errors'
@@ -225,9 +226,16 @@ async function pointsPage(ctx: ConsoleContext, collection: VectorCollection): Pr
 }
 
 export function vectorPages(router: ConsoleRouter): void {
-  router.get(VECTORS, async ({ ctx }) => {
+  router.get(VECTORS, async ({ ctx, url }) => {
     const collections = await ctx.services.vectors.listCollections()
-    return ctx.render('Vectors', 'vectors', vectorsView(collections))
+    return ctx.render('Vectors', 'vectors', vectorsView(collections, url.searchParams.get('search') ?? ''))
+  })
+
+  // Before /:collectionId, which would otherwise read "bulk-delete" as a collection ID.
+  router.post(`${VECTORS}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.vectors.deleteCollection(id))
+    if (!removed) return ctx.go(VECTORS, { tone: 'warning', text: 'No vector collections were deleted.' })
+    return ctx.go(VECTORS, { tone: 'success', text: `${plural(removed, 'vector collection')} deleted` })
   })
 
   router.get(`${VECTORS}/new`, ({ ctx }) =>

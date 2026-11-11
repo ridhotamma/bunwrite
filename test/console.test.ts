@@ -1095,7 +1095,7 @@ describe('settings through the console', () => {
   test('detail pages use tabs, sectioned settings and no-JavaScript fallbacks', async () => {
     // Database and collection pages split their content from settings.
     const database = await (await get('/console/databases/main')).text()
-    expect(database).toContain('Search collections')
+    expect(database).toContain('placeholder="Search name or ID"')
     expect(database).toContain('>Collections</a>')
     const databaseSettings = await (await get('/console/databases/main/settings')).text()
     expect(databaseSettings).toContain('Delete database')

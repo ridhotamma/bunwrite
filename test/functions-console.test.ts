@@ -184,6 +184,11 @@ describe('console function creation', () => {
     expect(page).toContain('hx-select="#function-domains-status"')
     expect(page).toContain('id="function-domains-status"')
 
+    // The list links straight to the custom domain instead of the default address.
+    const list = await (await get('/console/functions')).text()
+    expect(list).toMatch(/href="https?:\/\/api\.example\.org[^"]*" target="_blank"/)
+    expect(list).not.toContain('Global variables')
+
     const removed = await post('/console/functions/hello/domains/remove', { remove: 'api.example.org' })
     expect(flash(removed).get('ok')).toBe('Domain removed')
     expect(server.services.functions.domains(await server.services.functions.fn('hello'))).toEqual(['hooks.example.org'])

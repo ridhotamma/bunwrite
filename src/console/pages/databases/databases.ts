@@ -1,9 +1,27 @@
 import { aggregatePermissions } from '~/auth/permissions'
 import type { ConsoleRouter } from '~/console/context'
-import { checked, lines, value } from '~/console/forms'
+import { arrayOf, checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html } from '~/console/html'
-import { badge, destroy, emptyState, header, icon, listCard, pageFooter, searchForm, settingsSection, tabs, when } from '~/console/ui'
+import {
+  badge,
+  bulkRemove,
+  bulkSelectAll,
+  bulkSelectRow,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  listToolbar,
+  matches,
+  noMatches,
+  pageFooter,
+  plural,
+  settingsSection,
+  tabs,
+  when,
+} from '~/console/ui'
 import { COL, DB, collectionUrl, countDocuments } from './shared'
 
 const databaseUrl = (id: string) => `${DB}/${encodeURIComponent(id)}`
@@ -19,20 +37,30 @@ const databaseTabs = (id: string, on: 'collections' | 'settings') =>
 
 /** Database and collection index/detail pages. */
 export function databaseAndCollectionPages(router: ConsoleRouter): void {
-  router.get(DB, ({ ctx }) => {
-    const databases = [...ctx.services.registry.databases.values()]
+  router.get(DB, ({ ctx, url }) => {
+    const search = url.searchParams.get('search') ?? ''
+    const all = [...ctx.services.registry.databases.values()]
+    const databases = all.filter((d) => matches(search, d.name, d.id))
+    const bulkId = 'bulk-databases'
     const collections = [...ctx.services.registry.collections.values()]
     const create = html`<a class="btn primary" href="${DB}/new">${icon('plus')}<span>Create database</span></a>`
     return ctx.render(
       'Databases',
       'databases',
-      html`${header('Databases', { description: 'Databases and collections that store this project\'s documents.', actions: databases.length ? create : undefined })}
+      html`${header('Databases', { description: 'Databases and collections that store this project\'s documents.', actions: all.length ? create : undefined })}
       ${listCard('databases', {
+        toolbar: all.length
+          ? listToolbar({
+              search: { action: DB, target: 'databases', name: 'search', value: search, placeholder: 'Search name or ID' },
+              bulk: { id: bulkId, action: `${DB}/bulk-delete`, confirm: 'Delete the selected databases? All their collections and documents are removed too. This cannot be undone.' },
+            })
+          : undefined,
         body: databases.length
           ? html`<div class="scroll">
               <table>
                 <thead>
                   <tr>
+                    <th class="select-col">${bulkSelectAll(bulkId)}</th>
                     <th>Database</th>
                     <th class="num">Collections</th>
                     <th class="hide-sm">Status</th>
@@ -43,6 +71,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
                   ${databases.map(
                     (d) =>
                       html`<tr class="row-link" onclick="location='${databaseUrl(d.id)}'">
+                        <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, d.id, `Select ${d.name}`, false, `${databaseUrl(d.id)}/settings`)}</td>
                         <td>
                           <a href="${databaseUrl(d.id)}">${d.name}</a>
                           <div class="mono subdued cell-sub">${d.id}</div>
@@ -55,9 +84,25 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
                 </tbody>
               </table>
             </div>`
-          : emptyState('No databases yet', 'Databases hold collections, and collections hold your documents.', create),
+          : search
+            ? noMatches('databases', DB)
+            : emptyState('No databases yet', 'Databases hold collections, and collections hold your documents.', create),
       })}`,
     )
+  })
+
+  // Before /:db, which would otherwise read "bulk-delete" as a database ID.
+  router.post(`${DB}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.schema.deleteDatabase(id))
+    if (!removed) return ctx.go(DB, { tone: 'warning', text: 'No databases were deleted.' })
+    return ctx.go(DB, { tone: 'success', text: `${plural(removed, 'database')} deleted` })
+  })
+
+  router.post(`${DB}/:db/bulk-delete`, async ({ ctx, path }) => {
+    const d = ctx.services.registry.database(path.db!, true)
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.schema.deleteCollection(d.id, id))
+    if (!removed) return ctx.go(databaseUrl(d.id), { tone: 'warning', text: 'No collections were deleted.' })
+    return ctx.go(databaseUrl(d.id), { tone: 'success', text: `${plural(removed, 'collection')} deleted` })
   })
 
   router.get(`${DB}/new`, ({ ctx }) =>
@@ -91,9 +136,10 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
 
   router.get(`${DB}/:db`, async ({ ctx, path, url }) => {
     const d = ctx.services.registry.database(path.db!, true)
-    const query = (url.searchParams.get('q') ?? '').trim().toLowerCase()
+    const query = url.searchParams.get('q') ?? ''
     const all = [...ctx.services.registry.collections.values()].filter((c) => c.databaseId === d.id).sort((a, b) => a.name.localeCompare(b.name))
-    const collections = query ? all.filter((c) => `${c.name} ${c.id}`.toLowerCase().includes(query)) : all
+    const collections = all.filter((c) => matches(query, c.name, c.id))
+    const bulkId = 'bulk-collections'
     const counts = new Map(await Promise.all(collections.map(async (c) => [c.id, await countDocuments(ctx, c)] as const)))
     const create = html`<a class="btn primary" href="${DB}/${d.id}/new">${icon('plus')}<span>Create collection</span></a>`
     const body = collections.length
@@ -101,6 +147,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
           <table>
             <thead>
               <tr>
+                <th class="select-col">${bulkSelectAll(bulkId)}</th>
                 <th>Collection</th>
                 <th class="num">Documents</th>
                 <th class="num hide-sm">Attributes</th>
@@ -111,6 +158,7 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
               ${collections.map(
                 (c) =>
                   html`<tr class="row-link" onclick="location='${collectionUrl(c)}/documents'">
+                    <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, c.id, `Select ${c.name}`, false, `${collectionUrl(c)}/settings`)}</td>
                     <td>
                       <a href="${collectionUrl(c)}/documents">${c.name}</a>
                       <div class="mono subdued cell-sub">${c.id}</div>
@@ -123,8 +171,8 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
             </tbody>
           </table>
         </div>`
-      : query
-        ? emptyState('No collections match', 'Try another name or ID.', html`<a class="btn" href="${databaseUrl(d.id)}">Clear search</a>`)
+      : query.trim()
+        ? noMatches('collections', databaseUrl(d.id))
         : emptyState('No collections yet', 'Collections hold your documents and define their fields.', create)
     return ctx.render(
       d.name,
@@ -135,7 +183,10 @@ export function databaseAndCollectionPages(router: ConsoleRouter): void {
       })}${databaseTabs(d.id, 'collections')}
       ${listCard('collections', {
         toolbar: all.length
-          ? searchForm({ action: databaseUrl(d.id), target: 'collections', name: 'q', value: url.searchParams.get('q') ?? '', placeholder: 'Search collections' })
+          ? listToolbar({
+              search: { action: databaseUrl(d.id), target: 'collections', name: 'q', value: query, placeholder: 'Search name or ID' },
+              bulk: { id: bulkId, action: `${databaseUrl(d.id)}/bulk-delete`, confirm: 'Delete the selected collections? Their documents are removed too. This cannot be undone.' },
+            })
           : undefined,
         body,
       })}`,

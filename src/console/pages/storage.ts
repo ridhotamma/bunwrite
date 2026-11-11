@@ -6,23 +6,28 @@ import { fileToken } from '~/storage/tokens'
 import type { ConsoleRouter } from '~/console/context'
 import type { ConsoleContext } from '~/console/context'
 import { dialog } from '~/console/dialog'
-import { checked, lines, value } from '~/console/forms'
+import { arrayOf, checked, lines, value } from '~/console/forms'
 import { COLLECTION_ACTIONS, DOCUMENT_ACTIONS, permissionsField, securityChoice } from '~/console/permissions'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
 import { fileField } from '~/console/upload'
 import {
   badge,
+  bulkRemove,
+  bulkSelectAll,
+  bulkSelectRow,
   destroy,
   emptyState,
   formatBytes,
   header,
   icon,
   listCard,
+  listToolbar,
+  matches,
+  noMatches,
   pageFooter,
   pager,
   plural,
-  searchForm,
   settingsSection,
   tabs,
   when,
@@ -210,21 +215,31 @@ const uploadButton = (b: BucketRow, primary: boolean) =>
   >`
 
 export function storagePages(router: ConsoleRouter): void {
-  router.get(STORAGE, async ({ ctx }) => {
-    const buckets = await ctx.services.storage.buckets()
+  router.get(STORAGE, async ({ ctx, url }) => {
+    const search = url.searchParams.get('search') ?? ''
+    const all = await ctx.services.storage.buckets()
+    const buckets = all.filter((b) => matches(search, b.name, b.id))
+    const bulkId = 'bulk-buckets'
     const usage = await ctx.services.storage.usageByBucket()
     const create = html`<a class="btn primary" href="${STORAGE}/new">${icon('plus')}<span>Create bucket</span></a>`
     return ctx.render(
       'Storage',
       'storage',
-      html`${header('Storage', { description: 'Buckets that hold uploaded files.', actions: buckets.length ? create : undefined })}
-        <div class="card flush">
-          ${
+      html`${header('Storage', { description: 'Buckets that hold uploaded files.', actions: all.length ? create : undefined })}
+        ${listCard('buckets', {
+          toolbar: all.length
+            ? listToolbar({
+                search: { action: STORAGE, target: 'buckets', name: 'search', value: search, placeholder: 'Search name or ID' },
+                bulk: { id: bulkId, action: `${STORAGE}/bulk-delete`, confirm: 'Delete the selected buckets? All their files are removed too. This cannot be undone.' },
+              })
+            : undefined,
+          body:
             buckets.length
               ? html`<div class="scroll">
                   <table>
                     <thead>
                       <tr>
+                        <th class="select-col">${bulkSelectAll(bulkId)}</th>
                         <th>Bucket</th>
                         <th class="num">Files</th>
                         <th class="num">Size</th>
@@ -236,6 +251,7 @@ export function storagePages(router: ConsoleRouter): void {
                       ${buckets.map(
                         (b) =>
                           html`<tr class="row-link" onclick="location='${bucketUrl(b.id)}'">
+                            <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, b.id, `Select ${b.name}`, false, `${bucketUrl(b.id)}/settings`)}</td>
                             <td>
                               <a href="${bucketUrl(b.id)}">${b.name}</a>
                               <div class="mono subdued cell-sub">${b.id}</div>
@@ -249,10 +265,25 @@ export function storagePages(router: ConsoleRouter): void {
                     </tbody>
                   </table>
                 </div>`
-              : emptyState('No buckets yet', 'Buckets hold uploaded files, each with its own limits and permissions.', create)
-          }
-        </div>`,
+              : search
+                ? noMatches('buckets', STORAGE)
+                : emptyState('No buckets yet', 'Buckets hold uploaded files, each with its own limits and permissions.', create),
+        })}`,
     )
+  })
+
+  // Before /:bucket, which would otherwise read "bulk-delete" as a bucket ID.
+  router.post(`${STORAGE}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.storage.deleteBucket(id))
+    if (!removed) return ctx.go(STORAGE, { tone: 'warning', text: 'No buckets were deleted.' })
+    return ctx.go(STORAGE, { tone: 'success', text: `${plural(removed, 'bucket')} deleted` })
+  })
+
+  router.post(`${STORAGE}/:bucket/files/bulk-delete`, async ({ ctx, path }) => {
+    const b = await ctx.services.storage.bucket(path.bucket!, true)
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.storage.deleteFile(keyCaller(), b.id, id))
+    if (!removed) return ctx.go(bucketUrl(b.id), { tone: 'warning', text: 'No files were deleted.' })
+    return ctx.go(bucketUrl(b.id), { tone: 'success', text: `${plural(removed, 'file')} deleted` })
   })
 
   router.get(`${STORAGE}/new`, async ({ ctx }) => {
@@ -280,11 +311,13 @@ export function storagePages(router: ConsoleRouter): void {
     const { page, limit } = pageParams(url)
     const { total, files } = await ctx.services.storage.listFiles(keyCaller(), b.id, listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
+    const bulkId = 'bulk-files'
     const body = files.length
       ? html`<div class="scroll">
           <table>
             <thead>
               <tr>
+                <th class="select-col">${bulkSelectAll(bulkId)}</th>
                 <th>Name</th>
                 <th class="hide-sm">Type</th>
                 <th class="num">Size</th>
@@ -297,6 +330,7 @@ export function storagePages(router: ConsoleRouter): void {
                 const isPublic = publiclyReadable(b, f.$permissions)
                 const viewUrl = fileViewUrl(ctx, b.id, f.$id, isPublic)
                 return html`<tr>
+                  <td class="select-col">${bulkSelectRow(bulkId, f.$id, `Select ${f.name}`)}</td>
                   <td class="clip">
                     <a href="${viewUrl}" target="_blank" rel="noopener" hx-boost="false">${f.name}</a>${isPublic ? html` ${badge('Public', 'success')}` : ''}
                   </td>
@@ -322,14 +356,18 @@ export function storagePages(router: ConsoleRouter): void {
           </table>
         </div>`
       : search
-        ? emptyState('No files match', 'Try another name.', html`<a class="btn" href="${bucketUrl(b.id)}">Clear search</a>`)
+        ? noMatches('files', bucketUrl(b.id))
         : emptyState('No files yet', 'Upload one here, or let your apps add them.', uploadButton(b, false))
     return ctx.render(
       b.name,
       'storage',
       html`${bucketHeader(b, uploadButton(b, true))}${bucketTabs(b, 'files')}
       ${listCard('files', {
-        toolbar: searchForm({ action: bucketUrl(b.id), target: 'files', name: 'search', value: search, placeholder: 'Search files' }),
+        // Files have no edit page: their row has copy and delete, so the toolbar only deletes.
+        toolbar: listToolbar({
+          search: { action: bucketUrl(b.id), target: 'files', name: 'search', value: search, placeholder: 'Search files' },
+          bulk: { id: bulkId, action: `${bucketUrl(b.id)}/files/bulk-delete`, confirm: 'Delete the selected files? This cannot be undone.', edit: false },
+        }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'file')}` }),
       })}

@@ -4,7 +4,24 @@
  */
 import { dialog } from '~/console/dialog'
 import { html, type Html } from '~/console/html'
-import { alert, badge, destroy, emptyState, header, icon, pageFooter, settingsSection, tabs, when } from '~/console/ui'
+import {
+  alert,
+  badge,
+  bulkSelectAll,
+  bulkSelectRow,
+  destroy,
+  emptyState,
+  header,
+  icon,
+  listCard,
+  listToolbar,
+  matches,
+  noMatches,
+  pageFooter,
+  settingsSection,
+  tabs,
+  when,
+} from '~/console/ui'
 import type { WebhookRow } from '~/webhooks/service'
 import { MAX_ATTEMPTS } from '~/webhooks/service'
 import { eventPicker, type EventGroup } from './webhook-events'
@@ -61,15 +78,24 @@ function generalFields(draft: WebhookDraft, hasPassword: boolean, idField?: Html
     <p class="help">Basic auth is sent as an <span class="mono">Authorization</span> header. Leave both empty for none.</p>`
 }
 
-export function webhooksView(hooks: WebhookRow[]): Html {
+export function webhooksView(all: WebhookRow[], search = ''): Html {
   const create = html`<a class="btn primary" href="${WEBHOOKS}/new">${icon('plus')}<span>Create webhook</span></a>`
-  return html`${header('Webhooks', { description: 'Call your own endpoints when events happen in this project.', actions: hooks.length ? create : undefined })}
-    <div class="card flush">
-      ${hooks.length
-        ? html`<div class="scroll"><table><thead><tr><th>Webhook</th><th class="hide-sm">Endpoint</th><th class="num">Events</th><th class="num">Failures</th><th>Status</th></tr></thead><tbody>
+  const hooks = all.filter((hook) => matches(search, hook.name, hook.id, hook.url))
+  const bulkId = 'bulk-webhooks'
+  return html`${header('Webhooks', { description: 'Call your own endpoints when events happen in this project.', actions: all.length ? create : undefined })}
+    ${listCard('webhooks', {
+      toolbar: all.length
+        ? listToolbar({
+            search: { action: WEBHOOKS, target: 'webhooks', name: 'search', value: search, placeholder: 'Search name, ID or endpoint' },
+            bulk: { id: bulkId, action: `${WEBHOOKS}/bulk-delete`, confirm: 'Delete the selected webhooks? Their delivery history is removed too. This cannot be undone.' },
+          })
+        : undefined,
+      body: hooks.length
+        ? html`<div class="scroll"><table><thead><tr><th class="select-col">${bulkSelectAll(bulkId)}</th><th>Webhook</th><th class="hide-sm">Endpoint</th><th class="num">Events</th><th class="num">Failures</th><th>Status</th></tr></thead><tbody>
           ${hooks.map((hook) => {
             const events = JSON.parse(hook.events) as string[]
             return html`<tr class="row-link" onclick="location='${webhookUrl(hook.id)}'">
+              <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, hook.id, `Select ${hook.name}`, false, `${webhookUrl(hook.id)}/settings`)}</td>
               <td><a href="${webhookUrl(hook.id)}">${hook.name}</a><div class="mono subdued cell-sub">${hook.id}</div></td>
               <td class="hide-sm mono clip subdued">${hook.url}</td>
               <td class="num">${events.length}</td>
@@ -77,8 +103,10 @@ export function webhooksView(hooks: WebhookRow[]): Html {
               <td>${statusOf(hook)}</td></tr>`
           })}
           </tbody></table></div>`
-        : emptyState('No webhooks yet', 'Webhooks POST document changes to a URL you control, outside the app.', create)}
-    </div>`
+        : search
+          ? noMatches('webhooks', WEBHOOKS)
+          : emptyState('No webhooks yet', 'Webhooks POST document changes to a URL you control, outside the app.', create),
+    })}`
 }
 
 export function webhookCreateView(env: WebhookEnv, options: { draft?: WebhookDraft; error?: string } = {}): Html {

@@ -11,7 +11,6 @@ import { html, type Html } from '~/console/html'
 import {
   alert,
   badge,
-  bulkDeleteForm,
   bulkSelectAll,
   bulkSelectRow,
   copyableId,
@@ -20,7 +19,10 @@ import {
   header,
   icon,
   listCard,
+  listToolbar,
+  matches,
   menu,
+  noMatches,
   plural,
   poll,
   settingsSection,
@@ -262,41 +264,50 @@ export function functionPages(router: ConsoleRouter): void {
     const create = html`<a class="btn primary" href="${FN}/new">${icon('plus')}<span>Create function</span></a>`
     const bulkId = 'bulk-functions'
     const badges = await Promise.all(fns.map((f) => codeBadge(ctx, f, latest.get(f.id) ?? null)))
+    const search = url.searchParams.get('search') ?? ''
+    const shown = fns.map((f, i) => [f, badges[i]] as const).filter(([f]) => matches(search, f.name, f.id, f.runtime, ...ctx.services.functions.domains(f)))
     return ctx.render(
       'Functions',
       'functions',
       html`${header('Functions', { description: 'Server-side code that runs on a schedule, on events or over HTTP.',
-        actions: html`<a class="btn" href="/console/settings/functions">Global variables</a>${fns.length ? create : ''}`,
+        actions: fns.length ? create : undefined,
       })}
       ${missing ? alert('critical', html`Code not found for ${plural(missing, 'function')}. Check the code folder in <a href="/console/settings/functions">Settings</a>; it should be the folder with the project config file (bunwrite.config.json or appwrite.config.json).`) : ''}
       ${listCard('functions', {
         toolbar: fns.length
-          ? html`<div class="toolbar">
-              <span class="subdued">Select functions to delete</span
-              >${bulkDeleteForm({ id: bulkId, action: `${FN}/bulk-delete`, confirm: 'Delete the selected functions? Their deployments, runs and variables are removed too. This cannot be undone.' })}
-            </div>`
+          ? listToolbar({
+              search: { action: FN, target: 'functions', name: 'search', value: search, placeholder: 'Search name, ID, runtime or domain' },
+              bulk: { id: bulkId, action: `${FN}/bulk-delete`, confirm: 'Delete the selected functions? Their deployments, runs and variables are removed too. This cannot be undone.' },
+            })
           : undefined,
-        body: fns.length
+        body: shown.length
           ? html`<div class="scroll">
               <table>
                 <thead>
                   <tr>
                     <th class="select-col">${bulkSelectAll(bulkId)}</th>
                     <th>Function</th>
+                    <th>Address</th>
                     <th class="hide-sm">Runtime</th>
                     <th>Schedule</th>
                     <th>Last run</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${fns.map((f, i) => {
+                  ${shown.map(([f, codeState]) => {
                     const run = last.get(f.id)
+                    // A custom domain wins over the default address.
+                    const urls = ctx.services.functions.urls(f)
+                    const address = urls[1] ?? urls[0]!
                     return html`<tr class="row-link" onclick="location='${functionUrl(f.id)}'">
-                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, f.id, `Select ${f.name}`)}</td>
+                      <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, f.id, `Select ${f.name}`, false, `${functionUrl(f.id)}/settings`)}</td>
                       <td>
                         <a href="${functionUrl(f.id)}">${f.name}</a>
                         <div class="mono subdued cell-sub">${f.id}</div>
-                        ${f.enabled ? '' : html`${badge('Disabled')}`}${badges[i]}
+                        ${f.enabled ? '' : html`${badge('Disabled')}`}${codeState}
+                      </td>
+                      <td class="mono clip">
+                        <a href="${address}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${new URL(address).host}</a>
                       </td>
                       <td class="hide-sm subdued">${f.runtime}</td>
                       <td class="mono">
@@ -310,7 +321,9 @@ export function functionPages(router: ConsoleRouter): void {
                 </tbody>
               </table>
             </div>`
-          : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
+          : search
+            ? noMatches('functions', FN)
+            : emptyState('No functions yet', 'Create one here, or import a project config file from Schema.', create),
       })}`,
     )
   })

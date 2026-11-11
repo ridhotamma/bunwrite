@@ -396,6 +396,10 @@ describe('custom domains', () => {
     expect(saved.status).toBe(303)
     expect(await rulesFor('blog')).toEqual(['shop.example.org', 'new.example.org'])
 
+    // The list links straight to the first custom domain instead of the default address.
+    const list = await (await fetch(`${base}/console/sites`, { headers: { cookie } })).text()
+    expect(list).toMatch(/href="https?:\/\/shop\.example\.org[^"]*" target="_blank"/)
+
     // Saving the general form must not wipe the domains, which have their own form.
     const general = await post('/console/sites/blog', { name: 'Blog', enabled: 'on', framework: 'vite', output_directory: 'dist', fallback_file: 'index.html', api_function_id: 'api' })
     expect(general.status).toBe(303)

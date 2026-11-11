@@ -195,15 +195,40 @@ export interface SearchOptions {
  * deliberately does not submit while typing: replacing the form on each
  * keystroke loses focus and the value the user is entering.
  */
-export function searchForm(options: SearchOptions): Html {
+export function searchForm(options: SearchOptions, className = 'toolbar'): Html {
   const { action, target, placeholder, name, value = '', submit, mono, title, extra } = options
   // Search submits only on Enter (or the explicit button), never while typing:
   // replacing the form on each keystroke steals focus and makes the value jump.
-  return html`<form class="toolbar" method="get" action="${action}" hx-get="${action}" hx-target="#${target}" hx-select="#${target}" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit">
-    <input type="search" name="${name}" value="${value}" placeholder="${placeholder}" autocomplete="off" ${mono ? html`class="mono"` : ''} ${title ? html`title="${title}"` : ''}>
+  return html`<form class="${className}" method="get" action="${action}" hx-get="${action}" hx-target="#${target}" hx-select="#${target}" hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit" role="search">
+    <input type="search" name="${name}" value="${value}" placeholder="${placeholder}" autocomplete="off" aria-label="${placeholder}" ${mono ? html`class="mono"` : ''} ${title ? html`title="${title}"` : ''}>
     ${extra ?? ''}
     <button>${submit ?? 'Search'}</button>
   </form>`
+}
+
+export interface ListToolbarOptions {
+  search: SearchOptions
+  /** Row selection with Edit (one row) and Delete (any number). */
+  bulk?: BulkDeleteOptions
+}
+
+/**
+ * The toolbar every resource list shares: search on the left, selection
+ * actions on the right. They are sibling forms because forms cannot nest.
+ */
+export function listToolbar({ search, bulk }: ListToolbarOptions): Html {
+  return html`<div class="toolbar list-toolbar">${searchForm(search, 'toolbar-search')}${bulk ? bulkDeleteForm(bulk) : ''}</div>`
+}
+
+/** Shown in place of the table when a search finds nothing. */
+export function noMatches(noun: string, clear: string): Html {
+  return emptyState(`No ${noun} match`, 'Try another search.', html`<a class="btn" href="${clear}">Clear search</a>`, 'magnifying-glass')
+}
+
+/** Case-insensitive match of a search term against a row's name, ID and other text. */
+export function matches(search: string, ...fields: (string | null | undefined)[]): boolean {
+  const term = search.trim().toLowerCase()
+  return !term || fields.some((f) => f && f.toLowerCase().includes(term))
 }
 
 export interface PagerOptions {
@@ -249,6 +274,8 @@ export interface BulkDeleteOptions {
   /** Button label. */
   label?: string
   confirm: string
+  /** Show an Edit link that opens the one selected row's `data-edit` URL. On by default. */
+  edit?: boolean
 }
 
 /**
@@ -260,8 +287,26 @@ export function bulkDeleteForm(options: BulkDeleteOptions): Html {
   const label = options.label ?? 'Delete selected'
   return html`<form id="${options.id}" method="post" action="${options.action}" class="bulk-actions" data-bulk-form data-confirm="${options.confirm}" data-confirm-label="${label}" data-confirm-tone="critical">
     <span class="subdued" data-bulk-count>0 selected</span>
+    ${options.edit === false ? '' : html`<a class="btn" data-bulk-edit aria-disabled="true">Edit</a>`}
     <button type="submit" class="critical" data-bulk-submit disabled>${label}</button>
   </form>`
+}
+
+/**
+ * Deletes each selected ID once and returns how many went. An ID that is
+ * already gone (another tab, a double submit) is skipped, not an error.
+ */
+export async function bulkRemove(ids: string[], remove: (id: string) => Promise<unknown>): Promise<number> {
+  let removed = 0
+  for (const id of new Set(ids)) {
+    try {
+      await remove(id)
+      removed++
+    } catch (e) {
+      if ((e as { code?: number }).code !== 404) throw e
+    }
+  }
+  return removed
 }
 
 /** A header checkbox that selects every enabled row checkbox in `formId`. */
@@ -269,9 +314,9 @@ export function bulkSelectAll(formId: string, disabled = false): Html {
   return html`<input type="checkbox" form="${formId}" data-bulk-select-all aria-label="Select all" ${disabled ? 'disabled' : ''}>`
 }
 
-/** A row checkbox, associated with the bulk form in `formId`. */
-export function bulkSelectRow(formId: string, value: string, label: string, disabled = false): Html {
-  return html`<input type="checkbox" form="${formId}" name="ids" value="${value}" data-bulk-id aria-label="${label}" ${disabled ? 'disabled' : ''}>`
+/** A row checkbox, associated with the bulk form in `formId`. `edit` is where the toolbar's Edit goes when only this row is selected. */
+export function bulkSelectRow(formId: string, value: string, label: string, disabled = false, edit?: string): Html {
+  return html`<input type="checkbox" form="${formId}" name="ids" value="${value}" data-bulk-id aria-label="${label}" ${edit ? html`data-edit="${edit}"` : ''} ${disabled ? 'disabled' : ''}>`
 }
 
 /**

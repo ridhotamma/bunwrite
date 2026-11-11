@@ -2,22 +2,26 @@ import { membershipModel, userModel, type UserRowFull } from '~/auth/models'
 import { validEmail, validPhone } from '~/auth/service'
 import { err } from '~/lib/errors'
 import type { ConsoleRouter } from '~/console/context'
-import { checked, lines, parseJsonObject, value } from '~/console/forms'
+import { arrayOf, checked, lines, parseJsonObject, value } from '~/console/forms'
 import { html, type Html } from '~/console/html'
 import { listQueries, pageCount, pageParams } from '~/console/query'
 import {
   avatar,
   badge,
+  bulkRemove,
+  bulkSelectAll,
+  bulkSelectRow,
   copyableId,
   destroy,
   emptyState,
   header,
   icon,
   listCard,
+  listToolbar,
+  noMatches,
   pageFooter,
   pager,
   plural,
-  searchForm,
   settingsSection,
   tabs,
   when,
@@ -52,11 +56,13 @@ export function userPages(router: ConsoleRouter): void {
     const { total, users } = await ctx.services.auth.listUsers(listQueries(page, limit), search || undefined)
     const pages = pageCount(total, limit)
     const create = html`<a class="btn primary" href="${USERS}/new">${icon('plus')}<span>Create user</span></a>`
+    const bulkId = 'bulk-users'
     const body = users.length
       ? html`<div class="scroll">
           <table>
             <thead>
               <tr>
+                <th class="select-col">${bulkSelectAll(bulkId)}</th>
                 <th>User</th>
                 <th class="hide-sm">Phone</th>
                 <th>Status</th>
@@ -67,6 +73,7 @@ export function userPages(router: ConsoleRouter): void {
               ${users.map(
                 (u) =>
                   html`<tr class="row-link" onclick="location='${userUrl(u.id)}'">
+                    <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, u.id, `Select ${u.name || u.email || u.id}`, false, `${userUrl(u.id)}/settings`)}</td>
                     <td>
                       <div class="member-cell">
                         ${avatar(u.name || u.email || u.id)}
@@ -85,18 +92,28 @@ export function userPages(router: ConsoleRouter): void {
           </table>
         </div>`
       : search
-        ? emptyState('No users match', 'Try another name, email, phone or ID.', html`<a class="btn" href="${USERS}">Clear search</a>`)
+        ? noMatches('users', USERS)
         : emptyState('No users yet', 'People appear here when they sign up in your apps, or when you create one.', create)
     return ctx.render(
       'Users',
       'users',
       html`${header('Users', { description: 'People who have signed up for your apps.', actions: users.length || search ? create : undefined })}
       ${listCard('users', {
-        toolbar: searchForm({ action: USERS, target: 'users', name: 'search', value: search, placeholder: 'Search name, email, phone or ID' }),
+        toolbar: listToolbar({
+          search: { action: USERS, target: 'users', name: 'search', value: search, placeholder: 'Search name, email, phone or ID' },
+          bulk: { id: bulkId, action: `${USERS}/bulk-delete`, confirm: 'Delete the selected users? Their sessions and team memberships are removed too. This cannot be undone.' },
+        }),
         body,
         footer: pager({ page, pages, params: { search }, always: total > 0, label: `Page ${page} of ${pages} · ${plural(total, 'user')}` }),
       })}`,
     )
+  })
+
+  // Before /:id, which would otherwise read "bulk-delete" as a user ID.
+  router.post(`${USERS}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.auth.deleteUser(id))
+    if (!removed) return ctx.go(USERS, { tone: 'warning', text: 'No users were deleted.' })
+    return ctx.go(USERS, { tone: 'success', text: `${plural(removed, 'user')} deleted` })
   })
 
   router.get(`${USERS}/new`, ({ ctx }) =>

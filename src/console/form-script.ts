@@ -120,6 +120,13 @@ export const FORM_SCRIPT = `
     if (count) count.textContent = checked.length + " selected"
     const submit = form.querySelector("[data-bulk-submit]")
     if (submit) submit.disabled = checked.length === 0
+    // Edit opens one item, so it only turns on when exactly one row is selected.
+    const edit = form.querySelector("[data-bulk-edit]")
+    if (edit) {
+      const href = checked.length === 1 ? checked[0].dataset.edit : ""
+      if (href) { edit.setAttribute("href", href); edit.removeAttribute("aria-disabled") }
+      else { edit.removeAttribute("href"); edit.setAttribute("aria-disabled", "true") }
+    }
   }
   function setupBulk() {
     for (const form of document.querySelectorAll("form[data-bulk-form]")) updateBulk(form)

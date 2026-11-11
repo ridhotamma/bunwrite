@@ -1,6 +1,7 @@
 /** Webhooks page handlers. Markup lives in console/views/webhooks. */
 import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { arrayOf, checked, lines, value } from '~/console/forms'
+import { bulkRemove, plural } from '~/console/ui'
 import { eventGroups, type DatabaseChoice } from '~/console/views/webhook-events'
 import {
   WEBHOOKS,
@@ -51,7 +52,16 @@ function draftOfForm(form: Record<string, unknown>, existing?: WebhookRow): Webh
 }
 
 export function webhookPages(router: ConsoleRouter): void {
-  router.get(WEBHOOKS, async ({ ctx }) => ctx.render('Webhooks', 'webhooks', webhooksView(await ctx.services.webhooks.list())))
+  router.get(WEBHOOKS, async ({ ctx, url }) =>
+    ctx.render('Webhooks', 'webhooks', webhooksView(await ctx.services.webhooks.list(), url.searchParams.get('search') ?? '')),
+  )
+
+  // Before /:webhook, which would otherwise read "bulk-delete" as a webhook ID.
+  router.post(`${WEBHOOKS}/bulk-delete`, async ({ ctx }) => {
+    const removed = await bulkRemove(arrayOf(ctx.form.ids), (id) => ctx.services.webhooks.delete(id))
+    if (!removed) return ctx.go(WEBHOOKS, { tone: 'warning', text: 'No webhooks were deleted.' })
+    return ctx.go(WEBHOOKS, { tone: 'success', text: `${plural(removed, 'webhook')} deleted` })
+  })
 
   router.get(`${WEBHOOKS}/new`, ({ ctx }) => ctx.render('Create webhook', 'webhooks', webhookCreateView(envOf(ctx))))
 

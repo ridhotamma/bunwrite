@@ -7,12 +7,17 @@ import { fileField } from '~/console/upload'
 import {
   alert,
   badge,
+  bulkSelectAll,
+  bulkSelectRow,
   copyableId,
   destroy,
   emptyState,
   header,
   icon,
   listCard,
+  listToolbar,
+  matches,
+  noMatches,
   pageFooter,
   pager,
   plural,
@@ -172,16 +177,19 @@ export function collectionShell(
 }
 
 /** The list page. */
-export function vectorsView(collections: VectorCollection[]): Html {
+export function vectorsView(all: VectorCollection[], search = ''): Html {
+  const collections = all.filter((c) => matches(search, c.name, c.$id, c.embedder))
+  const bulkId = 'bulk-vectors'
   const create = html`<a class="btn primary" href="${VECTORS}/new">${icon('plus')}<span>Create collection</span></a>`
   const settings = html`<a class="btn" href="${VECTOR_SETTINGS}">${icon('gear-six')}<span>Settings</span></a>`
   const body = collections.length
     ? html`<div class="scroll">
         <table>
-          <thead><tr><th>Collection</th><th class="num">Points</th><th class="num hide-sm">Dimensions</th><th class="hide-sm">Metric</th><th class="hide-sm">Embedder</th><th class="hide-sm">Updated</th></tr></thead>
+          <thead><tr><th class="select-col">${bulkSelectAll(bulkId)}</th><th>Collection</th><th class="num">Points</th><th class="num hide-sm">Dimensions</th><th class="hide-sm">Metric</th><th class="hide-sm">Embedder</th><th class="hide-sm">Updated</th></tr></thead>
           <tbody>
             ${collections.map(
               (collection) => html`<tr class="row-link" onclick="location='${collectionUrl(collection.$id)}'">
+                <td class="select-col" onclick="event.stopPropagation()">${bulkSelectRow(bulkId, collection.$id, `Select ${collection.name}`, false, `${collectionUrl(collection.$id)}/settings`)}</td>
                 <td><a href="${collectionUrl(collection.$id)}">${collection.name}</a><div class="mono subdued cell-sub">${collection.$id}</div></td>
                 <td class="num">${collection.points.toLocaleString('en-US')}</td>
                 <td class="num hide-sm">${collection.dimension}</td>
@@ -193,13 +201,23 @@ export function vectorsView(collections: VectorCollection[]): Html {
           </tbody>
         </table>
       </div>`
-    : emptyState(
-        'No vector collections yet',
-        'Create a collection to store embeddings for semantic search, recommendations or RAG.',
-        create,
-      )
-  return html`${header('Vectors', { description: 'Embedding collections for semantic search and RAG.', actions: html`${settings}${collections.length ? create : ''}` })}
-    ${listCard('vectors', { body })}`
+    : search
+      ? noMatches('collections', VECTORS)
+      : emptyState(
+          'No vector collections yet',
+          'Create a collection to store embeddings for semantic search, recommendations or RAG.',
+          create,
+        )
+  return html`${header('Vectors', { description: 'Embedding collections for semantic search and RAG.', actions: html`${settings}${all.length ? create : ''}` })}
+    ${listCard('vectors', {
+      toolbar: all.length
+        ? listToolbar({
+            search: { action: VECTORS, target: 'vectors', name: 'search', value: search, placeholder: 'Search name, ID or embedder' },
+            bulk: { id: bulkId, action: `${VECTORS}/bulk-delete`, confirm: 'Delete the selected collections? Their points and documents are removed too. This cannot be undone.' },
+          })
+        : undefined,
+      body,
+    })}`
 }
 
 /** Create-collection page. */
