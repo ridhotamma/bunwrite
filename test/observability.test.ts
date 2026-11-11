@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { KEY, PROJECT, startServer } from './helpers'
 
 import type { Caller } from '~/auth/caller'
 import type { Collection } from '~/schema/types'
@@ -367,5 +368,26 @@ describe('Observability facade', () => {
     })
     expect(spans).toEqual([{ route: '/health', status: 200 }])
     await observability.close()
+  })
+})
+
+describe('route labels', () => {
+  test('paths that match no route share one label', async () => {
+    const server = startServer()
+    try {
+      const observability = server.services.observability
+      await observability.reconfigure({ ...observability.config, console: true, consoleSampleRate: 1 }, { timers: false })
+      for (const path of ['/wp-login.php', '/.env/backup', '/databases/main/collections/products/documents']) {
+        await fetch(`${server.endpoint}${path}`, { headers: { 'x-appwrite-project': PROJECT, 'x-appwrite-key': KEY } })
+      }
+      await server.services.telemetry.flush()
+      const routes = server.db.sqlite
+        .query<{ route: string }, []>('SELECT DISTINCT route FROM _telemetry_spans ORDER BY route')
+        .all()
+        .map((row) => row.route)
+      expect(routes).toEqual(['/databases/:id/collections/:id/documents', 'unmatched'])
+    } finally {
+      server.stop()
+    }
   })
 })

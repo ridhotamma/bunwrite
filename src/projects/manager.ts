@@ -601,6 +601,7 @@ export class ProjectManager implements ProjectResolver {
   /** Run the periodic cleanup for every project. */
   async prune(): Promise<void> {
     await this.control.requestLogs.prune()
+    await this.control.telemetry.prune()
     await pruneRateLimits(this.control.db)
     for (const runtime of this.runtimes.values()) {
       await runtime.services.transactions.prune()
@@ -610,6 +611,7 @@ export class ProjectManager implements ProjectResolver {
       await runtime.services.sites.pruneDeployments()
       runtime.services.queue.prune()
       await runtime.services.requestLogs.prune()
+      await runtime.services.telemetry.prune()
       await runtime.services.storage.prunePreviews()
       runtime.services.realtime.pruneBus()
       await pruneRateLimits(runtime.services.db)

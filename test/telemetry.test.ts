@@ -175,3 +175,38 @@ describe('TelemetryStore', () => {
     await telemetry.close()
   })
 })
+
+describe('analytics event counts', () => {
+  test('every event is counted, while only a sample of raw rows is written', async () => {
+    const db = database()
+    const telemetry = store(db)
+    for (let i = 0; i < 1000; i++) {
+      telemetry.recordEvent({
+        event: i % 4 === 0 ? 'document.delete' : 'document.create',
+        distinctId: `user-${i % 7}`,
+        project: 'p',
+        database: 'main',
+        collection: 'items',
+        documentId: `d${i}`,
+        properties: {},
+      })
+    }
+    await telemetry.flush()
+    const raw = db.sqlite.query<{ n: number }, []>('SELECT count(*) AS n FROM _telemetry_events').get()!.n
+    expect(raw).toBeGreaterThan(0)
+    expect(raw).toBeLessThanOrEqual(50)
+
+    const since = new Date(Date.now() - 3_600_000).toISOString()
+    const summary = await telemetry.eventSummary('p', since)
+    expect(Object.fromEntries(summary.map((row) => [row.event, row.n]))).toEqual({ 'document.create': 750, 'document.delete': 250 })
+    const hours = await telemetry.eventsByHour('p', since)
+    expect(hours.reduce((sum, row) => sum + row.n, 0)).toBe(1000)
+    expect(await telemetry.eventNames('p')).toEqual(['document.create', 'document.delete'])
+
+    // A second flush adds to the same minute instead of replacing it.
+    telemetry.recordEvent({ event: 'document.create', distinctId: 'u', project: 'p', database: 'main', collection: 'items', documentId: 'x', properties: {} })
+    await telemetry.flush()
+    expect((await telemetry.eventSummary('p', since)).find((row) => row.event === 'document.create')?.n).toBe(751)
+    await telemetry.close()
+  })
+})

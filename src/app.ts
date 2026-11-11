@@ -117,6 +117,9 @@ async function syncServices(services: Services): Promise<void> {
   }
 }
 
+/** Metric and trace route label for requests that match no API route. */
+export const UNMATCHED_ROUTE = 'unmatched'
+
 export function createApp(source: Services | ProjectResolver) {
   const projects: ProjectResolver = 'defaultProject' in source ? source : singleProjectResolver(source)
   const control = projects.control
@@ -397,6 +400,9 @@ export function createApp(source: Services | ProjectResolver) {
       }
     }
 
+    // A path no route knows (often scanner traffic like /wp-login.php) shares one
+    // label, so it cannot create a metric series or a trace route per URL.
+    if (!match) meta.route = UNMATCHED_ROUTE
     if (request.method === 'OPTIONS' && !match?.raw) return new Response(null, { status: 204 })
     if (!match) throw err('general_route_not_found')
 

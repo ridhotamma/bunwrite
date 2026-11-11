@@ -101,7 +101,7 @@ interface LegacyInstance {
   secret?: string
 }
 
-const LOG_TABLES = new Set(['_request_logs', '_telemetry_spans', '_telemetry_events', '_telemetry_minutes'])
+const LOG_TABLES = new Set(['_request_logs', '_telemetry_spans', '_telemetry_events', '_telemetry_minutes', '_telemetry_event_minutes'])
 const CONTROL_ONLY_TABLES = new Set<string>([
   '_projects',
   '_organizations',

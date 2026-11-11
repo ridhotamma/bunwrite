@@ -8,6 +8,7 @@
  * path never waits on SQLite.
  */
 import type { SqlDatabase } from '~/db/driver'
+import { isLeader } from '~/cluster/role'
 import { now } from '~/lib/datetime'
 
 export interface TelemetryOptions {
@@ -150,6 +151,13 @@ const bucketOf = (milliseconds: number): number => {
 const DEFAULTS: TelemetryOptions = { maxSpans: 2_000, maxEvents: 5_000, retentionDays: 7, flushMs: 5_000 }
 /** In-memory backlog while a flush is slow; drops the oldest rather than growing. */
 const MAX_PENDING = 20_000
+/**
+ * Raw analytics rows kept per flush per process. Every event is counted in
+ * `_telemetry_event_minutes`; the raw table only feeds the recent-events list,
+ * and was trimmed to a few thousand rows anyway, so writing one row per
+ * document change mostly wrote rows that were deleted seconds later.
+ */
+const RAW_EVENTS_PER_FLUSH = 50
 
 const STATUS_RANGES: Record<string, [number, number]> = {
   '2xx': [200, 300],
@@ -169,6 +177,10 @@ export class TelemetryStore {
   private spans: PendingSpan[] = []
   private events: PendingEvent[] = []
   private minuteRows = new Map<string, MinuteRow>()
+  /** `project|minute|event` → count since the last flush. */
+  private eventCounts = new Map<string, number>()
+  /** Events seen this flush window, for sampling the raw rows fairly. */
+  private eventsSeen = 0
   private minuteClock = { minute: '', at: 0 }
   private timer: ReturnType<typeof setTimeout> | null = null
   private flushing: Promise<void> | null = null
@@ -215,21 +227,26 @@ export class TelemetryStore {
 
   recordEvent(input: EventInput): void {
     if (this.closed) return
-    if (this.events.length >= MAX_PENDING) this.events.splice(0, Math.max(1, Math.floor(MAX_PENDING / 10)))
-    this.events.push({
-      pending: true,
-      seq: pending(),
-      event: input.event,
-      distinct_id: input.distinctId,
-      project: input.project,
-      database: input.database,
-      collection: input.collection,
-      document_id: input.documentId,
-      properties: JSON.stringify(input.properties),
-      created_at: now(),
-    })
-    if (this.events.length >= 200) void this.flush()
-    else this.schedule()
+    const key = `${input.project}|${this.minuteOf(Date.now())}|${input.event}`
+    this.eventCounts.set(key, (this.eventCounts.get(key) ?? 0) + 1)
+    // Reservoir sample: every event in the window has the same chance of a raw row.
+    this.eventsSeen++
+    const slot = this.events.length < RAW_EVENTS_PER_FLUSH ? this.events.length : Math.floor(Math.random() * this.eventsSeen)
+    if (slot < RAW_EVENTS_PER_FLUSH) {
+      this.events[slot] = {
+        pending: true,
+        seq: pending(),
+        event: input.event,
+        distinct_id: input.distinctId,
+        project: input.project,
+        database: input.database,
+        collection: input.collection,
+        document_id: input.documentId,
+        properties: JSON.stringify(input.properties),
+        created_at: now(),
+      }
+    }
+    this.schedule()
   }
 
   /**
@@ -272,7 +289,7 @@ export class TelemetryStore {
   /** Write queued rows. Safe to call from the console before reading. */
   flush(): Promise<void> {
     if (this.flushing) return this.flushing
-    if (this.spans.length === 0 && this.events.length === 0 && this.minuteRows.size === 0) return Promise.resolve()
+    if (this.spans.length === 0 && this.events.length === 0 && this.minuteRows.size === 0 && this.eventCounts.size === 0) return Promise.resolve()
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
@@ -280,18 +297,23 @@ export class TelemetryStore {
     const spans = this.spans
     const events = this.events
     const minutes = [...this.minuteRows.values()]
+    const eventCounts = [...this.eventCounts.entries()]
     this.spans = []
+    // Raw rows go out oldest first, whatever slot the sample put them in.
     this.events = []
+    this.eventsSeen = 0
     this.minuteRows.clear()
-    this.flushing = this.write(spans, events, minutes).finally(() => {
+    this.eventCounts.clear()
+    events.sort((a, b) => b.seq - a.seq)
+    this.flushing = this.write(spans, events, minutes, eventCounts).finally(() => {
       this.flushing = null
     })
     return this.flushing
   }
 
-  private async write(spans: PendingSpan[], events: PendingEvent[], minutes: MinuteRow[]): Promise<void> {
+  private async write(spans: PendingSpan[], events: PendingEvent[], minutes: MinuteRow[], eventCounts: [string, number][] = []): Promise<void> {
     try {
-      if (spans.length > 0 || events.length > 0 || minutes.length > 0) {
+      if (spans.length > 0 || events.length > 0 || minutes.length > 0 || eventCounts.length > 0) {
         await this.db.driver.transaction(async (tx) => {
           for (const span of spans) {
             await tx.run(
@@ -324,6 +346,14 @@ export class TelemetryStore {
               [event.event, event.distinct_id, event.project, event.database, event.collection, event.document_id, event.properties, event.created_at],
             )
           }
+          for (const [key, count] of eventCounts) {
+            const [project, minute, ...name] = key.split('|')
+            await tx.run(
+              `INSERT INTO _telemetry_event_minutes (project, minute, event, count) VALUES (?, ?, ?, ?)
+               ON CONFLICT(project, minute, event) DO UPDATE SET count = count + excluded.count`,
+              [project!, minute!, name.join('|'), count],
+            )
+          }
           for (const row of minutes) {
             await tx.run(
               `INSERT INTO _telemetry_minutes
@@ -340,7 +370,8 @@ export class TelemetryStore {
           }
         })
       }
-      await this.prune()
+      // In a cluster only the leader prunes; it also runs from the periodic cleanup.
+      if (isLeader()) await this.prune()
     } catch (error) {
       // Console telemetry is best-effort. A closed or deleted project database
       // must not turn into a retry loop, so drop the failed batch and warn at
@@ -353,7 +384,8 @@ export class TelemetryStore {
     }
   }
 
-  private async prune(): Promise<void> {
+  /** Drop rows past retention and over the row limits. Runs at most once a minute. */
+  async prune(): Promise<void> {
     const at = Date.now()
     if (at - this.lastPrune < 60_000) return
     this.lastPrune = at
@@ -361,6 +393,7 @@ export class TelemetryStore {
     await this.db.driver.run('DELETE FROM _telemetry_spans WHERE created_at < ?', [cutoff])
     await this.db.driver.run('DELETE FROM _telemetry_events WHERE created_at < ?', [cutoff])
     await this.db.driver.run('DELETE FROM _telemetry_minutes WHERE minute < ?', [cutoff.slice(0, 16)])
+    await this.db.driver.run('DELETE FROM _telemetry_event_minutes WHERE minute < ?', [cutoff.slice(0, 16)])
     await this.trim('_telemetry_spans', this.options.maxSpans)
     await this.trim('_telemetry_events', this.options.maxEvents)
   }
@@ -444,7 +477,7 @@ export class TelemetryStore {
 
   async eventNames(project: string): Promise<string[]> {
     const rows = await this.db.driver.all<{ event: string }>(
-      'SELECT event FROM _telemetry_events WHERE project = ? GROUP BY event ORDER BY count(*) DESC LIMIT 20',
+      'SELECT event FROM _telemetry_event_minutes WHERE project = ? GROUP BY event ORDER BY sum(count) DESC LIMIT 20',
       [project],
     )
     return rows.map((row) => row.event)
@@ -452,8 +485,8 @@ export class TelemetryStore {
 
   async eventSummary(project: string, since: string): Promise<EventCount[]> {
     const rows = await this.db.driver.all<{ event: string; n: number }>(
-      'SELECT event, count(*) AS n FROM _telemetry_events WHERE project = ? AND created_at >= ? GROUP BY event ORDER BY n DESC LIMIT 12',
-      [project, since],
+      'SELECT event, sum(count) AS n FROM _telemetry_event_minutes WHERE project = ? AND minute >= ? GROUP BY event ORDER BY n DESC LIMIT 12',
+      [project, since.slice(0, 16)],
     )
     return rows.map((row) => ({ event: row.event, n: Number(row.n) }))
   }
@@ -461,8 +494,8 @@ export class TelemetryStore {
   /** Events per hour (`YYYY-MM-DDTHH`), for the analytics chart. */
   async eventsByHour(project: string, since: string): Promise<Array<{ hour: string; n: number }>> {
     const rows = await this.db.driver.all<{ hour: string; n: number }>(
-      'SELECT substr(created_at, 1, 13) AS hour, count(*) AS n FROM _telemetry_events WHERE project = ? AND created_at >= ? GROUP BY hour ORDER BY hour ASC',
-      [project, since],
+      'SELECT substr(minute, 1, 13) AS hour, sum(count) AS n FROM _telemetry_event_minutes WHERE project = ? AND minute >= ? GROUP BY hour ORDER BY hour ASC',
+      [project, since.slice(0, 16)],
     )
     return rows.map((row) => ({ hour: row.hour, n: Number(row.n) }))
   }

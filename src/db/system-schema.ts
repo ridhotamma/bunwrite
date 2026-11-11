@@ -915,6 +915,23 @@ export const telemetryMinutes = sqliteTable(
   (t) => [uniqueIndex('_telemetry_minutes_project_minute').on(t.project, t.minute)],
 )
 
+/**
+ * Analytics event counts per project, minute and event name. The console's
+ * summary and hourly chart read these, so they stay exact while only a sample
+ * of individual events is kept in `_telemetry_events`. Workers add their
+ * counts with an upsert once per flush.
+ */
+export const telemetryEventMinutes = sqliteTable(
+  '_telemetry_event_minutes',
+  {
+    project: text('project').notNull(),
+    minute: text('minute').notNull(),
+    event: text('event').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => [uniqueIndex('_telemetry_event_minutes_key').on(t.project, t.minute, t.event), index('_telemetry_event_minutes_minute').on(t.minute)],
+)
+
 /** Outgoing webhooks (Appwrite's project webhooks), as `appwrite push webhooks` makes them. */
 export const webhooks = sqliteTable('_webhooks', {
   seq: integer('seq').primaryKey({ autoIncrement: true }),

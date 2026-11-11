@@ -104,6 +104,13 @@ keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
 - [x] **Vector search cache.** Parsed vectors and term IDs per collection
   (`VECTOR_SEARCH_CACHE_MB`), invalidated by `_meta` triggers on
   `_vector_points`; 8–17x faster built-in search at 20k points.
+- [x] **Analytics counts instead of one row per document write.** Console
+  telemetry is on by default; it cost about 7% of reads and 12.5% of creates on
+  one core, mostly from an analytics row per document write. Events are now
+  counted per minute and only a sample is stored; telemetry pruning runs on the
+  leader only.
+- [x] **Realtime bus catch-up.** Workers read bus backlogs in pages (SQLite) and
+  re-read after a notification that arrived mid-read (Postgres).
 - [ ] Re-run the booking matrix at 200/300/400 clients with `WORKER_PORTS=true`
   to confirm the tail is gone before treating 300+ as safe.
 

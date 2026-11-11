@@ -53,9 +53,16 @@ This copy is local and works without a provider:
 - **Traces** are sampled at the project's console sample rate (default `1%`)
   into `_telemetry_spans`, capped at the configured span limit (default
   `2000`).
-- **Analytics** stores document metadata in `_telemetry_events`, capped at the
-  configured event limit (default `5000`).
-- Everything is pruned after the configured retention (default 7 days).
+- **Analytics** counts every document event per minute in
+  `_telemetry_event_minutes`, which the summary and hourly chart read, so they
+  stay exact. The event list in `_telemetry_events` keeps a random sample of at
+  most 50 events per process every 5 seconds, capped at the configured event
+  limit (default `5000`). Distinct subjects are counted from that sample.
+- Everything is pruned after the configured retention (default 7 days), by the
+  leader process only.
+- A request whose path matches no API route (for example scanner traffic such as
+  `/wp-login.php`) is labelled `unmatched` in traces and metrics, so it cannot
+  create a new series per URL.
 
 Turn **Keep local telemetry in the console** off in Settings to stop the local
 copy. Metrics and traces still export to a configured provider.
