@@ -153,6 +153,18 @@ export class OrganizationService {
     return row ? (row.role === 'owner' ? 'owner' : 'developer') : null
   }
 
+  /** Change the display name a member goes by. */
+  async renameMember(orgId: string, email: string, name: string): Promise<void> {
+    const value = name.trim()
+    if (!value || value.length > 128) throw err('general_argument_invalid', 'Your name must be 1 to 128 characters.')
+    await this.db.driver.run('UPDATE _organization_members SET name = ?, updated_at = ? WHERE organization_id = ? AND email = ?', [
+      value,
+      now(),
+      orgId,
+      email.toLowerCase(),
+    ])
+  }
+
   /** Make sure an existing console admin has an active organization row. */
   async ensureAdmin(orgId: string, email: string): Promise<OrganizationMember> {
     const address = email.toLowerCase()

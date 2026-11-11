@@ -336,21 +336,26 @@ describe('Git: detection and preview names', () => {
   })
 })
 
+/** The GitHub link on the console's install hand-off page. */
+const installLink = (page: string): string => /href="([^"]+)" data-handoff-go/.exec(page)?.[1] ?? ''
+
 describe('Git: GitHub App and installations', () => {
   test('the manifest flow stores the app, and env vars still win', async () => {
     const state = signState(server.config.secret, { kind: 'manifest', returnTo: '/console/organization' })
     const res = await fetch(`${server.endpoint}/vcs/github/manifest?code=good-code&state=${encodeURIComponent(state)}`, { redirect: 'manual' })
     expect(res.status).toBe(302)
-    // The app is useless before it is installed, so creation goes straight to
-    // the install screen instead of another console page.
-    expect(res.headers.get('location')).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    // The app is useless before it is installed, so creation goes straight on
+    // to step two: the console's page that hands off to GitHub's install screen.
+    expect(res.headers.get('location')).toBe('/console/vcs/install?next=%2Fconsole%2Forganization')
     expect(server.hub.apps.stored()).toBe(true)
     const app = server.hub.apps.get()!
     expect(app.appId).toBe('123')
     expect(app.source).toBe('env')
     expect(app.name).toBe('Bunwrite made')
+    // A forged or expired state goes back to the console with an error, not a bare text page.
     const forged = await fetch(`${server.endpoint}/vcs/github/manifest?code=good-code&state=nope`, { redirect: 'manual' })
-    expect(forged.status).toBe(400)
+    expect(forged.status).toBe(302)
+    expect(forged.headers.get('location')).toStartWith('/console/organization?err=')
   })
 
   test('the install callback adds only installations the GitHub user can access', async () => {
@@ -648,11 +653,14 @@ describe('Git: deployments', () => {
     expect(git.text).toContain('acme')
     // Add installation leaves the console for GitHub, also when htmx sends the request.
     expect(git.text).toContain('href="/console/vcs/install" hx-boost="false"')
+    // The page in between says what happens on GitHub, then continues there.
     const install = await get('/console/vcs/install')
-    expect(install.status).toBe(303)
-    expect(install.location).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    expect(install.status).toBe(200)
+    expect(install.text).toContain('Install the GitHub App')
+    expect(installLink(install.text)).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    // htmx cannot render a whole page; it is told to load it in full.
     const boosted = await fetch(`${base()}/console/vcs/install`, { headers: { cookie, 'hx-request': 'true' }, redirect: 'manual' })
-    expect(boosted.headers.get('hx-redirect')).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
+    expect(boosted.headers.get('hx-redirect')).toBe('/console/vcs/install')
 
     const settings = await get('/console/sites/web/settings')
     expect(settings.text).toContain('id="git-repository"')
@@ -838,8 +846,10 @@ describe('Git: deployments', () => {
     // The return address survives the GitHub round trip, so the user lands
     // back on the page they were filling in.
     const install = await get(`/console/vcs/install?next=${encodeURIComponent('/console/sites/new?source=github')}`)
-    expect(install.status).toBe(303)
-    const location = install.headers.get('location')!
+    expect(install.status).toBe(200)
+    const installPage = await install.text()
+    expect(installPage).toContain('href="/console/sites/new?source=github" data-handoff-cancel')
+    const location = installLink(installPage)
     expect(location).toStartWith(`${gh}/apps/bunwrite-test/installations/new?state=`)
     const state = new URL(location).searchParams.get('state')!
     const done = await fetch(

@@ -27,7 +27,20 @@ export interface Admin {
   seq: number
   email: string
   mfa: boolean
+  /** When the profile photo last changed, or '' when there is none. */
+  avatarAt: string
 }
+
+/** A profile photo as stored: a small WebP. */
+export interface AdminAvatar {
+  data: Buffer
+  type: string
+  at: string
+}
+
+/** Where the console serves an admin's photo; the version lets browsers cache it for good. */
+export const avatarUrl = (admin: { seq: number; avatarAt: string }): string =>
+  admin.avatarAt ? `/console/avatars/${admin.seq}?v=${encodeURIComponent(admin.avatarAt)}` : ''
 
 export type LoginResult = { status: 'ok'; secret: string } | { status: 'mfa'; challenge: string; code: string; email: string } | { status: 'invalid' }
 
@@ -35,10 +48,19 @@ interface AdminRow {
   seq: number
   email: string
   mfa: number
+  avatar_updated_at: string
   created_at: string
 }
 
-const toAdmin = (row: AdminRow) => ({ ...row, mfa: Boolean(row.mfa) })
+const toAdmin = (row: AdminRow): Admin & { created_at: string } => ({
+  seq: row.seq,
+  email: row.email,
+  mfa: Boolean(row.mfa),
+  avatarAt: row.avatar_updated_at ?? '',
+  created_at: row.created_at,
+})
+
+const ADMIN_COLUMNS = 'seq, email, mfa, avatar_updated_at, created_at'
 
 export class ConsoleAuth {
   constructor(private db: SqlDatabase) {}
@@ -48,12 +70,12 @@ export class ConsoleAuth {
   }
 
   async list(): Promise<(Admin & { created_at: string })[]> {
-    const rows = await this.db.driver.all<AdminRow>('SELECT seq, email, mfa, created_at FROM _console_admins ORDER BY seq')
+    const rows = await this.db.driver.all<AdminRow>(`SELECT ${ADMIN_COLUMNS} FROM _console_admins ORDER BY seq`)
     return rows.map(toAdmin)
   }
 
   async find(email: string): Promise<(Admin & { created_at: string }) | null> {
-    const row = await this.db.driver.get<AdminRow>('SELECT seq, email, mfa, created_at FROM _console_admins WHERE email = ?', [email.trim().toLowerCase()])
+    const row = await this.db.driver.get<AdminRow>(`SELECT ${ADMIN_COLUMNS} FROM _console_admins WHERE email = ?`, [email.trim().toLowerCase()])
     return row ? toAdmin(row) : null
   }
 
@@ -91,6 +113,37 @@ export class ConsoleAuth {
   /** Turn email MFA on or off for one admin. */
   async setMfa(seq: number, enabled: boolean): Promise<void> {
     await this.db.driver.run('UPDATE _console_admins SET mfa = ?, updated_at = ? WHERE seq = ?', [enabled ? 1 : 0, now(), seq])
+  }
+
+  /**
+   * Set a new password after the current one was checked. Every other console
+   * session ends, so a stolen session cannot outlive the change; the session
+   * that made the change (`keepSecret`) stays signed in.
+   */
+  async changePassword(seq: number, next: string, keepSecret: string | null): Promise<void> {
+    const hash = await hashPassword(validatePassword(next, 'new password'))
+    await this.db.driver.run('UPDATE _console_admins SET password = ?, updated_at = ? WHERE seq = ?', [hash, now(), seq])
+    await this.db.driver.run('DELETE FROM _console_sessions WHERE admin_id = ? AND secret_hash <> ?', [seq, keepSecret ? sha256(keepSecret) : ''])
+  }
+
+  /** Store a profile photo (already resized to a small WebP), or clear it with null. */
+  async setAvatar(seq: number, webp: Buffer | null): Promise<void> {
+    const stamp = now()
+    await this.db.driver.run('UPDATE _console_admins SET avatar = ?, avatar_updated_at = ?, updated_at = ? WHERE seq = ?', [
+      webp ? webp.toString('base64') : '',
+      webp ? stamp : '',
+      stamp,
+      seq,
+    ])
+  }
+
+  async avatar(seq: number): Promise<AdminAvatar | null> {
+    const row = await this.db.driver.get<{ avatar: string; avatar_updated_at: string }>(
+      'SELECT avatar, avatar_updated_at FROM _console_admins WHERE seq = ?',
+      [seq],
+    )
+    if (!row?.avatar) return null
+    return { data: Buffer.from(row.avatar, 'base64'), type: 'image/webp', at: row.avatar_updated_at }
   }
 
   /** Re-check the password for a sensitive console action. */
@@ -208,8 +261,13 @@ export class ConsoleAuth {
     return result.status === 'ok' ? result.secret : null
   }
 
+  /** The console session secret a request carries, if any. */
+  secretOf(request: Request): string | null {
+    return parseCookies(request.headers.get('cookie') ?? '')[CONSOLE_COOKIE] || null
+  }
+
   async admin(request: Request): Promise<Admin | null> {
-    const secret = parseCookies(request.headers.get('cookie') ?? '')[CONSOLE_COOKIE]
+    const secret = this.secretOf(request)
     return secret ? ((await this.session(secret))?.admin ?? null) : null
   }
 
@@ -222,9 +280,10 @@ export class ConsoleAuth {
       seq: number
       email: string
       mfa: number
+      avatar_updated_at: string
       created_at: string
     }>(
-      `SELECT s.seq AS session_seq, s.expire, s.created_at AS session_created, a.seq, a.email, a.mfa, a.created_at
+      `SELECT s.seq AS session_seq, s.expire, s.created_at AS session_created, a.seq, a.email, a.mfa, a.avatar_updated_at, a.created_at
        FROM _console_sessions s JOIN _console_admins a ON a.seq = s.admin_id
        WHERE s.secret_hash = ? AND s.expire > ?`,
       [sha256(secret), now()],
@@ -234,7 +293,7 @@ export class ConsoleAuth {
       seq: row.session_seq,
       expire: row.expire,
       createdAt: row.session_created,
-      admin: { seq: row.seq, email: row.email, mfa: Boolean(row.mfa), created_at: row.created_at },
+      admin: toAdmin(row),
     }
   }
 

@@ -294,6 +294,52 @@ button[aria-busy]{cursor:progress;opacity:.8}
 .tile.purple{background:#efe9fb;color:#5b3a9c}.tile.pink{background:#fbe8f0;color:#8a2455}.tile.teal{background:#dff3f0;color:#0f5a52}
 .avatar{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--active);color:var(--text);font-size:11px;font-weight:500;line-height:1}
 .avatar.md{width:32px;height:32px;font-size:12px}
+.avatar.lg{width:48px;height:48px;font-size:16px}
+.avatar.xl{width:80px;height:80px;font-size:26px;font-weight:500}
+.avatar.has-photo{overflow:hidden;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border)}
+.avatar img{display:block;width:100%;height:100%;object-fit:cover}
+.nav-profile{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:4px;margin:-4px;border-radius:8px;color:inherit;text-decoration:none}
+.nav-profile:hover{background:var(--nav-hover);text-decoration:none}
+.nav-profile:hover .nav-admin{color:var(--text)}
+.menu-account{display:flex;align-items:center;gap:10px;padding:8px}
+.menu-account>span:last-child{min-width:0}.menu-account .subdued{display:block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Profile */
+.profile-head{display:flex;align-items:center;gap:20px;margin:4px 0 28px}
+.profile-title{min-width:0}.profile-title h1{margin:0;font-size:22px;line-height:30px}.profile-title>p{margin:0}
+.profile-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;font-size:13px}
+.photo-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.photo-form{flex:1;min-width:220px}
+.photo-actions{display:flex;flex-wrap:wrap;gap:8px}
+.photo-actions label.btn{position:relative;margin:0;cursor:pointer}
+.photo-actions label.btn:focus-within{outline:2px solid var(--primary);outline-offset:2px}
+.photo-status{display:block;min-height:18px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.photo-status.error{color:var(--critical)}
+/* The page between the console and GitHub */
+.handoff{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px}
+.handoff-card{width:100%;max-width:440px;padding:32px 28px 22px;text-align:center}
+.handoff-card h1{margin:22px 0 6px;font-size:20px;line-height:28px}
+.handoff-lead{margin:0 auto 22px;max-width:340px}
+.handoff-logos{display:flex;align-items:center;justify-content:center;gap:14px}
+.handoff-logo{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:16px;background:var(--surface);box-shadow:var(--shadow),0 4px 12px rgba(16,16,20,.06)}
+.handoff-logo.github{background:#1f2328;color:#fff}
+.handoff-track{display:flex;gap:6px}
+.handoff-track i{width:6px;height:6px;border-radius:50%;background:var(--border-strong);animation:handoff 1.2s infinite ease-in-out}
+.handoff-track i:nth-child(2){animation-delay:.15s}.handoff-track i:nth-child(3){animation-delay:.3s}
+.handoff.paused .handoff-track i{animation:none}
+@keyframes handoff{0%,70%,100%{background:var(--border-strong);transform:none}35%{background:var(--text);transform:translateY(-3px)}}
+.handoff-steps{display:flex;flex-direction:column;gap:2px;margin:0 0 22px;padding:6px;list-style:none;border-radius:var(--radius);background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border);text-align:left}
+.handoff-steps li{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;color:var(--subdued);font-size:13.5px}
+.handoff-steps li.current{background:var(--surface);color:var(--text);font-weight:500;box-shadow:var(--shadow)}
+.handoff-steps li.done{color:var(--text)}
+.handoff-dot{display:inline-flex;align-items:center;justify-content:center;flex:none;width:20px;height:20px;border-radius:50%;background:var(--active);font-size:11px;font-weight:500}
+.handoff-steps li.current .handoff-dot{background:var(--primary);color:#fff}
+.handoff-steps li.done .handoff-dot{background:var(--success-bg);color:var(--success)}
+.handoff-where{margin-left:auto;color:var(--subdued);font-size:12px;font-weight:400}
+.handoff-go{width:100%;min-height:40px}
+.handoff.leaving .handoff-go{opacity:.7;pointer-events:none}
+.handoff-foot{display:flex;justify-content:space-between;gap:12px;margin:14px 0 0;font-size:13px}
+@media (prefers-reduced-motion:reduce){.handoff-track i{animation:none}}
+@media (max-width:640px){.profile-head{gap:14px}.profile-head .avatar.xl{width:64px;height:64px;font-size:22px}}
 .chip{display:inline-flex;align-items:center;gap:6px;min-height:28px;padding:2px 10px;border-radius:8px;font-size:12.5px}
 
 /* Banners and toast */

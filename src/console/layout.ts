@@ -16,9 +16,19 @@ import { RESPONSIVE_SCRIPT } from './responsive'
 import { FILE_UPLOAD_SCRIPT } from './upload'
 import { alert, avatar, icon, menu, tile, type IconName } from './ui'
 
+/** The signed-in admin as the chrome shows them. */
+export interface Account {
+  email: string
+  /** Display name; falls back to the email. */
+  name?: string
+  /** Profile photo URL, or '' for initials. */
+  photo?: string
+}
+
 export interface Nav {
   section: string
   admin: string
+  account?: Account
   projectName: string
   /** The organization that owns every project, shown above the project name. */
   orgName: string
@@ -122,7 +132,7 @@ export function shell(title: string, nav: Nav, body: Html, flash?: Flash): Html 
     <div class="group">Manage</div>
     ${MANAGE.map(link)}
     <div class="foot">
-      ${avatar(nav.admin)}<span class="nav-admin" title="${nav.admin}">${nav.admin}</span>
+      <a class="nav-profile" href="/console/profile" data-tooltip="Profile" aria-label="Your profile">${avatar(nav.account?.name || nav.admin, 'sm', nav.account?.photo)}<span class="nav-admin" title="${nav.admin}">${nav.account?.name || nav.admin}</span></a>
       <form method="post" action="/console/logout" class="inline" data-confirm="Sign out of the console?" data-confirm-label="Sign out"><button class="icon-btn" data-tooltip="Sign out" aria-label="Sign out">${icon('sign-out')}</button></form>
     </div>
   </nav>
@@ -148,14 +158,16 @@ ${confirmDialog()}
 }
 
 /** The organization shell for project selection, members and settings: no project navigation. */
-export function projectShell(title: string, nav: { admin: string }, body: Html, flash?: Flash): Html {
+export function projectShell(title: string, nav: { admin: string; account?: Account }, body: Html, flash?: Flash): Html {
   const { banner, toast, clear } = flashParts(flash)
+  const name = nav.account?.name || nav.admin
   const account = menu(
-    html`<div class="menu-head">Signed in as<b>${nav.admin}</b></div>
+    html`<div class="menu-head menu-account">${avatar(name, 'md', nav.account?.photo)}<span><b>${name}</b><span class="subdued">${nav.admin}</span></span></div>
       <hr>
+      <a class="menu-item" href="/console/profile">${icon('user')}<span class="menu-item-text">Profile</span></a>
       <a class="menu-item" href="/console/security">${icon('gear-six')}<span class="menu-item-text">Security</span></a>
       <form method="post" action="/console/logout" data-confirm="Sign out of the console?" data-confirm-label="Sign out"><button type="submit" class="menu-item">${icon('sign-out')}<span class="menu-item-text">Sign out</span></button></form>`,
-    { label: 'Account', triggerClass: 'account-btn', trigger: html`${avatar(nav.admin, 'md')}` },
+    { label: 'Account', triggerClass: 'account-btn', trigger: html`${avatar(name, 'md', nav.account?.photo)}` },
   )
   return html`<!doctype html>
 <html lang="en">

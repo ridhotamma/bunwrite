@@ -710,6 +710,10 @@ export const consoleAdmins = sqliteTable('_console_admins', {
   password: text('password').notNull(),
   /** Sign-in also needs a code emailed to the admin. */
   mfa: integer('mfa', { mode: 'boolean' }).notNull().default(false),
+  /** Profile photo: a small square WebP, base64. Empty when the admin has none. */
+  avatar: text('avatar').notNull().default(''),
+  /** When the photo last changed; versions its URL so browsers can cache it. */
+  avatarUpdatedAt: text('avatar_updated_at').notNull().default(''),
   ...timestamps,
 })
 

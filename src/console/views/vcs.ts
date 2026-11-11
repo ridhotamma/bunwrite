@@ -1,7 +1,7 @@
 /** Console markup for Git deployments: the GitHub App, installations, a resource's repository, and where a deployment came from. */
 import type { ConsoleContext } from '~/console/context'
-import { html, type Html } from '~/console/html'
-import { alert, badge, cardHead, copyableId, destroy, emptyState, icon, settingsSection, when } from '~/console/ui'
+import { html, raw, type Html } from '~/console/html'
+import { alert, badge, cardHead, copyableId, destroy, emptyState, githubMark, icon, settingsSection, when } from '~/console/ui'
 import type { FunctionRow } from '~/functions/service'
 import type { SiteRow } from '~/sites/service'
 import type { GithubCommit, GithubPull } from '~/vcs/github'
@@ -126,7 +126,7 @@ export function githubAppSection(ctx: ConsoleContext): Html {
           <label>Organization<input name="org" class="mono" placeholder="acme" required><small>The organization's GitHub login.</small></label>
         </div>
         <p class="help" style="margin:0">GitHub asks you to confirm the name, then sends you back here. Or register an app yourself and set the <code>VCS_GITHUB_*</code> variables.</p>
-        <div class="foot"><button class="primary">Create GitHub App</button></div>
+        <div class="foot"><button class="primary">${githubMark(16)}<span>Create GitHub App</span></button></div>
       </form>`
   const section = settingsSection('GitHub App', 'Deploy sites and functions from GitHub: pushes build and go live, other branches get previews, and pull requests get a status comment.', body, {
     id: 'github-app',
@@ -139,13 +139,85 @@ export function githubAppSection(ctx: ConsoleContext): Html {
   )}`
 }
 
-/** A page that posts the manifest to GitHub on load. */
-export function manifestRedirect(action: string, manifest: string): Html {
-  return html`<form id="github-manifest" method="post" action="${action}">
-      <input type="hidden" name="manifest" value="${manifest}">
-      <p>Opening GitHub… <button class="primary">Continue to GitHub</button></p>
-    </form>
-    <script>document.getElementById('github-manifest').submit()</script>`
+const HANDOFF_STEPS = ['Create the GitHub App', 'Install it on an account', 'Pick repositories in Bunwrite']
+
+export interface HandoffOptions {
+  heading: string
+  lead: Html | string
+  /** Which of the three setup steps GitHub is about to do (0-based). */
+  step: number
+  /** Where the page sends the browser: a link, or a form GitHub expects as a POST. */
+  target: { href: string } | { action: string; fields: Record<string, string> }
+  /** Back to the console without going to GitHub. */
+  cancel: string
+}
+
+/**
+ * Leave the console for GitHub after a short beat, so people see where they
+ * are going and what comes back. Coming back with the browser's Back button
+ * (bfcache) does not bounce them to GitHub again; the button is still there.
+ */
+const HANDOFF_SCRIPT = `
+(() => {
+  const root = document.querySelector('[data-handoff]')
+  if (!root) return
+  const go = root.querySelector('[data-handoff-go]')
+  const note = root.querySelector('[data-handoff-note]')
+  let timer = 0
+  const leave = () => {
+    root.classList.add('leaving')
+    note.textContent = 'Opening GitHub…'
+    if (go.form) go.form.submit()
+    else location.href = go.href
+  }
+  const stop = () => {
+    clearTimeout(timer)
+    root.classList.remove('leaving')
+    root.classList.add('paused')
+    note.textContent = 'Continue when you are ready.'
+  }
+  timer = setTimeout(leave, 1600)
+  root.querySelector('[data-handoff-cancel]').addEventListener('click', () => clearTimeout(timer))
+  addEventListener('pageshow', (event) => { if (event.persisted) stop() })
+  addEventListener('keydown', (event) => { if (event.key === 'Escape') stop() })
+})()
+`
+
+/** The page between the console and GitHub. Rendered with the bare layout. */
+export function githubHandoff(options: HandoffOptions): Html {
+  const steps = html`<ol class="handoff-steps">
+    ${HANDOFF_STEPS.map((label, index) => {
+      const state = index < options.step ? 'done' : index === options.step ? 'current' : ''
+      const where = index === HANDOFF_STEPS.length - 1 ? 'Bunwrite' : 'GitHub'
+      return html`<li class="${state}" ${state === 'current' ? html`aria-current="step"` : ''}>
+        <span class="handoff-dot">${state === 'done' ? icon('check', 12) : String(index + 1)}</span>
+        <span>${label}</span><span class="handoff-where">${where}</span>
+      </li>`
+    })}
+  </ol>`
+  const button = html`${githubMark(16)}<span>Continue to GitHub</span>`
+  const action =
+    'href' in options.target
+      ? html`<a class="btn primary handoff-go" href="${options.target.href}" data-handoff-go>${button}</a>`
+      : html`<form method="post" action="${options.target.action}">
+          ${Object.entries(options.target.fields).map(([name, v]) => html`<input type="hidden" name="${name}" value="${v}">`)}
+          <button class="primary handoff-go" data-handoff-go>${button}</button>
+        </form>`
+  return html`<div class="handoff" data-handoff>
+      <div class="card handoff-card">
+        <div class="handoff-logos" aria-hidden="true">
+          <span class="handoff-logo"><img src="/images/logo-dark.png" alt="" width="28" height="28"></span>
+          <span class="handoff-track"><i></i><i></i><i></i></span>
+          <span class="handoff-logo github">${githubMark(28)}</span>
+        </div>
+        <h1>${options.heading}</h1>
+        <p class="subdued handoff-lead">${options.lead}</p>
+        ${steps}
+        ${action}
+        <p class="handoff-foot"><span class="subdued" data-handoff-note aria-live="polite">Taking you to GitHub…</span><a href="${options.cancel}" data-handoff-cancel>Cancel</a></p>
+      </div>
+    </div>
+    <script>${raw(HANDOFF_SCRIPT)}</script>`
 }
 
 // ---- Project settings → Git ----
@@ -165,7 +237,7 @@ export async function gitTabView(ctx: ConsoleContext): Promise<Html> {
   }
   // GitHub is another site: a boosted (htmx) request cannot follow the redirect there.
   const toolbar = html`<div class="toolbar"><h2 style="margin:0">Installations</h2>
-    <a class="btn primary" href="/console/vcs/install" hx-boost="false" style="margin-left:auto">${icon('plus')}<span>Add installation</span></a></div>`
+    <a class="btn primary" href="/console/vcs/install" hx-boost="false" style="margin-left:auto">${githubMark(16)}<span>Add installation</span></a></div>`
   return settingsSection(
     title,
     hint,

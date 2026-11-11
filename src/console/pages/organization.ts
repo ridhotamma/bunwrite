@@ -3,6 +3,7 @@ import { arrayOf, checked, value } from '~/console/forms'
 import { html, page, type Html } from '~/console/html'
 import { icon } from '~/console/ui'
 import { ORGANIZATION_EMAIL } from '~/console/views/email'
+import { avatarUrl } from '~/console/auth'
 import { membersView, organizationGeneralView, organizationHeader } from '~/console/views/organization'
 import { inlineStatus } from '~/console/views/settings'
 import { githubAppSection } from '~/console/views/vcs'
@@ -13,6 +14,11 @@ import { err } from '~/lib/errors'
 const orgId = (ctx: ConsoleContext) => ctx.projects.control.config.orgId
 const canManage = async (ctx: ConsoleContext) => (await ctx.organizations.roleOf(orgId(ctx), ctx.admin.email)) === 'owner'
 const consoleBaseUrl = (ctx: ConsoleContext) => ctx.projects.control.config.publicEndpoint.replace(/\/v1\/?$/, '')
+/** Profile photo URLs by member email, for the Members table. */
+async function memberPhotos(ctx: ConsoleContext): Promise<Record<string, string>> {
+  return Object.fromEntries((await ctx.auth.list()).filter((admin) => admin.avatarAt).map((admin) => [admin.email, avatarUrl(admin)]))
+}
+
 const ownerCount = (members: { status: string; role: string }[]) => members.filter((member) => member.status === 'active' && member.role === 'owner').length
 
 async function orgHeader(ctx: ConsoleContext, active: 'projects' | 'members' | 'settings', actions?: Html) {
@@ -94,6 +100,7 @@ export function organizationPages(router: ConsoleRouter): void {
         ownerCount: ownerCount(members),
         canManage: manager,
         currentEmail: ctx.admin.email,
+        photos: await memberPhotos(ctx),
         query,
         inviteOpen: manager && url.searchParams.get('invite') === '1',
       })}`,
@@ -124,6 +131,7 @@ export function organizationPages(router: ConsoleRouter): void {
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
+        photos: await memberPhotos(ctx),
         query: '',
         inviteOpen: false,
         inviteResults: results,
@@ -151,6 +159,7 @@ export function organizationPages(router: ConsoleRouter): void {
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
+        photos: await memberPhotos(ctx),
         query: '',
         inviteOpen: false,
         copiedLink: result,
@@ -177,6 +186,7 @@ export function organizationPages(router: ConsoleRouter): void {
         ownerCount: ownerCount(members),
         canManage: true,
         currentEmail: ctx.admin.email,
+        photos: await memberPhotos(ctx),
         query: '',
         inviteOpen: false,
         inviteResults: results,

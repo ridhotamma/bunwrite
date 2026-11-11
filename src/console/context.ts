@@ -1,6 +1,6 @@
 /** The context every console page handler receives. */
 import type { RouteContext, Router } from '~/lib/router'
-import type { OrganizationService } from '~/organizations/service'
+import type { OrganizationMember, OrganizationService } from '~/organizations/service'
 import type { ProjectInfo, ProjectResolver } from '~/projects/types'
 import type { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
@@ -17,6 +17,8 @@ export interface ConsoleContext {
   schema: SchemaAdmin
   auth: ConsoleAuth
   admin: Admin
+  /** The admin's organization membership: role and display name. */
+  member: OrganizationMember
   form: Form
   request: Request
   url: URL

@@ -269,13 +269,14 @@ export class VcsHub {
    */
   async completeManifest(url: URL): Promise<Response> {
     const state = readState<{ kind: string; returnTo: string }>(this.secret, url.searchParams.get('state'))
-    if (state?.kind !== 'manifest') return new Response('This link has expired. Start the GitHub App setup again from the console.', { status: 400 })
+    if (state?.kind !== 'manifest') return redirect(withFlash('/console/organization', 'err', 'That GitHub link has expired. Create the GitHub App again.'))
     const code = url.searchParams.get('code')
     if (!code) return redirect(withFlash(state.returnTo, 'err', 'GitHub did not create the app.'))
     try {
       const app = await this.github.convertManifest(code)
       await this.apps.save(app)
-      return redirect(this.installUrl(state.returnTo))
+      // Step two of the console's setup page, which then goes on to GitHub's install screen.
+      return redirect(`/console/vcs/install?next=${encodeURIComponent(state.returnTo)}`)
     } catch (error) {
       return redirect(withFlash(state.returnTo, 'err', error instanceof Error ? error.message : String(error)))
     }
@@ -296,7 +297,7 @@ export class VcsHub {
    */
   async completeInstall(url: URL): Promise<Response> {
     const state = readState<{ kind: string; returnTo: string; installationId?: string }>(this.secret, url.searchParams.get('state'))
-    if (state?.kind !== 'install') return new Response('This link has expired. Start the installation again from the console.', { status: 400 })
+    if (state?.kind !== 'install') return redirect(withFlash('/console/settings/git', 'err', 'That GitHub link has expired. Add the installation again.'))
     const back = (key: 'ok' | 'err', text: string) => redirect(withFlash(state.returnTo, key, text))
     if (url.searchParams.get('setup_action') === 'request')
       return back('ok', 'GitHub asked an organization owner to approve the installation. Add it again once they have.')

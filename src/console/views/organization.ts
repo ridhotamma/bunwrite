@@ -195,6 +195,8 @@ export interface MembersViewOptions {
   ownerCount: number
   canManage: boolean
   currentEmail: string
+  /** Profile photo URLs by email; members without one show initials. */
+  photos?: Record<string, string>
   query: string
   inviteOpen: boolean
   inviteResults?: InviteResult[]
@@ -208,7 +210,7 @@ function membersTable(options: MembersViewOptions, active: OrganizationMember[])
     ${active.map((member) => {
       const self = member.email === currentEmail.toLowerCase()
       return html`<tr>
-        <td><div class="member-cell">${avatar(member.name || member.email, 'md')}<div><b>${member.name || displayName(member.email)}${self ? html` ${badge('You')}` : ''}</b><div class="subdued">${member.email}</div></div></div></td>
+        <td><div class="member-cell">${avatar(member.name || member.email, 'md', options.photos?.[member.email] ?? '')}<div><b>${member.name || displayName(member.email)}${self ? html` ${badge('You')}` : ''}</b><div class="subdued">${member.email}</div></div></div></td>
         <td class="role-col">${canManage && !self ? roleControl(member, ownerCount) : roleLabel(member.role)}</td>
         <td class="subdued hide-sm">${day(member.joinedAt ?? member.invitedAt)}</td>
         ${canManage ? html`<td class="num">${self ? '' : memberMenu(member, ownerCount)}</td>` : ''}

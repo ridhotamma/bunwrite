@@ -17,7 +17,7 @@ import { SchemaAdmin } from '~/schema/admin'
 import type { Services } from '~/services'
 import { VcsHub } from '~/vcs/hub'
 import { htmxPath } from './assets'
-import { ConsoleAuth } from './auth'
+import { avatarUrl, ConsoleAuth } from './auth'
 import type { ConsoleContext } from './context'
 import { readForm } from './forms'
 import { back, go } from './htmx'
@@ -276,8 +276,9 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
 
       const admin = await auth.admin(request)
       if (!admin) return go(request, noAdmins && loopback(request, server) ? '/console/setup' : '/console/login')
-      await organizations.ensureAdmin(control.config.orgId, admin.email)
-      const canManageProjects = (await organizations.roleOf(control.config.orgId, admin.email)) === 'owner'
+      const member = await organizations.ensureAdmin(control.config.orgId, admin.email)
+      const canManageProjects = member.role === 'owner'
+      const account = { email: admin.email, name: member.name, photo: avatarUrl(admin) }
 
       if (url.pathname === '/console/logout' && request.method === 'POST') {
         await auth.logout(request)
@@ -293,7 +294,9 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         pathname !== '/console' &&
         !pathname.startsWith('/console/projects') &&
         !pathname.startsWith('/console/organization') &&
-        !pathname.startsWith('/console/security')
+        !pathname.startsWith('/console/security') &&
+        !pathname.startsWith('/console/profile') &&
+        !pathname.startsWith('/console/avatars')
       if (projectRoute && !selected) return go(request, '/console')
 
       const organization = await organizations.get(control.config.orgId)
@@ -314,6 +317,7 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         schema,
         auth,
         admin,
+        member,
         form: await readForm(request),
         request,
         url,
@@ -327,13 +331,14 @@ export function createConsole(source: Services | ProjectResolver, vcsHub?: VcsHu
         selectedProjectId: selected?.info.id ?? null,
         render: (title, section, body) =>
           page(
-            section === 'projects' || section === 'organization' || section === 'security'
-              ? projectShell(title, { admin: admin.email }, body, flash)
+            section === 'projects' || section === 'organization' || section === 'security' || section === 'profile'
+              ? projectShell(title, { admin: admin.email, account }, body, flash)
               : shell(
                   title,
                   {
                     section,
                     admin: admin.email,
+                    account,
                     projectName: services.config.projectName,
                     orgName: organization?.name ?? control.config.projectName,
                     projects: projects.list().map((project) => project.info),

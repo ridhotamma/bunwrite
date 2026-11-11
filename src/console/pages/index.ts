@@ -8,6 +8,7 @@ import { mcpPages } from './mcp'
 import { observabilityPages } from './observability'
 import { organizationPages } from './organization'
 import { overviewPages } from './overview'
+import { profilePages } from './profile'
 import { projectPages } from './projects'
 import { realtimePages } from './realtime'
 import { schemaPages } from './schema'
@@ -40,6 +41,7 @@ export function registerConsolePages(router: ConsoleRouter): void {
   observabilityPages(router)
   settingsPages(router)
   securityPages(router)
+  profilePages(router)
   apiPages(router)
   mcpPages(router)
   webhookPages(router)

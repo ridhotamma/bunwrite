@@ -3,7 +3,8 @@ import type { ConsoleContext, ConsoleRouter } from '~/console/context'
 import { checked, value } from '~/console/forms'
 import { html, page } from '~/console/html'
 import { alert, header } from '~/console/ui'
-import { approveView, branchOptions, commitOptions, manifestRedirect, repositoryOptions } from '~/console/views/vcs'
+import { bare } from '~/console/layout'
+import { approveView, branchOptions, commitOptions, githubHandoff, repositoryOptions } from '~/console/views/vcs'
 import { buildFields, presetValues, SITES } from '~/console/views/sites'
 import { runtimeLabel } from '~/runtimes/catalog'
 import { frameworkOf } from '~/sites/frameworks'
@@ -50,11 +51,17 @@ export function vcsPages(router: ConsoleRouter): void {
     const org = value(ctx.form, 'owner_type') === 'org' ? value(ctx.form, 'org') : ''
     if (value(ctx.form, 'owner_type') === 'org' && !org) throw err('general_argument_invalid', 'Enter the GitHub organization the app belongs to.')
     const { action, manifest } = ctx.hub.manifestForm(org, '/console/organization')
-    return ctx.render(
-      'GitHub App',
-      'organization',
-      html`${header('GitHub App', { back: '/console/organization' })}
-        <div class="card">${manifestRedirect(action, manifest)}</div>`,
+    return page(
+      bare(
+        'Create GitHub App',
+        githubHandoff({
+          heading: 'Create your GitHub App',
+          lead: html`GitHub asks you to name the app${org ? html` for <b>${org}</b>` : ''} and confirm. Then you install it, and come straight back here.`,
+          step: 0,
+          target: { action, fields: { manifest } },
+          cancel: '/console/organization#github-app',
+        }),
+      ),
     )
   })
 
@@ -67,10 +74,22 @@ export function vcsPages(router: ConsoleRouter): void {
   // ---- Installations ----
 
   router.get('/console/vcs/install', ({ ctx, request, url }) => {
-    const target = ctx.hub.installUrl(returnTo(url.searchParams.get('next')))
-    // An htmx request would fetch GitHub in the background and fail; tell htmx to leave the page instead.
-    if (request.headers.get('hx-request')) return new Response(null, { status: 200, headers: { 'hx-redirect': target } })
-    return redirect(target)
+    // An htmx request cannot render a whole page or follow GitHub; ask htmx for a full page load instead.
+    if (request.headers.get('hx-request')) return new Response(null, { status: 200, headers: { 'hx-redirect': `${url.pathname}${url.search}` } })
+    const back = returnTo(url.searchParams.get('next'))
+    if (!ctx.hub.apps.get()?.slug) return redirect(`/console/organization?err=${encodeURIComponent('Set up the GitHub App first.')}#github-app`)
+    return page(
+      bare(
+        'Install GitHub App',
+        githubHandoff({
+          heading: 'Install the GitHub App',
+          lead: 'Pick the account or organization, and which repositories Bunwrite may read. GitHub then sends you back here to choose one.',
+          step: 1,
+          target: { href: ctx.hub.installUrl(back) },
+          cancel: back,
+        }),
+      ),
+    )
   })
 
   router.post('/console/vcs/installations/:id/delete', async ({ ctx, path }) => {
