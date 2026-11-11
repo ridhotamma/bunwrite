@@ -72,7 +72,7 @@ docker run -it --rm \
   --volume /var/run/docker.sock:/var/run/docker.sock \
   --volume "$(pwd)/bunwrite:/usr/src/code/bunwrite:rw" \
   --entrypoint=upgrade \
-  ghcr.io/ridhotamma/bunwrite:0.9.3
+  ghcr.io/ridhotamma/bunwrite:0.9.4
 ```
 
 The upgrade keeps `.env`, rewrites the compose file to the new image (the old

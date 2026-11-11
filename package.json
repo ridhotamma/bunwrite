@@ -1,6 +1,6 @@
 {
   "name": "bunwrite",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "A lightweight, Appwrite-compatible backend on Bun + SQLite + Drizzle.",
   "license": "MIT",
   "keywords": [
