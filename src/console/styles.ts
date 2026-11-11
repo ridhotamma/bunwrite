@@ -304,16 +304,23 @@ button[aria-busy]{cursor:progress;opacity:.8}
 .menu-account{display:flex;align-items:center;gap:10px;padding:8px}
 .menu-account>span:last-child{min-width:0}.menu-account .subdued{display:block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Profile */
-.profile-head{display:flex;align-items:center;gap:20px;margin:4px 0 28px}
-.profile-title{min-width:0}.profile-title h1{margin:0;font-size:22px;line-height:30px}.profile-title>p{margin:0}
+.profile-head{display:flex;align-items:flex-start;gap:20px;margin:4px 0 28px}
+.profile-title{min-width:0;padding-top:4px}.profile-title h1{margin:0;font-size:22px;line-height:30px;overflow-wrap:anywhere}.profile-title>p{margin:0;overflow-wrap:anywhere}
 .profile-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px;font-size:13px}
-.photo-row{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
-.photo-form{flex:1;min-width:220px}
-.photo-actions{display:flex;flex-wrap:wrap;gap:8px}
-.photo-actions label.btn{position:relative;margin:0;cursor:pointer}
-.photo-actions label.btn:focus-within{outline:2px solid var(--primary);outline-offset:2px}
-.photo-status{display:block;min-height:18px;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.photo-status.error{color:var(--critical)}
+.profile-photo{flex:none}
+.profile-avatar{all:unset;position:relative;display:flex;width:fit-content;border-radius:50%;cursor:pointer;list-style:none}
+.profile-avatar::-webkit-details-marker{display:none}
+.profile-avatar-edit{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(16,16,20,.45);color:#fff;opacity:0;transition:opacity .15s}
+.profile-avatar:hover .profile-avatar-edit,.profile-avatar-menu[open] .profile-avatar-edit,.uploading .profile-avatar-edit{opacity:1}
+.profile-avatar:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+.uploading .profile-avatar{pointer-events:none}.uploading .profile-avatar-edit .icon{animation:photo-pulse 1s ease-in-out infinite}
+@keyframes photo-pulse{50%{opacity:.35;transform:translateY(-2px)}}
+.profile-photo-noscript{display:flex;flex-direction:column;gap:6px;max-width:160px;margin-top:10px}
+.photo-status{display:block;margin-top:8px;color:var(--critical);font-size:12.5px}
+.password-box>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0;font-weight:400}
+.password-box>summary::-webkit-details-marker{display:none}
+.password-box[open]>summary{display:none}
+.password-row{display:flex;align-items:center;gap:10px;color:var(--subdued)}.password-dots{letter-spacing:2px}
 /* The page between the console and GitHub */
 .handoff{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:32px 16px}
 .handoff-card{width:100%;max-width:440px;padding:32px 28px 22px;text-align:center}
