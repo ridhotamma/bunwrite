@@ -114,6 +114,44 @@ keepalive mismatch and worker 0 doing public traffic plus every SQLite write.
 - [ ] Re-run the booking matrix at 200/300/400 clients with `WORKER_PORTS=true`
   to confirm the tail is gone before treating 300+ as safe.
 
+## Document throughput (2026-11-12)
+
+One Bun process on an Apple M1, a file-backed SQLite database with 20,000
+documents, request logging and console telemetry on, `oha` on the same
+machine. Production cores are slower and add a proxy and TLS, so read these as
+relative numbers.
+
+| Path | Before | After |
+| --- | ---: | ---: |
+| Read by ID, API key (50 clients) | 11.0k req/s | 16.6k |
+| Read by ID, signed-in user with row permissions (50 clients) | 168 | 13.1k |
+| List 25, signed-in user, while 50 writes/s | 75 (p50 780 ms) | 1,929 (p50 25 ms) |
+| Create, API key (10 / 50 / 200 clients) | 4.9k / 4.9k / 4.7k | 7.2k / 9.1k / 9.4k |
+| Update by ID, API key (10 / 50 / 200 clients) | 10.5k / 12.0k / 13.9k | 16.2k / 17.3k / 16.2k |
+
+What changed:
+
+- [x] **Row-permission filter as a correlated `EXISTS`.** The old
+  `_seq IN (SELECT doc FROM perms ...)` built the list of every readable
+  document on each query: 14 ms for one read on 20k rows, now 15 µs.
+- [x] **Read-by-ID ETag from the row revision** instead of a collection-wide
+  version query; a write elsewhere in the collection no longer invalidates it.
+- [x] **Adaptive write batching on by default**, single process included.
+- [x] **Request log lines written in batches**, request-log rows inserted 50
+  per statement, and trusted-proxy checks cached per address.
+
+Capacity, at 5 requests per active user per minute, with 40% reads by ID, 40%
+lists and 20% writes: about 85k active users per core for API-key or
+collection-level permissions, and about 2k per core for signed-in users with
+row permissions before the filter change. Reads scale with worker cores;
+writes for one project stay on one writer process (about 9–10k document writes
+per second with batching on this machine).
+
+Still open for lists: a filter on a field whose only index is a compound
+index (for example `(tenantId, slug)`) still reads and sorts every matching
+row to return the first page by `$sequence`. An index on the filtered field
+alone avoids the sort.
+
 ## Still to do, in order
 
 ### 1. Measure on the server (first, no app changes)

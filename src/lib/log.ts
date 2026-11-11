@@ -54,6 +54,31 @@ export function formatRequestLog(entry: RequestLog, format: LogFormat): string {
   return parts.join(' ')
 }
 
+/**
+ * Lines wait here and go out in one write per event-loop turn. A write per
+ * request was a synchronous call on every response (about 7% of a read on one
+ * core); a busy server now writes a batch instead.
+ */
+let pendingLines: string[] = []
+let flushScheduled = false
+const MAX_PENDING_LINES = 256
+
+/** Write any buffered request lines now. Called on exit, and by tests. */
+export function flushRequestLogLines(): void {
+  flushScheduled = false
+  if (pendingLines.length === 0) return
+  const text = pendingLines.join('\n')
+  pendingLines = []
+  console.log(text)
+}
+
+process.on('exit', flushRequestLogLines)
+
 export function logRequest(entry: RequestLog, format: LogFormat): void {
-  console.log(formatRequestLog(entry, format))
+  pendingLines.push(formatRequestLog(entry, format))
+  if (pendingLines.length >= MAX_PENDING_LINES) flushRequestLogLines()
+  else if (!flushScheduled) {
+    flushScheduled = true
+    setImmediate(flushRequestLogLines)
+  }
 }

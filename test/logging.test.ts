@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 
 import { ConsoleAuth } from '~/console/auth'
 import { configFromEnv, defaultLogSampleRate } from '~/config'
-import { formatRequestLog } from '~/lib/log'
+import { flushRequestLogLines, formatRequestLog } from '~/lib/log'
 import { PROJECT, startServer, type TestServer } from './helpers'
 
 describe('request logs', () => {
@@ -13,7 +13,8 @@ describe('request logs', () => {
   beforeAll(() => {
     server = startServer(undefined, { logRequests: true, logFormat: 'json' })
     const spy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((arg) => String(arg)).join(' '))
+      // Request lines are written in batches, one per line break.
+      lines.push(...args.map((arg) => String(arg)).join(' ').split('\n'))
     })
     restoreLog = () => spy.mockRestore()
   })
@@ -38,6 +39,7 @@ describe('request logs', () => {
     expect(res.headers.get('x-request-id')).toBe('req-test-1')
     expect(Number(res.headers.get('content-length'))).toBeGreaterThan(0)
 
+    flushRequestLogLines()
     const line = lines.find((entry) => entry.includes('"msg":"request"') && entry.includes('"/v1/health"'))
     expect(line).toBeDefined()
     const entry = JSON.parse(line!)
@@ -64,6 +66,7 @@ describe('request logs', () => {
     server.config.logRequests = false
     const before = lines.length
     await fetch(`${server.endpoint}/health`, { headers: { 'x-appwrite-project': PROJECT } })
+    flushRequestLogLines()
     expect(lines.length).toBe(before)
     server.config.logRequests = true
   })
@@ -72,9 +75,11 @@ describe('request logs', () => {
     server.config.logSampleRate = 0
     const before = lines.length
     await fetch(`${server.endpoint}/health`, { headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'sampled-out' } })
+    flushRequestLogLines()
     expect(lines.length).toBe(before)
 
     await fetch(`${server.endpoint}/nope`, { headers: { 'x-appwrite-project': PROJECT, 'x-request-id': 'sampled-error' } })
+    flushRequestLogLines()
     expect(lines.some((entry) => entry.includes('sampled-error'))).toBe(true)
     server.config.logSampleRate = 1
   })

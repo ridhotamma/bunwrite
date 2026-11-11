@@ -79,7 +79,25 @@ export function parseTrustedProxies(spec: string | undefined): TrustedProxies {
   return { list, cloudflare }
 }
 
-const trusted = (trust: TrustedProxies, ip: string) => trust.list.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
+/**
+ * Whether an address is one of our proxies. The same few peers (the proxy, or
+ * a handful of clients) repeat on every request, and a BlockList check is not
+ * free, so answers are cached per trust list.
+ */
+const trustCache = new WeakMap<TrustedProxies, Map<string, boolean>>()
+const MAX_TRUST_CACHE = 4096
+
+function trusted(trust: TrustedProxies, ip: string): boolean {
+  let cache = trustCache.get(trust)
+  if (!cache) trustCache.set(trust, (cache = new Map()))
+  let answer = cache.get(ip)
+  if (answer === undefined) {
+    answer = trust.list.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
+    if (cache.size >= MAX_TRUST_CACHE) cache.clear()
+    cache.set(ip, answer)
+  }
+  return answer
+}
 
 /**
  * Work out the client's address. `peer` is the connection's address; when it

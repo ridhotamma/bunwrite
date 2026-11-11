@@ -67,6 +67,8 @@ const STATUS_RANGES: Record<string, [number, number]> = {
 }
 
 const BATCH_SIZE = 100
+/** Rows per INSERT; 50 × 14 values stays far below SQLite's and Postgres's bind limits. */
+const INSERT_CHUNK = 50
 const FLUSH_MS = 1000
 /** Hard cap while the database is slower than request traffic; oldest lines go first. */
 const MAX_QUEUED = 10_000
@@ -121,11 +123,14 @@ export class RequestLogService {
   private async write(rows: PendingLog[]): Promise<void> {
     try {
       await this.db.driver.transaction(async (tx) => {
-        for (const row of rows) {
+        // Several rows per statement: one statement per row was most of the
+        // cost of keeping request logs.
+        for (let index = 0; index < rows.length; index += INSERT_CHUNK) {
+          const chunk = rows.slice(index, index + INSERT_CHUNK)
           await tx.run(
             `INSERT INTO _request_logs (id, method, path, status, duration_ms, request_bytes, response_bytes, ip, project, auth, referer, user_agent, error, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
+             VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+            chunk.flatMap((row) => [
               row.id,
               row.method,
               row.path,
@@ -140,7 +145,7 @@ export class RequestLogService {
               row.userAgent ?? '',
               row.error ?? '',
               row.createdAt,
-            ],
+            ]),
           )
         }
       })
