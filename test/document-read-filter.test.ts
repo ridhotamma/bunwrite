@@ -51,5 +51,8 @@ test('the permission check probes each row instead of listing every readable doc
     .join('\n')
   // A LIST SUBQUERY would materialise every readable document on each read.
   expect(plan).not.toContain('LIST SUBQUERY')
-  expect(plan).toContain('CORRELATED')
+  // SQLite versions differ on whether they print "CORRELATED"; some only show
+  // the per-row probe. The probe itself is the guarantee: the permission table
+  // is searched by doc for the row, never scanned.
+  expect(plan).toMatch(/SEARCH p (?:EXISTS )?USING (?:COVERING )?INDEX \S+_perms_doc \(doc=\? AND type=\? AND role=\?\)/)
 })
