@@ -370,6 +370,14 @@ button[aria-busy]{cursor:progress;opacity:.8}
 .menu-root{position:relative;display:inline-block}.menu-root>summary{margin:0;font-weight:inherit}
 .menu{position:absolute;top:calc(100% + 4px);right:0;z-index:60;min-width:190px;padding:6px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);box-shadow:var(--shadow-lg);text-align:left;font-weight:400}
 .menu.menu-fixed{position:fixed;right:auto}
+/* Menus stay hidden until the script has placed them, then scale in from the trigger; closing plays it back. */
+.menu-root[open]>.menu:not([data-placed]){visibility:hidden}
+.menu{--menu-dy:-4px;transform-origin:top right}.menu-root[data-align=start]>.menu{transform-origin:top left}
+.menu[data-side=top]{--menu-dy:4px;transform-origin:bottom right}.menu-root[data-align=start]>.menu[data-side=top]{transform-origin:bottom left}
+.menu[data-placed]{animation:menu-in .14s cubic-bezier(.2,.8,.2,1)}
+.menu[data-closing]{animation:menu-out .1s ease-in forwards;pointer-events:none}
+@keyframes menu-in{from{opacity:0;transform:translateY(var(--menu-dy)) scale(.97)}}
+@keyframes menu-out{to{opacity:0;transform:translateY(var(--menu-dy)) scale(.97)}}
 .menu hr{margin:6px -6px;border:0;border-top:1px solid var(--border)}
 .menu form{display:block;margin:0}
 .menu-item,.menu form button{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;width:100%;min-height:32px;padding:6px 8px;border-radius:6px;color:var(--text);white-space:nowrap;cursor:pointer}
