@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { createApp } from '~/app'
 import { keyCaller } from '~/auth/caller'
 import {
+  forwardWrite,
   isDatabaseWrite,
   isForwardedConsoleWrite,
   isForwardedWrite,
@@ -265,6 +266,32 @@ describe('write forwarding', () => {
     const owner = writerShardFor(PROJECT, 2)
     expect(hits[owner]).toBe(1)
     expect(hits[owner === 0 ? 1 : 0]).toBe(0)
+  })
+
+  test('a slow writer is not sent the same write again', async () => {
+    let hits = 0
+    const slow = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch: async () => {
+        hits++
+        await Bun.sleep(400)
+        return new Response('{}', { status: 201 })
+      },
+    })
+    stops.push(() => slow.stop(true))
+    const config = testConfig({ workers: 2, workerIndex: 1, writerPort: slow.port! })
+    const request = new Request('http://localhost/v1/databases/main/collections/products/documents', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ documentId: 'once' }),
+    })
+    const response = await forwardWrite(config, request, config.projectId, { timeoutMs: 100 })
+    // The writer may still apply it, so the reader must not retry or write locally.
+    expect(response?.status).toBe(504)
+    expect(((await response!.json()) as { message: string }).message).toContain('may or may not have been applied')
+    await Bun.sleep(500)
+    expect(hits).toBe(1)
   })
 
   test('a write sent to a reader lands on the writer process', async () => {

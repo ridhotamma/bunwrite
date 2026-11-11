@@ -18,6 +18,7 @@
  */
 import type { Config } from '~/config'
 import { clientIpOf } from '~/lib/client-ip'
+import { err } from '~/lib/errors'
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 /** Document and transaction writes always belong on the writer. */
@@ -78,16 +79,32 @@ const CONSOLE_LOCAL_WRITES = [
   /^\/console\/schema\/save\/?$/,
   /^\/console\/schema\/import\/preview\/?$/,
 ]
-/** How long to keep trying while the writer process is restarting. */
+/**
+ * How long to keep trying while the writer process is restarting. Only a
+ * failed connection is retried: the writer never saw that request.
+ */
 const RETRY_DELAYS_MS = [0, 50, 150]
 /** After this many failed forwards, serve writes locally for a while. */
 const CIRCUIT_OPEN_MS = 30_000
 /**
- * A forwarded write waits at most this long. Anything longer is a stalled
- * writer; falling back to a local write with a short busy timeout is better
- * than holding the public worker's event loop for a minute.
+ * A forwarded write waits at most this long. The writer may still finish it,
+ * so a timeout is answered with 504 instead of being retried or written
+ * locally: sending a create twice would apply it twice.
  */
 const FORWARD_TIMEOUT_MS = 10_000
+
+/** True when the request reached the writer but its answer did not come back in time. */
+function timedOut(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+}
+
+function unconfirmedWrite(): Response {
+  const body = {
+    ...err('general_unknown', 'The write took too long to confirm, so it may or may not have been applied. Read the affected resources back before retrying.').toJSON(),
+    code: 504,
+  }
+  return new Response(JSON.stringify(body), { status: 504, headers: { 'content-type': 'application/json' } })
+}
 
 /** Shards whose listener failed recently; one bad writer does not open the others' circuits. */
 const circuitOpenUntil = new Map<number, number>()
@@ -181,7 +198,13 @@ const HOP_BY_HOP = ['host', 'content-length', 'connection', 'keep-alive', 'trans
  * listener it reaches). Returns null when that writer did not take it, so the
  * caller can handle the write locally instead of failing it.
  */
-export async function forwardWrite(config: Config, request: Request, projectId = config.projectId): Promise<Response | null> {
+export async function forwardWrite(
+  config: Config,
+  request: Request,
+  projectId = config.projectId,
+  options: { timeoutMs?: number } = {},
+): Promise<Response | null> {
+  const timeoutMs = options.timeoutMs ?? FORWARD_TIMEOUT_MS
   const shard = writerShardFor(projectId, config.writerShards)
   const port = writerPortFor(config, shard)
   const url = new URL(request.url)
@@ -209,9 +232,13 @@ export async function forwardWrite(config: Config, request: Request, projectId =
         headers,
         body,
         redirect: 'manual',
-        signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
+      if (timedOut(error)) {
+        console.error(`[cluster] writer shard ${shard} did not answer ${request.method} ${url.pathname} within ${timeoutMs / 1000}s; not retrying`)
+        return unconfirmedWrite()
+      }
       lastError = error
     }
   }
