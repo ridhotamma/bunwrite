@@ -102,8 +102,10 @@ function and WebSocket traffic does not use this path.
   SQLite stay on the worker that accepted them — storage uploads, function
   executions and deployments, function HTTP endpoints, site deployments, render
   jobs and VCS work.
-  `WRITE_BATCH_MS` groups writes that arrive together into one transaction
-  (each with its own savepoint), which removes a commit per request at peak.
+  `WRITE_BATCH_MS` (on by default, one process included) groups writes that
+  arrive together into one transaction (each with its own savepoint), which
+  removes a commit per request at peak. An idle writer flushes on the next
+  event-loop turn; the window only applies while a batch is committing.
   Write transactions retry a busy lock a few times with jittered backoff before
   failing; a retry only happens before the transaction callback starts, so
   events and generated IDs are never duplicated. If a writer is restarting, a

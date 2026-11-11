@@ -163,7 +163,7 @@ describe('writer role', () => {
     expect(config.writerPort).toBe(9091)
     expect(config.writerShards).toBe(1)
     expect(config.writerHost).toBe('127.0.0.1')
-    expect(config.writeBatchMs).toBe(0) // one process: no write contention
+    expect(config.writeBatchMs).toBe(1) // grouping concurrent writes doubles creates even on one process
     expect(config.publicWorkers).toBe(1)
     expect(config.workerPorts).toBe(false)
     expect(config.maxInflight).toBe(200)

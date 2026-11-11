@@ -5,9 +5,11 @@
  * commits. They queue on the same write lock anyway, so grouping the writes
  * that are already waiting costs nothing and saves a commit per request.
  *
- * A write joins the next batch if it arrives while the window is open. The
- * window is short (a few milliseconds) and the batch is capped, so latency
- * stays bounded even when the writer is saturated. Each operation keeps its
+ * When nothing is committing, the queue flushes on the next event-loop turn,
+ * which still groups every write that arrived in the same I/O pass but never
+ * makes a lone write wait. While a batch is committing, new writes wait up to
+ * the window and go in the next batch. The batch is capped, so latency stays
+ * bounded even when the writer is saturated. Each operation keeps its
  * own savepoint, permissions and events; one failure never rolls back the
  * other requests in the batch.
  */
@@ -35,6 +37,7 @@ const MAX_QUEUED = 10_000
 export class WriteBatcher {
   private queue: Pending[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
+  private immediate: ReturnType<typeof setImmediate> | null = null
   /** Serialises flushes so two timers cannot commit overlapping batches. */
   private flushing: Promise<void> | null = null
 
@@ -101,7 +104,16 @@ export class WriteBatcher {
   }
 
   private schedule(): void {
-    if (this.timer || this.queue.length === 0) return
+    if (this.timer || this.immediate || this.queue.length === 0) return
+    if (!this.flushing) {
+      // Idle writer: a fixed window made a single write wait (updates at 10
+      // clients halved); the next turn already collects concurrent arrivals.
+      this.immediate = setImmediate(() => {
+        this.immediate = null
+        void this.flush()
+      })
+      return
+    }
     this.timer = setTimeout(() => void this.flush(), this.windowMs)
   }
 
@@ -109,6 +121,10 @@ export class WriteBatcher {
     if (this.timer) {
       clearTimeout(this.timer)
       this.timer = null
+    }
+    if (this.immediate) {
+      clearImmediate(this.immediate)
+      this.immediate = null
     }
     if (this.queue.length === 0) return Promise.resolve()
     if (this.flushing) return this.flushing.then(() => this.flush())
