@@ -56,7 +56,7 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 
 /* App frame: sidebar + centred page. The frame draws the sidebar's edge so it runs the full page height. */
 .frame{display:grid;grid-template-columns:var(--nav-w) minmax(0,1fr);min-height:100vh;background:linear-gradient(to right,transparent calc(var(--nav-w) - 1px),var(--border) calc(var(--nav-w) - 1px),var(--border) var(--nav-w),transparent var(--nav-w))}
-.nav{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px;padding:12px 10px;overflow:auto}
+.nav{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:2px;padding:0 10px;overflow:auto}
 /* Keep items at full size; a short window scrolls the sidebar instead of squeezing it. */
 .nav>*{flex-shrink:0}
 /* Sidebar scrollbar: thin and rounded, hidden until the sidebar is hovered or focused. The gutter is reserved so links never shift. */
@@ -67,12 +67,13 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
 .nav::-webkit-scrollbar-thumb{border-radius:6px;background:transparent}
 .nav:hover::-webkit-scrollbar-thumb,.nav:focus-within::-webkit-scrollbar-thumb{background:var(--border-strong)}
 .nav::-webkit-scrollbar-thumb:hover{background:var(--subdued)}
-.nav-head{position:relative;display:flex;align-items:center;gap:4px;padding:0 0 10px;margin-bottom:6px;border-bottom:1px solid var(--border)}
+/* The switcher and the account row stay pinned; only the links between them scroll. */
+.nav-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:4px;padding:12px 0 10px;margin-bottom:6px;border-bottom:1px solid var(--border);background:var(--bg)}
 .nav>a{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--subdued);font-weight:500}
 .nav>a:hover{background:var(--hover);color:var(--text);text-decoration:none}
 .nav>a.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
 .nav .group{padding:14px 10px 4px;color:var(--subdued);font-size:11.5px;letter-spacing:.02em}
-.nav .foot{display:flex;align-items:center;gap:8px;margin-top:auto;padding:12px 4px 0;border-top:1px solid var(--border)}
+.nav .foot{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;gap:8px;margin-top:auto;padding:12px 4px;border-top:1px solid var(--border);background:var(--bg)}
 .nav .foot .nav-admin{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--subdued);font-size:13px}
 .nav-toggle{all:unset;display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:8px;color:var(--subdued);cursor:pointer}
 .nav-toggle:hover{background:var(--hover);color:var(--text)}
@@ -89,7 +90,7 @@ code,.mono,pre,textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monos
   html.nav-collapsed .switcher-text,html.nav-collapsed .switcher-caret,html.nav-collapsed .nav>a span,html.nav-collapsed .nav .group,html.nav-collapsed .nav .nav-admin,html.nav-collapsed .nav .nav-collapse-icon{display:none}
   html.nav-collapsed .nav>a{justify-content:center;padding:0}
   html.nav-collapsed .nav .group+a{margin-top:12px}
-  html.nav-collapsed .nav .foot{flex-direction:column;padding:12px 0 0}
+  html.nav-collapsed .nav .foot{flex-direction:column;padding:12px 0}
   html.nav-collapsed .nav .nav-expand-icon{display:flex}
 }
 
@@ -582,6 +583,7 @@ textarea.code-editor{min-height:260px;max-height:50vh;overflow:auto;line-height:
   .topbar label:hover{background:var(--hover)}
   .topbar .brand{display:flex;align-items:center;gap:8px;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nav{position:fixed;inset:0 auto 0 0;z-index:30;width:276px;background:var(--surface);box-shadow:var(--shadow-lg);transform:translateX(-100%);transition:transform .22s ease;visibility:hidden}
+  .nav-head,.nav .foot{background:var(--surface)}
   #nav-toggle:checked~.frame .nav{transform:none;visibility:visible}
   #nav-toggle:checked~.scrim{display:block;position:fixed;inset:0;z-index:25;background:rgba(16,16,20,.35)}
   .nav-toggle{display:none}
