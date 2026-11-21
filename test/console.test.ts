@@ -162,17 +162,14 @@ describe('console access', () => {
     }
   })
 
-  test('the MCP page shows the project connection and agent setup', async () => {
-    const res = await get('/console/mcp')
+  test('the API page links to the MCP guide, and the MCP page is gone', async () => {
+    const res = await get('/console/api')
     expect(res.status).toBe(200)
     const body = await res.text()
-    expect(body).toContain('href="/console/mcp" class="on"')
-    expect(body).toContain(server.endpoint)
-    expect(body).toContain(PROJECT)
-    expect(body).toContain('mcpServers')
-    expect(body).toContain('bunwrite_get_context')
-    expect(body).toContain('data-copy-target="#mcp-command"')
-    expect(body).toContain('--read-only')
+    expect(body).toContain('href="https://github.com/ridhotamma/bunwrite/blob/main/docs/MCP.md"')
+    expect(body).toContain('MCP guide')
+    expect(body).not.toContain('href="/console/mcp"')
+    expect(await (await get('/console/mcp')).text()).toContain('Page not found')
   })
 
   test('htmx requests get an HX-Location instead of a redirect', async () => {
